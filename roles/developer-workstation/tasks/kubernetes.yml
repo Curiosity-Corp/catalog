@@ -61,7 +61,7 @@
 
 - name: Install kubectx
   ansible.builtin.unarchive:
-    src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/kubectx_{{ kubectx_release.json.tag_name | regex_replace('^v', '') }}_linux_x86_64.tar.gz"
+    src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/kubectx_{{ kubectx_release.json.tag_name }}_linux_x86_64.tar.gz"
     dest: /usr/local/bin
     remote_src: true
     include: [kubectx]
@@ -74,7 +74,7 @@
 
 - name: Install kubens
   ansible.builtin.unarchive:
-    src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/kubens_{{ kubectx_release.json.tag_name | regex_replace('^v', '') }}_linux_x86_64.tar.gz"
+    src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/kubens_{{ kubectx_release.json.tag_name }}_linux_x86_64.tar.gz"
     dest: /usr/local/bin
     remote_src: true
     include: [kubens]
