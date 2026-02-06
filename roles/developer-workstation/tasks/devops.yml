@@ -32,27 +32,6 @@
     include: [grpcurl]
   when: not grpcurl_installed.stat.exists
 
-# --- dive (Docker image explorer) ---
-- name: Check if dive is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/dive
-  register: dive_installed
-
-- name: Get dive latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/wagoodman/dive/releases/latest
-    return_content: true
-  register: dive_release
-  when: not dive_installed.stat.exists
-
-- name: Install dive
-  ansible.builtin.unarchive:
-    src: "https://github.com/wagoodman/dive/releases/download/{{ dive_release.json.tag_name }}/dive_{{ dive_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [dive]
-  when: not dive_installed.stat.exists
-
 # --- crane (container registry tool) ---
 - name: Check if crane is installed
   ansible.builtin.stat:

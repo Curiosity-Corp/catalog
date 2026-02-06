@@ -14,4 +14,7 @@
     - "@anthropic-ai/claude-code"
     - "@google/gemini-cli"
     - "@openai/codex"
-  ignore_errors: true
+  register: _ai_npm_result
+  failed_when:
+    - _ai_npm_result is failed
+    - "'EACCES' not in (_ai_npm_result.msg | default(''))"

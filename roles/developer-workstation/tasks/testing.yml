@@ -5,15 +5,30 @@
 # Playwright for browser automation testing
 # =============================================================================
 
+- name: Check if playwright is installed
+  ansible.builtin.command:
+    cmd: npm list -g playwright
+  register: _playwright_check
+  changed_when: false
+  failed_when: false
+
 - name: Install Playwright via npm
   community.general.npm:
     name: playwright
     global: true
     state: present
-  ignore_errors: true
+  when: _playwright_check.rc != 0
+
+- name: Check if Playwright Chromium is installed
+  ansible.builtin.find:
+    paths: /root/.cache/ms-playwright
+    patterns: "chrome"
+    recurse: true
+    file_type: file
+  register: _playwright_chromium
 
 - name: Install Playwright Chromium browser
   ansible.builtin.command:
     cmd: npx playwright install --with-deps chromium
   changed_when: true
-  ignore_errors: true
+  when: _playwright_chromium.matched == 0

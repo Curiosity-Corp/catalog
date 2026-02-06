@@ -52,12 +52,17 @@
     path: /usr/local/bin/kubectx
   register: kubectx_installed
 
+- name: Check if kubens is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/kubens
+  register: kubens_installed
+
 - name: Get kubectx latest version
   ansible.builtin.uri:
     url: https://api.github.com/repos/ahmetb/kubectx/releases/latest
     return_content: true
   register: kubectx_release
-  when: not kubectx_installed.stat.exists
+  when: not kubectx_installed.stat.exists or not kubens_installed.stat.exists
 
 - name: Install kubectx
   ansible.builtin.unarchive:
@@ -66,11 +71,6 @@
     remote_src: true
     include: [kubectx]
   when: not kubectx_installed.stat.exists
-
-- name: Check if kubens is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/kubens
-  register: kubens_installed
 
 - name: Install kubens
   ansible.builtin.unarchive:

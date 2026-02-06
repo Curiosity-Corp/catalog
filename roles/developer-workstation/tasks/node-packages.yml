@@ -20,4 +20,7 @@
     - eslint
     - prettier
     - "@mermaid-js/mermaid-cli"
-  ignore_errors: true
+  register: _npm_result
+  failed_when:
+    - _npm_result is failed
+    - "'EACCES' not in (_npm_result.msg | default(''))"

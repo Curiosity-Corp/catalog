@@ -42,4 +42,6 @@
   ansible.builtin.shell:
     cmd: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
   when: not rust_installed.stat.exists

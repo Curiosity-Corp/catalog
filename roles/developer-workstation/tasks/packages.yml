@@ -154,3 +154,17 @@
       - skopeo
     state: present
     update_cache: true
+
+# --- Ensure unwanted packages are absent ---
+- name: Remove Docker and Rancher packages if present
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+      - docker-buildx-plugin
+      - rancher
+    state: absent
+    purge: true

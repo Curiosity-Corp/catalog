@@ -9,22 +9,30 @@
 - name: Ensure pipx is configured
   ansible.builtin.command: pipx ensurepath
   become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
   changed_when: false
-  ignore_errors: true
 
 - name: Install uv (fast pip replacement)
   ansible.builtin.shell:
     cmd: curl -fsSL https://astral.sh/uv/install.sh | sh
     creates: "{{ dev_user_home }}/.local/bin/uv"
   become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
 
 - name: Install Python tools via pipx
   community.general.pipx:
     name: "{{ item }}"
     state: present
   become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
   loop:
     - ruff
     - poetry
     - pre-commit
-  ignore_errors: true
+  register: _pipx_result
+  failed_when:
+    - _pipx_result is failed
+    - "'already' not in (_pipx_result.msg | default(''))"

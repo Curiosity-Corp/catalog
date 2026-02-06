@@ -11,6 +11,8 @@
     value: "{{ item.value }}"
     scope: global
   become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
   loop:
     - { name: init.defaultBranch, value: main }
     - { name: pull.rebase, value: "true" }
@@ -31,6 +33,8 @@
     value: "{{ item.value }}"
     scope: global
   become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
   loop:
     - { name: core.pager, value: delta }
     - { name: interactive.diffFilter, value: "delta --color-only" }
@@ -43,4 +47,6 @@
   ansible.builtin.command:
     cmd: git lfs install
   become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
   changed_when: false

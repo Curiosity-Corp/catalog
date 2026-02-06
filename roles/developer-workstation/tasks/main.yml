@@ -1,4 +1,33 @@
 ---
+# =============================================================================
+# Pre-flight Validation
+# =============================================================================
+- name: Verify running as root
+  ansible.builtin.assert:
+    that:
+      - ansible_user_id == 'root'
+    fail_msg: "This role must run as root (use --become or run with sudo)"
+
+- name: Verify target user exists
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ dev_user }}"
+
+- name: Verify dev_user home directory exists
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}"
+  register: _dev_user_home_stat
+
+- name: Fail if dev_user home directory missing
+  ansible.builtin.assert:
+    that:
+      - _dev_user_home_stat.stat.exists
+      - _dev_user_home_stat.stat.isdir
+    fail_msg: "Home directory {{ dev_user_home }} does not exist for user {{ dev_user }}"
+
+# =============================================================================
+# Task Includes
+# =============================================================================
 - name: Include APT repository setup
   ansible.builtin.include_tasks: repos.yml
   tags: [repos]
