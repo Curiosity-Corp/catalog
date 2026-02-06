@@ -251,10 +251,8 @@
     mode: '0644'
 
 # --- Fix ownership ---
+# Use shell instead of file module to skip read-only snap mount points
 - name: Fix ownership of dev_user home directory
-  ansible.builtin.file:
-    path: "{{ dev_user_home }}"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
-    recurse: true
+  ansible.builtin.shell:
+    cmd: "chown -R --no-dereference {{ dev_user }}:{{ dev_user }} {{ dev_user_home }} 2>/dev/null || true"
   changed_when: false
