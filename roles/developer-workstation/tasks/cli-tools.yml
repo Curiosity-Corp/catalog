@@ -232,11 +232,6 @@
   when: not hyperfine_installed.stat.exists
 
 # --- starship ---
-- name: Check if starship is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/starship
-  register: starship_installed
-
 - name: Install starship
   ansible.builtin.shell:
     cmd: curl -sS https://starship.rs/install.sh | sh -s -- -y

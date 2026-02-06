@@ -12,18 +12,12 @@
     creates: /usr/local/bin/helm
 
 # --- Kustomize ---
-- name: Check if kustomize is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/kustomize
-  register: kustomize_installed
-
 - name: Install Kustomize
   ansible.builtin.shell:
     cmd: |
       curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
       mv kustomize /usr/local/bin/kustomize
     creates: /usr/local/bin/kustomize
-  when: not kustomize_installed.stat.exists
 
 # --- k9s ---
 - name: Check if k9s is installed
