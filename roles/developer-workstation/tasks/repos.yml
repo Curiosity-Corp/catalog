@@ -20,6 +20,14 @@
   notify: Update apt cache
 
 # --- VS Code (Microsoft) ---
+# VS Code's own installer creates vscode.sources with a different signed-by path,
+# which conflicts with our managed vscode.list. Remove it to avoid apt conflicts.
+- name: Remove conflicting VS Code repo config (from VS Code installer)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/vscode.sources
+    state: absent
+  notify: Update apt cache
+
 - name: Download Microsoft GPG key
   ansible.builtin.shell:
     cmd: curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg
