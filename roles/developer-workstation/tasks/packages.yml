@@ -83,6 +83,7 @@
       - tree
       - ncdu
       - tealdeer
+      - tokei
       # --- Archive tools ---
       - unzip
       - zip

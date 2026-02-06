@@ -199,26 +199,8 @@
       - --strip-components=1
   when: not watchexec_installed.stat.exists
 
-# --- tokei ---
-- name: Check if tokei is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/tokei
-  register: tokei_installed
-
-- name: Get tokei latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/XAMPPRocky/tokei/releases/latest
-    return_content: true
-  register: tokei_release
-  when: not tokei_installed.stat.exists
-
-- name: Install tokei
-  ansible.builtin.unarchive:
-    src: "https://github.com/XAMPPRocky/tokei/releases/download/{{ tokei_release.json.tag_name }}/tokei-x86_64-unknown-linux-gnu.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [tokei]
-  when: not tokei_installed.stat.exists
+# --- tokei (installed via apt in packages.yml) ---
+# Note: tokei GitHub releases have no binaries since v13. Using apt package instead.
 
 # --- hyperfine ---
 - name: Check if hyperfine is installed
