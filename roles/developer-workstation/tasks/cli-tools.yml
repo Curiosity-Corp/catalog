@@ -143,9 +143,16 @@
 - name: Install glow
   ansible.builtin.unarchive:
     src: "https://github.com/charmbracelet/glow/releases/download/{{ glow_release.json.tag_name }}/glow_{{ glow_release.json.tag_name | regex_replace('^v', '') }}_Linux_x86_64.tar.gz"
-    dest: /usr/local/bin
+    dest: /tmp
     remote_src: true
-    include: [glow]
+  when: not glow_installed.stat.exists
+
+- name: Move glow binary to /usr/local/bin
+  ansible.builtin.copy:
+    src: "/tmp/glow_{{ glow_release.json.tag_name | regex_replace('^v', '') }}_Linux_x86_64/glow"
+    dest: /usr/local/bin/glow
+    mode: '0755'
+    remote_src: true
   when: not glow_installed.stat.exists
 
 # --- just ---
