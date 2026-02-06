@@ -1,0 +1,123 @@
+---
+# =============================================================================
+# APT Repository Setup
+# =============================================================================
+# Uses shell+creates for GPG keys (idempotent, avoids deprecated apt_key)
+# Uses apt_repository for source lists
+# =============================================================================
+
+# --- GitHub CLI ---
+- name: Download GitHub CLI GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+    creates: /usr/share/keyrings/githubcli-archive-keyring.gpg
+
+- name: Add GitHub CLI repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
+    filename: github-cli
+    state: present
+  notify: Update apt cache
+
+# --- VS Code (Microsoft) ---
+- name: Download Microsoft GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg
+    creates: /usr/share/keyrings/microsoft-archive-keyring.gpg
+
+- name: Add VS Code repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main"
+    filename: vscode
+    state: present
+  notify: Update apt cache
+
+# --- Google Cloud CLI ---
+- name: Download Google Cloud GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud-google-archive-keyring.gpg
+    creates: /usr/share/keyrings/cloud-google-archive-keyring.gpg
+
+- name: Add Google Cloud CLI repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/cloud-google-archive-keyring.gpg] https://packages.cloud.google.com/apt cloud-sdk main"
+    filename: google-cloud-sdk
+    state: present
+  notify: Update apt cache
+
+# --- Cloudflared ---
+- name: Download Cloudflare GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | gpg --dearmor -o /usr/share/keyrings/cloudflare-archive-keyring.gpg
+    creates: /usr/share/keyrings/cloudflare-archive-keyring.gpg
+
+- name: Add Cloudflared repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/cloudflare-archive-keyring.gpg] https://pkg.cloudflare.com/cloudflared {{ ansible_distribution_release }} main"
+    filename: cloudflared
+    state: present
+  notify: Update apt cache
+
+# --- Kubernetes (kubectl) ---
+- name: Download Kubernetes GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
+    creates: /usr/share/keyrings/kubernetes-archive-keyring.gpg
+
+- name: Add Kubernetes repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /"
+    filename: kubernetes
+    state: present
+  notify: Update apt cache
+
+# --- HashiCorp (terraform, packer, vault) ---
+- name: Download HashiCorp GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+- name: Add HashiCorp repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main"
+    filename: hashicorp
+    state: present
+  notify: Update apt cache
+
+# --- Google Chrome ---
+- name: Download Google Chrome GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-archive-keyring.gpg
+    creates: /usr/share/keyrings/google-chrome-archive-keyring.gpg
+
+- name: Add Google Chrome repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/google-chrome-archive-keyring.gpg] https://dl.google.com/linux/chrome/deb/ stable main"
+    filename: google-chrome
+    state: present
+  notify: Update apt cache
+
+# --- 1Password CLI ---
+- name: Download 1Password GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor -o /usr/share/keyrings/1password-archive-keyring.gpg
+    creates: /usr/share/keyrings/1password-archive-keyring.gpg
+
+- name: Add 1Password CLI repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/{{ ansible_architecture | replace('x86_64', 'amd64') }} stable main"
+    filename: 1password-cli
+    state: present
+  notify: Update apt cache
+
+# --- Node.js (NodeSource) ---
+# NodeSource requires their setup script for proper configuration
+- name: Install Node.js repository via NodeSource setup script
+  ansible.builtin.shell:
+    cmd: "curl -fsSL https://deb.nodesource.com/setup_{{ node_major_version }}.x | bash -"
+    creates: /etc/apt/sources.list.d/nodesource.list
+  notify: Update apt cache
+
+# --- Flush handlers to update apt cache before package installation ---
+- name: Flush handlers to update apt cache
+  ansible.builtin.meta: flush_handlers

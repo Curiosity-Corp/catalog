@@ -1,0 +1,7 @@
+---
+- name: Curiosity Computer - Developer Workstation
+  hosts: localhost
+  connection: local
+  become: true
+  roles:
+    - developer-workstation

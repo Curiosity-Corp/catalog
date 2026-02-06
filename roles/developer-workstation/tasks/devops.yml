@@ -1,0 +1,75 @@
+---
+# =============================================================================
+# DevOps Utilities
+# =============================================================================
+# Container, API, and file management tools
+# =============================================================================
+
+# --- rclone ---
+- name: Install rclone
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://rclone.org/install.sh | bash
+    creates: /usr/bin/rclone
+
+# --- grpcurl ---
+- name: Check if grpcurl is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/grpcurl
+  register: grpcurl_installed
+
+- name: Get grpcurl latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/fullstorydev/grpcurl/releases/latest
+    return_content: true
+  register: grpcurl_release
+  when: not grpcurl_installed.stat.exists
+
+- name: Install grpcurl
+  ansible.builtin.unarchive:
+    src: "https://github.com/fullstorydev/grpcurl/releases/download/{{ grpcurl_release.json.tag_name }}/grpcurl_{{ grpcurl_release.json.tag_name | regex_replace('^v', '') }}_linux_x86_64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [grpcurl]
+  when: not grpcurl_installed.stat.exists
+
+# --- dive (Docker image explorer) ---
+- name: Check if dive is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/dive
+  register: dive_installed
+
+- name: Get dive latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/wagoodman/dive/releases/latest
+    return_content: true
+  register: dive_release
+  when: not dive_installed.stat.exists
+
+- name: Install dive
+  ansible.builtin.unarchive:
+    src: "https://github.com/wagoodman/dive/releases/download/{{ dive_release.json.tag_name }}/dive_{{ dive_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [dive]
+  when: not dive_installed.stat.exists
+
+# --- crane (container registry tool) ---
+- name: Check if crane is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/crane
+  register: crane_installed
+
+- name: Get crane latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/google/go-containerregistry/releases/latest
+    return_content: true
+  register: crane_release
+  when: not crane_installed.stat.exists
+
+- name: Install crane
+  ansible.builtin.unarchive:
+    src: "https://github.com/google/go-containerregistry/releases/download/{{ crane_release.json.tag_name }}/go-containerregistry_Linux_x86_64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [crane]
+  when: not crane_installed.stat.exists

@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# Python Tools
+# =============================================================================
+# Uses pipx for isolated Python tool installs and uv as fast pip replacement.
+# Python and pipx are installed via APT (packages.yml).
+# =============================================================================
+
+- name: Ensure pipx is configured
+  ansible.builtin.command: pipx ensurepath
+  become_user: "{{ dev_user }}"
+  changed_when: false
+  ignore_errors: true
+
+- name: Install uv (fast pip replacement)
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://astral.sh/uv/install.sh | sh
+    creates: "{{ dev_user_home }}/.local/bin/uv"
+  become_user: "{{ dev_user }}"
+
+- name: Install Python tools via pipx
+  community.general.pipx:
+    name: "{{ item }}"
+    state: present
+  become_user: "{{ dev_user }}"
+  loop:
+    - ruff
+    - poetry
+    - pre-commit
+  ignore_errors: true

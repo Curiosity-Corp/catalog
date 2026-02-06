@@ -1,0 +1,46 @@
+---
+# =============================================================================
+# Git Configuration
+# =============================================================================
+# Global git settings for dev_user including delta pager integration
+# =============================================================================
+
+- name: Configure git defaults
+  community.general.git_config:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    scope: global
+  become_user: "{{ dev_user }}"
+  loop:
+    - { name: init.defaultBranch, value: main }
+    - { name: pull.rebase, value: "true" }
+    - { name: push.autoSetupRemote, value: "true" }
+    - { name: core.autocrlf, value: input }
+    - { name: rerere.enabled, value: "true" }
+    - { name: diff.algorithm, value: histogram }
+    - { name: merge.conflictstyle, value: zdiff3 }
+
+- name: Check if delta is available for git pager config
+  ansible.builtin.stat:
+    path: /usr/local/bin/delta
+  register: delta_installed
+
+- name: Configure delta as git pager
+  community.general.git_config:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    scope: global
+  become_user: "{{ dev_user }}"
+  loop:
+    - { name: core.pager, value: delta }
+    - { name: interactive.diffFilter, value: "delta --color-only" }
+    - { name: delta.navigate, value: "true" }
+    - { name: delta.side-by-side, value: "true" }
+    - { name: delta.line-numbers, value: "true" }
+  when: delta_installed.stat.exists
+
+- name: Install git-lfs
+  ansible.builtin.command:
+    cmd: git lfs install
+  become_user: "{{ dev_user }}"
+  changed_when: false

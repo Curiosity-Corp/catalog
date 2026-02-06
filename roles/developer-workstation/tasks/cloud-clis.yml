@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# Cloud CLI Installation
+# =============================================================================
+# CLIs not available via APT repositories
+# =============================================================================
+
+# --- Azure CLI ---
+- name: Install Azure CLI
+  ansible.builtin.shell:
+    cmd: curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+    creates: /usr/bin/az
+
+# --- AWS CLI v2 ---
+- name: Check if AWS CLI is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/aws
+  register: aws_cli_installed
+
+- name: Download AWS CLI v2
+  ansible.builtin.unarchive:
+    src: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+    dest: /tmp
+    remote_src: true
+  when: not aws_cli_installed.stat.exists
+
+- name: Install AWS CLI v2
+  ansible.builtin.command:
+    cmd: /tmp/aws/install
+    creates: /usr/local/bin/aws
+  when: not aws_cli_installed.stat.exists
+
+- name: Clean up AWS CLI installer
+  ansible.builtin.file:
+    path: /tmp/aws
+    state: absent
+  when: not aws_cli_installed.stat.exists

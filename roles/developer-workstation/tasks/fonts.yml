@@ -1,0 +1,33 @@
+---
+# =============================================================================
+# Font Installation
+# =============================================================================
+# JetBrains Mono Nerd Font for terminal and editor use
+# =============================================================================
+
+- name: Check if JetBrains Mono Nerd Font is installed
+  ansible.builtin.stat:
+    path: /usr/share/fonts/truetype/jetbrains-mono-nerd
+  register: nerd_font_installed
+
+- name: Create font directory
+  ansible.builtin.file:
+    path: /usr/share/fonts/truetype/jetbrains-mono-nerd
+    state: directory
+    mode: '0755'
+  when: not nerd_font_installed.stat.exists
+
+- name: Get Nerd Fonts latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest
+    return_content: true
+  register: nerd_fonts_release
+  when: not nerd_font_installed.stat.exists
+
+- name: Install JetBrains Mono Nerd Font
+  ansible.builtin.unarchive:
+    src: "https://github.com/ryanoasis/nerd-fonts/releases/download/{{ nerd_fonts_release.json.tag_name }}/JetBrainsMono.tar.xz"
+    dest: /usr/share/fonts/truetype/jetbrains-mono-nerd
+    remote_src: true
+  when: not nerd_font_installed.stat.exists
+  notify: Update font cache

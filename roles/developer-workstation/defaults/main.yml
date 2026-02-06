@@ -1,0 +1,9 @@
+---
+dev_user: curiosity
+dev_user_home: /home/curiosity
+node_major_version: "25"
+# ansible-pull settings
+ansible_pull_repo: "https://github.com/Curiosity-Corp/catalog.git"
+ansible_pull_branch: "main"
+ansible_pull_playbook: "playbooks/site.yml"
+ansible_pull_dir: "/opt/curiosity-catalog"

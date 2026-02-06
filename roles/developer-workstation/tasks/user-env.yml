@@ -1,0 +1,260 @@
+---
+# =============================================================================
+# User Environment Configuration
+# =============================================================================
+# Shell setup, aliases, symlinks, PATH, and editor config for dev_user
+# =============================================================================
+
+# --- Symlinks for renamed Ubuntu packages ---
+- name: Create fd symlink (fdfind -> fd)
+  ansible.builtin.file:
+    src: /usr/bin/fdfind
+    dest: /usr/local/bin/fd
+    state: link
+    force: true
+
+- name: Create bat symlink (batcat -> bat)
+  ansible.builtin.file:
+    src: /usr/bin/batcat
+    dest: /usr/local/bin/bat
+    state: link
+    force: true
+
+# --- Starship prompt ---
+- name: Add starship init to .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    line: 'eval "$(starship init bash)"'
+    regexp: 'starship init bash'
+    create: true
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: '0644'
+
+- name: Add starship init to .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    line: 'eval "$(starship init zsh)"'
+    regexp: 'starship init zsh'
+    create: true
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: '0644'
+
+# --- Direnv hooks ---
+- name: Add direnv hook to .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    line: 'eval "$(direnv hook bash)"'
+    regexp: 'direnv hook bash'
+
+- name: Add direnv hook to .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    line: 'eval "$(direnv hook zsh)"'
+    regexp: 'direnv hook zsh'
+
+# --- Zoxide ---
+- name: Add zoxide init to .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    line: 'eval "$(zoxide init bash)"'
+    regexp: 'zoxide init bash'
+
+- name: Add zoxide init to .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    line: 'eval "$(zoxide init zsh)"'
+    regexp: 'zoxide init zsh'
+
+# --- PATH additions ---
+- name: Add PATH additions to .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    line: 'export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.krew/bin:/usr/local/go/bin:$PATH"'
+    regexp: 'krew/bin'
+
+- name: Add PATH additions to .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    line: 'export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.krew/bin:/usr/local/go/bin:$PATH"'
+    regexp: 'krew/bin'
+
+# --- Editor ---
+- name: Set EDITOR in .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    line: 'export EDITOR="code --wait"'
+    regexp: '^export EDITOR='
+
+- name: Set EDITOR in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    line: 'export EDITOR="code --wait"'
+    regexp: '^export EDITOR='
+
+# --- Source aliases ---
+- name: Ensure .bash_aliases is sourced in .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    line: '[ -f ~/.bash_aliases ] && source ~/.bash_aliases'
+    regexp: 'bash_aliases'
+
+# --- Aliases file ---
+- name: Create comprehensive .bash_aliases
+  ansible.builtin.copy:
+    content: |
+      # =============================================================================
+      # Developer Workstation Aliases
+      # =============================================================================
+      # Managed by Ansible - local changes will be overwritten
+      # =============================================================================
+
+      # --- Kubernetes aliases ---
+      alias k='kubectl'
+      alias kx='kubectx'
+      alias kn='kubens'
+      alias kgp='kubectl get pods'
+      alias kgpa='kubectl get pods -A'
+      alias kgd='kubectl get deployments'
+      alias kgs='kubectl get services'
+      alias kgn='kubectl get nodes'
+      alias kgi='kubectl get ingress'
+      alias kgns='kubectl get namespaces'
+      alias kgcm='kubectl get configmaps'
+      alias kgsec='kubectl get secrets'
+      alias kgpv='kubectl get pv'
+      alias kgpvc='kubectl get pvc'
+      alias kgsc='kubectl get storageclass'
+      alias kge='kubectl get events --sort-by=.lastTimestamp'
+      alias kdp='kubectl describe pod'
+      alias kdd='kubectl describe deployment'
+      alias kds='kubectl describe service'
+      alias kdn='kubectl describe node'
+      alias kl='kubectl logs'
+      alias klf='kubectl logs -f'
+      alias kex='kubectl exec -it'
+      alias kaf='kubectl apply -f'
+      alias kdf='kubectl delete -f'
+      alias kak='kubectl apply -k'
+      alias kdk='kubectl delete -k'
+      alias ktop='kubectl top pods'
+      alias ktopn='kubectl top nodes'
+      alias kctx='kubectl config current-context'
+      alias kns='kubectl config view --minify --output jsonpath="{..namespace}"'
+      alias krew='kubectl krew'
+
+      # --- Git aliases ---
+      alias g='git'
+      alias gs='git status'
+      alias ga='git add'
+      alias gaa='git add -A'
+      alias gc='git commit'
+      alias gcm='git commit -m'
+      alias gca='git commit --amend'
+      alias gp='git push'
+      alias gpf='git push --force-with-lease'
+      alias gpl='git pull'
+      alias gf='git fetch'
+      alias gfa='git fetch --all'
+      alias gb='git branch'
+      alias gba='git branch -a'
+      alias gco='git checkout'
+      alias gcb='git checkout -b'
+      alias gsw='git switch'
+      alias gswc='git switch -c'
+      alias gd='git diff'
+      alias gds='git diff --staged'
+      alias gl='git log --oneline'
+      alias gla='git log --oneline --all --graph'
+      alias glg='git log --graph --pretty=format:"%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset" --abbrev-commit'
+      alias gst='git stash'
+      alias gstp='git stash pop'
+      alias gstl='git stash list'
+      alias grb='git rebase'
+      alias grbi='git rebase -i'
+      alias gm='git merge'
+      alias gcp='git cherry-pick'
+      alias grs='git reset'
+      alias grsh='git reset --hard'
+      alias gclean='git clean -fd'
+
+      # --- Infrastructure aliases ---
+      alias tf='terraform'
+      alias tfi='terraform init'
+      alias tfp='terraform plan'
+      alias tfa='terraform apply'
+      alias tfd='terraform destroy'
+      alias tfv='terraform validate'
+      alias tfo='terraform output'
+      alias tfs='terraform state'
+      alias pk='packer'
+      alias ans='ansible'
+      alias ansp='ansible-playbook'
+
+      # --- Docker/container aliases ---
+      alias d='docker'
+      alias dc='docker compose'
+      alias dps='docker ps'
+      alias dpsa='docker ps -a'
+      alias di='docker images'
+      alias dex='docker exec -it'
+      alias dl='docker logs'
+      alias dlf='docker logs -f'
+      alias drm='docker rm'
+      alias drmi='docker rmi'
+      alias dsp='docker system prune'
+
+      # --- Modern replacements ---
+      alias cat='bat --paging=never 2>/dev/null || command cat'
+      alias ls='eza --icons 2>/dev/null || command ls --color=auto'
+      alias ll='eza -alh --icons 2>/dev/null || command ls -alh --color=auto'
+      alias la='eza -a --icons 2>/dev/null || command ls -a --color=auto'
+      alias lt='eza --tree --icons 2>/dev/null || tree'
+      alias grep='grep --color=auto'
+      alias diff='delta 2>/dev/null || command diff --color=auto'
+      alias du='dust 2>/dev/null || command du -h'
+      alias df='duf 2>/dev/null || command df -h'
+      alias find='fd 2>/dev/null || command find'
+      alias top='btop 2>/dev/null || command top'
+      alias cd='z 2>/dev/null || builtin cd'
+
+      # --- Network/system aliases ---
+      alias ports='ss -tlnp'
+      alias myip='curl -s ifconfig.me'
+      alias localip='hostname -I | awk "{print \$1}"'
+      alias ping='ping -c 5'
+      alias speedtest='curl -s https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py | python3 -'
+      alias weather='curl wttr.in'
+      alias h='history'
+      alias hg='history | grep'
+      alias j='jobs -l'
+      alias path='echo $PATH | tr ":" "\n"'
+      alias now='date +"%Y-%m-%d %H:%M:%S"'
+      alias week='date +%V'
+      alias reload='source ~/.bashrc'
+      alias cls='clear'
+      alias ..='cd ..'
+      alias ...='cd ../..'
+      alias ....='cd ../../..'
+
+      # --- File operations ---
+      alias cp='cp -iv'
+      alias mv='mv -iv'
+      alias mkdir='mkdir -pv'
+      alias rm='rm -Iv'
+      alias chmod='chmod -v'
+      alias chown='chown -v'
+    dest: "{{ dev_user_home }}/.bash_aliases"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: '0644'
+
+# --- Fix ownership ---
+- name: Fix ownership of dev_user home directory
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    recurse: true
+  changed_when: false

@@ -1,0 +1,248 @@
+---
+# =============================================================================
+# Modern CLI Tools (GitHub Binary Downloads)
+# =============================================================================
+# Uses stat + uri + unarchive/get_url pattern for idempotent installs.
+# Each tool is only downloaded if not already present.
+# =============================================================================
+
+# --- lazygit ---
+- name: Check if lazygit is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/lazygit
+  register: lazygit_installed
+
+- name: Get lazygit latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/jesseduffield/lazygit/releases/latest
+    return_content: true
+  register: lazygit_release
+  when: not lazygit_installed.stat.exists
+
+- name: Install lazygit
+  ansible.builtin.unarchive:
+    src: "https://github.com/jesseduffield/lazygit/releases/download/{{ lazygit_release.json.tag_name }}/lazygit_{{ lazygit_release.json.tag_name | regex_replace('^v', '') }}_Linux_x86_64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [lazygit]
+  when: not lazygit_installed.stat.exists
+
+# --- yq ---
+- name: Check if yq is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/yq
+  register: yq_installed
+
+- name: Get yq latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/mikefarah/yq/releases/latest
+    return_content: true
+  register: yq_release
+  when: not yq_installed.stat.exists
+
+- name: Install yq
+  ansible.builtin.get_url:
+    url: "https://github.com/mikefarah/yq/releases/download/{{ yq_release.json.tag_name }}/yq_linux_amd64"
+    dest: /usr/local/bin/yq
+    mode: '0755'
+  when: not yq_installed.stat.exists
+
+# --- delta ---
+- name: Check if delta is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/delta
+  register: delta_installed
+
+- name: Get delta latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/dandavison/delta/releases/latest
+    return_content: true
+  register: delta_release
+  when: not delta_installed.stat.exists
+
+- name: Install delta
+  ansible.builtin.unarchive:
+    src: "https://github.com/dandavison/delta/releases/download/{{ delta_release.json.tag_name }}/delta-{{ delta_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-gnu.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["delta-{{ delta_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-gnu/delta"]
+    extra_opts:
+      - --strip-components=1
+  when: not delta_installed.stat.exists
+
+# --- zoxide ---
+- name: Check if zoxide is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/zoxide
+  register: zoxide_installed
+
+- name: Install zoxide
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash
+    creates: /usr/local/bin/zoxide
+  environment:
+    BIN_DIR: /usr/local/bin
+
+# --- dust ---
+- name: Check if dust is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/dust
+  register: dust_installed
+
+- name: Get dust latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/bootandy/dust/releases/latest
+    return_content: true
+  register: dust_release
+  when: not dust_installed.stat.exists
+
+- name: Install dust
+  ansible.builtin.unarchive:
+    src: "https://github.com/bootandy/dust/releases/download/{{ dust_release.json.tag_name }}/dust-{{ dust_release.json.tag_name }}-x86_64-unknown-linux-gnu.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["dust-{{ dust_release.json.tag_name }}-x86_64-unknown-linux-gnu/dust"]
+    extra_opts:
+      - --strip-components=1
+  when: not dust_installed.stat.exists
+
+# --- duf ---
+- name: Check if duf is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/duf
+  register: duf_installed
+
+- name: Get duf latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/muesli/duf/releases/latest
+    return_content: true
+  register: duf_release
+  when: not duf_installed.stat.exists
+
+- name: Install duf
+  ansible.builtin.unarchive:
+    src: "https://github.com/muesli/duf/releases/download/{{ duf_release.json.tag_name }}/duf_{{ duf_release.json.tag_name | regex_replace('^v', '') }}_linux_x86_64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [duf]
+  when: not duf_installed.stat.exists
+
+# --- glow ---
+- name: Check if glow is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/glow
+  register: glow_installed
+
+- name: Get glow latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/charmbracelet/glow/releases/latest
+    return_content: true
+  register: glow_release
+  when: not glow_installed.stat.exists
+
+- name: Install glow
+  ansible.builtin.unarchive:
+    src: "https://github.com/charmbracelet/glow/releases/download/{{ glow_release.json.tag_name }}/glow_{{ glow_release.json.tag_name | regex_replace('^v', '') }}_Linux_x86_64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [glow]
+  when: not glow_installed.stat.exists
+
+# --- just ---
+- name: Check if just is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/just
+  register: just_installed
+
+- name: Get just latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/casey/just/releases/latest
+    return_content: true
+  register: just_release
+  when: not just_installed.stat.exists
+
+- name: Install just
+  ansible.builtin.unarchive:
+    src: "https://github.com/casey/just/releases/download/{{ just_release.json.tag_name }}/just-{{ just_release.json.tag_name }}-x86_64-unknown-linux-musl.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [just]
+  when: not just_installed.stat.exists
+
+# --- watchexec ---
+- name: Check if watchexec is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/watchexec
+  register: watchexec_installed
+
+- name: Get watchexec latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/watchexec/watchexec/releases/latest
+    return_content: true
+  register: watchexec_release
+  when: not watchexec_installed.stat.exists
+
+- name: Install watchexec
+  ansible.builtin.unarchive:
+    src: "https://github.com/watchexec/watchexec/releases/download/{{ watchexec_release.json.tag_name }}/watchexec-{{ watchexec_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-gnu.tar.xz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["watchexec-{{ watchexec_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-gnu/watchexec"]
+    extra_opts:
+      - --strip-components=1
+  when: not watchexec_installed.stat.exists
+
+# --- tokei ---
+- name: Check if tokei is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/tokei
+  register: tokei_installed
+
+- name: Get tokei latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/XAMPPRocky/tokei/releases/latest
+    return_content: true
+  register: tokei_release
+  when: not tokei_installed.stat.exists
+
+- name: Install tokei
+  ansible.builtin.unarchive:
+    src: "https://github.com/XAMPPRocky/tokei/releases/download/{{ tokei_release.json.tag_name }}/tokei-x86_64-unknown-linux-gnu.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [tokei]
+  when: not tokei_installed.stat.exists
+
+# --- hyperfine ---
+- name: Check if hyperfine is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/hyperfine
+  register: hyperfine_installed
+
+- name: Get hyperfine latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/sharkdp/hyperfine/releases/latest
+    return_content: true
+  register: hyperfine_release
+  when: not hyperfine_installed.stat.exists
+
+- name: Install hyperfine
+  ansible.builtin.unarchive:
+    src: "https://github.com/sharkdp/hyperfine/releases/download/{{ hyperfine_release.json.tag_name }}/hyperfine-{{ hyperfine_release.json.tag_name }}-x86_64-unknown-linux-gnu.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["hyperfine-{{ hyperfine_release.json.tag_name }}-x86_64-unknown-linux-gnu/hyperfine"]
+    extra_opts:
+      - --strip-components=1
+  when: not hyperfine_installed.stat.exists
+
+# --- starship ---
+- name: Check if starship is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/starship
+  register: starship_installed
+
+- name: Install starship
+  ansible.builtin.shell:
+    cmd: curl -sS https://starship.rs/install.sh | sh -s -- -y
+    creates: /usr/local/bin/starship

@@ -1,0 +1,45 @@
+---
+# =============================================================================
+# Language Runtimes (non-APT)
+# =============================================================================
+# Go: latest from go.dev
+# Rust: via rustup for dev_user
+# =============================================================================
+
+# --- Go ---
+- name: Check if Go is installed
+  ansible.builtin.stat:
+    path: /usr/local/go/bin/go
+  register: go_installed
+
+- name: Get latest Go version
+  ansible.builtin.uri:
+    url: https://go.dev/VERSION?m=text
+    return_content: true
+  register: go_version
+  when: not go_installed.stat.exists
+
+- name: Install Go
+  ansible.builtin.unarchive:
+    src: "https://go.dev/dl/{{ go_version.content.split('\n')[0] }}.linux-amd64.tar.gz"
+    dest: /usr/local
+    remote_src: true
+  when: not go_installed.stat.exists
+
+- name: Set Go PATH
+  ansible.builtin.copy:
+    content: 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin'
+    dest: /etc/profile.d/golang.sh
+    mode: '0644'
+
+# --- Rust ---
+- name: Check if Rust is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.rustup"
+  register: rust_installed
+
+- name: Install Rust via rustup
+  ansible.builtin.shell:
+    cmd: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  become_user: "{{ dev_user }}"
+  when: not rust_installed.stat.exists

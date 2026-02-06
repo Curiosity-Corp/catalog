@@ -1,0 +1,51 @@
+---
+# =============================================================================
+# Ansible-Pull Systemd Timer
+# =============================================================================
+# Sets up periodic ansible-pull runs for ongoing workstation updates.
+# Variables come from defaults/main.yml:
+#   ansible_pull_repo, ansible_pull_branch, ansible_pull_playbook,
+#   ansible_pull_interval, ansible_pull_dir
+# =============================================================================
+
+- name: Create ansible-pull service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Ansible Pull - Developer Workstation Updates
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/ansible-pull -U {{ ansible_pull_repo }} -C {{ ansible_pull_branch }} -d {{ ansible_pull_dir }} {{ ansible_pull_playbook }}
+      TimeoutStartSec=3600
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/ansible-pull.service
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Create ansible-pull timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run ansible-pull periodically
+
+      [Timer]
+      OnBootSec=5min
+      OnCalendar=*-*-* 02:00:00
+      RandomizedDelaySec=30min
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/ansible-pull.timer
+    mode: '0644'
+  notify: Reload systemd
+
+- name: Enable ansible-pull timer
+  ansible.builtin.systemd:
+    name: ansible-pull.timer
+    enabled: true
+    state: started
+    daemon_reload: true

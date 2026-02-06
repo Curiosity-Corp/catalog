@@ -1,0 +1,140 @@
+---
+# =============================================================================
+# Security Tools
+# =============================================================================
+# Container security, secrets management, and certificate tools
+# =============================================================================
+
+# --- Trivy ---
+- name: Install Trivy
+  ansible.builtin.shell:
+    cmd: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+    creates: /usr/local/bin/trivy
+
+# --- kubeseal (Sealed Secrets) ---
+- name: Check if kubeseal is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/kubeseal
+  register: kubeseal_installed
+
+- name: Get kubeseal latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest
+    return_content: true
+  register: kubeseal_release
+  when: not kubeseal_installed.stat.exists
+
+- name: Install kubeseal
+  ansible.builtin.get_url:
+    url: "https://github.com/bitnami-labs/sealed-secrets/releases/download/{{ kubeseal_release.json.tag_name }}/kubeseal-{{ kubeseal_release.json.tag_name | regex_replace('^v', '') }}-linux-amd64.tar.gz"
+    dest: /tmp/kubeseal.tar.gz
+    mode: "0644"
+  when: not kubeseal_installed.stat.exists
+
+- name: Extract kubeseal
+  ansible.builtin.unarchive:
+    src: /tmp/kubeseal.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    include: [kubeseal]
+  when: not kubeseal_installed.stat.exists
+
+- name: Clean up kubeseal tarball
+  ansible.builtin.file:
+    path: /tmp/kubeseal.tar.gz
+    state: absent
+  when: not kubeseal_installed.stat.exists
+
+# --- SOPS ---
+- name: Check if sops is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/sops
+  register: sops_installed
+
+- name: Get SOPS latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/getsops/sops/releases/latest
+    return_content: true
+  register: sops_release
+  when: not sops_installed.stat.exists
+
+- name: Install SOPS
+  ansible.builtin.get_url:
+    url: "https://github.com/getsops/sops/releases/download/{{ sops_release.json.tag_name }}/sops-{{ sops_release.json.tag_name }}.linux.amd64"
+    dest: /usr/local/bin/sops
+    mode: "0755"
+  when: not sops_installed.stat.exists
+
+# --- cosign ---
+- name: Check if cosign is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/cosign
+  register: cosign_installed
+
+- name: Get cosign latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/sigstore/cosign/releases/latest
+    return_content: true
+  register: cosign_release
+  when: not cosign_installed.stat.exists
+
+- name: Install cosign
+  ansible.builtin.get_url:
+    url: "https://github.com/sigstore/cosign/releases/download/{{ cosign_release.json.tag_name }}/cosign-linux-amd64"
+    dest: /usr/local/bin/cosign
+    mode: "0755"
+  when: not cosign_installed.stat.exists
+
+# --- step-cli ---
+- name: Check if step is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/step
+  register: step_installed
+
+- name: Get step-cli latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/smallstep/cli/releases/latest
+    return_content: true
+  register: step_release
+  when: not step_installed.stat.exists
+
+- name: Install step-cli
+  ansible.builtin.unarchive:
+    src: "https://github.com/smallstep/cli/releases/download/{{ step_release.json.tag_name }}/step_linux_{{ step_release.json.tag_name | regex_replace('^v', '') }}_amd64.tar.gz"
+    dest: /tmp
+    remote_src: true
+  when: not step_installed.stat.exists
+
+- name: Move step binary to /usr/local/bin
+  ansible.builtin.copy:
+    src: "/tmp/step_{{ step_release.json.tag_name | regex_replace('^v', '') }}/bin/step"
+    dest: /usr/local/bin/step
+    mode: "0755"
+    remote_src: true
+  when: not step_installed.stat.exists
+
+- name: Clean up step-cli temp files
+  ansible.builtin.file:
+    path: "/tmp/step_{{ step_release.json.tag_name | regex_replace('^v', '') }}"
+    state: absent
+  when: not step_installed.stat.exists
+
+# --- mkcert ---
+- name: Check if mkcert is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/mkcert
+  register: mkcert_installed
+
+- name: Get mkcert latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/FiloSottile/mkcert/releases/latest
+    return_content: true
+  register: mkcert_release
+  when: not mkcert_installed.stat.exists
+
+- name: Install mkcert
+  ansible.builtin.get_url:
+    url: "https://github.com/FiloSottile/mkcert/releases/download/{{ mkcert_release.json.tag_name }}/mkcert-{{ mkcert_release.json.tag_name }}-linux-amd64"
+    dest: /usr/local/bin/mkcert
+    mode: "0755"
+  when: not mkcert_installed.stat.exists

@@ -1,0 +1,19 @@
+---
+# =============================================================================
+# Testing Frameworks
+# =============================================================================
+# Playwright for browser automation testing
+# =============================================================================
+
+- name: Install Playwright via npm
+  community.general.npm:
+    name: playwright
+    global: true
+    state: present
+  ignore_errors: true
+
+- name: Install Playwright Chromium browser
+  ansible.builtin.command:
+    cmd: npx playwright install --with-deps chromium
+  changed_when: true
+  ignore_errors: true

@@ -1,0 +1,64 @@
+---
+- name: Include APT repository setup
+  ansible.builtin.include_tasks: repos.yml
+  tags: [repos]
+
+- name: Include APT package installation
+  ansible.builtin.include_tasks: packages.yml
+  tags: [packages]
+
+- name: Include cloud CLI installation
+  ansible.builtin.include_tasks: cloud-clis.yml
+  tags: [cloud]
+
+- name: Include Kubernetes tools
+  ansible.builtin.include_tasks: kubernetes.yml
+  tags: [kubernetes]
+
+- name: Include security tools
+  ansible.builtin.include_tasks: security.yml
+  tags: [security]
+
+- name: Include DevOps utilities
+  ansible.builtin.include_tasks: devops.yml
+  tags: [devops]
+
+- name: Include language runtimes
+  ansible.builtin.include_tasks: languages.yml
+  tags: [languages]
+
+- name: Include Node.js packages
+  ansible.builtin.include_tasks: node-packages.yml
+  tags: [node]
+
+- name: Include Python tools
+  ansible.builtin.include_tasks: python-tools.yml
+  tags: [python]
+
+- name: Include modern CLI tools
+  ansible.builtin.include_tasks: cli-tools.yml
+  tags: [cli]
+
+- name: Include testing frameworks
+  ansible.builtin.include_tasks: testing.yml
+  tags: [testing]
+
+- name: Include AI coding assistants
+  ansible.builtin.include_tasks: ai-assistants.yml
+  tags: [ai]
+
+- name: Include Git configuration
+  ansible.builtin.include_tasks: git-config.yml
+  tags: [git]
+
+- name: Include user environment
+  ansible.builtin.include_tasks: user-env.yml
+  tags: [user]
+
+- name: Include fonts
+  ansible.builtin.include_tasks: fonts.yml
+  tags: [fonts]
+
+- name: Include ansible-pull timer
+  ansible.builtin.include_tasks: ansible-pull-timer.yml
+  tags: [ansible-pull]

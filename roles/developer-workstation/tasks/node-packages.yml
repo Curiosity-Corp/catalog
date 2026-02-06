@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# Node.js Global Packages
+# =============================================================================
+# Installed via npm global. Node.js itself is installed via APT (packages.yml).
+# =============================================================================
+
+- name: Install npm global packages
+  community.general.npm:
+    name: "{{ item }}"
+    global: true
+    state: present
+  loop:
+    - pnpm
+    - yarn
+    - typescript
+    - ts-node
+    - tsx
+    - turbo
+    - eslint
+    - prettier
+    - "@mermaid-js/mermaid-cli"
+  ignore_errors: true

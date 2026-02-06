@@ -1,0 +1,168 @@
+---
+# =============================================================================
+# Kubernetes & GitOps Tools
+# =============================================================================
+# Binary downloads from GitHub releases and install scripts
+# =============================================================================
+
+# --- Helm ---
+- name: Install Helm
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    creates: /usr/local/bin/helm
+
+# --- Kustomize ---
+- name: Check if kustomize is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/kustomize
+  register: kustomize_installed
+
+- name: Install Kustomize
+  ansible.builtin.shell:
+    cmd: |
+      curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+      mv kustomize /usr/local/bin/kustomize
+    creates: /usr/local/bin/kustomize
+  when: not kustomize_installed.stat.exists
+
+# --- k9s ---
+- name: Check if k9s is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k9s
+  register: k9s_installed
+
+- name: Get k9s latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/derailed/k9s/releases/latest
+    return_content: true
+  register: k9s_release
+  when: not k9s_installed.stat.exists
+
+- name: Install k9s
+  ansible.builtin.unarchive:
+    src: "https://github.com/derailed/k9s/releases/download/{{ k9s_release.json.tag_name }}/k9s_Linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [k9s]
+  when: not k9s_installed.stat.exists
+
+# --- kubectx + kubens ---
+- name: Check if kubectx is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/kubectx
+  register: kubectx_installed
+
+- name: Get kubectx latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/ahmetb/kubectx/releases/latest
+    return_content: true
+  register: kubectx_release
+  when: not kubectx_installed.stat.exists
+
+- name: Install kubectx
+  ansible.builtin.unarchive:
+    src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/kubectx_{{ kubectx_release.json.tag_name | regex_replace('^v', '') }}_linux_x86_64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [kubectx]
+  when: not kubectx_installed.stat.exists
+
+- name: Check if kubens is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/kubens
+  register: kubens_installed
+
+- name: Install kubens
+  ansible.builtin.unarchive:
+    src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/kubens_{{ kubectx_release.json.tag_name | regex_replace('^v', '') }}_linux_x86_64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [kubens]
+  when: not kubens_installed.stat.exists
+
+# --- stern ---
+- name: Check if stern is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/stern
+  register: stern_installed
+
+- name: Get stern latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/stern/stern/releases/latest
+    return_content: true
+  register: stern_release
+  when: not stern_installed.stat.exists
+
+- name: Install stern
+  ansible.builtin.unarchive:
+    src: "https://github.com/stern/stern/releases/download/{{ stern_release.json.tag_name }}/stern_{{ stern_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [stern]
+  when: not stern_installed.stat.exists
+
+# --- ArgoCD CLI ---
+- name: Install ArgoCD CLI
+  ansible.builtin.get_url:
+    url: https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+    dest: /usr/local/bin/argocd
+    mode: "0755"
+    force: false
+
+# --- Flux CLI ---
+- name: Install Flux CLI
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://fluxcd.io/install.sh | bash
+    creates: /usr/local/bin/flux
+
+# --- Velero CLI ---
+- name: Check if velero is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/velero
+  register: velero_installed
+
+- name: Get Velero latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/vmware-tanzu/velero/releases/latest
+    return_content: true
+  register: velero_release
+  when: not velero_installed.stat.exists
+
+- name: Install Velero CLI
+  ansible.builtin.unarchive:
+    src: "https://github.com/vmware-tanzu/velero/releases/download/{{ velero_release.json.tag_name }}/velero-{{ velero_release.json.tag_name }}-linux-amd64.tar.gz"
+    dest: /tmp
+    remote_src: true
+  when: not velero_installed.stat.exists
+
+- name: Move Velero binary to /usr/local/bin
+  ansible.builtin.copy:
+    src: "/tmp/velero-{{ velero_release.json.tag_name }}-linux-amd64/velero"
+    dest: /usr/local/bin/velero
+    mode: "0755"
+    remote_src: true
+  when: not velero_installed.stat.exists
+
+- name: Clean up Velero temp files
+  ansible.builtin.file:
+    path: "/tmp/velero-{{ velero_release.json.tag_name }}-linux-amd64"
+    state: absent
+  when: not velero_installed.stat.exists
+
+# --- Krew (kubectl plugin manager) ---
+- name: Install Krew
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      cd "$(mktemp -d)"
+      OS="$(uname | tr '[:upper:]' '[:lower:]')"
+      ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')"
+      KREW="krew-${OS}_${ARCH}"
+      curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz"
+      tar zxvf "${KREW}.tar.gz"
+      ./"${KREW}" install krew
+    creates: "{{ dev_user_home }}/.krew/bin/kubectl-krew"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
