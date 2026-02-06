@@ -82,7 +82,7 @@
       # --- File utilities ---
       - tree
       - ncdu
-      - tldr
+      - tealdeer
       # --- Archive tools ---
       - unzip
       - zip
