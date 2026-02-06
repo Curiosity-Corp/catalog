@@ -2,6 +2,9 @@
 dev_user: curiosity
 dev_user_home: /home/curiosity
 node_major_version: "25"
+# Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
+# (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)
+apt_fallback_release: "noble"
 # ansible-pull settings
 ansible_pull_repo: "https://github.com/Curiosity-Corp/catalog.git"
 ansible_pull_branch: "main"
