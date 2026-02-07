@@ -118,6 +118,19 @@
     state: present
   notify: Update apt cache
 
+# --- Brave Browser ---
+- name: Download Brave Browser GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg -o /usr/share/keyrings/brave-browser-archive-keyring.gpg
+    creates: /usr/share/keyrings/brave-browser-archive-keyring.gpg
+
+- name: Add Brave Browser repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main"
+    filename: brave-browser
+    state: present
+  notify: Update apt cache
+
 # --- Node.js (NodeSource) ---
 # NodeSource requires their setup script for proper configuration
 - name: Install Node.js repository via NodeSource setup script

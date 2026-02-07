@@ -24,6 +24,7 @@ hardware_profiles:
     description: "Generic developer workstation (no hardware-specific drivers)"
     packages: []
     services: []
+    pia_vpn: false
 
   z590:
     description: "ASUS TUF Gaming Z590 — Curiosity Computers (iGPU passthrough VMs)"
@@ -38,8 +39,29 @@ hardware_profiles:
       - intel-gpu-tools
       # Firmware blobs (Intel BT/WiFi, GPU, etc.)
       - linux-firmware
-      # Elgato Stream Deck support (udev rules + Python lib)
+      # Elgato Stream Deck HID access
       - libhidapi-libusb0
-      # Audio (Focusrite Scarlett 2i2 works via ALSA/PipeWire, no extra driver)
+      # Focusrite Scarlett 2i2 mixer/routing control (equivalent to Focusrite Control)
+      - alsa-scarlett-gui
+      # Canon camera tethered shooting and file transfer
+      - gphoto2
+      # Network diagnostics for Realtek USB 2.5G LAN driver verification
+      - ethtool
     services:
       - bluetooth
+    # pipx packages (installed as user)
+    pipx_packages:
+      - streamdeck-linux-gui
+    # udev rules for hardware access
+    udev_rules:
+      - name: 70-streamdeck
+        content: |
+          # Elgato Stream Deck — allow non-root access
+          SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+      - name: 50-usb-realtek-net
+        content: |
+          # Force r8152 driver for Realtek RTL8156 2.5GbE USB adapters
+          # Prevents cdc_ncm from binding (causes ~750Mbps cap and high latency)
+          ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0b05", ATTR{idProduct}=="1976", RUN+="/sbin/modprobe r8152"
+    # Private Internet Access VPN
+    pia_vpn: true

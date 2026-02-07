@@ -2,7 +2,7 @@
 # =============================================================================
 # Hardware-Specific Drivers and Packages
 # =============================================================================
-# Installs packages based on hardware_profile variable.
+# Installs packages, udev rules, and userspace tools based on hardware_profile.
 # Profiles defined in defaults/main.yml. Select via -e hardware_profile=z590
 # =============================================================================
 
@@ -23,3 +23,68 @@
     state: started
   loop: "{{ hardware_profiles[hardware_profile].services }}"
   when: hardware_profiles[hardware_profile].services | length > 0
+
+# ---- udev rules ----
+
+- name: Install hardware-specific udev rules ({{ hardware_profile }})
+  ansible.builtin.copy:
+    dest: "/etc/udev/rules.d/{{ item.name }}.rules"
+    content: "{{ item.content }}"
+    mode: "0644"
+  loop: "{{ hardware_profiles[hardware_profile].udev_rules | default([]) }}"
+  register: _udev_rules_result
+
+- name: Reload udev rules
+  ansible.builtin.command: udevadm control --reload-rules
+  when: _udev_rules_result is changed
+  changed_when: true
+
+# ---- pipx packages (installed as dev_user) ----
+
+- name: Install hardware-specific pipx packages ({{ hardware_profile }})
+  community.general.pipx:
+    name: "{{ item }}"
+    state: present
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  loop: "{{ hardware_profiles[hardware_profile].pipx_packages | default([]) }}"
+  failed_when: false
+
+# ---- Private Internet Access VPN ----
+
+- name: Check if PIA VPN is installed
+  ansible.builtin.stat:
+    path: /opt/piavpn/bin/piactl
+  register: _pia_installed
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Download PIA VPN installer
+  ansible.builtin.get_url:
+    url: https://installers.privateinternetaccess.com/download/pia-linux-3.7-08412.run
+    dest: /tmp/pia-linux.run
+    mode: "0755"
+  when:
+    - hardware_profiles[hardware_profile].pia_vpn | default(false)
+    - not (_pia_installed.stat.exists | default(false))
+
+- name: Install PIA VPN
+  ansible.builtin.command: /tmp/pia-linux.run
+  when:
+    - hardware_profiles[hardware_profile].pia_vpn | default(false)
+    - not (_pia_installed.stat.exists | default(false))
+  changed_when: true
+
+- name: Clean up PIA installer
+  ansible.builtin.file:
+    path: /tmp/pia-linux.run
+    state: absent
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Enable PIA VPN daemon
+  ansible.builtin.systemd:
+    name: piavpn
+    enabled: true
+    state: started
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)

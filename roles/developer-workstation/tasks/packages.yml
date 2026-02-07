@@ -44,8 +44,9 @@
       - google-cloud-cli
       # --- Cloudflare ---
       - cloudflared
-      # --- Browser ---
+      # --- Browsers ---
       - google-chrome-stable
+      - brave-browser
       # --- Kubernetes ---
       - kubectl
       # --- HashiCorp ---
