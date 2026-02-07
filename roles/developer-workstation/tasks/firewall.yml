@@ -1,0 +1,44 @@
+---
+# =============================================================================
+# UFW Firewall Configuration
+# =============================================================================
+# Default deny incoming, allow outgoing. SSH open on all interfaces.
+# VNC (5900/tcp) restricted to tailscale0 only.
+# =============================================================================
+
+- name: Set UFW default deny incoming
+  community.general.ufw:
+    direction: incoming
+    default: deny
+
+- name: Set UFW default allow outgoing
+  community.general.ufw:
+    direction: outgoing
+    default: allow
+
+- name: Allow SSH on all interfaces
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+    comment: SSH
+
+- name: Allow VNC on tailscale0 only
+  community.general.ufw:
+    rule: allow
+    port: "5900"
+    proto: tcp
+    interface: tailscale0
+    direction: in
+    comment: x11vnc via Tailscale
+
+- name: Allow all Tailscale traffic on tailscale0
+  community.general.ufw:
+    rule: allow
+    interface: tailscale0
+    direction: in
+    comment: Tailscale mesh traffic
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled

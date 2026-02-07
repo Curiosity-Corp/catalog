@@ -1,0 +1,106 @@
+---
+# =============================================================================
+# Display Configuration (GDM, VNC, GNOME settings)
+# =============================================================================
+# Configures the desktop environment for iGPU passthrough VMs:
+# - GDM: disable Wayland (required for x11vnc), enable auto-login
+# - x11vnc: headless VNC server mirroring the physical display
+# - dconf: disable screen lock, blanking, idle dimming
+# =============================================================================
+
+# ---- GDM Configuration ----
+
+- name: Configure GDM (disable Wayland, auto-login)
+  ansible.builtin.copy:
+    dest: /etc/gdm3/custom.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [daemon]
+      WaylandEnable=false
+      AutomaticLoginEnable=true
+      AutomaticLogin={{ dev_user }}
+
+      [security]
+
+      [xdmcp]
+
+      [chooser]
+
+      [debug]
+
+# ---- x11vnc Service ----
+
+- name: Create x11vnc systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/x11vnc.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=x11vnc VNC Server (mirrors physical display)
+      After=display-manager.service
+      Requires=display-manager.service
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/x11vnc -display :0 -auth guess -forever -loop -noxdamage -repeat -shared -rfbport 5900
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=graphical.target
+  notify: Reload systemd
+
+- name: Enable x11vnc service
+  ansible.builtin.systemd:
+    name: x11vnc
+    enabled: true
+    daemon_reload: true
+
+# ---- dconf GNOME Settings (disable screen lock/blank) ----
+
+- name: Create dconf profile
+  ansible.builtin.copy:
+    dest: /etc/dconf/profile/user
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      user-db:user
+      system-db:local
+
+- name: Ensure dconf local database directory exists
+  ansible.builtin.file:
+    path: /etc/dconf/db/local.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure GNOME settings (no screen lock, no blanking)
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/local.d/00-igpu-vm
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [org/gnome/desktop/screensaver]
+      lock-enabled=false
+      idle-activation-enabled=false
+
+      [org/gnome/desktop/session]
+      idle-delay=uint32 0
+
+      [org/gnome/settings-daemon/plugins/power]
+      idle-dim=false
+      sleep-inactive-ac-type='nothing'
+      sleep-inactive-battery-type='nothing'
+  register: _dconf_settings
+
+- name: Update dconf database
+  ansible.builtin.command: dconf update
+  when: _dconf_settings is changed
+  changed_when: true

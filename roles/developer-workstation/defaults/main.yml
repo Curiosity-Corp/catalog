@@ -11,6 +11,23 @@ ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
 
+# Entra ID SSO (authd + authd-msentraid broker)
+entra_id_enabled: true
+entra_id_tenant_id: "2febe90d-872e-4e31-b1ee-7898aac0159c"
+entra_id_client_id: "6bfdc2af-08c9-4778-b01c-8f39f43e551a"
+entra_id_allowed_users: "ALL"
+
+# Display configuration (GDM auto-login, x11vnc, dconf no-lock)
+# Enable on iGPU passthrough VMs that need physical display + VNC
+display_config_enabled: false
+
+# UFW firewall (SSH open, VNC restricted to tailscale0)
+firewall_enabled: false
+
+# Profile cleanup (Shared PC mode equivalent)
+profile_cleanup_enabled: true
+profile_cleanup_days: 60
+
 # =============================================================================
 # Hardware Profiles
 # =============================================================================

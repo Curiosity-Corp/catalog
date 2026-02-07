@@ -1,0 +1,104 @@
+---
+# =============================================================================
+# Stale Profile Cleanup (Shared PC mode equivalent)
+# =============================================================================
+# Removes home directories for Entra ID users (user@domain format) who
+# haven't logged in for profile_cleanup_days. Runs weekly via systemd timer.
+# Local users (no @ in name) are never touched.
+# =============================================================================
+
+- name: Create stale profile cleanup script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/cleanup-stale-profiles.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Cleanup home directories for Entra ID users inactive > {{ profile_cleanup_days }} days
+      set -euo pipefail
+
+      MAX_DAYS="{{ profile_cleanup_days }}"
+      NOW=$(date +%s)
+      CUTOFF=$((NOW - MAX_DAYS * 86400))
+
+      for homedir in /home/*@*; do
+        [ -d "$homedir" ] || continue
+        user=$(basename "$homedir")
+
+        # Get last login time from lastlog
+        last_login=$(lastlog -u "$user" 2>/dev/null | tail -1 | awk '{
+          if ($0 ~ /Never logged in/) print 0;
+          else {
+            # lastlog format: user port from <date>
+            # Date starts at field 4
+            cmd = "date -d \"" $4 " " $5 " " $6 " " $7 " " $8 " " $9 "\" +%s 2>/dev/null"
+            cmd | getline ts
+            close(cmd)
+            print ts
+          }
+        }')
+
+        # If user never logged in, use home dir modification time
+        if [ "${last_login:-0}" = "0" ]; then
+          last_login=$(stat -c %Y "$homedir")
+        fi
+
+        if [ "$last_login" -lt "$CUTOFF" ]; then
+          logger -t profile-cleanup "Removing stale profile: $user (last active: $(date -d @$last_login '+%Y-%m-%d'))"
+          # Kill any remaining processes
+          pkill -u "$user" 2>/dev/null || true
+          sleep 2
+          # Remove home directory
+          rm -rf "$homedir"
+          # Remove user from passwd if authd created a local entry
+          userdel "$user" 2>/dev/null || true
+          logger -t profile-cleanup "Removed profile: $user"
+        fi
+      done
+
+- name: Create profile cleanup systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/cleanup-stale-profiles.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Cleanup stale Entra ID user profiles
+      After=local-fs.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/cleanup-stale-profiles.sh
+
+- name: Create profile cleanup systemd timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/cleanup-stale-profiles.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly cleanup of stale Entra ID user profiles
+
+      [Timer]
+      OnCalendar=Sun *-*-* 03:00:00
+      RandomizedDelaySec=1h
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd for profile cleanup
+
+- name: Enable profile cleanup timer
+  ansible.builtin.systemd:
+    name: cleanup-stale-profiles.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Reload systemd for profile cleanup
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: Reload systemd for profile cleanup

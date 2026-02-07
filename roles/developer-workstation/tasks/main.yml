@@ -84,6 +84,26 @@
   ansible.builtin.include_tasks: user-env.yml
   tags: [user]
 
+- name: Include display configuration (GDM, VNC, GNOME)
+  ansible.builtin.include_tasks: display-config.yml
+  tags: [display]
+  when: display_config_enabled | default(false)
+
+- name: Include firewall (UFW)
+  ansible.builtin.include_tasks: firewall.yml
+  tags: [firewall]
+  when: firewall_enabled | default(false)
+
+- name: Include Entra ID SSO (authd)
+  ansible.builtin.include_tasks: entra-id.yml
+  tags: [entra-id, sso]
+  when: entra_id_enabled | default(false)
+
+- name: Include profile cleanup timer
+  ansible.builtin.include_tasks: profile-cleanup.yml
+  tags: [profile-cleanup]
+  when: profile_cleanup_enabled | default(false)
+
 - name: Include hardware-specific drivers
   ansible.builtin.include_tasks: hardware-drivers.yml
   tags: [hardware]

@@ -138,6 +138,11 @@
       - remmina
       - remmina-plugin-rdp
       - remmina-plugin-vnc
+      - x11vnc
+      # --- Desktop configuration ---
+      - dconf-cli
+      # --- Firewall ---
+      - ufw
       # --- Encryption/secrets ---
       - age
       - pass
