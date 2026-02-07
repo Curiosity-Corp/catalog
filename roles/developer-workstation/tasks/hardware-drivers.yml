@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# Hardware-Specific Drivers and Packages
+# =============================================================================
+# Installs packages based on hardware_profile variable.
+# Profiles defined in defaults/main.yml. Select via -e hardware_profile=z590
+# =============================================================================
+
+- name: "Show hardware profile: {{ hardware_profile }}"
+  ansible.builtin.debug:
+    msg: "Hardware profile: {{ hardware_profile }} — {{ hardware_profiles[hardware_profile].description }}"
+
+- name: Install hardware-specific packages ({{ hardware_profile }})
+  ansible.builtin.apt:
+    name: "{{ hardware_profiles[hardware_profile].packages }}"
+    state: present
+  when: hardware_profiles[hardware_profile].packages | length > 0
+
+- name: Enable hardware-specific services ({{ hardware_profile }})
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: "{{ hardware_profiles[hardware_profile].services }}"
+  when: hardware_profiles[hardware_profile].services | length > 0

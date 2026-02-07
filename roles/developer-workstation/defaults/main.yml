@@ -10,3 +10,36 @@ ansible_pull_repo: "https://github.com/Curiosity-Corp/catalog.git"
 ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
+
+# =============================================================================
+# Hardware Profiles
+# =============================================================================
+# Select via: -e hardware_profile=z590
+# Each profile defines packages and config specific to that hardware class.
+# =============================================================================
+hardware_profile: generic
+
+hardware_profiles:
+  generic:
+    description: "Generic developer workstation (no hardware-specific drivers)"
+    packages: []
+    services: []
+
+  z590:
+    description: "ASUS TUF Gaming Z590 — Curiosity Computers (iGPU passthrough VMs)"
+    packages:
+      # Logitech device management (Unifying/Bolt/Lightspeed receivers)
+      - solaar
+      # Bluetooth stack
+      - bluez
+      - bluez-tools
+      # Intel iGPU video acceleration
+      - intel-media-va-driver
+      - intel-gpu-tools
+      # Firmware blobs (Intel BT/WiFi, GPU, etc.)
+      - linux-firmware
+      # Elgato Stream Deck support (udev rules + Python lib)
+      - libhidapi-libusb0
+      # Audio (Focusrite Scarlett 2i2 works via ALSA/PipeWire, no extra driver)
+    services:
+      - bluetooth

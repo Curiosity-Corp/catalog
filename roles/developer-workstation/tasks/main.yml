@@ -84,6 +84,10 @@
   ansible.builtin.include_tasks: user-env.yml
   tags: [user]
 
+- name: Include hardware-specific drivers
+  ansible.builtin.include_tasks: hardware-drivers.yml
+  tags: [hardware]
+
 - name: Include fonts
   ansible.builtin.include_tasks: fonts.yml
   tags: [fonts]
