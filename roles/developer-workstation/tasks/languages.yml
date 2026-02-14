@@ -130,3 +130,18 @@
   ansible.builtin.shell:
     cmd: curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
     creates: /usr/local/bin/composer
+
+# --- SDKMAN (JVM version manager) ---
+- name: Check if SDKMAN is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.sdkman/bin/sdkman-init.sh"
+  register: sdkman_installed
+
+- name: Install SDKMAN
+  ansible.builtin.shell:
+    cmd: curl -s "https://get.sdkman.io?rcupdate=false" | bash
+    creates: "{{ dev_user_home }}/.sdkman/bin/sdkman-init.sh"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"

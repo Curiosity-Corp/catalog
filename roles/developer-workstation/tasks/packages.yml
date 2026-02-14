@@ -171,6 +171,9 @@
       - pandoc
       # --- Debugger ---
       - gdb
+      # --- Containers (daemonless, no background daemon) ---
+      - podman
+      - buildah
       # --- pyenv build dependencies ---
       - libssl-dev
       - libbz2-dev

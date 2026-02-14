@@ -234,6 +234,10 @@
       alias ans='ansible'
       alias ansp='ansible-playbook'
 
+      # --- Containers (podman as docker drop-in) ---
+      alias docker='podman'
+      alias docker-compose='podman compose'
+
       # --- Modern replacements ---
       alias cat='bat --paging=never 2>/dev/null || command cat'
       alias ls='eza --icons 2>/dev/null || command ls --color=auto'
@@ -314,6 +318,23 @@
       export PYENV_ROOT="$HOME/.pyenv"
       [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
       eval "$(pyenv init -)"
+
+# --- SDKMAN shell init ---
+- name: Add SDKMAN init to .bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - sdkman"
+    block: |
+      export SDKMAN_DIR="$HOME/.sdkman"
+      [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+
+- name: Add SDKMAN init to .zshrc
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    marker: "# {mark} ANSIBLE MANAGED - sdkman"
+    block: |
+      export SDKMAN_DIR="$HOME/.sdkman"
+      [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
 
 # --- Fix ownership of role-managed files ---
 - name: Fix ownership of role-managed dotfiles
