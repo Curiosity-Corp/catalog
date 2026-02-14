@@ -65,25 +65,102 @@
     state: absent
   when: not kubeseal_installed.stat.exists
 
-# --- SOPS ---
-- name: Check if sops is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/sops
-  register: sops_installed
+# =============================================================================
+# Post-Quantum age + SOPS
+# =============================================================================
+# age v1.3.1+ is required for PQ hybrid keys (ML-KEM-768 + X25519).
+# SOPS must be built from main to embed filippo.io/age v1.3.1.
+# The standard APT age and GitHub release SOPS do NOT support PQ keys.
+# =============================================================================
 
-- name: Get SOPS latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/getsops/sops/releases/latest
-    return_content: true
-  register: sops_release
-  when: not sops_installed.stat.exists
+# --- age v1.3.1 (PQ support) ---
+- name: Check age version
+  ansible.builtin.command: age --version
+  register: age_version_check
+  changed_when: false
+  failed_when: false
 
-- name: Install SOPS
-  ansible.builtin.get_url:
-    url: "https://github.com/getsops/sops/releases/download/{{ sops_release.json.tag_name }}/sops-{{ sops_release.json.tag_name }}.linux.amd64"
-    dest: /usr/local/bin/sops
-    mode: "0755"
-  when: not sops_installed.stat.exists
+- name: Install age v1.3.1 (PQ hybrid key support)
+  when: age_version_check.rc != 0 or 'v1.3.1' not in (age_version_check.stdout | default(''))
+  block:
+    - name: Download age v1.3.1
+      ansible.builtin.unarchive:
+        src: https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-linux-amd64.tar.gz
+        dest: /tmp
+        remote_src: true
+
+    - name: Install age and age-keygen
+      ansible.builtin.copy:
+        src: "/tmp/age/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        mode: "0755"
+        remote_src: true
+      loop:
+        - age
+        - age-keygen
+
+    - name: Clean up age temp files
+      ansible.builtin.file:
+        path: /tmp/age
+        state: absent
+
+# --- SOPS (PQ-capable, built from main) ---
+- name: Check if PQ-capable sops is installed
+  ansible.builtin.shell:
+    cmd: sops --version 2>&1 | head -1
+  register: sops_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Build and install SOPS from main (PQ support)
+  when: sops_version_check.rc != 0 or 'develop' not in (sops_version_check.stdout | default(''))
+  block:
+    - name: Check Go is available for SOPS build
+      ansible.builtin.command: go version
+      register: go_check
+      changed_when: false
+      failed_when: false
+
+    - name: Build SOPS from main via go install
+      ansible.builtin.shell:
+        cmd: go install github.com/getsops/sops/v3/cmd/sops@main
+      environment:
+        HOME: /root
+        GOPATH: /root/go
+        GOBIN: /root/go/bin
+      when: go_check.rc == 0
+
+    - name: Install SOPS binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: /root/go/bin/sops
+        dest: /usr/local/bin/sops
+        mode: "0755"
+        remote_src: true
+      when: go_check.rc == 0
+
+# --- PQ age keypair generation (per-user, idempotent) ---
+- name: Ensure user .age directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.age"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0700"
+
+- name: Generate PQ age keypair (one-time)
+  ansible.builtin.command:
+    cmd: age-keygen -o {{ dev_user_home }}/.age/key.txt
+    creates: "{{ dev_user_home }}/.age/key.txt"
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+
+- name: Set age key file permissions
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.age/key.txt"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0600"
 
 # --- cosign ---
 - name: Check if cosign is installed
