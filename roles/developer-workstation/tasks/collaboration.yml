@@ -8,10 +8,13 @@
 # =============================================================================
 # Mattermost Desktop
 # =============================================================================
+# Installs from GitHub release tarball to /opt/mattermost-desktop with a
+# symlink to /usr/local/bin. No .deb available since v6.x.
+# =============================================================================
 
 - name: Check if Mattermost Desktop is installed
   ansible.builtin.stat:
-    path: /usr/bin/mattermost-desktop
+    path: /opt/mattermost-desktop/mattermost-desktop
   register: mattermost_desktop_installed
 
 - name: Get Mattermost Desktop latest version
@@ -21,31 +24,47 @@
   register: mattermost_desktop_release
   when: not mattermost_desktop_installed.stat.exists
 
-- name: Download Mattermost Desktop .deb
-  ansible.builtin.get_url:
-    url: "https://releases.mattermost.com/desktop/{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-amd64.deb"
-    dest: /tmp/mattermost-desktop.deb
-    mode: "0644"
+- name: Download and extract Mattermost Desktop
+  ansible.builtin.unarchive:
+    src: "https://github.com/mattermost/desktop/releases/download/{{ mattermost_desktop_release.json.tag_name }}/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-x64.tar.gz"
+    dest: /opt
+    remote_src: true
   when: not mattermost_desktop_installed.stat.exists
 
-- name: Install Mattermost Desktop
-  ansible.builtin.apt:
-    deb: /tmp/mattermost-desktop.deb
-    state: present
+- name: Rename Mattermost Desktop directory
+  ansible.builtin.command:
+    cmd: "mv /opt/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-x64 /opt/mattermost-desktop"
+    creates: /opt/mattermost-desktop
   when: not mattermost_desktop_installed.stat.exists
 
-- name: Clean up Mattermost Desktop .deb
+- name: Symlink Mattermost Desktop to PATH
   ansible.builtin.file:
-    path: /tmp/mattermost-desktop.deb
-    state: absent
-  when: not mattermost_desktop_installed.stat.exists
+    src: /opt/mattermost-desktop/mattermost-desktop
+    dest: /usr/local/bin/mattermost-desktop
+    state: link
+    force: true
+
+- name: Create Mattermost Desktop .desktop entry
+  ansible.builtin.copy:
+    content: |
+      [Desktop Entry]
+      Name=Mattermost
+      Comment=Mattermost Desktop Application
+      Exec=/opt/mattermost-desktop/mattermost-desktop %U
+      Icon=/opt/mattermost-desktop/app_icon.png
+      Terminal=false
+      Type=Application
+      Categories=Network;InstantMessaging;
+      StartupWMClass=Mattermost
+    dest: /usr/share/applications/mattermost-desktop.desktop
+    mode: "0644"
 
 # =============================================================================
-# Firefox Enterprise Policies — Bitwarden Extension
+# Firefox Enterprise Policies — Bitwarden Extension + Internal CA Trust
 # =============================================================================
 # Force-installs the Bitwarden password manager extension for all Firefox users.
-# Uses Mozilla's enterprise policy engine (policies.json).
-# Works with both deb and snap Firefox installations.
+# Enables ImportEnterpriseRoots so Firefox trusts the system CA store
+# (required for Harbor Internal CA on Ziti-only services).
 # =============================================================================
 
 - name: Ensure Firefox policy directories exist
