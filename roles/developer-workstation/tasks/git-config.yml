@@ -46,6 +46,7 @@
 - name: Install git-lfs
   ansible.builtin.command:
     cmd: git lfs install
+    chdir: "{{ dev_user_home }}"
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
