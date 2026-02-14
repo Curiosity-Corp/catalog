@@ -76,6 +76,10 @@
   ansible.builtin.include_tasks: ai-assistants.yml
   tags: [ai]
 
+- name: Include VS Code extensions
+  ansible.builtin.include_tasks: vscode-extensions.yml
+  tags: [vscode, extensions]
+
 - name: Include collaboration tools (Mattermost, Firefox extensions)
   ansible.builtin.include_tasks: collaboration.yml
   tags: [collaboration]

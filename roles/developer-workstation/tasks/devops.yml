@@ -73,3 +73,24 @@
     remote_src: true
     include: [tofu]
   when: not tofu_installed.stat.exists
+
+# --- act (GitHub Actions local runner) ---
+- name: Check if act is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/act
+  register: act_installed
+
+- name: Get act latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/nektos/act/releases/latest
+    return_content: true
+  register: act_release
+  when: not act_installed.stat.exists
+
+- name: Install act
+  ansible.builtin.unarchive:
+    src: "https://github.com/nektos/act/releases/download/{{ act_release.json.tag_name }}/act_Linux_x86_64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [act]
+  when: not act_installed.stat.exists

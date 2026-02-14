@@ -30,6 +30,33 @@ sunshine_deb_url: "https://github.com/LizardByte/Sunshine/releases/download/v202
 sunshine_default_user: sunshine
 sunshine_default_pass: sunshine
 
+# VS Code extensions (pre-installed baseline matching installed runtimes/tools)
+# Override in extra-vars to customize per-machine
+vscode_extensions:
+  # Language support (matches installed runtimes)
+  - ms-python.python
+  - ms-python.vscode-pylance
+  - golang.go
+  - rust-lang.rust-analyzer
+  - denoland.vscode-deno
+  - ms-dotnettools.csharp
+  - bmewburn.vscode-intelephense-client
+  - redhat.java
+  # Formatting and linting
+  - esbenp.prettier-vscode
+  - dbaeumer.vscode-eslint
+  # Git
+  - eamodio.gitlens
+  # Infrastructure (matches installed CLIs)
+  - hashicorp.terraform
+  - ms-kubernetes-tools.vscode-kubernetes-tools
+  - redhat.vscode-yaml
+  - redhat.ansible
+  # Editor productivity
+  - editorconfig.editorconfig
+  - yzhang.markdown-all-in-one
+  - ms-vscode-remote.remote-ssh
+
 # UFW firewall (SSH open, VNC restricted to ziti0)
 firewall_enabled: false
 

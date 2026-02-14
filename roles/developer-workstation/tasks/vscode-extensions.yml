@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# VS Code Extensions
+# =============================================================================
+# Pre-installs a baseline set of extensions matching installed language
+# runtimes and infrastructure tools. Override vscode_extensions in defaults
+# or extra-vars to customize. Users can add more via the VS Code UI.
+# =============================================================================
+
+- name: Install VS Code extensions
+  ansible.builtin.command:
+    cmd: "code --install-extension {{ item }} --force"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  loop: "{{ vscode_extensions }}"
+  register: _vscode_ext_result
+  changed_when: "'was successfully installed' in (_vscode_ext_result.stdout | default(''))"
+  failed_when: false
