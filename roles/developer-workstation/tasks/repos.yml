@@ -127,6 +127,12 @@
   notify: Update apt cache
 
 # --- OpenZiti (ziti-edge-tunnel) ---
+- name: Remove pre-existing OpenZiti repo config (conflicting signed-by)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/openziti-release.list
+    state: absent
+  notify: Update apt cache
+
 - name: Download OpenZiti GPG key
   ansible.builtin.shell:
     cmd: curl -fsSL https://get.openziti.io/tun/package-repos.gpg | gpg --dearmor -o /usr/share/keyrings/openziti-archive-keyring.gpg
