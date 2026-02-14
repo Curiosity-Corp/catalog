@@ -53,19 +53,6 @@
     state: present
   notify: Update apt cache
 
-# --- Cloudflared ---
-- name: Download Cloudflare GPG key
-  ansible.builtin.shell:
-    cmd: curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | gpg --dearmor -o /usr/share/keyrings/cloudflare-archive-keyring.gpg
-    creates: /usr/share/keyrings/cloudflare-archive-keyring.gpg
-
-- name: Add Cloudflared repository
-  ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/cloudflare-archive-keyring.gpg] https://pkg.cloudflare.com/cloudflared {{ apt_fallback_release }} main"
-    filename: cloudflared
-    state: present
-  notify: Update apt cache
-
 # --- Kubernetes (kubectl) ---
 - name: Download Kubernetes GPG key
   ansible.builtin.shell:
@@ -137,6 +124,19 @@
   ansible.builtin.shell:
     cmd: "curl -fsSL https://deb.nodesource.com/setup_{{ node_major_version }}.x | bash -"
     creates: /etc/apt/sources.list.d/nodesource.list
+  notify: Update apt cache
+
+# --- OpenZiti (ziti-edge-tunnel) ---
+- name: Download OpenZiti GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://get.openziti.io/tun/package-repos.gpg | gpg --dearmor -o /usr/share/keyrings/openziti-archive-keyring.gpg
+    creates: /usr/share/keyrings/openziti-archive-keyring.gpg
+
+- name: Add OpenZiti repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/openziti-archive-keyring.gpg] https://packages.openziti.org/zitipax-openziti-deb-stable debian main"
+    filename: openziti
+    state: present
   notify: Update apt cache
 
 # --- Flush handlers to update apt cache before package installation ---

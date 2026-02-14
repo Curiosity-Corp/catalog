@@ -5,6 +5,26 @@
 # Container security, secrets management, and certificate tools
 # =============================================================================
 
+# =============================================================================
+# Internal CA Trust
+# =============================================================================
+# Harbor Internal CA — used for TLS on Ziti-only internal services
+# (Keycloak, Harbor registry, etc.) instead of Let's Encrypt.
+# =============================================================================
+
+- name: Install Harbor Internal CA certificate
+  ansible.builtin.copy:
+    src: harbor-internal-ca.crt
+    dest: /usr/local/share/ca-certificates/harbor-internal-ca.crt
+    owner: root
+    group: root
+    mode: "0644"
+  register: _harbor_ca_installed
+
+- name: Update system CA trust store
+  ansible.builtin.command: update-ca-certificates
+  when: _harbor_ca_installed.changed
+
 # --- Trivy ---
 - name: Install Trivy
   ansible.builtin.shell:

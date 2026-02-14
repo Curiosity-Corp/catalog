@@ -42,8 +42,6 @@
       - code
       # --- Google Cloud CLI ---
       - google-cloud-cli
-      # --- Cloudflare ---
-      - cloudflared
       # --- Browsers ---
       - google-chrome-stable
       - brave-browser
@@ -131,9 +129,10 @@
       # --- SSH ---
       - openssh-client
       - sshfs
-      # --- VPN ---
+      # --- VPN / ZTNA ---
       - openvpn
       - wireguard-tools
+      - openziti-edge-tunnel
       # --- Remote desktop ---
       - remmina
       - remmina-plugin-rdp
@@ -162,7 +161,7 @@
     update_cache: true
 
 # --- Ensure unwanted packages are absent ---
-- name: Remove Docker and Rancher packages if present
+- name: Remove unwanted packages
   ansible.builtin.apt:
     name:
       - docker.io
@@ -172,5 +171,12 @@
       - docker-compose-plugin
       - docker-buildx-plugin
       - rancher
+      - cloudflared
+      - tailscale
     state: absent
     purge: true
+
+- name: Remove Cloudflare APT repo if present
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/cloudflared.list
+    state: absent

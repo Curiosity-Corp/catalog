@@ -1,0 +1,84 @@
+---
+# =============================================================================
+# Collaboration Tools
+# =============================================================================
+# Mattermost Desktop, Firefox extensions, and browser policies
+# =============================================================================
+
+# =============================================================================
+# Mattermost Desktop
+# =============================================================================
+
+- name: Check if Mattermost Desktop is installed
+  ansible.builtin.stat:
+    path: /usr/bin/mattermost-desktop
+  register: mattermost_desktop_installed
+
+- name: Get Mattermost Desktop latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/mattermost/desktop/releases/latest
+    return_content: true
+  register: mattermost_desktop_release
+  when: not mattermost_desktop_installed.stat.exists
+
+- name: Download Mattermost Desktop .deb
+  ansible.builtin.get_url:
+    url: "https://releases.mattermost.com/desktop/{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-amd64.deb"
+    dest: /tmp/mattermost-desktop.deb
+    mode: "0644"
+  when: not mattermost_desktop_installed.stat.exists
+
+- name: Install Mattermost Desktop
+  ansible.builtin.apt:
+    deb: /tmp/mattermost-desktop.deb
+    state: present
+  when: not mattermost_desktop_installed.stat.exists
+
+- name: Clean up Mattermost Desktop .deb
+  ansible.builtin.file:
+    path: /tmp/mattermost-desktop.deb
+    state: absent
+  when: not mattermost_desktop_installed.stat.exists
+
+# =============================================================================
+# Firefox Enterprise Policies — Bitwarden Extension
+# =============================================================================
+# Force-installs the Bitwarden password manager extension for all Firefox users.
+# Uses Mozilla's enterprise policy engine (policies.json).
+# Works with both deb and snap Firefox installations.
+# =============================================================================
+
+- name: Ensure Firefox policy directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/firefox/policies
+    - /usr/lib/firefox/distribution
+
+- name: Deploy Firefox enterprise policies
+  ansible.builtin.copy:
+    content: |
+      {
+        "policies": {
+          "ExtensionSettings": {
+            "{446900e4-71c2-419f-a6a7-df9c091e268b}": {
+              "installation_mode": "force_installed",
+              "install_url": "https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi"
+            }
+          },
+          "Certificates": {
+            "ImportEnterpriseRoots": true
+          }
+        }
+      }
+    dest: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - /etc/firefox/policies/policies.json
+    - /usr/lib/firefox/distribution/policies.json

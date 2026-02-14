@@ -21,7 +21,7 @@ entra_id_allowed_users: "ALL"
 # Enable on iGPU passthrough VMs that need physical display + VNC
 display_config_enabled: false
 
-# UFW firewall (SSH open, VNC restricted to tailscale0)
+# UFW firewall (SSH open, VNC restricted to ziti0)
 firewall_enabled: false
 
 # Profile cleanup (Shared PC mode equivalent)

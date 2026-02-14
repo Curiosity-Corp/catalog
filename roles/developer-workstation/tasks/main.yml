@@ -76,6 +76,10 @@
   ansible.builtin.include_tasks: ai-assistants.yml
   tags: [ai]
 
+- name: Include collaboration tools (Mattermost, Firefox extensions)
+  ansible.builtin.include_tasks: collaboration.yml
+  tags: [collaboration]
+
 - name: Include Git configuration
   ansible.builtin.include_tasks: git-config.yml
   tags: [git]

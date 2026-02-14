@@ -35,3 +35,43 @@
     path: /tmp/aws
     state: absent
   when: not aws_cli_installed.stat.exists
+
+# --- Coder CLI ---
+- name: Install Coder CLI
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://coder.com/install.sh | sh
+    creates: /usr/local/bin/coder
+
+# --- GitLab CLI (glab) ---
+- name: Check if glab is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/glab
+  register: glab_installed
+
+- name: Get glab latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/gitlab-org/cli/releases/latest
+    return_content: true
+  register: glab_release
+  when: not glab_installed.stat.exists
+
+- name: Install glab
+  ansible.builtin.unarchive:
+    src: "https://gitlab.com/gitlab-org/cli/-/releases/{{ glab_release.json.tag_name }}/downloads/glab_{{ glab_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
+    dest: /tmp
+    remote_src: true
+  when: not glab_installed.stat.exists
+
+- name: Move glab binary to /usr/local/bin
+  ansible.builtin.copy:
+    src: "/tmp/glab_{{ glab_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64/bin/glab"
+    dest: /usr/local/bin/glab
+    mode: "0755"
+    remote_src: true
+  when: not glab_installed.stat.exists
+
+- name: Clean up glab temp files
+  ansible.builtin.file:
+    path: "/tmp/glab_{{ glab_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64"
+    state: absent
+  when: not glab_installed.stat.exists

@@ -3,7 +3,7 @@
 # UFW Firewall Configuration
 # =============================================================================
 # Default deny incoming, allow outgoing. SSH open on all interfaces.
-# VNC (5900/tcp) restricted to tailscale0 only.
+# VNC (5900/tcp) restricted to ziti0 (OpenZiti tunnel) only.
 # =============================================================================
 
 - name: Set UFW default deny incoming
@@ -23,21 +23,21 @@
     proto: tcp
     comment: SSH
 
-- name: Allow VNC on tailscale0 only
+- name: Allow VNC on ziti0 only
   community.general.ufw:
     rule: allow
     port: "5900"
     proto: tcp
-    interface: tailscale0
+    interface: ziti0
     direction: in
-    comment: x11vnc via Tailscale
+    comment: x11vnc via OpenZiti
 
-- name: Allow all Tailscale traffic on tailscale0
+- name: Allow all OpenZiti traffic on ziti0
   community.general.ufw:
     rule: allow
-    interface: tailscale0
+    interface: ziti0
     direction: in
-    comment: Tailscale mesh traffic
+    comment: OpenZiti tunnel traffic
 
 - name: Enable UFW
   community.general.ufw:
