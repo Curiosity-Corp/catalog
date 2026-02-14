@@ -80,6 +80,19 @@
     line: 'export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.krew/bin:/usr/local/go/bin:$PATH"'
     regexp: 'krew/bin'
 
+# --- SOPS ---
+- name: Set SOPS_AGE_KEY_FILE in .bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    line: 'export SOPS_AGE_KEY_FILE="$HOME/.keys/age.key"'
+    regexp: '^export SOPS_AGE_KEY_FILE='
+
+- name: Set SOPS_AGE_KEY_FILE in .zshrc
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    line: 'export SOPS_AGE_KEY_FILE="$HOME/.keys/age.key"'
+    regexp: '^export SOPS_AGE_KEY_FILE='
+
 # --- Editor ---
 - name: Set EDITOR in .bashrc
   ansible.builtin.lineinfile:
