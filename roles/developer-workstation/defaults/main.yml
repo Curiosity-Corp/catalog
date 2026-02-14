@@ -22,8 +22,9 @@ entra_id_allowed_users: "ALL"
 display_config_enabled: false
 
 # Sunshine remote streaming (Moonlight-compatible, KMS capture + VAAPI encode)
-# Enable on iGPU passthrough VMs for low-latency remote desktop access
-sunshine_enabled: false
+# Enabled by default — safe on machines without iGPU (falls back to software encode)
+# Set sunshine_enabled: false in extra-vars to explicitly disable
+sunshine_enabled: true
 sunshine_version: "v2025.924.154138"
 sunshine_deb_url: "https://github.com/LizardByte/Sunshine/releases/download/v2025.924.154138/sunshine-debian-trixie-amd64.deb"
 sunshine_default_user: sunshine
