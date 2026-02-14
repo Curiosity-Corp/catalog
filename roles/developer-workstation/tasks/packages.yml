@@ -145,6 +145,8 @@
       # --- Encryption/secrets ---
       # age installed separately (v1.3.1+ for PQ support, see security.yml)
       - pass
+      # --- Certificate management ---
+      - libnss3-tools
       # --- Misc utilities ---
       - entr
       - pv

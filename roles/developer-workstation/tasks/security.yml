@@ -25,6 +25,33 @@
   ansible.builtin.command: update-ca-certificates
   when: _harbor_ca_installed.changed
 
+# NSS database — Chromium/Electron apps (Mattermost, Chrome, VS Code)
+# use ~/.pki/nssdb instead of the system CA store.
+- name: Ensure user NSS database directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.pki/nssdb"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0700"
+
+- name: Check if Harbor CA is in user NSS database
+  ansible.builtin.command:
+    cmd: certutil -d sql:{{ dev_user_home }}/.pki/nssdb -L -n "Harbor Internal CA"
+  register: _nss_harbor_ca
+  changed_when: false
+  failed_when: false
+  become_user: "{{ dev_user }}"
+
+- name: Add Harbor Internal CA to user NSS database
+  ansible.builtin.command:
+    cmd: >-
+      certutil -d sql:{{ dev_user_home }}/.pki/nssdb
+      -A -t "CT,C,C" -n "Harbor Internal CA"
+      -i /usr/local/share/ca-certificates/harbor-internal-ca.crt
+  become_user: "{{ dev_user }}"
+  when: _nss_harbor_ca.rc != 0
+
 # --- Trivy ---
 - name: Install Trivy
   ansible.builtin.shell:

@@ -50,7 +50,7 @@
       [Desktop Entry]
       Name=Mattermost
       Comment=Mattermost Desktop Application
-      Exec=/opt/mattermost-desktop/mattermost-desktop %U
+      Exec=env NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/harbor-internal-ca.crt /opt/mattermost-desktop/mattermost-desktop %U
       Icon=/opt/mattermost-desktop/app_icon.png
       Terminal=false
       Type=Application
@@ -101,3 +101,63 @@
   loop:
     - /etc/firefox/policies/policies.json
     - /usr/lib/firefox/distribution/policies.json
+
+# =============================================================================
+# Snap Firefox — Harbor Internal CA Trust
+# =============================================================================
+# Snap Firefox is sandboxed and doesn't read /etc/firefox/policies or the
+# system CA store. Add Harbor CA directly to each snap Firefox NSS profile.
+# =============================================================================
+
+- name: Find snap Firefox NSS databases
+  ansible.builtin.find:
+    paths: "{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox"
+    patterns: "cert9.db"
+    recurse: true
+  register: _snap_firefox_nssdb
+
+- name: Add Harbor Internal CA to snap Firefox profiles
+  ansible.builtin.command:
+    cmd: >-
+      certutil -d sql:{{ item.path | dirname }}
+      -A -t "CT,C,C" -n "Harbor Internal CA"
+      -i /usr/local/share/ca-certificates/harbor-internal-ca.crt
+  become_user: "{{ dev_user }}"
+  loop: "{{ _snap_firefox_nssdb.files }}"
+  loop_control:
+    label: "{{ item.path | dirname | basename }}"
+  register: _snap_ff_ca
+  changed_when: _snap_ff_ca.rc == 0
+  failed_when: false
+
+# =============================================================================
+# Snap Mattermost Desktop — NODE_EXTRA_CA_CERTS override
+# =============================================================================
+# If Mattermost was installed via snap instead of tarball, create a user-local
+# .desktop override that sets NODE_EXTRA_CA_CERTS for Harbor CA trust.
+# =============================================================================
+
+- name: Check if Mattermost snap is installed
+  ansible.builtin.stat:
+    path: /snap/bin/mattermost-desktop
+  register: _mattermost_snap
+
+- name: Create snap Mattermost .desktop override with CA trust
+  ansible.builtin.copy:
+    content: |
+      [Desktop Entry]
+      X-SnapInstanceName=mattermost-desktop
+      Name=Mattermost
+      Exec=env NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/harbor-internal-ca.crt /snap/bin/mattermost-desktop %U
+      Terminal=false
+      Type=Application
+      Icon=/snap/mattermost-desktop/current/meta/gui/icon.png
+      StartupWMClass=Mattermost
+      Comment=Mattermost
+      MimeType=x-scheme-handler/mattermost;
+      Categories=Network;InstantMessaging;
+    dest: "{{ dev_user_home }}/.local/share/applications/mattermost-desktop_mattermost-desktop.desktop"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  when: _mattermost_snap.stat.exists
