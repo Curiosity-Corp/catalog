@@ -93,6 +93,11 @@
   tags: [display]
   when: display_config_enabled | default(false)
 
+- name: Include Sunshine remote streaming
+  ansible.builtin.include_tasks: streaming.yml
+  tags: [streaming, sunshine]
+  when: sunshine_enabled | default(false)
+
 - name: Include firewall (UFW)
   ansible.builtin.include_tasks: firewall.yml
   tags: [firewall]

@@ -1,0 +1,157 @@
+---
+# =============================================================================
+# Sunshine Remote Desktop Streaming (Moonlight-compatible)
+# =============================================================================
+# Installs and configures Sunshine for low-latency remote desktop streaming.
+# KMS capture reads the i915 DRM framebuffer, VAAPI uses Quick Sync media
+# engine for hardware-accelerated H.264/H.265 encoding.
+#
+# Moonlight client: https://moonlight-stream.org/
+# Sunshine web UI: https://<vm-ip>:47990
+# Default credentials: sunshine / sunshine
+# =============================================================================
+
+- name: Check if Sunshine is installed
+  ansible.builtin.command: which sunshine
+  register: _sunshine_installed
+  changed_when: false
+  failed_when: false
+
+- name: Get installed Sunshine version
+  ansible.builtin.command: sunshine --version
+  register: _sunshine_version
+  changed_when: false
+  failed_when: false
+  when: _sunshine_installed.rc == 0
+
+- name: Download Sunshine .deb
+  ansible.builtin.get_url:
+    url: "{{ sunshine_deb_url }}"
+    dest: /tmp/sunshine.deb
+    mode: "0644"
+  when: >
+    _sunshine_installed.rc != 0 or
+    (sunshine_version not in (_sunshine_version.stdout | default('')))
+
+- name: Install Sunshine .deb (with dependencies)
+  ansible.builtin.apt:
+    deb: /tmp/sunshine.deb
+    state: present
+  when: >
+    _sunshine_installed.rc != 0 or
+    (sunshine_version not in (_sunshine_version.stdout | default('')))
+
+- name: Clean up Sunshine .deb
+  ansible.builtin.file:
+    path: /tmp/sunshine.deb
+    state: absent
+
+- name: Set cap_sys_admin on Sunshine binary (KMS capture)
+  community.general.capabilities:
+    path: "{{ _sunshine_installed.stdout | default('/usr/bin/sunshine') }}"
+    capability: cap_sys_admin+ep
+    state: present
+  when: _sunshine_installed.rc == 0 or true
+
+# Fallback if community.general.capabilities not available
+- name: Set cap_sys_admin via setcap (fallback)
+  ansible.builtin.command: "setcap cap_sys_admin+ep {{ _sunshine_installed.stdout | default('/usr/bin/sunshine') }}"
+  changed_when: true
+  failed_when: false
+
+- name: Add user to video, render, and input groups
+  ansible.builtin.user:
+    name: "{{ dev_user }}"
+    groups: video,render,input
+    append: true
+
+- name: Create Sunshine config directory
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/sunshine"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy Sunshine configuration
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.config/sunshine/sunshine.conf"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      # Sunshine streaming for iGPU VFIO passthrough VM
+      # KMS capture reads i915 DRM framebuffer
+      # VAAPI encoding uses UHD 630 Quick Sync media engine
+      adapter_name = /dev/dri/renderD128
+      encoder = vaapi
+      min_fps_factor = 1
+  notify: Restart Sunshine user service
+
+- name: Create Sunshine systemd user service
+  ansible.builtin.copy:
+    dest: /etc/systemd/user/sunshine.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Sunshine Game Stream Host for Moonlight
+      After=graphical-session.target
+      PartOf=graphical-session.target
+
+      [Service]
+      ExecStart=/usr/bin/sunshine
+      Restart=on-failure
+      RestartSec=5s
+
+      [Install]
+      WantedBy=default.target
+  notify: Restart Sunshine user service
+
+- name: Create user systemd directory
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/systemd/user/default.target.wants"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Enable Sunshine user service
+  ansible.builtin.file:
+    src: /etc/systemd/user/sunshine.service
+    dest: "{{ dev_user_home }}/.config/systemd/user/default.target.wants/sunshine.service"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+
+- name: Enable lingering for user (start services without login)
+  ansible.builtin.file:
+    path: /var/lib/systemd/linger
+    state: directory
+    mode: "0755"
+
+- name: Create linger file for user
+  ansible.builtin.file:
+    path: "/var/lib/systemd/linger/{{ dev_user }}"
+    state: touch
+    mode: "0644"
+  changed_when: false
+
+- name: Set default Sunshine credentials
+  ansible.builtin.command: "sunshine --creds {{ sunshine_default_user }} {{ sunshine_default_pass }}"
+  args:
+    creates: "{{ dev_user_home }}/.config/sunshine/sunshine_state.json"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  failed_when: false
+
+- name: Fix Sunshine config ownership
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/sunshine"
+    state: directory
+    recurse: true
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"

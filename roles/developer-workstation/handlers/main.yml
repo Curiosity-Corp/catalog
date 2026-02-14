@@ -10,3 +10,8 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+
+- name: Restart Sunshine user service
+  ansible.builtin.command: "loginctl kill-user {{ dev_user }}"
+  changed_when: true
+  failed_when: false
