@@ -2,8 +2,10 @@
 # =============================================================================
 # Language Runtimes (non-APT)
 # =============================================================================
-# Go: latest from go.dev
-# Rust: via rustup for dev_user
+# Go: latest from go.dev          | Deno: GitHub release binary
+# Rust: via rustup for dev_user   | Bun: GitHub release binary
+# nvm: Node version manager       | Composer: PHP package manager
+# pyenv: Python version manager   |
 # =============================================================================
 
 # --- Go ---
@@ -45,3 +47,86 @@
   environment:
     HOME: "{{ dev_user_home }}"
   when: not rust_installed.stat.exists
+
+# --- nvm (Node Version Manager) ---
+- name: Check if nvm is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.nvm/nvm.sh"
+  register: nvm_installed
+
+- name: Install nvm
+  ansible.builtin.shell:
+    cmd: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | PROFILE=/dev/null bash
+    creates: "{{ dev_user_home }}/.nvm/nvm.sh"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+
+# --- pyenv ---
+- name: Check if pyenv is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.pyenv/bin/pyenv"
+  register: pyenv_installed
+
+- name: Install pyenv
+  ansible.builtin.git:
+    repo: https://github.com/pyenv/pyenv.git
+    dest: "{{ dev_user_home }}/.pyenv"
+    depth: 1
+  become: true
+  become_user: "{{ dev_user }}"
+  when: not pyenv_installed.stat.exists
+
+# --- Deno ---
+- name: Check if Deno is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/deno
+  register: deno_installed
+
+- name: Get Deno latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/denoland/deno/releases/latest
+    return_content: true
+  register: deno_release
+  when: not deno_installed.stat.exists
+
+- name: Install Deno
+  ansible.builtin.unarchive:
+    src: "https://github.com/denoland/deno/releases/download/{{ deno_release.json.tag_name }}/deno-x86_64-unknown-linux-gnu.zip"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [deno]
+  when: not deno_installed.stat.exists
+
+# --- Bun ---
+- name: Check if Bun is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/bun
+  register: bun_installed
+
+- name: Download Bun
+  ansible.builtin.unarchive:
+    src: https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip
+    dest: /tmp
+    remote_src: true
+  when: not bun_installed.stat.exists
+
+- name: Install Bun binary
+  ansible.builtin.copy:
+    src: /tmp/bun-linux-x64/bun
+    dest: /usr/local/bin/bun
+    mode: "0755"
+    remote_src: true
+  when: not bun_installed.stat.exists
+
+- name: Clean up Bun temp files
+  ansible.builtin.file:
+    path: /tmp/bun-linux-x64
+    state: absent
+
+# --- PHP Composer ---
+- name: Install Composer (PHP package manager)
+  ansible.builtin.shell:
+    cmd: curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    creates: /usr/local/bin/composer

@@ -40,6 +40,15 @@
     state: present
   notify: Update apt cache
 
+# --- .NET SDK (Microsoft) ---
+# Uses same GPG key as VS Code (packages.microsoft.com)
+- name: Add Microsoft .NET SDK repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/ubuntu/24.04/prod {{ apt_fallback_release }} main"
+    filename: microsoft-dotnet
+    state: present
+  notify: Update apt cache
+
 # --- Google Cloud CLI ---
 - name: Download Google Cloud GPG key
   ansible.builtin.shell:

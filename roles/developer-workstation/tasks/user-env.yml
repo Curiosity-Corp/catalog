@@ -20,6 +20,35 @@
     state: link
     force: true
 
+# --- Oh My Zsh ---
+# Install before .zshrc modifications (OMZ creates its own .zshrc template).
+# Starship handles the prompt; OMZ provides plugins and completions only.
+- name: Check if Oh My Zsh is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.oh-my-zsh"
+  register: omz_installed
+
+- name: Install Oh My Zsh
+  ansible.builtin.shell:
+    cmd: sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when: not omz_installed.stat.exists
+
+- name: Disable Oh My Zsh theme (using starship instead)
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    regexp: '^ZSH_THEME='
+    line: 'ZSH_THEME=""'
+
+- name: Configure Oh My Zsh plugins
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    regexp: '^plugins=\('
+    line: 'plugins=(git kubectl helm terraform aws npm node rust golang)'
+
 # --- Starship prompt ---
 - name: Add starship init to .bashrc
   ansible.builtin.lineinfile:
@@ -247,6 +276,44 @@
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: '0644'
+
+# --- nvm shell init ---
+- name: Add nvm init to .bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - nvm"
+    block: |
+      export NVM_DIR="$HOME/.nvm"
+      [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+      [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+- name: Add nvm init to .zshrc
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    marker: "# {mark} ANSIBLE MANAGED - nvm"
+    block: |
+      export NVM_DIR="$HOME/.nvm"
+      [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+      [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+# --- pyenv shell init ---
+- name: Add pyenv init to .bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - pyenv"
+    block: |
+      export PYENV_ROOT="$HOME/.pyenv"
+      [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"
+
+- name: Add pyenv init to .zshrc
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.zshrc"
+    marker: "# {mark} ANSIBLE MANAGED - pyenv"
+    block: |
+      export PYENV_ROOT="$HOME/.pyenv"
+      [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"
 
 # --- Fix ownership of role-managed files ---
 - name: Fix ownership of role-managed dotfiles

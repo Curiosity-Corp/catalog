@@ -159,6 +159,25 @@
       - curl
       - btop
       - skopeo
+      # --- PHP ---
+      - php-cli
+      - php-curl
+      - php-mbstring
+      - php-xml
+      - php-zip
+      # --- .NET ---
+      - dotnet-sdk-9.0
+      # --- Document conversion ---
+      - pandoc
+      # --- Debugger ---
+      - gdb
+      # --- pyenv build dependencies ---
+      - libssl-dev
+      - libbz2-dev
+      - libreadline-dev
+      - libffi-dev
+      - liblzma-dev
+      - zlib1g-dev
     state: present
     update_cache: true
 
