@@ -48,9 +48,9 @@
     path: /usr/local/bin/glab
   register: glab_installed
 
-- name: Get glab latest version
+- name: Get glab latest version from GitLab API
   ansible.builtin.uri:
-    url: https://api.github.com/repos/gitlab-org/cli/releases/latest
+    url: https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest
     return_content: true
   register: glab_release
   when: not glab_installed.stat.exists
@@ -64,7 +64,7 @@
 
 - name: Move glab binary to /usr/local/bin
   ansible.builtin.copy:
-    src: "/tmp/glab_{{ glab_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64/bin/glab"
+    src: "/tmp/bin/glab"
     dest: /usr/local/bin/glab
     mode: "0755"
     remote_src: true
@@ -72,6 +72,6 @@
 
 - name: Clean up glab temp files
   ansible.builtin.file:
-    path: "/tmp/glab_{{ glab_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64"
+    path: /tmp/bin/glab
     state: absent
   when: not glab_installed.stat.exists
