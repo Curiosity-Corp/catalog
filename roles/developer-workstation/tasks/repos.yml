@@ -80,6 +80,15 @@
   notify: Update apt cache
 
 # --- Google Chrome ---
+# Chrome's installer appends an unsigned deb line to google-chrome.list,
+# causing duplicate warnings. Remove the file so apt_repository recreates
+# it cleanly with only the signed entry.
+- name: Remove Chrome installer repo config (conflicting unsigned entry)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/google-chrome.list
+    state: absent
+  notify: Update apt cache
+
 - name: Download Google Chrome GPG key
   ansible.builtin.shell:
     cmd: curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-archive-keyring.gpg
@@ -106,6 +115,12 @@
   notify: Update apt cache
 
 # --- Brave Browser ---
+- name: Remove conflicting Brave repo config (from Brave installer)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/brave-browser-release.sources
+    state: absent
+  notify: Update apt cache
+
 - name: Download Brave Browser GPG key
   ansible.builtin.shell:
     cmd: curl -fsSL https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg -o /usr/share/keyrings/brave-browser-archive-keyring.gpg

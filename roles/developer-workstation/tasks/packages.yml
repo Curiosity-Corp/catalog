@@ -132,7 +132,7 @@
       # --- VPN / ZTNA ---
       - openvpn
       - wireguard-tools
-      - openziti-edge-tunnel
+      - openziti
       # --- Remote desktop ---
       - remmina
       - remmina-plugin-rdp
