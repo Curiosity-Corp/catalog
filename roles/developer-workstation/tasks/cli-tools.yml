@@ -81,6 +81,7 @@
     cmd: curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash
     creates: /usr/local/bin/zoxide
   environment:
+    HOME: /root
     BIN_DIR: /usr/local/bin
 
 # --- dust ---
