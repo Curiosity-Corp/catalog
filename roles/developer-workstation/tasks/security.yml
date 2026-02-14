@@ -105,15 +105,16 @@
         state: absent
 
 # --- SOPS (PQ-capable, built from main) ---
-- name: Check if PQ-capable sops is installed
-  ansible.builtin.shell:
-    cmd: sops --version 2>&1 | head -1
-  register: sops_version_check
+# Only install if sops is not already in PATH. Existing PQ-capable
+# installs (e.g. ~/go/bin/sops) are left untouched.
+- name: Check if sops is available
+  ansible.builtin.command: which sops
+  register: sops_which_check
   changed_when: false
   failed_when: false
 
 - name: Build and install SOPS from main (PQ support)
-  when: sops_version_check.rc != 0 or 'develop' not in (sops_version_check.stdout | default(''))
+  when: sops_which_check.rc != 0
   block:
     - name: Check Go is available for SOPS build
       ansible.builtin.command: go version
@@ -139,28 +140,36 @@
       when: go_check.rc == 0
 
 # --- PQ age keypair generation (per-user, idempotent) ---
-- name: Ensure user .age directory exists
+# Uses ~/.keys/age.key (org convention). Skips if any age key already exists.
+- name: Check if age key already exists
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.keys/age.key"
+  register: age_key_check
+
+- name: Ensure user .keys directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.age"
+    path: "{{ dev_user_home }}/.keys"
     state: directory
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0700"
+  when: not age_key_check.stat.exists
 
 - name: Generate PQ age keypair (one-time)
   ansible.builtin.command:
-    cmd: age-keygen -o {{ dev_user_home }}/.age/key.txt
-    creates: "{{ dev_user_home }}/.age/key.txt"
+    cmd: age-keygen -o {{ dev_user_home }}/.keys/age.key
+    creates: "{{ dev_user_home }}/.keys/age.key"
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
 
 - name: Set age key file permissions
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.age/key.txt"
+    path: "{{ dev_user_home }}/.keys/age.key"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0600"
+  when: not age_key_check.stat.exists
 
 # --- cosign ---
 - name: Check if cosign is installed
