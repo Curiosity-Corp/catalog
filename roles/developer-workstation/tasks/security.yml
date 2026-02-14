@@ -171,26 +171,29 @@
     mode: "0600"
   when: not age_key_check.stat.exists
 
-- name: Extract age public key
-  ansible.builtin.shell:
-    cmd: grep 'public key' {{ dev_user_home }}/.keys/age.key | cut -d' ' -f4
-  register: age_public_key
-  changed_when: false
+- name: Extract and display age public key (first run only)
+  when: not age_key_check.stat.exists
+  block:
+    - name: Extract age public key
+      ansible.builtin.shell:
+        cmd: grep 'public key' {{ dev_user_home }}/.keys/age.key | cut -d' ' -f4
+      register: age_public_key
+      changed_when: false
 
-- name: Write public key to ~/.keys/age.pub
-  ansible.builtin.copy:
-    content: "{{ age_public_key.stdout }}\n"
-    dest: "{{ dev_user_home }}/.keys/age.pub"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
-    mode: "0644"
+    - name: Write public key to ~/.keys/age.pub
+      ansible.builtin.copy:
+        content: "{{ age_public_key.stdout }}\n"
+        dest: "{{ dev_user_home }}/.keys/age.pub"
+        owner: "{{ dev_user }}"
+        group: "{{ dev_user }}"
+        mode: "0644"
 
-- name: Display age public key
-  ansible.builtin.debug:
-    msg: >-
-      PQ age public key for {{ dev_user }}:
-      {{ age_public_key.stdout }}
-      — Send this to the infrastructure admin to be added as a SOPS recipient.
+    - name: Display age public key
+      ansible.builtin.debug:
+        msg: >-
+          PQ age public key for {{ dev_user }}:
+          {{ age_public_key.stdout }}
+          — Send this to the infrastructure admin to be added as a SOPS recipient.
 
 # --- cosign ---
 - name: Check if cosign is installed
