@@ -18,6 +18,8 @@
 
       [Service]
       Type=oneshot
+      Environment=HOME=/root
+      Environment=ANSIBLE_INVALID_TASK_ATTRIBUTE_FAILED=False
       ExecStart=/usr/bin/ansible-pull -U {{ ansible_pull_repo }} -C {{ ansible_pull_branch }} -d {{ ansible_pull_dir }} {{ ansible_pull_playbook }}
       TimeoutStartSec=3600
       StandardOutput=journal
