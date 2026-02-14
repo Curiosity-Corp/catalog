@@ -232,6 +232,17 @@
       - --strip-components=1
   when: not hyperfine_installed.stat.exists
 
+# --- chezmoi ---
+- name: Check if chezmoi is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/chezmoi
+  register: chezmoi_installed
+
+- name: Install chezmoi
+  ansible.builtin.shell:
+    cmd: sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
+    creates: /usr/local/bin/chezmoi
+
 # --- starship ---
 - name: Install starship
   ansible.builtin.shell:

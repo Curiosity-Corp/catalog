@@ -37,6 +37,24 @@
     HOME: "{{ dev_user_home }}"
   when: not omz_installed.stat.exists
 
+- name: Install zsh-autosuggestions plugin
+  ansible.builtin.git:
+    repo: https://github.com/zsh-users/zsh-autosuggestions.git
+    dest: "{{ dev_user_home }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+    depth: 1
+  become: true
+  become_user: "{{ dev_user }}"
+  when: omz_installed.stat.exists or not omz_installed.stat.exists
+
+- name: Install zsh-syntax-highlighting plugin
+  ansible.builtin.git:
+    repo: https://github.com/zsh-users/zsh-syntax-highlighting.git
+    dest: "{{ dev_user_home }}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+    depth: 1
+  become: true
+  become_user: "{{ dev_user }}"
+  when: omz_installed.stat.exists or not omz_installed.stat.exists
+
 - name: Disable Oh My Zsh theme (using starship instead)
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.zshrc"
@@ -47,7 +65,7 @@
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.zshrc"
     regexp: '^plugins=\('
-    line: 'plugins=(git kubectl helm terraform aws npm node rust golang)'
+    line: 'plugins=(git kubectl helm terraform aws npm node rust golang zsh-autosuggestions zsh-syntax-highlighting)'
 
 # --- Starship prompt ---
 - name: Add starship init to .bashrc
