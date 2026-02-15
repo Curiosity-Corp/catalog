@@ -204,3 +204,21 @@
   ansible.builtin.file:
     path: /etc/apt/sources.list.d/cloudflared.list
     state: absent
+
+- name: Install qemu-guest-agent on VM guests
+  ansible.builtin.apt:
+    name: qemu-guest-agent
+    state: present
+    update_cache: false
+  when:
+    - ansible_virtualization_role | default('') == 'guest'
+    - ansible_virtualization_type | default('') in ['kvm', 'qemu']
+
+- name: Ensure qemu-guest-agent is enabled on VM guests
+  ansible.builtin.systemd:
+    name: qemu-guest-agent
+    enabled: true
+    state: started
+  when:
+    - ansible_virtualization_role | default('') == 'guest'
+    - ansible_virtualization_type | default('') in ['kvm', 'qemu']
