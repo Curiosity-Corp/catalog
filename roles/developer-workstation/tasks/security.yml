@@ -21,9 +21,18 @@
     mode: "0644"
   register: _harbor_ca_installed
 
+- name: Install Ziti Controller Root CA certificate
+  ansible.builtin.copy:
+    src: ziti-controller-root-ca.crt
+    dest: /usr/local/share/ca-certificates/ziti-controller-root-ca.crt
+    owner: root
+    group: root
+    mode: "0644"
+  register: _ziti_ca_installed
+
 - name: Update system CA trust store
   ansible.builtin.command: update-ca-certificates
-  when: _harbor_ca_installed.changed
+  when: _harbor_ca_installed.changed or _ziti_ca_installed.changed
 
 # NSS database — Chromium/Electron apps (Mattermost, Chrome, VS Code)
 # use ~/.pki/nssdb instead of the system CA store.
@@ -51,6 +60,23 @@
       -i /usr/local/share/ca-certificates/harbor-internal-ca.crt
   become_user: "{{ dev_user }}"
   when: _nss_harbor_ca.rc != 0
+
+- name: Check if Ziti CA is in user NSS database
+  ansible.builtin.command:
+    cmd: certutil -d sql:{{ dev_user_home }}/.pki/nssdb -L -n "Ziti Controller Root CA"
+  register: _nss_ziti_ca
+  changed_when: false
+  failed_when: false
+  become_user: "{{ dev_user }}"
+
+- name: Add Ziti Controller Root CA to user NSS database
+  ansible.builtin.command:
+    cmd: >-
+      certutil -d sql:{{ dev_user_home }}/.pki/nssdb
+      -A -t "CT,C,C" -n "Ziti Controller Root CA"
+      -i /usr/local/share/ca-certificates/ziti-controller-root-ca.crt
+  become_user: "{{ dev_user }}"
+  when: _nss_ziti_ca.rc != 0
 
 # --- Trivy ---
 - name: Install Trivy
