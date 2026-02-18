@@ -76,13 +76,20 @@
     path: /usr/local/bin/zoxide
   register: zoxide_installed
 
+- name: Get zoxide latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/ajeetdsouza/zoxide/releases/latest
+    return_content: true
+  register: zoxide_release
+  when: not zoxide_installed.stat.exists
+
 - name: Install zoxide
-  ansible.builtin.shell:
-    cmd: curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash
-    creates: /usr/local/bin/zoxide
-  environment:
-    HOME: /root
-    BIN_DIR: /usr/local/bin
+  ansible.builtin.unarchive:
+    src: "https://github.com/ajeetdsouza/zoxide/releases/download/{{ zoxide_release.json.tag_name }}/zoxide-{{ zoxide_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-musl.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [zoxide]
+  when: not zoxide_installed.stat.exists
 
 # --- dust ---
 - name: Check if dust is installed
