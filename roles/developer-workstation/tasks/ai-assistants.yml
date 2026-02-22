@@ -5,7 +5,8 @@
 # CLI tools for AI-assisted development
 # =============================================================================
 
-- name: Install AI coding assistants
+# --- npm-based AI CLIs ---
+- name: Install AI coding assistants (npm)
   community.general.npm:
     name: "{{ item }}"
     global: true
@@ -14,7 +15,37 @@
     - "@anthropic-ai/claude-code"
     - "@google/gemini-cli"
     - "@openai/codex"
+    - "@vibe-kit/grok-cli"
+    - "@sourcegraph/amp"
+    - opencode-ai
   register: _ai_npm_result
   failed_when:
     - _ai_npm_result is failed
     - "'EACCES' not in (_ai_npm_result.msg | default(''))"
+
+# --- pipx-based AI CLIs ---
+- name: Install AI coding assistants (pipx)
+  community.general.pipx:
+    name: "{{ item.name }}"
+    state: present
+    install_deps: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  loop:
+    - { name: aider-chat }
+    - { name: kimi-cli }
+    - { name: mistral-vibe }
+    - { name: llm }
+  loop_control:
+    label: "{{ item.name }}"
+  register: _ai_pipx_result
+  failed_when:
+    - _ai_pipx_result is failed
+    - "'already' not in (_ai_pipx_result.msg | default(''))"
+
+# --- Goose CLI (Block) ---
+- name: Install Goose CLI
+  ansible.builtin.shell:
+    cmd: GOOSE_INSTALL_DIR=/usr/local/bin curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash
+    creates: /usr/local/bin/goose

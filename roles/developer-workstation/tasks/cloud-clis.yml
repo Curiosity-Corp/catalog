@@ -1,8 +1,9 @@
 ---
 # =============================================================================
-# Cloud CLI Installation
+# Cloud & Service CLI Installation
 # =============================================================================
-# CLIs not available via APT repositories
+# CLIs not available via APT repositories: cloud providers, GitOps services,
+# container registries, and internal platform tools.
 # =============================================================================
 
 # --- Azure CLI ---
@@ -75,3 +76,101 @@
     path: /tmp/bin/glab
     state: absent
   when: not glab_installed.stat.exists
+
+# --- mmctl (Mattermost CLI) ---
+- name: Check if mmctl is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/mmctl
+  register: mmctl_installed
+
+- name: Get mmctl latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/mattermost/mmctl/releases/latest
+    return_content: true
+  register: mmctl_release
+  when: not mmctl_installed.stat.exists
+
+- name: Install mmctl
+  ansible.builtin.unarchive:
+    src: "https://github.com/mattermost/mmctl/releases/download/{{ mmctl_release.json.tag_name }}/linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [mmctl]
+  when: not mmctl_installed.stat.exists
+
+# --- Bitwarden CLI (bw) ---
+- name: Install Bitwarden CLI
+  community.general.npm:
+    name: "@bitwarden/cli"
+    global: true
+    state: present
+  register: _bw_result
+  failed_when:
+    - _bw_result is failed
+    - "'EACCES' not in (_bw_result.msg | default(''))"
+
+# --- Harbor CLI ---
+- name: Check if harbor is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/harbor
+  register: harbor_installed
+
+- name: Get Harbor CLI latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/goharbor/harbor-cli/releases/latest
+    return_content: true
+  register: harbor_release
+  when: not harbor_installed.stat.exists
+
+- name: Install Harbor CLI
+  ansible.builtin.unarchive:
+    src: "https://github.com/goharbor/harbor-cli/releases/download/{{ harbor_release.json.tag_name }}/harbor-cli_{{ harbor_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [harbor]
+  when: not harbor_installed.stat.exists
+
+# --- MinIO Client (mc) — for SeaweedFS S3 ---
+- name: Install MinIO Client (mc)
+  ansible.builtin.get_url:
+    url: https://dl.min.io/client/mc/release/linux-amd64/mc
+    dest: /usr/local/bin/mc
+    mode: "0755"
+    force: false
+
+# --- Keycloak Admin CLI (kcadm) ---
+- name: Check if kcadm is installed
+  ansible.builtin.stat:
+    path: /usr/local/share/keycloak/bin/kcadm.sh
+  register: kcadm_installed
+
+- name: Get Keycloak latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/keycloak/keycloak/releases/latest
+    return_content: true
+  register: keycloak_release
+  when: not kcadm_installed.stat.exists
+
+- name: Download Keycloak distribution
+  ansible.builtin.unarchive:
+    src: "https://github.com/keycloak/keycloak/releases/download/{{ keycloak_release.json.tag_name }}/keycloak-{{ keycloak_release.json.tag_name }}.tar.gz"
+    dest: /tmp
+    remote_src: true
+  when: not kcadm_installed.stat.exists
+
+- name: Install Keycloak CLI tools
+  ansible.builtin.shell:
+    cmd: |
+      mkdir -p /usr/local/share/keycloak
+      cp -r /tmp/keycloak-{{ keycloak_release.json.tag_name }}/bin /usr/local/share/keycloak/
+      cp -r /tmp/keycloak-{{ keycloak_release.json.tag_name }}/lib /usr/local/share/keycloak/
+      ln -sf /usr/local/share/keycloak/bin/kcadm.sh /usr/local/bin/kcadm
+      ln -sf /usr/local/share/keycloak/bin/kcreg.sh /usr/local/bin/kcreg
+    creates: /usr/local/share/keycloak/bin/kcadm.sh
+  when: not kcadm_installed.stat.exists
+
+- name: Clean up Keycloak temp files
+  ansible.builtin.file:
+    path: "/tmp/keycloak-{{ keycloak_release.json.tag_name }}"
+    state: absent
+  when: not kcadm_installed.stat.exists
