@@ -255,3 +255,29 @@
   ansible.builtin.shell:
     cmd: curl -sS https://starship.rs/install.sh | sh -s -- -y
     creates: /usr/local/bin/starship
+
+# --- filebrowser (workspace profile) ---
+- name: Check if filebrowser is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/filebrowser
+  register: filebrowser_installed
+  when: workstation_profile == 'workspace'
+
+- name: Get filebrowser latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/filebrowser/filebrowser/releases/latest
+    return_content: true
+  register: filebrowser_release
+  when:
+    - workstation_profile == 'workspace'
+    - not filebrowser_installed.stat.exists
+
+- name: Install filebrowser
+  ansible.builtin.unarchive:
+    src: "https://github.com/filebrowser/filebrowser/releases/download/{{ filebrowser_release.json.tag_name }}/linux-amd64-filebrowser.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [filebrowser]
+  when:
+    - workstation_profile == 'workspace'
+    - not filebrowser_installed.stat.exists
