@@ -11,11 +11,19 @@ ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
 
-# Entra ID SSO (authd + authd-msentraid broker)
-entra_id_enabled: true
-entra_id_tenant_id: "2febe90d-872e-4e31-b1ee-7898aac0159c"
-entra_id_client_id: "6bfdc2af-08c9-4778-b01c-8f39f43e551a"
-entra_id_allowed_users: "ALL"
+# Entra ID SSO — SUNSET, replaced by Keycloak SSO
+entra_id_enabled: false
+
+# Keycloak SSO (authd + authd-oidc broker)
+keycloak_sso_enabled: true
+keycloak_host: "auth.focuspass.com"
+keycloak_realm: "omlabs"
+keycloak_desktop_client_id: "desktop-login"
+keycloak_allowed_users: "ALL"
+
+# OpenZiti ZTNA (ziti-edge-tunnel + OIDC session hooks)
+ziti_enabled: true
+ziti_install_script_url: "https://get.openziti.io/tun/scripts/install-ubuntu.bash"
 
 # Display configuration (GDM auto-login, x11vnc, dconf no-lock)
 # Enable on iGPU passthrough VMs that need physical display + VNC

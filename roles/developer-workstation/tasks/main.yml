@@ -111,10 +111,15 @@
   tags: [firewall]
   when: firewall_enabled | default(false)
 
-- name: Include Entra ID SSO (authd)
-  ansible.builtin.include_tasks: entra-id.yml
-  tags: [entra-id, sso]
-  when: entra_id_enabled | default(false)
+- name: Include Keycloak SSO (authd + authd-oidc)
+  ansible.builtin.include_tasks: keycloak-sso.yml
+  tags: [keycloak, sso]
+  when: keycloak_sso_enabled | default(false)
+
+- name: Include Ziti edge tunnel + OIDC session hooks
+  ansible.builtin.include_tasks: ziti.yml
+  tags: [ziti, networking]
+  when: ziti_enabled | default(false)
 
 - name: Include profile cleanup timer
   ansible.builtin.include_tasks: profile-cleanup.yml

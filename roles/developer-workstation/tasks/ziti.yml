@@ -1,0 +1,240 @@
+---
+# =============================================================================
+# OpenZiti Edge Tunnel + OIDC Session Hooks
+# =============================================================================
+# Installs ziti-edge-tunnel, deploys OIDC login/logout/reactivation scripts,
+# wires up GNOME screensaver lock/unlock hooks, and adds a profile.d hook
+# so OIDC identities authenticate automatically on graphical login.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Install / Update ziti-edge-tunnel
+# -----------------------------------------------------------------------------
+- name: Check if ziti-edge-tunnel is already installed
+  ansible.builtin.stat:
+    path: /opt/openziti/bin/ziti-edge-tunnel
+  register: _ziti_tunnel_bin
+
+- name: Get installed ziti-edge-tunnel version
+  ansible.builtin.command:
+    cmd: /opt/openziti/bin/ziti-edge-tunnel version
+  register: _ziti_tunnel_version
+  changed_when: false
+  failed_when: false
+  when: _ziti_tunnel_bin.stat.exists
+
+- name: Set ziti-edge-tunnel needs upgrade flag
+  ansible.builtin.set_fact:
+    _ziti_needs_upgrade: >-
+      {{
+        (not _ziti_tunnel_bin.stat.exists) or
+        (_ziti_tunnel_version.stdout | default('0.0.0') is version('1.10.10', '<'))
+      }}
+
+- name: Download ziti-edge-tunnel installer
+  ansible.builtin.get_url:
+    url: "{{ ziti_install_script_url }}"
+    dest: /tmp/install-ziti-edge-tunnel.bash
+    mode: "0755"
+    force: true
+  when: _ziti_needs_upgrade
+
+- name: Install ziti-edge-tunnel via official installer
+  ansible.builtin.command:
+    cmd: /bin/bash /tmp/install-ziti-edge-tunnel.bash
+  register: _ziti_install_result
+  changed_when: _ziti_install_result.rc == 0
+  when: _ziti_needs_upgrade
+
+# -----------------------------------------------------------------------------
+# OIDC Login Script
+# -----------------------------------------------------------------------------
+- name: Deploy OIDC login script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/ziti-oidc-login.sh
+    mode: "0755"
+    owner: root
+    group: root
+    content: |
+      #!/usr/bin/env bash
+      # ziti-oidc-login.sh — authenticate all OIDC identities via ext-jwt-login
+      set -euo pipefail
+
+      IDENTITY_DIR="/opt/openziti/etc/identities"
+      PROVIDER="keycloak-omlabs"
+
+      shopt -s nullglob
+      identities=("${IDENTITY_DIR}"/*-oidc.json)
+      shopt -u nullglob
+
+      if [[ ${#identities[@]} -eq 0 ]]; then
+        logger -t ziti-oidc "No OIDC identity files found in ${IDENTITY_DIR}"
+        exit 0
+      fi
+
+      for id_file in "${identities[@]}"; do
+        logger -t ziti-oidc "Starting ext-jwt-login for ${id_file}"
+        output=$(ziti-edge-tunnel ext-jwt-login -i "${id_file}" -p "${PROVIDER}" 2>&1) || true
+
+        auth_url=$(echo "${output}" | grep -oP 'https://\S+' | head -n1) || true
+
+        if [[ -n "${auth_url}" ]]; then
+          logger -t ziti-oidc "Opening auth URL for ${id_file}"
+          DISPLAY=:0 xdg-open "${auth_url}" 2>/dev/null || true
+        else
+          logger -t ziti-oidc "No auth URL extracted for ${id_file} — output: ${output}"
+        fi
+      done
+
+# -----------------------------------------------------------------------------
+# OIDC Logout Script
+# -----------------------------------------------------------------------------
+- name: Deploy OIDC logout script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/ziti-oidc-logout.sh
+    mode: "0755"
+    owner: root
+    group: root
+    content: |
+      #!/usr/bin/env bash
+      # ziti-oidc-logout.sh — deactivate all OIDC identities on screen lock
+      set -euo pipefail
+
+      IDENTITY_DIR="/opt/openziti/etc/identities"
+
+      shopt -s nullglob
+      identities=("${IDENTITY_DIR}"/*-oidc.json)
+      shopt -u nullglob
+
+      for id_file in "${identities[@]}"; do
+        id_name=$(basename "${id_file}" .json)
+        logger -t ziti-oidc "Deactivating OIDC identity: ${id_name}"
+        ziti-edge-tunnel on_off -o off -i "${id_name}" 2>&1 | logger -t ziti-oidc || true
+      done
+
+# -----------------------------------------------------------------------------
+# OIDC Reactivation Script
+# -----------------------------------------------------------------------------
+- name: Deploy OIDC reactivation script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/ziti-oidc-reactivate.sh
+    mode: "0755"
+    owner: root
+    group: root
+    content: |
+      #!/usr/bin/env bash
+      # ziti-oidc-reactivate.sh — reactivate OIDC identities on screen unlock
+      set -euo pipefail
+
+      IDENTITY_DIR="/opt/openziti/etc/identities"
+
+      shopt -s nullglob
+      identities=("${IDENTITY_DIR}"/*-oidc.json)
+      shopt -u nullglob
+
+      for id_file in "${identities[@]}"; do
+        id_name=$(basename "${id_file}" .json)
+        logger -t ziti-oidc "Reactivating OIDC identity: ${id_name}"
+        if ! ziti-edge-tunnel on_off -o on -i "${id_name}" 2>&1 | logger -t ziti-oidc; then
+          logger -t ziti-oidc "Reactivation failed for ${id_name}, triggering login flow"
+          /usr/local/bin/ziti-oidc-login.sh
+        fi
+      done
+
+# -----------------------------------------------------------------------------
+# Profile.d Hook (graphical session auto-login)
+# -----------------------------------------------------------------------------
+- name: Deploy profile.d OIDC session hook
+  ansible.builtin.copy:
+    dest: /etc/profile.d/ziti-oidc-session.sh
+    mode: "0644"
+    owner: root
+    group: root
+    content: |
+      #!/usr/bin/env bash
+      # ziti-oidc-session.sh — trigger OIDC login on graphical session start
+      if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
+        ( sleep 5 && /usr/local/bin/ziti-oidc-login.sh ) &
+        disown
+      fi
+
+# -----------------------------------------------------------------------------
+# GNOME Screensaver Monitor (lock/unlock hooks)
+# -----------------------------------------------------------------------------
+- name: Deploy screensaver monitor script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/ziti-oidc-screensaver-monitor.sh
+    mode: "0755"
+    owner: root
+    group: root
+    content: |
+      #!/usr/bin/env bash
+      # ziti-oidc-screensaver-monitor.sh — watch GNOME screensaver lock/unlock
+      set -euo pipefail
+
+      dbus-monitor --session "type='signal',interface='org.gnome.ScreenSaver'" | \
+        while read -r line; do
+          case "${line}" in
+            *"boolean true"*)
+              logger -t ziti-oidc "Screen locked — deactivating OIDC identities"
+              /usr/local/bin/ziti-oidc-logout.sh
+              ;;
+            *"boolean false"*)
+              logger -t ziti-oidc "Screen unlocked — reactivating OIDC identities"
+              /usr/local/bin/ziti-oidc-reactivate.sh
+              ;;
+          esac
+        done
+
+- name: Deploy screensaver monitor systemd user service
+  ansible.builtin.copy:
+    dest: /etc/systemd/user/ziti-oidc-screensaver-monitor.service
+    mode: "0644"
+    owner: root
+    group: root
+    content: |
+      [Unit]
+      Description=Ziti OIDC screensaver lock/unlock monitor
+      After=graphical-session.target
+      PartOf=graphical-session.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/ziti-oidc-screensaver-monitor.sh
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=graphical-session.target
+
+- name: Enable screensaver monitor for all desktop users
+  ansible.builtin.command:
+    cmd: systemctl --global enable ziti-oidc-screensaver-monitor.service
+  register: _screensaver_monitor_enable
+  changed_when: "'Created symlink' in _screensaver_monitor_enable.stdout or 'Created symlink' in _screensaver_monitor_enable.stderr"
+  failed_when: _screensaver_monitor_enable.rc != 0
+
+# -----------------------------------------------------------------------------
+# Sudoers Rule (password-less OIDC script execution)
+# -----------------------------------------------------------------------------
+- name: Deploy sudoers rule for OIDC scripts
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/ziti-oidc
+    mode: "0440"
+    owner: root
+    group: root
+    content: |
+      # Allow any user to run Ziti OIDC scripts as root without password
+      ALL ALL=(root) NOPASSWD: /usr/local/bin/ziti-oidc-login.sh
+      ALL ALL=(root) NOPASSWD: /usr/local/bin/ziti-oidc-logout.sh
+      ALL ALL=(root) NOPASSWD: /usr/local/bin/ziti-oidc-reactivate.sh
+    validate: "visudo -cf %s"
+
+# -----------------------------------------------------------------------------
+# Enable ziti-edge-tunnel service
+# -----------------------------------------------------------------------------
+- name: Enable ziti-edge-tunnel service
+  ansible.builtin.systemd:
+    name: ziti-edge-tunnel.service
+    enabled: true
+    state: started

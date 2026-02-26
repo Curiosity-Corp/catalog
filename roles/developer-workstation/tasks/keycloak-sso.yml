@@ -1,0 +1,58 @@
+---
+# =============================================================================
+# Keycloak SSO via authd + authd-oidc broker
+# =============================================================================
+# Enables Keycloak OIDC login on Ubuntu workstations.
+# Users sign in at GDM with their Keycloak email using device code flow.
+# Replaces the sunset Entra ID (authd-msentraid) setup.
+# =============================================================================
+
+- name: Add authd PPA
+  ansible.builtin.apt_repository:
+    repo: "ppa:ubuntu-enterprise-desktop/authd"
+    state: present
+    update_cache: true
+  register: _authd_ppa
+
+- name: Install authd
+  ansible.builtin.apt:
+    name: authd
+    state: present
+    update_cache: "{{ _authd_ppa.changed }}"
+
+- name: Remove authd-msentraid snap (sunset)
+  community.general.snap:
+    name: authd-msentraid
+    state: absent
+
+- name: Install authd-oidc snap
+  community.general.snap:
+    name: authd-oidc
+    state: present
+
+- name: Configure authd-oidc broker for Keycloak
+  ansible.builtin.copy:
+    dest: /var/snap/authd-oidc/current/broker.conf
+    content: |
+      [oidc]
+      issuer = https://{{ keycloak_host }}/realms/{{ keycloak_realm }}
+      client_id = {{ keycloak_desktop_client_id }}
+
+      [users]
+      home_base_dir = /home
+      allowed_users = {{ keycloak_allowed_users }}
+    owner: root
+    group: root
+    mode: "0644"
+  register: _broker_conf
+
+- name: Ensure authd service is enabled and running
+  ansible.builtin.systemd:
+    name: authd
+    enabled: true
+    state: started
+
+- name: Restart authd-oidc broker
+  ansible.builtin.command: snap restart authd-oidc
+  when: _broker_conf is changed
+  changed_when: true
