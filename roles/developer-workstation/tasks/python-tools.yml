@@ -32,6 +32,8 @@
     - ruff
     - poetry
     - pre-commit
+    - jupyterlab
+    - ipython
   register: _pipx_result
   failed_when:
     - _pipx_result is failed

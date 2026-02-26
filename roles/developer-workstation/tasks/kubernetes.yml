@@ -19,6 +19,26 @@
       mv kustomize /usr/local/bin/kustomize
     creates: /usr/local/bin/kustomize
 
+# --- talosctl ---
+- name: Check if talosctl is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/talosctl
+  register: talosctl_installed
+
+- name: Get talosctl latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/siderolabs/talos/releases/latest
+    return_content: true
+  register: talosctl_release
+  when: not talosctl_installed.stat.exists
+
+- name: Install talosctl
+  ansible.builtin.get_url:
+    url: "https://github.com/siderolabs/talos/releases/download/{{ talosctl_release.json.tag_name }}/talosctl-linux-amd64"
+    dest: /usr/local/bin/talosctl
+    mode: "0755"
+  when: not talosctl_installed.stat.exists
+
 # --- k9s ---
 - name: Check if k9s is installed
   ansible.builtin.stat:
@@ -160,3 +180,24 @@
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+
+# --- kubeconform ---
+- name: Check if kubeconform is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/kubeconform
+  register: kubeconform_installed
+
+- name: Get kubeconform latest version
+  ansible.builtin.uri:
+    url: https://api.github.com/repos/yannh/kubeconform/releases/latest
+    return_content: true
+  register: kubeconform_release
+  when: not kubeconform_installed.stat.exists
+
+- name: Install kubeconform
+  ansible.builtin.unarchive:
+    src: "https://github.com/yannh/kubeconform/releases/download/{{ kubeconform_release.json.tag_name }}/kubeconform-linux-amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [kubeconform]
+  when: not kubeconform_installed.stat.exists

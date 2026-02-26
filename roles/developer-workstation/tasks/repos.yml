@@ -88,6 +88,19 @@
     state: present
   notify: Update apt cache
 
+# --- MongoDB (mongosh) ---
+- name: Download MongoDB GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-archive-keyring.gpg
+    creates: /usr/share/keyrings/mongodb-archive-keyring.gpg
+
+- name: Add MongoDB repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg] https://repo.mongodb.org/apt/ubuntu {{ apt_fallback_release }}/mongodb-org/8.0 multiverse"
+    filename: mongodb-org
+    state: present
+  notify: Update apt cache
+
 # --- Google Chrome ---
 # Chrome's installer appends an unsigned deb line to google-chrome.list,
 # causing duplicate warnings. Remove the file so apt_repository recreates

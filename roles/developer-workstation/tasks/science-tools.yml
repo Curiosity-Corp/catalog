@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# Scientific Python & Data Science Tools
+# =============================================================================
+# Installs a broad scientific stack system-wide so tools are available from:
+# - terminal workflows
+# - notebooks (JupyterLab kernel)
+# =============================================================================
+
+- name: Install scientific Python packages (system-wide)
+  ansible.builtin.pip:
+    name:
+      # --- Core data science ---
+      - numpy
+      - scipy
+      - pandas
+      - matplotlib
+      - sympy
+      - scikit-learn
+      - seaborn
+      # --- Common utilities ---
+      - requests
+      - httpx
+      - pytest
+      - boto3
+      - openpyxl
+      - Pillow
+      # --- Jupyter interactivity ---
+      - ipykernel
+      - ipywidgets
+      - ipympl
+      - plotly
+      # --- Physics simulation ---
+      - vpython
+      - pymunk
+      - pybullet
+      # --- 3D visualization ---
+      - pyvista
+      - trame
+      - k3d
+      # --- Domain-specific ---
+      - h5py
+      - qutip
+      - astropy
+    executable: pip3
+    state: present
+    extra_args: --break-system-packages
+
+- name: Register system Python kernel for Jupyter
+  ansible.builtin.command:
+    cmd: python3 -m ipykernel install --name python3 --display-name "Python 3 (System)" --prefix /usr/local
+    creates: /usr/local/share/jupyter/kernels/python3/kernel.json

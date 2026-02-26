@@ -68,10 +68,12 @@
       - fzf
       # --- Terminal multiplexers/shells ---
       - tmux
+      - tmate
       - zsh
       - screen
       # --- Editors ---
       - neovim
+      - vim
       - nano
       # --- Environment ---
       - direnv
@@ -124,6 +126,7 @@
       - redis-tools
       - postgresql-client
       - default-mysql-client
+      - mongodb-mongosh
       # --- Networking tools ---
       - socat
       - netcat-openbsd
@@ -170,6 +173,12 @@
       - dotnet-sdk-9.0
       # --- Document conversion ---
       - pandoc
+      - graphviz
+      - ffmpeg
+      - imagemagick
+      - texlive-base
+      - texlive-latex-extra
+      - protobuf-compiler
       # --- Debugger ---
       - gdb
       # --- Containers (daemonless, no background daemon) ---
@@ -182,6 +191,9 @@
       - libffi-dev
       - liblzma-dev
       - zlib1g-dev
+      # --- Scientific Python system dependencies ---
+      - libhdf5-dev
+      - libegl1
     state: present
     update_cache: true
 

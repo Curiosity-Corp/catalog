@@ -64,6 +64,10 @@
   ansible.builtin.include_tasks: python-tools.yml
   tags: [python]
 
+- name: Include scientific Python and data-science tools
+  ansible.builtin.include_tasks: science-tools.yml
+  tags: [science, data-science]
+
 - name: Include modern CLI tools
   ansible.builtin.include_tasks: cli-tools.yml
   tags: [cli]
