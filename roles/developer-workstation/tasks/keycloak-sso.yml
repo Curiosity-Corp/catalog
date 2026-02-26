@@ -46,6 +46,30 @@
     mode: "0644"
   register: _broker_conf
 
+- name: Create authd broker discovery directory
+  ansible.builtin.file:
+    path: /etc/authd/brokers.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Register authd-oidc broker with authd
+  ansible.builtin.copy:
+    src: /snap/authd-oidc/current/conf/authd/oidc.conf
+    dest: /etc/authd/brokers.d/oidc.conf
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  register: _broker_registered
+
+- name: Restart authd to discover OIDC broker
+  ansible.builtin.systemd:
+    name: authd
+    state: restarted
+  when: _broker_registered is changed or _broker_conf is changed
+
 - name: Ensure authd service is enabled and running
   ansible.builtin.systemd:
     name: authd
