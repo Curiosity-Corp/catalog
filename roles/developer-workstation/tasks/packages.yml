@@ -45,6 +45,7 @@
       # --- Browsers ---
       - google-chrome-stable
       - brave-browser
+      - firefox
       # --- Kubernetes ---
       - kubectl
       # --- HashiCorp ---

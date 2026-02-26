@@ -46,18 +46,35 @@
     path: /tmp/sunshine.deb
     state: absent
 
+- name: Resolve Sunshine binary real path
+  ansible.builtin.command: readlink -f "{{ _sunshine_installed.stdout | default('/usr/bin/sunshine') }}"
+  register: _sunshine_bin_realpath
+  changed_when: false
+  failed_when: false
+  when: _sunshine_installed.rc == 0
+
 - name: Set cap_sys_admin on Sunshine binary (KMS capture)
   community.general.capabilities:
-    path: "{{ _sunshine_installed.stdout | default('/usr/bin/sunshine') }}"
+    path: "{{ _sunshine_bin_realpath.stdout }}"
     capability: cap_sys_admin+ep
     state: present
-  when: _sunshine_installed.rc == 0 or true
+  register: _sunshine_capabilities_result
+  failed_when: false
+  when:
+    - _sunshine_bin_realpath is defined
+    - _sunshine_bin_realpath.rc == 0
+    - (_sunshine_bin_realpath.stdout | length) > 0
 
 # Fallback if community.general.capabilities not available
 - name: Set cap_sys_admin via setcap (fallback)
-  ansible.builtin.command: "setcap cap_sys_admin+ep {{ _sunshine_installed.stdout | default('/usr/bin/sunshine') }}"
-  changed_when: true
+  ansible.builtin.command: "setcap cap_sys_admin+ep {{ _sunshine_bin_realpath.stdout }}"
+  changed_when: false
   failed_when: false
+  when:
+    - _sunshine_bin_realpath is defined
+    - _sunshine_bin_realpath.rc == 0
+    - (_sunshine_bin_realpath.stdout | length) > 0
+    - _sunshine_capabilities_result is failed
 
 - name: Add user to video, render, and input groups
   ansible.builtin.user:
