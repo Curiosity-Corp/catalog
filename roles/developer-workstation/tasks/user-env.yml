@@ -163,13 +163,13 @@
 - name: Set EDITOR in .bashrc
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.bashrc"
-    line: 'export EDITOR="code --wait"'
+    line: 'export EDITOR="{{ preferred_editor }}"'
     regexp: '^export EDITOR='
 
 - name: Set EDITOR in .zshrc
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.zshrc"
-    line: 'export EDITOR="code --wait"'
+    line: 'export EDITOR="{{ preferred_editor }}"'
     regexp: '^export EDITOR='
 
 # --- Source aliases ---

@@ -25,16 +25,34 @@
       - _dev_user_home_stat.stat.isdir
     fail_msg: "Home directory {{ dev_user_home }} does not exist for user {{ dev_user }}"
 
+- name: Verify workstation profile is valid
+  ansible.builtin.assert:
+    that:
+      - workstation_profile in ['desktop', 'workspace']
+    fail_msg: "workstation_profile must be 'desktop' or 'workspace'"
+
 # =============================================================================
 # Task Includes
 # =============================================================================
-- name: Include APT repository setup
+- name: Include APT repository setup (desktop)
   ansible.builtin.include_tasks: repos.yml
   tags: [repos]
+  when: workstation_profile == 'desktop'
 
-- name: Include APT package installation
+- name: Include APT repository setup (workspace)
+  ansible.builtin.include_tasks: repos-workspace.yml
+  tags: [repos]
+  when: workstation_profile == 'workspace'
+
+- name: Include APT package installation (desktop)
   ansible.builtin.include_tasks: packages.yml
   tags: [packages]
+  when: workstation_profile == 'desktop'
+
+- name: Include APT package installation (workspace)
+  ansible.builtin.include_tasks: packages-workspace.yml
+  tags: [packages]
+  when: workstation_profile == 'workspace'
 
 - name: Include cloud CLI installation
   ansible.builtin.include_tasks: cloud-clis.yml
@@ -43,10 +61,6 @@
 - name: Include Kubernetes tools
   ansible.builtin.include_tasks: kubernetes.yml
   tags: [kubernetes]
-
-- name: Include security tools
-  ansible.builtin.include_tasks: security.yml
-  tags: [security]
 
 - name: Include DevOps utilities
   ansible.builtin.include_tasks: devops.yml
@@ -80,13 +94,20 @@
   ansible.builtin.include_tasks: ai-assistants.yml
   tags: [ai]
 
+- name: Include security tools
+  ansible.builtin.include_tasks: security.yml
+  tags: [security]
+  when: workstation_profile == 'desktop'
+
 - name: Include VS Code extensions
   ansible.builtin.include_tasks: vscode-extensions.yml
   tags: [vscode, extensions]
+  when: workstation_profile == 'desktop'
 
 - name: Include collaboration tools (Mattermost, Firefox extensions)
   ansible.builtin.include_tasks: collaboration.yml
   tags: [collaboration]
+  when: workstation_profile == 'desktop'
 
 - name: Include Git configuration
   ansible.builtin.include_tasks: git-config.yml
@@ -99,41 +120,56 @@
 - name: Include display configuration (GDM, VNC, GNOME)
   ansible.builtin.include_tasks: display-config.yml
   tags: [display]
-  when: display_config_enabled | default(false)
+  when:
+    - workstation_profile == 'desktop'
+    - display_config_enabled | default(false)
 
 - name: Include Sunshine remote streaming
   ansible.builtin.include_tasks: streaming.yml
   tags: [streaming, sunshine]
-  when: sunshine_enabled | default(false)
+  when:
+    - workstation_profile == 'desktop'
+    - sunshine_enabled | default(false)
 
 - name: Include firewall (UFW)
   ansible.builtin.include_tasks: firewall.yml
   tags: [firewall]
-  when: firewall_enabled | default(false)
+  when:
+    - workstation_profile == 'desktop'
+    - firewall_enabled | default(false)
 
 - name: Include Keycloak SSO (authd + authd-oidc)
   ansible.builtin.include_tasks: keycloak-sso.yml
   tags: [keycloak, sso]
-  when: keycloak_sso_enabled | default(false)
+  when:
+    - workstation_profile == 'desktop'
+    - keycloak_sso_enabled | default(false)
 
 - name: Include Ziti edge tunnel + OIDC session hooks
   ansible.builtin.include_tasks: ziti.yml
   tags: [ziti, networking]
-  when: ziti_enabled | default(false)
+  when:
+    - workstation_profile == 'desktop'
+    - ziti_enabled | default(false)
 
 - name: Include profile cleanup timer
   ansible.builtin.include_tasks: profile-cleanup.yml
   tags: [profile-cleanup]
-  when: profile_cleanup_enabled | default(false)
+  when:
+    - workstation_profile == 'desktop'
+    - profile_cleanup_enabled | default(false)
 
 - name: Include hardware-specific drivers
   ansible.builtin.include_tasks: hardware-drivers.yml
   tags: [hardware]
+  when: workstation_profile == 'desktop'
 
 - name: Include fonts
   ansible.builtin.include_tasks: fonts.yml
   tags: [fonts]
+  when: workstation_profile == 'desktop'
 
 - name: Include ansible-pull timer
   ansible.builtin.include_tasks: ansible-pull-timer.yml
   tags: [ansible-pull]
+  when: workstation_profile == 'desktop'

@@ -1,6 +1,15 @@
 ---
 dev_user: curiosity
 dev_user_home: /home/curiosity
+# Role profile:
+#   desktop   = full workstation (physical/VM desktop host)
+#   workspace = container-safe Coder workspace profile
+workstation_profile: desktop
+
+# Default editor command written to shell rc files.
+# Workspace profile should override this to terminal-friendly editors.
+preferred_editor: "code --wait"
+
 node_major_version: "25"
 # Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
 # (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)

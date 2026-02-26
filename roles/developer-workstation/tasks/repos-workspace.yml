@@ -1,0 +1,95 @@
+---
+# =============================================================================
+# APT Repository Setup (Workspace Profile)
+# =============================================================================
+# Container-safe repository set for Coder workspaces.
+# Excludes desktop/browser/enterprise-only repos.
+# =============================================================================
+
+# --- GitHub CLI ---
+- name: Download GitHub CLI GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+    creates: /usr/share/keyrings/githubcli-archive-keyring.gpg
+
+- name: Add GitHub CLI repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
+    filename: github-cli
+    state: present
+  notify: Update apt cache
+
+# --- .NET SDK (Microsoft) ---
+- name: Download Microsoft GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg
+    creates: /usr/share/keyrings/microsoft-archive-keyring.gpg
+
+- name: Add Microsoft .NET SDK repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/ubuntu/24.04/prod {{ apt_fallback_release }} main"
+    filename: microsoft-dotnet
+    state: present
+  notify: Update apt cache
+
+# --- Google Cloud CLI ---
+- name: Download Google Cloud GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud-google-archive-keyring.gpg
+    creates: /usr/share/keyrings/cloud-google-archive-keyring.gpg
+
+- name: Add Google Cloud CLI repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/cloud-google-archive-keyring.gpg] https://packages.cloud.google.com/apt cloud-sdk main"
+    filename: google-cloud-sdk
+    state: present
+  notify: Update apt cache
+
+# --- Kubernetes (kubectl) ---
+- name: Download Kubernetes GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
+    creates: /usr/share/keyrings/kubernetes-archive-keyring.gpg
+
+- name: Add Kubernetes repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /"
+    filename: kubernetes
+    state: present
+  notify: Update apt cache
+
+# --- HashiCorp (terraform, packer, vault) ---
+- name: Download HashiCorp GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+- name: Add HashiCorp repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com {{ apt_fallback_release }} main"
+    filename: hashicorp
+    state: present
+  notify: Update apt cache
+
+# --- MongoDB (mongosh) ---
+- name: Download MongoDB GPG key
+  ansible.builtin.shell:
+    cmd: curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-archive-keyring.gpg
+    creates: /usr/share/keyrings/mongodb-archive-keyring.gpg
+
+- name: Add MongoDB repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg] https://repo.mongodb.org/apt/ubuntu {{ apt_fallback_release }}/mongodb-org/8.0 multiverse"
+    filename: mongodb-org
+    state: present
+  notify: Update apt cache
+
+# --- Node.js (NodeSource) ---
+- name: Install Node.js repository via NodeSource setup script
+  ansible.builtin.shell:
+    cmd: "curl -fsSL https://deb.nodesource.com/setup_{{ node_major_version }}.x | bash -"
+    creates: /etc/apt/sources.list.d/nodesource.list
+  notify: Update apt cache
+
+- name: Flush handlers to update apt cache
+  ansible.builtin.meta: flush_handlers

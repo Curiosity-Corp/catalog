@@ -1,0 +1,182 @@
+---
+# =============================================================================
+# APT Package Installation (Workspace Profile)
+# =============================================================================
+# Container-safe package set for Coder workspaces.
+# Avoids desktop/browser/systemd-host dependencies.
+# =============================================================================
+
+- name: Install workspace APT packages
+  ansible.builtin.apt:
+    name:
+      # --- Build tools ---
+      - build-essential
+      - gcc
+      - g++
+      - make
+      - cmake
+      - pkg-config
+      - autoconf
+      - automake
+      - libtool
+      # --- Python ---
+      - python3
+      - python3-pip
+      - python3-venv
+      - python3-dev
+      - pipx
+      # --- Node.js ---
+      - nodejs
+      # --- Java ---
+      - openjdk-21-jdk
+      # --- Ruby ---
+      - ruby
+      - ruby-dev
+      # --- Git ---
+      - git
+      - git-lfs
+      - tig
+      - gh
+      # --- Google Cloud CLI ---
+      - google-cloud-cli
+      # --- Kubernetes ---
+      - kubectl
+      # --- HashiCorp ---
+      - terraform
+      - packer
+      - vault
+      # --- Ansible ---
+      - ansible
+      - ansible-lint
+      # --- JSON/YAML ---
+      - jq
+      # --- Modern search/file tools ---
+      - ripgrep
+      - fd-find
+      - bat
+      - eza
+      - fzf
+      # --- Terminal multiplexers/shells ---
+      - tmux
+      - tmate
+      - zsh
+      - screen
+      # --- Editors ---
+      - neovim
+      - vim
+      - nano
+      # --- Environment ---
+      - direnv
+      # --- Linting ---
+      - shellcheck
+      # --- HTTP client ---
+      - httpie
+      # --- File utilities ---
+      - tree
+      - ncdu
+      - tealdeer
+      - tokei
+      # --- Archive tools ---
+      - unzip
+      - zip
+      - p7zip-full
+      - zstd
+      - pigz
+      # --- Network diagnostics ---
+      - nmap
+      - dnsutils
+      - mtr-tiny
+      - traceroute
+      - whois
+      - ipcalc
+      # --- Network monitoring ---
+      - tcpdump
+      - iperf3
+      - iftop
+      # --- System debugging ---
+      - strace
+      - ltrace
+      - sysstat
+      - iotop
+      - lsof
+      - psmisc
+      # --- FUSE ---
+      - libfuse2
+      # --- System essentials ---
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - software-properties-common
+      # --- Databases (clients) ---
+      - sqlite3
+      - libsqlite3-dev
+      - redis-tools
+      - postgresql-client
+      - default-mysql-client
+      - mongodb-mongosh
+      # --- Networking tools ---
+      - socat
+      - netcat-openbsd
+      # --- SSH ---
+      - openssh-client
+      - sshfs
+      # --- Misc utilities ---
+      - entr
+      - pv
+      - bc
+      - dos2unix
+      - rename
+      - expect
+      - parallel
+      - wget
+      - curl
+      - btop
+      - skopeo
+      # --- PHP ---
+      - php-cli
+      - php-curl
+      - php-mbstring
+      - php-xml
+      - php-zip
+      # --- .NET ---
+      - dotnet-sdk-9.0
+      # --- Document conversion ---
+      - pandoc
+      - graphviz
+      - ffmpeg
+      - imagemagick
+      - texlive-base
+      - texlive-latex-extra
+      - protobuf-compiler
+      # --- Debugger ---
+      - gdb
+      # --- Containers (daemonless, no background daemon) ---
+      - podman
+      - buildah
+      # --- pyenv build dependencies ---
+      - libssl-dev
+      - libbz2-dev
+      - libreadline-dev
+      - libffi-dev
+      - liblzma-dev
+      - zlib1g-dev
+      # --- Scientific Python system dependencies ---
+      - libhdf5-dev
+      - libegl1
+    state: present
+    update_cache: true
+
+- name: Remove unwanted packages
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+      - docker-buildx-plugin
+      - rancher
+      - cloudflared
+      - tailscale
+    state: absent
+    purge: true
