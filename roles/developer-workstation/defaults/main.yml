@@ -89,11 +89,32 @@ profile_cleanup_days: 60
 # =============================================================================
 hardware_profile: generic
 
+# Multi-factor authentication (PAM TOTP + fingerprint enforcement)
+mfa_auth_enabled: true
+
 hardware_profiles:
   generic:
     description: "Generic developer workstation (no hardware-specific drivers)"
     packages: []
     services: []
+    pia_vpn: false
+
+  t560:
+    description: "Lenovo ThinkPad T560 — suzanne-laptop"
+    packages:
+      # Intel HD Graphics 520 (Skylake gen9) video acceleration
+      - intel-media-va-driver
+      - intel-gpu-tools
+      - vainfo
+      # Fingerprint reader (Validity Sensors USB 138a:*)
+      # PAM stack (TOTP + fingerprint integration) handled by mfa-auth.yml
+      - fprintd
+      - libpam-fprintd
+      # Intel 8260 WiFi + Bluetooth firmware
+      - linux-firmware
+    services:
+      - fprintd
+    udev_rules: []
     pia_vpn: false
 
   z590:

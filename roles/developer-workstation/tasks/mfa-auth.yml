@@ -1,0 +1,107 @@
+---
+# =============================================================================
+# Multi-Factor Authentication — PAM Stack
+# =============================================================================
+# Layers all available login factors on the workstation:
+#   - Fingerprint  (libpam-fprintd / fprintd hardware daemon)
+#   - TOTP         (libpam-google-authenticator — per-user enrollment required)
+#   - Password     (pam_unix — always present as final factor)
+#
+# The local PAM stack applies to: GDM fallback, TTY login, sudo, screensaver.
+# Keycloak OIDC (authd) is handled separately and enforces MFA server-side.
+# For non-OIDC logins: fingerprint alone succeeds, OR password + TOTP required.
+#
+# TOTP uses nullok during transition (users who haven't enrolled can still log
+# in with password only). Remove nullok once all users have enrolled.
+# =============================================================================
+
+# --- Packages ---
+
+- name: Install TOTP and MFA PAM packages
+  ansible.builtin.apt:
+    name:
+      - libpam-google-authenticator  # TOTP PAM module (pam_google_authenticator.so)
+      - qrencode                      # QR code display during google-authenticator --setup
+      - oathtool                      # CLI TOTP generator for manual verification / recovery
+    state: present
+
+# --- pam-auth-update profile for TOTP ---
+# Ubuntu manages /etc/pam.d/common-auth via drop-in profiles in
+# /usr/share/pam-configs/. Dropping a profile here + running pam-auth-update
+# is the distro-safe way to insert PAM modules that survive upgrades.
+#
+# Priority 128: runs after fingerprint (100) but before password (192),
+# so the stack order is: fingerprint → TOTP → password.
+# success=done on fingerprint means TOTP + password are skipped when finger auth passes.
+
+- name: Deploy google-authenticator pam-configs profile
+  ansible.builtin.copy:
+    dest: /usr/share/pam-configs/google-authenticator
+    content: |
+      Name: Google Authenticator TOTP
+      Default: yes
+      Priority: 128
+      Auth-Type: Primary
+      Auth:
+              [success=done default=ignore]    pam_google_authenticator.so nullok
+      Auth-Initial:
+              [success=done default=ignore]    pam_google_authenticator.so nullok
+    owner: root
+    group: root
+    mode: "0644"
+  register: _totp_pam_profile
+
+# --- Enable both factors via pam-auth-update ---
+# libpam-fprintd ships /usr/share/pam-configs/fprintd — we enable it alongside
+# the TOTP profile. pam-auth-update --enable is idempotent; re-running is safe.
+
+- name: Check if fprintd is active in common-auth
+  ansible.builtin.command: grep -q pam_fprintd /etc/pam.d/common-auth
+  register: _fprintd_in_pam
+  changed_when: false
+  failed_when: false
+
+- name: Enable fingerprint auth via pam-auth-update
+  ansible.builtin.command: pam-auth-update --enable fprintd
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: _fprintd_in_pam.rc != 0
+  changed_when: true
+
+- name: Check if google-authenticator is active in common-auth
+  ansible.builtin.command: grep -q pam_google_authenticator /etc/pam.d/common-auth
+  register: _totp_in_pam
+  changed_when: false
+  failed_when: false
+
+- name: Enable TOTP auth via pam-auth-update
+  ansible.builtin.command: pam-auth-update --enable google-authenticator
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  when: _totp_in_pam.rc != 0
+  changed_when: true
+
+# --- fprintd service ---
+
+- name: Ensure fprintd service is enabled and running
+  ansible.builtin.systemd:
+    name: fprintd
+    enabled: true
+    state: started
+
+# --- TOTP enrollment reminder ---
+# Runs on first deploy (when the pam-configs profile was just created).
+# After this, users must run google-authenticator themselves to enroll.
+
+- name: Display TOTP enrollment reminder
+  ansible.builtin.debug:
+    msg: >-
+      TOTP PAM module installed but NOT yet enrolled for {{ dev_user }}.
+      Run as {{ dev_user }} to enroll:
+        google-authenticator --time-based --disallow-reuse --force
+          --rate-limit=3 --rate-time=30 --window-size=3
+      Scan the QR code into Aegis, Google Authenticator, or any TOTP app.
+      Until enrolled, the nullok option allows password-only login (grace period).
+      Remove nullok from /usr/share/pam-configs/google-authenticator once all
+      users have enrolled to enforce TOTP for every non-fingerprint login.
+  when: _totp_pam_profile.changed

@@ -145,6 +145,13 @@
     - workstation_profile == 'desktop'
     - keycloak_sso_enabled | default(false)
 
+- name: Include multi-factor authentication (PAM TOTP + fingerprint)
+  ansible.builtin.include_tasks: mfa-auth.yml
+  tags: [mfa, auth, security]
+  when:
+    - workstation_profile == 'desktop'
+    - mfa_auth_enabled | default(false)
+
 - name: Include Ziti edge tunnel + OIDC session hooks
   ansible.builtin.include_tasks: ziti.yml
   tags: [ziti, networking]
