@@ -20,7 +20,6 @@
     - eslint
     - prettier
     - "@mermaid-js/mermaid-cli"
-    - "@qwen-code/qwen-code"
   register: _npm_result
   failed_when:
     - _npm_result is failed
