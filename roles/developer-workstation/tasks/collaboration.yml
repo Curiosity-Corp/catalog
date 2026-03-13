@@ -8,34 +8,49 @@
 # =============================================================================
 # Mattermost Desktop
 # =============================================================================
-# Installs from GitHub release tarball to /opt/mattermost-desktop with a
-# symlink to /usr/local/bin. No .deb available since v6.x.
+# Installs from GitHub release tarball under /opt and keeps
+# /opt/mattermost-desktop pointed at the latest managed version.
+# No .deb available since v6.x.
 # =============================================================================
-
-- name: Check if Mattermost Desktop is installed
-  ansible.builtin.stat:
-    path: /opt/mattermost-desktop/mattermost-desktop
-  register: mattermost_desktop_installed
 
 - name: Get Mattermost Desktop latest version
   ansible.builtin.uri:
     url: https://api.github.com/repos/mattermost/desktop/releases/latest
     return_content: true
   register: mattermost_desktop_release
-  when: not mattermost_desktop_installed.stat.exists
 
-- name: Download and extract Mattermost Desktop
+- name: Set Mattermost Desktop version facts
+  ansible.builtin.set_fact:
+    mattermost_desktop_version: "{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}"
+    mattermost_desktop_dir: "/opt/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-x64"
+
+- name: Check Mattermost Desktop path state
+  ansible.builtin.stat:
+    path: /opt/mattermost-desktop
+    follow: false
+  register: mattermost_desktop_path
+
+- name: Download and extract Mattermost Desktop desired version
   ansible.builtin.unarchive:
     src: "https://github.com/mattermost/desktop/releases/download/{{ mattermost_desktop_release.json.tag_name }}/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-x64.tar.gz"
     dest: /opt
     remote_src: true
-  when: not mattermost_desktop_installed.stat.exists
+    creates: "{{ mattermost_desktop_dir }}"
 
-- name: Rename Mattermost Desktop directory
-  ansible.builtin.command:
-    cmd: "mv /opt/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-x64 /opt/mattermost-desktop"
-    creates: /opt/mattermost-desktop
-  when: not mattermost_desktop_installed.stat.exists
+- name: Remove legacy Mattermost Desktop directory layout
+  ansible.builtin.file:
+    path: /opt/mattermost-desktop
+    state: absent
+  when:
+    - mattermost_desktop_path.stat.exists
+    - not (mattermost_desktop_path.stat.islnk | default(false))
+
+- name: Symlink Mattermost Desktop current version
+  ansible.builtin.file:
+    src: "{{ mattermost_desktop_dir }}"
+    dest: /opt/mattermost-desktop
+    state: link
+    force: true
 
 - name: Symlink Mattermost Desktop to PATH
   ansible.builtin.file:
