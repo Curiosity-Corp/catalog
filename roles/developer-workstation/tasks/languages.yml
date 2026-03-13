@@ -146,13 +146,12 @@
   environment:
     HOME: "{{ dev_user_home }}"
 
-- name: Configure SDKMAN to not phone home on shell init
+- name: Configure SDKMAN curl timeouts to fail fast when unreachable
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.sdkman/etc/config"
     regexp: "{{ item.regexp }}"
     line: "{{ item.line }}"
   loop:
-    - { regexp: '^sdkman_selfupdate_feature=', line: 'sdkman_selfupdate_feature=false' }
     - { regexp: '^sdkman_curl_connect_timeout=', line: 'sdkman_curl_connect_timeout=2' }
     - { regexp: '^sdkman_curl_max_time=', line: 'sdkman_curl_max_time=3' }
   become: true
