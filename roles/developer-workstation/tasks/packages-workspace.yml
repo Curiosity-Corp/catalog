@@ -13,8 +13,11 @@
       - build-essential
       - gcc
       - g++
+      - clang
       - make
       - cmake
+      - meson
+      - ninja-build
       - pkg-config
       - autoconf
       - automake
@@ -128,6 +131,7 @@
       - rename
       - expect
       - parallel
+      - rsync
       - wget
       - curl
       - btop
@@ -150,6 +154,10 @@
       - protobuf-compiler
       # --- Debugger ---
       - gdb
+      - lldb
+      - valgrind
+      - cppcheck
+      - xvfb
       # --- Containers (daemonless, no background daemon) ---
       - podman
       - buildah
