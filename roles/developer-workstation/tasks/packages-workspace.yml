@@ -78,7 +78,7 @@
       - tree
       - ncdu
       - tealdeer
-      - tokei
+      # tokei - installed via cargo, not available in apt
       # --- Archive tools ---
       - unzip
       - zip
@@ -143,7 +143,7 @@
       - php-xml
       - php-zip
       # --- .NET ---
-      - dotnet-sdk-9.0
+      - dotnet-sdk-8.0
       # --- Document conversion ---
       - pandoc
       - graphviz
