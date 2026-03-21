@@ -276,16 +276,22 @@
       alias docker-compose='podman compose'
 
       # --- Modern replacements ---
-      alias cat='bat --paging=never 2>/dev/null || command cat'
-      alias ls='eza --icons 2>/dev/null || command ls --color=auto'
-      alias ll='eza -alh --icons 2>/dev/null || command ls -alh --color=auto'
-      alias la='eza -a --icons 2>/dev/null || command ls -a --color=auto'
-      alias lt='eza --tree --icons 2>/dev/null || tree'
+      # NOTE: Do not use 'alias cmd=replacement 2>/dev/null || command cmd'
+      # pattern. Bash aliases are simple text substitution — arguments only
+      # attach to the LAST command in the chain, not the first. This causes
+      # 'cat file' to run 'bat --paging=never' with NO file arg (hangs on
+      # stdin) then falls through to 'command cat file'. Use plain aliases
+      # since these tools are installed by this role.
+      alias cat='bat --paging=never'
+      alias ls='eza --icons'
+      alias ll='eza -alh --icons'
+      alias la='eza -a --icons'
+      alias lt='eza --tree --icons'
       alias grep='grep --color=auto'
-      alias diff='delta 2>/dev/null || command diff --color=auto'
-      alias du='dust 2>/dev/null || command du -h'
-      alias df='duf 2>/dev/null || command df -h'
-      alias top='btop 2>/dev/null || command top'
+      alias diff='delta'
+      alias du='dust'
+      alias df='duf'
+      alias top='btop'
 
       # --- Network/system aliases ---
       alias ports='ss -tlnp'
