@@ -2,12 +2,21 @@
 # =============================================================================
 # Scientific Python & Data Science Tools
 # =============================================================================
-# Installs a broad scientific stack system-wide so tools are available from:
-# - terminal workflows
-# - notebooks (JupyterLab kernel)
+# Installs a broad scientific stack into a dedicated virtual environment at
+# /opt/science-venv so tools are available from:
+# - terminal workflows (venv bin is on PATH via /etc/profile.d)
+# - notebooks (JupyterLab kernel registered as "Python 3 (Science)")
+#
+# This avoids PEP 668 --break-system-packages, which can corrupt system Python
+# and caused OOM crashes when compiling C extensions on constrained machines.
 # =============================================================================
 
-- name: Install scientific Python packages (system-wide)
+- name: Create /opt/science-venv virtual environment
+  ansible.builtin.command:
+    cmd: python3 -m venv /opt/science-venv
+    creates: /opt/science-venv/bin/activate
+
+- name: Install scientific Python packages into venv
   ansible.builtin.pip:
     name:
       # --- Core data science ---
@@ -42,11 +51,38 @@
       - h5py
       - qutip
       - astropy
-    executable: pip3
+    virtualenv: /opt/science-venv
     state: present
-    extra_args: --break-system-packages
 
-- name: Register system Python kernel for Jupyter
+- name: Add science-venv bin to PATH for all interactive shells
+  ansible.builtin.copy:
+    dest: /etc/profile.d/science-venv.sh
+    mode: "0644"
+    content: |
+      # Added by developer-workstation role — science-tools
+      if [ -d /opt/science-venv/bin ]; then
+        export PATH="/opt/science-venv/bin:$PATH"
+      fi
+
+- name: Symlink jupyter into /usr/local/bin for non-login shells
+  ansible.builtin.file:
+    src: /opt/science-venv/bin/jupyter
+    dest: /usr/local/bin/jupyter
+    state: link
+    force: true
+
+- name: Symlink ipython into /usr/local/bin for non-login shells
+  ansible.builtin.file:
+    src: /opt/science-venv/bin/ipython
+    dest: /usr/local/bin/ipython
+    state: link
+    force: true
+
+- name: Register venv Python as a Jupyter kernel
   ansible.builtin.command:
-    cmd: python3 -m ipykernel install --name python3 --display-name "Python 3 (System)" --prefix /usr/local
-    creates: /usr/local/share/jupyter/kernels/python3/kernel.json
+    cmd: >-
+      /opt/science-venv/bin/python -m ipykernel install
+      --name science
+      --display-name "Python 3 (Science)"
+      --prefix /usr/local
+    creates: /usr/local/share/jupyter/kernels/science/kernel.json
