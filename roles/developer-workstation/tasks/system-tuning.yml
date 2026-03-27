@@ -1,0 +1,120 @@
+---
+# =============================================================================
+# System Tuning
+# =============================================================================
+# Memory management, swap sizing, and OOM protection for developer workstations.
+# Prevents hard freezes under heavy multi-terminal / Electron app workloads.
+# =============================================================================
+
+# =============================================================================
+# Swap Configuration
+# =============================================================================
+# Ensures swap file exists at the configured size. Resizes if needed.
+# Default 16G provides headroom for 16GB+ RAM machines running heavy
+# terminal workloads alongside Electron apps (browsers, chat clients, IDEs).
+# =============================================================================
+
+- name: Check current swap file
+  ansible.builtin.stat:
+    path: /swap.img
+  register: _swap_file
+
+- name: Get current swap size in bytes
+  ansible.builtin.set_fact:
+    _current_swap_bytes: "{{ _swap_file.stat.size | default(0) }}"
+  when: _swap_file.stat.exists | default(false)
+
+- name: Calculate desired swap size in bytes
+  ansible.builtin.set_fact:
+    _desired_swap_bytes: "{{ swap_size_gb | int * 1073741824 }}"
+
+- name: Resize swap file
+  when: >
+    not (_swap_file.stat.exists | default(false)) or
+    (_current_swap_bytes | default(0) | int) != (_desired_swap_bytes | int)
+  block:
+    - name: Disable current swap
+      ansible.builtin.command: swapoff /swap.img
+      failed_when: false
+      changed_when: true
+
+    - name: Allocate swap file
+      ansible.builtin.command: fallocate -l {{ swap_size_gb }}G /swap.img
+      changed_when: true
+
+    - name: Set swap file permissions
+      ansible.builtin.file:
+        path: /swap.img
+        mode: "0600"
+
+    - name: Format swap file
+      ansible.builtin.command: mkswap /swap.img
+      changed_when: true
+
+    - name: Enable swap file
+      ansible.builtin.command: swapon /swap.img
+      changed_when: true
+
+- name: Ensure swap is in fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '/swap\.img'
+    line: '/swap.img none swap sw 0 0'
+    state: present
+
+# =============================================================================
+# VM Swappiness
+# =============================================================================
+# Lower swappiness keeps more in RAM instead of aggressively filling swap
+# while RAM still has room. Default 10 is good for workstations.
+# =============================================================================
+
+- name: Set vm.swappiness
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible — developer-workstation role
+      vm.swappiness={{ vm_swappiness }}
+    dest: /etc/sysctl.d/99-workstation-tuning.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: _sysctl_conf
+
+- name: Apply sysctl settings  # noqa: no-handler
+  ansible.builtin.command: sysctl --system
+  changed_when: true
+  when: _sysctl_conf.changed
+
+# =============================================================================
+# earlyoom — Userspace OOM Killer
+# =============================================================================
+# Kills the biggest memory hog before the system freezes. The kernel OOM
+# killer triggers too late (after the system is already thrashing). earlyoom
+# watches memory pressure and sends SIGTERM/SIGKILL before it's unrecoverable.
+#
+# Thresholds: SIGTERM at mem<=5% AND swap<=50%, SIGKILL at mem<=2.5% AND swap<=25%
+# Reports every 60s to journal for monitoring.
+# =============================================================================
+
+- name: Install earlyoom
+  ansible.builtin.apt:
+    name: earlyoom
+    state: present
+
+- name: Configure earlyoom thresholds
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible — developer-workstation role
+      # Report every 60s, SIGTERM at 5% mem + 50% swap, SIGKILL at 2.5% mem + 25% swap
+      EARLYOOM_ARGS="-r 60 -m 5 -s 50"
+    dest: /etc/default/earlyoom
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart earlyoom
+
+- name: Ensure earlyoom is enabled and running
+  ansible.builtin.systemd:
+    name: earlyoom
+    enabled: true
+    state: started

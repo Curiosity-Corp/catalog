@@ -1,0 +1,136 @@
+---
+# =============================================================================
+# WeeChat TUI Chat Client
+# =============================================================================
+# Installs WeeChat with wee-slack (Slack) and wee-most (Mattermost) plugins.
+# Plugins are built from source and placed in the user's weechat data dir
+# with autoload enabled.
+#
+# After install, the user must configure credentials interactively:
+#   Slack:      /slack register  (repeat per workspace)
+#   Mattermost: /mattermost server add <name>
+#               /set wee_most.server.<name>.url "https://..."
+#               /set wee_most.server.<name>.username "..."
+#               /secure set mm_password <password>
+#               /set wee_most.server.<name>.password "${sec.data.mm_password}"
+#               /mattermost connect <name>
+# =============================================================================
+
+# --- APT packages ---
+- name: Install WeeChat and plugin dependencies
+  ansible.builtin.apt:
+    name:
+      - weechat
+      - weechat-plugins
+      - weechat-python
+      - weechat-perl
+      - python3-websocket
+    state: present
+
+# --- Plugin directories ---
+- name: Ensure WeeChat plugin directories exist
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.local/share/weechat/python/autoload"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+# =============================================================================
+# wee-slack (Slack TUI client)
+# =============================================================================
+# The v2.x+ source is multi-file and needs build.sh to compile into slack.py.
+# =============================================================================
+
+- name: Check if wee-slack is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.local/share/weechat/python/slack.py"
+  register: _weeslack_installed
+
+- name: Clone wee-slack source  # noqa: latest[git]
+  ansible.builtin.git:
+    repo: https://github.com/wee-slack/wee-slack.git
+    dest: /tmp/wee-slack
+    depth: 1
+    force: true
+  when: not _weeslack_installed.stat.exists
+
+- name: Build wee-slack (compile multi-file source into single slack.py)  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: bash build.sh
+    chdir: /tmp/wee-slack
+    creates: /tmp/wee-slack/build/slack.py
+  when: not _weeslack_installed.stat.exists
+
+- name: Install wee-slack plugin
+  ansible.builtin.copy:
+    src: /tmp/wee-slack/build/slack.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/slack.py"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    remote_src: true
+  when: not _weeslack_installed.stat.exists
+
+- name: Enable wee-slack autoload
+  ansible.builtin.file:
+    src: ../slack.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/autoload/slack.py"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+
+- name: Clean up wee-slack build directory
+  ansible.builtin.file:
+    path: /tmp/wee-slack
+    state: absent
+
+# =============================================================================
+# wee-most (Mattermost TUI client)
+# =============================================================================
+
+- name: Check if wee-most is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.local/share/weechat/python/wee_most.py"
+  register: _weemost_installed
+
+- name: Clone wee-most source  # noqa: latest[git]
+  ansible.builtin.git:
+    repo: https://git.sr.ht/~tardypad/wee-most
+    dest: /tmp/wee-most
+    depth: 1
+    force: true
+  when: not _weemost_installed.stat.exists
+
+- name: Install wee-most plugin
+  ansible.builtin.copy:
+    src: /tmp/wee-most/wee_most.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/wee_most.py"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    remote_src: true
+  when: not _weemost_installed.stat.exists
+
+- name: Install wee-most emoji data
+  ansible.builtin.copy:
+    src: /tmp/wee-most/wee_most_emojis
+    dest: "{{ dev_user_home }}/.local/share/weechat/wee_most_emojis"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    remote_src: true
+  when: not _weemost_installed.stat.exists
+
+- name: Enable wee-most autoload
+  ansible.builtin.file:
+    src: ../wee_most.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/autoload/wee_most.py"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+
+- name: Clean up wee-most build directory
+  ansible.builtin.file:
+    path: /tmp/wee-most
+    state: absent

@@ -15,3 +15,8 @@
   ansible.builtin.command: "loginctl kill-user {{ dev_user }}"
   changed_when: true
   failed_when: false
+
+- name: Restart earlyoom
+  ansible.builtin.systemd:
+    name: earlyoom
+    state: restarted

@@ -20,6 +20,14 @@ ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
 
+# WeeChat TUI chat client (wee-slack + wee-most plugins)
+weechat_enabled: true
+
+# System tuning (swap, swappiness, earlyoom OOM protection)
+system_tuning_enabled: true
+swap_size_gb: 16
+vm_swappiness: 10
+
 # Entra ID SSO — SUNSET, replaced by Keycloak SSO
 entra_id_enabled: false
 

@@ -109,6 +109,18 @@
   tags: [collaboration]
   when: workstation_profile == 'desktop'
 
+- name: Include WeeChat TUI chat client
+  ansible.builtin.include_tasks: weechat.yml
+  tags: [weechat, chat]
+  when: weechat_enabled | default(false)
+
+- name: Include system tuning (swap, earlyoom, sysctl)
+  ansible.builtin.include_tasks: system-tuning.yml
+  tags: [tuning, system]
+  when:
+    - workstation_profile == 'desktop'
+    - system_tuning_enabled | default(false)
+
 - name: Include Git configuration
   ansible.builtin.include_tasks: git-config.yml
   tags: [git]
