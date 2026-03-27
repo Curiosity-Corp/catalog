@@ -62,13 +62,51 @@ class Config:
 
     def read(self):
         weechat.config_read(self.file)
-        # After reading, ensure server options are registered in our dict.
-        # The create_server_option_cb may not fire on reload if options
-        # already exist in weechat's internal config state.
-        autoconnect = self.get_value("server", "autoconnect")
-        if isinstance(autoconnect, str):
-            autoconnect = [s.strip() for s in autoconnect.split(",") if s.strip()]
-        for server_id in autoconnect:
+
+        # On plugin reload, the C-level config objects from the previous
+        # load may prevent create_server_option_cb from firing. When that
+        # happens, our Python options dict is missing server entries.
+        # Fix: parse the conf file directly and call add_server_options()
+        # for any servers we missed.
+        self._ensure_servers_from_conf_file()
+
+    def _ensure_servers_from_conf_file(self):
+        """Parse wee_most.conf to discover server IDs and register their
+        options if missing from our dict. This is the nuclear option that
+        bypasses weechat's config callback system entirely."""
+        import os
+        conf_path = os.path.join(
+            weechat.info_get("weechat_config_dir", "") or
+            weechat.info_get("weechat_dir", ""),
+            "wee_most.conf"
+        )
+        if not os.path.exists(conf_path):
+            return
+
+        server_ids = set()
+        try:
+            with open(conf_path, "r") as f:
+                in_server_section = False
+                for line in f:
+                    line = line.strip()
+                    if line == "[server]":
+                        in_server_section = True
+                        continue
+                    if line.startswith("[") and line.endswith("]"):
+                        in_server_section = False
+                        continue
+                    if not in_server_section:
+                        continue
+                    if "=" not in line or line.startswith("#"):
+                        continue
+                    key = line.split("=", 1)[0].strip()
+                    if "." in key and key != "autoconnect":
+                        server_id = key.rsplit(".", 1)[0]
+                        server_ids.add(server_id)
+        except Exception:
+            return
+
+        for server_id in server_ids:
             if not self.is_server_valid(server_id):
                 self.add_server_options(server_id)
 
