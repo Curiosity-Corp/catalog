@@ -784,7 +784,7 @@ def chat_poll_timer_cb(tenant_name, remaining_calls):
 
 
 def poll_chats(tenant_name):
-    path = "/me/chats?$expand=lastMessagePreview&$orderby=lastMessagePreview/createdDateTime desc&$top=50"
+    path = "/me/chats?%24expand=lastMessagePreview&%24orderby=lastMessagePreview/createdDateTime%20desc&%24top=50"
     graph_get(tenant_name, path, "poll_chats_cb", tenant_name)
 
 
@@ -794,13 +794,13 @@ def poll_chats_cb(tenant_name, command, rc, out, err):
         return weechat.WEECHAT_RC_ERROR
 
     if rc != 0:
-        t.print_error("Chat poll failed (rc={})".format(rc))
+        t.print_error("Chat poll failed (rc={}) err={} out={}".format(rc, err[:200] if err else "", out[:200] if out else ""))
         return weechat.WEECHAT_RC_ERROR
 
     try:
         data = json.loads(out)
     except (json.JSONDecodeError, ValueError) as e:
-        t.print_error("Chat poll parse error: {}".format(str(e)))
+        t.print_error("Chat poll parse error: {} — response: {}".format(str(e), out[:300] if out else "(empty)"))
         return weechat.WEECHAT_RC_ERROR
 
     if "error" in data:
@@ -983,7 +983,7 @@ def _ensure_chat_buffer(tenant, chat_id):
 # ---------------------------------------------------------------------------
 
 def fetch_chat_messages(tenant_name, chat_id):
-    path = "/me/chats/{}/messages?$top=20&$orderby=createdDateTime desc".format(chat_id)
+    path = "/me/chats/{}/messages?%24top=20&%24orderby=createdDateTime%20desc".format(chat_id)
     cb_data = "{}|{}".format(tenant_name, chat_id)
     graph_get(tenant_name, path, "fetch_chat_messages_cb", cb_data)
 
@@ -1078,7 +1078,7 @@ def poll_teams_cb(tenant_name, command, rc, out, err):
         return weechat.WEECHAT_RC_ERROR
 
     if rc != 0:
-        t.print_error("Teams poll failed (rc={})".format(rc))
+        t.print_error("Teams poll failed (rc={}) err={} out={}".format(rc, err[:200] if err else "", out[:200] if out else ""))
         return weechat.WEECHAT_RC_ERROR
 
     try:
@@ -1205,7 +1205,7 @@ def _ensure_channel_buffer(tenant, team_id, channel_id):
 # ---------------------------------------------------------------------------
 
 def fetch_channel_messages(tenant_name, team_id, channel_id):
-    path = "/teams/{}/channels/{}/messages?$top=20".format(team_id, channel_id)
+    path = "/teams/{}/channels/{}/messages?%24top=20".format(team_id, channel_id)
     cb_data = "{}|{}|{}".format(tenant_name, team_id, channel_id)
     graph_get(tenant_name, path, "fetch_channel_messages_cb", cb_data)
 
