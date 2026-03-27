@@ -802,10 +802,15 @@ def poll_chats_cb(tenant_name, command, rc, out, err):
         t.print_error("Chat poll failed (rc={}) err={} out={}".format(rc, err[:200] if err else "", out[:200] if out else ""))
         return weechat.WEECHAT_RC_ERROR
 
+    if not out or not out.strip():
+        # Empty response — skip silently (transient network issue)
+        return weechat.WEECHAT_RC_OK
+
     try:
         data = json.loads(out)
     except (json.JSONDecodeError, ValueError) as e:
-        t.print_error("Chat poll parse error: {} — response: {}".format(str(e), out[:300] if out else "(empty)"))
+        # Log truncated response for debugging, but don't spam on every poll
+        t.print_error("Chat poll parse error: {} — len={} first100={}".format(str(e), len(out), repr(out[:100])))
         return weechat.WEECHAT_RC_ERROR
 
     if "error" in data:

@@ -88,53 +88,21 @@
     state: absent
 
 # =============================================================================
-# wee-most (Mattermost TUI client)
+# wee-most (Mattermost TUI client — patched fork)
 # =============================================================================
-
-- name: Check if wee-most is installed
-  ansible.builtin.stat:
-    path: "{{ dev_user_home }}/.local/share/weechat/python/wee_most.py"
-  register: _weemost_installed
-
-- name: Clone wee-most source  # noqa: latest[git]
-  ansible.builtin.git:
-    repo: https://git.sr.ht/~tardypad/wee-most
-    dest: /tmp/wee-most
-    depth: 1
-    force: true
-  when: not _weemost_installed.stat.exists
-
-- name: Fix wee-most invalid escape sequences for Python 3.12+  # noqa: command-instead-of-module
-  ansible.builtin.command:
-    cmd: >-
-      sed -i
-      -e "s/re\.match('/re.match(r'/g"
-      -e 's/re\.match("/re.match(r"/g'
-      -e "s/re\.compile('/re.compile(r'/g"
-      -e 's/re\.search("/re.search(r"/g'
-      /tmp/wee-most/wee_most.py
-  changed_when: true
-  when: not _weemost_installed.stat.exists
+# Patched from upstream (sr.ht/~tardypad/wee-most) with:
+#   - Python 3.12+ raw string regex fixes
+#   - Personal access token auth (skip login for OIDC-only servers)
+# Deployed from role files/ instead of cloning upstream.
+# =============================================================================
 
 - name: Install wee-most plugin
   ansible.builtin.copy:
-    src: /tmp/wee-most/wee_most.py
+    src: wee_most.py
     dest: "{{ dev_user_home }}/.local/share/weechat/python/wee_most.py"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0644"
-    remote_src: true
-  when: not _weemost_installed.stat.exists
-
-- name: Install wee-most emoji data
-  ansible.builtin.copy:
-    src: /tmp/wee-most/wee_most_emojis
-    dest: "{{ dev_user_home }}/.local/share/weechat/wee_most_emojis"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
-    mode: "0644"
-    remote_src: true
-  when: not _weemost_installed.stat.exists
 
 - name: Enable wee-most autoload
   ansible.builtin.file:
@@ -143,11 +111,6 @@
     state: link
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
-
-- name: Clean up wee-most build directory
-  ansible.builtin.file:
-    path: /tmp/wee-most
-    state: absent
 
 # =============================================================================
 # wee-teams (Microsoft Teams TUI client via Graph API)
