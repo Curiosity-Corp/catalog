@@ -2,18 +2,20 @@
 # =============================================================================
 # WeeChat TUI Chat Client
 # =============================================================================
-# Installs WeeChat with wee-slack (Slack) and wee-most (Mattermost) plugins.
-# Plugins are built from source and placed in the user's weechat data dir
+# Installs WeeChat with plugins for Slack, Mattermost, and Microsoft Teams.
+# Plugins are built/deployed and placed in the user's weechat data dir
 # with autoload enabled.
 #
 # After install, the user must configure credentials interactively:
-#   Slack:      /slack register  (repeat per workspace)
+#   Slack:      /slack workspace add <name>
+#               (set api_token and api_cookies via browser session extraction)
 #   Mattermost: /mattermost server add <name>
 #               /set wee_most.server.<name>.url "https://..."
-#               /set wee_most.server.<name>.username "..."
-#               /secure set mm_password <password>
-#               /set wee_most.server.<name>.password "${sec.data.mm_password}"
+#               /set wee_most.server.<name>.password "${sec.data.mm_token}"
 #               /mattermost connect <name>
+#   Teams:      /teams tenant add <name>
+#               /teams auth <name>
+#               (follow device code flow in browser, then auto-connects)
 # =============================================================================
 
 # --- APT packages ---
@@ -146,3 +148,27 @@
   ansible.builtin.file:
     path: /tmp/wee-most
     state: absent
+
+# =============================================================================
+# wee-teams (Microsoft Teams TUI client via Graph API)
+# =============================================================================
+# Custom plugin using Focus Hive CLI Azure AD app (delegated permissions).
+# Multi-tenant: add tenants with /teams tenant add <name>, auth with device
+# code flow. Messages are sent as the authenticated user, not a bot.
+# =============================================================================
+
+- name: Install wee-teams plugin
+  ansible.builtin.copy:
+    src: teams.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/teams.py"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+- name: Enable wee-teams autoload
+  ansible.builtin.file:
+    src: ../teams.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/autoload/teams.py"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
