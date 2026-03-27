@@ -266,19 +266,24 @@ class EventRouter:
         real_cb = arg_search.group(2)
         real_data = arg_search.group(3)
 
-        if response_buffer_name not in self.response_buffers:
-            self.response_buffers[response_buffer_name] = ""
+        # Use data (unique per hook call) as the buffer key, not just URL
+        buf_key = data
+
+        if buf_key not in self.response_buffers:
+            self.response_buffers[buf_key] = {"out": "", "err": ""}
 
         if rc == weechat.WEECHAT_HOOK_PROCESS_RUNNING:
-            self.response_buffers[response_buffer_name] += out
+            self.response_buffers[buf_key]["out"] += out
+            self.response_buffers[buf_key]["err"] += err
             return weechat.WEECHAT_RC_OK
 
-        response = self.response_buffers[response_buffer_name] + out
-        del self.response_buffers[response_buffer_name]
+        response = self.response_buffers[buf_key]["out"] + out
+        full_err = self.response_buffers[buf_key]["err"] + err
+        del self.response_buffers[buf_key]
 
         cb_func = globals().get(real_cb)
         if cb_func:
-            return cb_func(real_data, command, rc, response, err)
+            return cb_func(real_data, command, rc, response, full_err)
 
         return weechat.WEECHAT_RC_ERROR
 
