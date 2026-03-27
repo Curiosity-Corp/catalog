@@ -197,6 +197,16 @@ class Config:
             ),
             "type": "integer",
         }
+        self.options["look.max_chat_buffers"] = {
+            "pointer": weechat.config_new_option(
+                self.file, self.sections["look"],
+                "max_chat_buffers", "integer",
+                "Max number of chat buffers to open automatically (0=unlimited, most recent first)",
+                "", 0, 500, "20", "20",
+                0, "", "", "", "", "", ""
+            ),
+            "type": "integer",
+        }
 
         # [tenant] section (user can add options dynamically)
         self.sections["tenant"] = weechat.config_new_section(
@@ -797,8 +807,11 @@ def poll_chats_cb(tenant_name, command, rc, out, err):
         t.print_error("Chat poll API error: {}".format(data.get("error", {}).get("message", str(data))))
         return weechat.WEECHAT_RC_ERROR
 
+    max_buffers = config.get_value("look", "max_chat_buffers") or 20
     chats = data.get("value", [])
-    for chat in chats:
+    open_buffer_count = sum(1 for c in t.chats.values() if c.get("buffer"))
+
+    for idx, chat in enumerate(chats):
         chat_id = chat.get("id", "")
         if not chat_id:
             continue
@@ -818,9 +831,14 @@ def poll_chats_cb(tenant_name, command, rc, out, err):
                 existing["last_message_ts"] = last_ts
                 existing["topic"] = topic
                 existing["chatType"] = chat_type
+                # Auto-open buffer if within limit and not already open
+                if not existing.get("buffer") and (max_buffers == 0 or open_buffer_count < max_buffers):
+                    existing["_open_buffer"] = True
+                    EVENTROUTER.enqueue_request("fetch_chat_members", tenant_name, chat_id)
+                    open_buffer_count += 1
                 EVENTROUTER.enqueue_request("fetch_chat_messages", tenant_name, chat_id)
         else:
-            # New chat we haven't seen yet
+            # Track the chat but only open buffer if within limit
             t.chats[chat_id] = {
                 "topic": topic,
                 "chatType": chat_type,
@@ -830,9 +848,14 @@ def poll_chats_cb(tenant_name, command, rc, out, err):
                 "buffer": None,
                 "display_name": "",
             }
-            # Fetch members to determine display name, then messages
+            # Flag for buffer creation if within limit
+            should_open = last_ts and (max_buffers == 0 or open_buffer_count < max_buffers)
+            if should_open:
+                t.chats[chat_id]["_open_buffer"] = True
+                open_buffer_count += 1
+            # Fetch members (for display name); buffer created only if flagged
             EVENTROUTER.enqueue_request("fetch_chat_members", tenant_name, chat_id)
-            if last_ts:
+            if should_open and last_ts:
                 EVENTROUTER.enqueue_request("fetch_chat_messages", tenant_name, chat_id)
 
     return weechat.WEECHAT_RC_OK
@@ -883,8 +906,12 @@ def fetch_chat_members_cb(cb_data, command, rc, out, err):
     # Compute display name
     chat_info["display_name"] = _compute_chat_display_name(t, chat_info)
 
-    # Create or update buffer
-    _ensure_chat_buffer(t, chat_id)
+    # Only create/update buffer if one already exists or messages are queued
+    # (buffer creation is now controlled by poll_chats_cb's max_chat_buffers logic
+    # or explicit /teams chat open command)
+    if chat_info.get("buffer") or chat_info.get("_open_buffer"):
+        chat_info.pop("_open_buffer", None)
+        _ensure_chat_buffer(t, chat_id)
 
     return weechat.WEECHAT_RC_OK
 
@@ -1393,6 +1420,8 @@ def teams_command_cb(data, buffer, command):
         return command_connect(args, buffer)
     elif subcmd == "disconnect":
         return command_disconnect(args, buffer)
+    elif subcmd == "chat":
+        return command_chat(args, buffer)
     else:
         write_command_error(command, "Unknown subcommand '{}'".format(subcmd))
         return weechat.WEECHAT_RC_ERROR
@@ -1507,6 +1536,101 @@ def write_command_error(args, message):
     weechat.prnt("", weechat.prefix("error") + message + ' "/teams ' + args + '" (help on command: /help teams)')
 
 
+def command_chat(args, buffer):
+    parts = args.strip().split(None, 1)
+    if not parts:
+        write_command_error("chat", "Missing action. Use: list [tenant], open <tenant> <search>")
+        return weechat.WEECHAT_RC_ERROR
+
+    action = parts[0]
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if action == "list":
+        # List all known chats across all tenants, or for a specific tenant
+        target_tenant = rest if rest else None
+        found = False
+        for tname, t in tenants.items():
+            if target_tenant and tname != target_tenant:
+                continue
+            if not t.connected:
+                continue
+            found = True
+            chat_list = sorted(
+                t.chats.items(),
+                key=lambda x: x[1].get("last_message_ts", ""),
+                reverse=True
+            )
+            weechat.prnt("", "")
+            weechat.prnt("", "{}teams: chats for tenant '{}'{}".format(
+                weechat.color("chat_server"), tname, weechat.color("reset")
+            ))
+            for chat_id, chat_info in chat_list:
+                name = chat_info.get("display_name", "") or chat_id[:20]
+                ctype = chat_info.get("chatType", "?")
+                has_buf = "*" if chat_info.get("buffer") else " "
+                ts = chat_info.get("last_message_ts", "")[:16].replace("T", " ")
+                weechat.prnt("", "  [{}] ({}) {} {}".format(has_buf, ctype, name, ts))
+            weechat.prnt("", "  (* = buffer open)  Total: {}".format(len(chat_list)))
+        if not found:
+            weechat.prnt("", "teams: no connected tenants" + (" matching '{}'".format(target_tenant) if target_tenant else ""))
+        return weechat.WEECHAT_RC_OK
+
+    elif action == "open":
+        # Open a specific chat by fuzzy matching display name
+        open_parts = rest.split(None, 1)
+        if len(open_parts) < 2:
+            write_command_error("chat open", "Usage: /teams chat open <tenant> <search>")
+            return weechat.WEECHAT_RC_ERROR
+
+        tenant_name = open_parts[0]
+        search = open_parts[1].lower()
+
+        t = tenants.get(tenant_name)
+        if not t or not t.connected:
+            write_command_error("chat open", "Tenant '{}' not connected".format(tenant_name))
+            return weechat.WEECHAT_RC_ERROR
+
+        matches = []
+        for chat_id, chat_info in t.chats.items():
+            name = chat_info.get("display_name", "").lower()
+            if search in name:
+                matches.append((chat_id, chat_info))
+
+        if not matches:
+            weechat.prnt("", "teams: no chats matching '{}' in tenant '{}'".format(search, tenant_name))
+            return weechat.WEECHAT_RC_OK
+
+        if len(matches) > 10:
+            weechat.prnt("", "teams: {} matches for '{}' — showing first 10, be more specific:".format(len(matches), search))
+            for chat_id, chat_info in matches[:10]:
+                weechat.prnt("", "  ({}) {}".format(
+                    chat_info.get("chatType", "?"),
+                    chat_info.get("display_name", chat_id[:20])
+                ))
+            return weechat.WEECHAT_RC_OK
+
+        for chat_id, chat_info in matches:
+            if chat_info.get("buffer"):
+                # Already open, just switch to it
+                weechat.buffer_set(chat_info["buffer"], "display", "1")
+                weechat.prnt("", "teams: switched to existing buffer for '{}'".format(chat_info.get("display_name", "")))
+            else:
+                # Open buffer and fetch messages
+                chat_info["_open_buffer"] = True
+                if chat_info.get("members"):
+                    _ensure_chat_buffer(t, chat_id)
+                else:
+                    EVENTROUTER.enqueue_request("fetch_chat_members", tenant_name, chat_id)
+                EVENTROUTER.enqueue_request("fetch_chat_messages", tenant_name, chat_id)
+                weechat.prnt("", "teams: opening chat '{}'".format(chat_info.get("display_name", "")))
+
+        return weechat.WEECHAT_RC_OK
+
+    else:
+        write_command_error("chat", "Unknown action '{}'. Use: list, open".format(action))
+        return weechat.WEECHAT_RC_ERROR
+
+
 # ---------------------------------------------------------------------------
 # Shutdown
 # ---------------------------------------------------------------------------
@@ -1547,17 +1671,21 @@ config.read()
 weechat.hook_command(
     "teams",
     "Microsoft Teams commands",
-    "tenant add <name> || tenant del <name> || tenant list || auth <tenant> || connect [<tenant>] || disconnect <tenant>",
+    "tenant add <name> || tenant del <name> || tenant list || auth <tenant> || connect [<tenant>] || disconnect <tenant> || chat list [<tenant>] || chat open <tenant> <search>",
     "  tenant add: add a new tenant configuration\n"
     "  tenant del: remove a tenant configuration\n"
     " tenant list: list configured tenants\n"
     "        auth: start device code authentication for a tenant\n"
     "     connect: connect to a tenant (or all autoconnect tenants)\n"
-    "  disconnect: disconnect from a tenant",
+    "  disconnect: disconnect from a tenant\n"
+    "   chat list: list all known chats (with open status)\n"
+    "   chat open: open a chat buffer by fuzzy name search",
     "tenant add || tenant del %(teams_tenant_names) || tenant list"
     " || auth %(teams_tenant_names)"
     " || connect %(teams_tenant_names)"
-    " || disconnect %(teams_tenant_names)",
+    " || disconnect %(teams_tenant_names)"
+    " || chat list %(teams_tenant_names)"
+    " || chat open %(teams_tenant_names)",
     "teams_command_cb",
     ""
 )
