@@ -1158,14 +1158,13 @@ def fetch_team_channels_cb(cb_data, command, rc, out, err):
                 "last_message_ts": "",
                 "last_message_id": "",
             }
-
-            # Create buffer
-            _ensure_channel_buffer(t, team_id, channel_id)
         else:
             team_info["channels"][channel_id]["displayName"] = ch_display_name
 
-        # Poll messages for this channel
-        EVENTROUTER.enqueue_request("fetch_channel_messages", tenant_name, team_id, channel_id)
+        # Only poll messages for channels that already have an open buffer
+        # (channels are opt-in via /teams channel open)
+        if team_info["channels"][channel_id].get("buffer"):
+            EVENTROUTER.enqueue_request("fetch_channel_messages", tenant_name, team_id, channel_id)
 
     return weechat.WEECHAT_RC_OK
 
@@ -1422,6 +1421,8 @@ def teams_command_cb(data, buffer, command):
         return command_disconnect(args, buffer)
     elif subcmd == "chat":
         return command_chat(args, buffer)
+    elif subcmd == "channel":
+        return command_channel(args, buffer)
     else:
         write_command_error(command, "Unknown subcommand '{}'".format(subcmd))
         return weechat.WEECHAT_RC_ERROR
@@ -1631,6 +1632,95 @@ def command_chat(args, buffer):
         return weechat.WEECHAT_RC_ERROR
 
 
+def command_channel(args, buffer):
+    parts = args.strip().split(None, 1)
+    if not parts:
+        write_command_error("channel", "Missing action. Use: list [tenant], open <tenant> <search>")
+        return weechat.WEECHAT_RC_ERROR
+
+    action = parts[0]
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if action == "list":
+        target_tenant = rest if rest else None
+        found = False
+        for tname, t in tenants.items():
+            if target_tenant and tname != target_tenant:
+                continue
+            if not t.connected:
+                continue
+            found = True
+            weechat.prnt("", "")
+            weechat.prnt("", "{}teams: channels for tenant '{}'{}".format(
+                weechat.color("chat_server"), tname, weechat.color("reset")
+            ))
+            for team_id, team_info in t.teams.items():
+                team_name = team_info.get("displayName", team_id)
+                for channel_id, ch_info in team_info.get("channels", {}).items():
+                    ch_name = ch_info.get("displayName", channel_id)
+                    has_buf = "*" if ch_info.get("buffer") else " "
+                    weechat.prnt("", "  [{}] #{}.{}".format(has_buf, team_name, ch_name))
+            total = sum(len(ti.get("channels", {})) for ti in t.teams.values())
+            weechat.prnt("", "  (* = buffer open)  Total: {}".format(total))
+        if not found:
+            weechat.prnt("", "teams: no connected tenants" + (" matching '{}'".format(target_tenant) if target_tenant else ""))
+        return weechat.WEECHAT_RC_OK
+
+    elif action == "open":
+        open_parts = rest.split(None, 1)
+        if len(open_parts) < 2:
+            write_command_error("channel open", "Usage: /teams channel open <tenant> <search>")
+            return weechat.WEECHAT_RC_ERROR
+
+        tenant_name = open_parts[0]
+        search = open_parts[1].lower()
+
+        t = tenants.get(tenant_name)
+        if not t or not t.connected:
+            write_command_error("channel open", "Tenant '{}' not connected".format(tenant_name))
+            return weechat.WEECHAT_RC_ERROR
+
+        matches = []
+        for team_id, team_info in t.teams.items():
+            team_name = team_info.get("displayName", "")
+            for channel_id, ch_info in team_info.get("channels", {}).items():
+                ch_name = ch_info.get("displayName", "")
+                full_name = "{}.{}".format(team_name, ch_name).lower()
+                if search in full_name:
+                    matches.append((team_id, channel_id, team_info, ch_info))
+
+        if not matches:
+            weechat.prnt("", "teams: no channels matching '{}' in tenant '{}'".format(search, tenant_name))
+            return weechat.WEECHAT_RC_OK
+
+        if len(matches) > 10:
+            weechat.prnt("", "teams: {} matches — showing first 10, be more specific:".format(len(matches)))
+            for team_id, channel_id, team_info, ch_info in matches[:10]:
+                weechat.prnt("", "  #{}.{}".format(
+                    team_info.get("displayName", ""), ch_info.get("displayName", "")
+                ))
+            return weechat.WEECHAT_RC_OK
+
+        for team_id, channel_id, team_info, ch_info in matches:
+            if ch_info.get("buffer"):
+                weechat.buffer_set(ch_info["buffer"], "display", "1")
+                weechat.prnt("", "teams: switched to #{}.{}".format(
+                    team_info.get("displayName", ""), ch_info.get("displayName", "")
+                ))
+            else:
+                _ensure_channel_buffer(t, team_id, channel_id)
+                EVENTROUTER.enqueue_request("fetch_channel_messages", tenant_name, team_id, channel_id)
+                weechat.prnt("", "teams: opening #{}.{}".format(
+                    team_info.get("displayName", ""), ch_info.get("displayName", "")
+                ))
+
+        return weechat.WEECHAT_RC_OK
+
+    else:
+        write_command_error("channel", "Unknown action '{}'. Use: list, open".format(action))
+        return weechat.WEECHAT_RC_ERROR
+
+
 # ---------------------------------------------------------------------------
 # Shutdown
 # ---------------------------------------------------------------------------
@@ -1671,21 +1761,28 @@ config.read()
 weechat.hook_command(
     "teams",
     "Microsoft Teams commands",
-    "tenant add <name> || tenant del <name> || tenant list || auth <tenant> || connect [<tenant>] || disconnect <tenant> || chat list [<tenant>] || chat open <tenant> <search>",
-    "  tenant add: add a new tenant configuration\n"
-    "  tenant del: remove a tenant configuration\n"
-    " tenant list: list configured tenants\n"
-    "        auth: start device code authentication for a tenant\n"
-    "     connect: connect to a tenant (or all autoconnect tenants)\n"
-    "  disconnect: disconnect from a tenant\n"
-    "   chat list: list all known chats (with open status)\n"
-    "   chat open: open a chat buffer by fuzzy name search",
+    "tenant add <name> || tenant del <name> || tenant list"
+    " || auth <tenant> || connect [<tenant>] || disconnect <tenant>"
+    " || chat list [<tenant>] || chat open <tenant> <search>"
+    " || channel list [<tenant>] || channel open <tenant> <search>",
+    "     tenant add: add a new tenant configuration\n"
+    "     tenant del: remove a tenant configuration\n"
+    "    tenant list: list configured tenants\n"
+    "           auth: start device code authentication for a tenant\n"
+    "        connect: connect to a tenant (or all autoconnect tenants)\n"
+    "     disconnect: disconnect from a tenant\n"
+    "      chat list: list all known group chats (with open status)\n"
+    "      chat open: open a chat buffer by fuzzy name search\n"
+    "   channel list: list all team channels (with open status)\n"
+    "   channel open: open a channel buffer by fuzzy name search",
     "tenant add || tenant del %(teams_tenant_names) || tenant list"
     " || auth %(teams_tenant_names)"
     " || connect %(teams_tenant_names)"
     " || disconnect %(teams_tenant_names)"
     " || chat list %(teams_tenant_names)"
-    " || chat open %(teams_tenant_names)",
+    " || chat open %(teams_tenant_names)"
+    " || channel list %(teams_tenant_names)"
+    " || channel open %(teams_tenant_names)",
     "teams_command_cb",
     ""
 )
