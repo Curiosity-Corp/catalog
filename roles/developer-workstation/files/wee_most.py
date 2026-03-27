@@ -62,6 +62,15 @@ class Config:
 
     def read(self):
         weechat.config_read(self.file)
+        # After reading, ensure server options are registered in our dict.
+        # The create_server_option_cb may not fire on reload if options
+        # already exist in weechat's internal config state.
+        autoconnect = self.get_value("server", "autoconnect")
+        if isinstance(autoconnect, str):
+            autoconnect = [s.strip() for s in autoconnect.split(",") if s.strip()]
+        for server_id in autoconnect:
+            if not self.is_server_valid(server_id):
+                self.add_server_options(server_id)
 
     def add_server_options(self, server_id):
         self.options["server.{}.command_2fa".format(server_id)] = { "pointer": weechat.config_new_option(self.file,
