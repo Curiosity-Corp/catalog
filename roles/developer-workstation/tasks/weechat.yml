@@ -102,6 +102,18 @@
     force: true
   when: not _weemost_installed.stat.exists
 
+- name: Fix wee-most invalid escape sequences for Python 3.12+  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      sed -i
+      -e "s/re\.match('/re.match(r'/g"
+      -e 's/re\.match("/re.match(r"/g'
+      -e "s/re\.compile('/re.compile(r'/g"
+      -e 's/re\.search("/re.search(r"/g'
+      /tmp/wee-most/wee_most.py
+  changed_when: true
+  when: not _weemost_installed.stat.exists
+
 - name: Install wee-most plugin
   ansible.builtin.copy:
     src: /tmp/wee-most/wee_most.py
