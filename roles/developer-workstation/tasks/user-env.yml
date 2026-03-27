@@ -172,13 +172,6 @@
     line: 'export EDITOR="{{ preferred_editor }}"'
     regexp: '^export EDITOR='
 
-# --- Source aliases ---
-- name: Ensure .bash_aliases is sourced in .bashrc
-  ansible.builtin.lineinfile:
-    path: "{{ dev_user_home }}/.bashrc"
-    line: '[ -f ~/.bash_aliases ] && source ~/.bash_aliases'
-    regexp: 'bash_aliases'
-
 # --- Aliases file ---
 - name: Create comprehensive .bash_aliases
   ansible.builtin.copy:
@@ -378,6 +371,24 @@
     block: |
       export SDKMAN_DIR="$HOME/.sdkman"
       [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+
+# --- Source aliases (AFTER tool inits) ---
+# Aliases must be sourced after nvm/pyenv/sdkman because alias cat='bat ...'
+# causes sdkman-init.sh's `cat FILE` to invoke bat in a PTY subshell, which
+# can hang. We use a blockinfile to guarantee correct placement.
+- name: Remove default Ubuntu .bash_aliases source block (moved after tool inits)
+  ansible.builtin.replace:
+    path: "{{ dev_user_home }}/.bashrc"
+    regexp: '^if \[ -f ~/\.bash_aliases \]; then\n.*bash_aliases.*\nfi\n?'
+    replace: ''
+
+- name: Source .bash_aliases after tool inits in .bashrc
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED - aliases"
+    insertafter: "END ANSIBLE MANAGED - sdkman"
+    block: |
+      [ -f ~/.bash_aliases ] && source ~/.bash_aliases
 
 # --- Fix ownership of role-managed files ---
 - name: Fix ownership of role-managed dotfiles
