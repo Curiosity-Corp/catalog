@@ -1,0 +1,21 @@
+include:
+  - project: 'DroidOpsInc/launcher'
+    ref: main
+    file: '/pipelines/validate-only.yml'
+
+variables:
+  PREFLIGHT_IMAGE: "harbor.focuscell.org/dockerhub-proxy/python:3.13-slim"
+  PREFLIGHT_COMMANDS: >-
+    python -m pip install --upgrade pip >/dev/null &&
+    python -m pip install ansible-core ansible-lint pyyaml >/dev/null &&
+    ansible-galaxy collection install -r requirements.yml >/dev/null &&
+    ansible-playbook --syntax-check playbooks/site.yml &&
+    ansible-lint playbooks/site.yml roles
+  TEST_COMMANDS: >-
+    python - <<'PY'
+    import json
+    from pathlib import Path
+    json.loads(Path("renovate.json").read_text(encoding="utf-8"))
+    print("renovate.json ok")
+    PY
+  SAST_IMAGE: "harbor.focuscell.org/dockerhub-proxy/python:3.13-slim"

@@ -1,0 +1,37 @@
+{
+  "extends": ["local>DroidOpsInc/dot-github:renovate-default"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "sunshine_version: \"(?<currentValue>v[^\"]+)\""
+      ],
+      "depNameTemplate": "LizardByte/Sunshine",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.gitlab-ci\\.yml$/"
+      ],
+      "matchStrings": [
+        "(?:PREFLIGHT_IMAGE|SAST_IMAGE):\\s+\"(?<depName>[^\":]+(?:/[^\":]+)+):(?<currentValue>[^\"]+)\""
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["LizardByte/Sunshine"],
+      "groupName": "workstation pinned releases"
+    },
+    {
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["harbor.focuscell.org/dockerhub-proxy/python"],
+      "groupName": "ci tooling images"
+    }
+  ]
+}
