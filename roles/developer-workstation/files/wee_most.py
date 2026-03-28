@@ -51,24 +51,33 @@ class Config:
     def get_server_value(self, server_id, name):
         value = self.get_value("server", "{}.{}".format(server_id, name))
 
+        # Fallback: query weechat's global option registry directly.
+        # On plugin reload, our Python options dict may be empty but
+        # weechat's C-level config still has the values.
+        if not value:
+            ptr = weechat.config_get("wee_most.server.{}.{}".format(server_id, name))
+            if ptr:
+                value = weechat.config_string(ptr)
+
         if name == "password":
-            # used for evaluation of ${sec.data.name} for example
             return weechat.string_eval_expression(value, {}, {}, {})
 
         return value
 
     def is_server_valid(self, server_id):
-        return "server.{}.url".format(server_id) in self.options
+        if "server.{}.url".format(server_id) in self.options:
+            return True
+        # Fallback: check weechat's global option registry
+        ptr = weechat.config_get("wee_most.server.{}.url".format(server_id))
+        return ptr != ""
 
     def read(self):
-        weechat.config_read(self.file)
-
-        # On plugin reload, the C-level config objects from the previous
-        # load may prevent create_server_option_cb from firing. When that
-        # happens, our Python options dict is missing server entries.
-        # Fix: parse the conf file directly and call add_server_options()
-        # for any servers we missed.
+        # Pre-register server options discovered from the conf file BEFORE
+        # config_read. This ensures the options exist (with empty defaults)
+        # so config_read can fill in the real values. Without this,
+        # create_server_option_cb may not fire on reload.
         self._ensure_servers_from_conf_file()
+        weechat.config_read(self.file)
 
     def _ensure_servers_from_conf_file(self):
         """Parse wee_most.conf to discover server IDs and register their
