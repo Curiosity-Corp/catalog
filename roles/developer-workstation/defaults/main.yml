@@ -19,6 +19,12 @@ ansible_pull_repo: "https://github.com/Curiosity-Corp/catalog.git"
 ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
+authd_archive_distribution: "{{ ansible_distribution_release }}"
+authd_archive_key_fingerprint: "155D766F2E771AED"
+authd_archive_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x{{ authd_archive_key_fingerprint }}"
+authd_archive_key_asc_path: "/etc/apt/keyrings/ubuntu-enterprise-desktop-authd.asc"
+authd_archive_keyring_path: "/etc/apt/keyrings/ubuntu-enterprise-desktop-authd.gpg"
+authd_archive_repo_url: "https://ppa.launchpadcontent.net/ubuntu-enterprise-desktop/authd/ubuntu"
 
 # WeeChat TUI chat client (wee-slack + wee-most plugins)
 weechat_enabled: true

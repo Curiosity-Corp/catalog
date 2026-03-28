@@ -7,12 +7,8 @@
 # Replaces the sunset Entra ID (authd-msentraid) setup.
 # =============================================================================
 
-- name: Add authd PPA
-  ansible.builtin.apt_repository:
-    repo: "ppa:ubuntu-enterprise-desktop/authd"
-    state: present
-    update_cache: true
-  register: _authd_ppa
+- name: Configure authd archive
+  ansible.builtin.include_tasks: authd-repo.yml
 
 - name: Install authd
   ansible.builtin.apt:
@@ -25,10 +21,24 @@
     name: authd-msentraid
     state: absent
 
+- name: Check if authd-oidc snap is already installed
+  ansible.builtin.command:
+    argv:
+      - snap
+      - list
+      - authd-oidc
+  register: _authd_oidc_snap
+  changed_when: false
+  failed_when: _authd_oidc_snap.rc not in [0, 1]
+
 - name: Install authd-oidc snap
-  community.general.snap:
-    name: authd-oidc
-    state: present
+  ansible.builtin.command:
+    argv:
+      - snap
+      - install
+      - authd-oidc
+  when: _authd_oidc_snap.rc != 0
+  changed_when: true
 
 - name: Configure authd-oidc broker for Keycloak
   ansible.builtin.copy:

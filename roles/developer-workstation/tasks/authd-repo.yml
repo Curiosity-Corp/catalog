@@ -1,0 +1,76 @@
+---
+# =============================================================================
+# authd archive setup (modern signed-by keyring flow)
+# =============================================================================
+
+- name: Ensure authd archive prerequisites are installed
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Ensure APT keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Remove legacy authd PPA source files
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - "ubuntu-enterprise-desktop-ubuntu-authd-*.list"
+      - "ubuntu-enterprise-desktop-ubuntu-authd-*.sources"
+    file_type: file
+  register: _legacy_authd_sources
+
+- name: Delete legacy authd PPA source files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _legacy_authd_sources.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Download authd archive signing key
+  ansible.builtin.get_url:
+    url: "{{ authd_archive_key_url }}"
+    dest: "{{ authd_archive_key_asc_path }}"
+    mode: "0644"
+    force: true
+  register: _authd_archive_key_download
+
+- name: Check authd keyring presence
+  ansible.builtin.stat:
+    path: "{{ authd_archive_keyring_path }}"
+  register: _authd_archive_keyring
+
+- name: Dearmor authd archive signing key
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --dearmor
+      - --yes
+      - --output
+      - "{{ authd_archive_keyring_path }}"
+      - "{{ authd_archive_key_asc_path }}"
+  when: _authd_archive_key_download.changed or not _authd_archive_keyring.stat.exists
+  changed_when: true
+
+- name: Configure authd archive
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }}
+      signed-by={{ authd_archive_keyring_path }}]
+      {{ authd_archive_repo_url }}
+      {{ authd_archive_distribution }}
+      main
+    filename: ubuntu-enterprise-desktop-authd
+    state: present
+    update_cache: true
+  register: _authd_ppa
