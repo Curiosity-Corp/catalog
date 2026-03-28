@@ -108,12 +108,19 @@ class Config:
 
     def get_tenant_value(self, tenant_name, name):
         value = self.get_value("tenant", "{}.{}".format(tenant_name, name))
+        if not value:
+            ptr = weechat.config_get("teams.tenant.{}.{}".format(tenant_name, name))
+            if ptr:
+                value = weechat.config_string(ptr)
         if name == "refresh_token":
             return weechat.string_eval_expression(str(value), {}, {}, {})
         return value
 
     def is_tenant_valid(self, tenant_name):
-        return "tenant.{}.refresh_token".format(tenant_name) in self.options
+        if "tenant.{}.refresh_token".format(tenant_name) in self.options:
+            return True
+        ptr = weechat.config_get("teams.tenant.{}.refresh_token".format(tenant_name))
+        return ptr != ""
 
     def tenant_names(self):
         names = set()
@@ -142,11 +149,11 @@ class Config:
             self.options[key_ac] = {
                 "pointer": weechat.config_new_option(
                     self.file, self.sections["tenant"],
-                    "{}.autoconnect".format(tenant_name), "boolean",
-                    "Automatically connect to {} tenant on start".format(tenant_name),
+                    "{}.autoconnect".format(tenant_name), "string",
+                    "Set to 'on' to auto-connect to {} on start".format(tenant_name),
                     "", 0, 0, "off", "off", 0, "", "", "", "", "", ""
                 ),
-                "type": "boolean",
+                "type": "string",
             }
 
     def remove_tenant_options(self, tenant_name):
@@ -167,8 +174,44 @@ class Config:
             weechat.config_write(self.file)
 
     def read(self):
+        self._ensure_tenants_from_conf_file()
         if self.file:
             weechat.config_read(self.file)
+
+    def _ensure_tenants_from_conf_file(self):
+        import os
+        conf_path = os.path.join(
+            weechat.info_get("weechat_config_dir", "") or
+            weechat.info_get("weechat_dir", ""),
+            "teams.conf"
+        )
+        if not os.path.exists(conf_path):
+            return
+        tenant_ids = set()
+        try:
+            with open(conf_path, "r") as f:
+                in_tenant_section = False
+                for line in f:
+                    line = line.strip()
+                    if line == "[tenant]":
+                        in_tenant_section = True
+                        continue
+                    if line.startswith("[") and line.endswith("]"):
+                        in_tenant_section = False
+                        continue
+                    if not in_tenant_section:
+                        continue
+                    if "=" not in line or line.startswith("#"):
+                        continue
+                    key = line.split("=", 1)[0].strip()
+                    if "." in key:
+                        tenant_id = key.split(".", 1)[0]
+                        tenant_ids.add(tenant_id)
+        except Exception:
+            return
+        for tenant_id in tenant_ids:
+            if not self.is_tenant_valid(tenant_id):
+                self.add_tenant_options(tenant_id)
 
     def setup(self):
         self.file = weechat.config_new("teams", "", "")
@@ -222,13 +265,9 @@ def config_create_tenant_option_cb(data, config_file, section, option_name, valu
 
     global config
 
-    opt_type = "string"
-    if option_name.endswith(".autoconnect"):
-        opt_type = "boolean"
-
     config.options["tenant.{}".format(option_name)] = {
         "pointer": weechat.config_new_option(
-            config_file, section, option_name, opt_type, "",
+            config_file, section, option_name, "string", "",
             "", 0, 0, value, value, 0, "", "", "", "", "", ""
         ),
         "type": opt_type,
@@ -258,16 +297,17 @@ class EventRouter:
             func(*request[1])
 
     def buffered_response_cb(self, data, command, rc, out, err):
-        arg_search = re.search(r'([^|]*)\|([^|]*)\|(.*)', data)
-        if not arg_search:
+        # Format: "request_id::callback::cb_data"
+        parts = data.split("::", 2)
+        if len(parts) < 3:
             return weechat.WEECHAT_RC_ERROR
 
-        response_buffer_name = arg_search.group(1)
-        real_cb = arg_search.group(2)
-        real_data = arg_search.group(3)
+        request_id = parts[0]
+        real_cb = parts[1]
+        real_data = parts[2]
 
-        # Use data (unique per hook call) as the buffer key, not just URL
-        buf_key = data
+        # Use request_id as buffer key — unique per hook_process call
+        buf_key = request_id
 
         if buf_key not in self.response_buffers:
             self.response_buffers[buf_key] = {"out": "", "err": ""}
@@ -288,8 +328,12 @@ class EventRouter:
         return weechat.WEECHAT_RC_ERROR
 
 
+_request_counter = 0
+
 def build_buffer_cb_data(url, cb, cb_data):
-    return "{}|{}|{}".format(url, cb, cb_data)
+    global _request_counter
+    _request_counter += 1
+    return "{}::{}::{}".format(_request_counter, cb, cb_data)
 
 
 def handle_queued_request_cb(data, remaining_calls):
@@ -1486,7 +1530,7 @@ def command_tenant(args, buffer):
                 elif t:
                     status = " (not connected)"
                 autoconnect = config.get_tenant_value(n, "autoconnect")
-                ac_str = " [autoconnect]" if autoconnect else ""
+                ac_str = " [autoconnect]" if autoconnect == "on" else ""
                 weechat.prnt("", "  {}{}{}".format(n, status, ac_str))
         return weechat.WEECHAT_RC_OK
 
@@ -1524,7 +1568,7 @@ def command_connect(args, buffer):
         connected_any = False
         for n in names:
             autoconnect = config.get_tenant_value(n, "autoconnect")
-            if autoconnect:
+            if autoconnect == "on":
                 connect_tenant(n)
                 connected_any = True
         if not connected_any:
@@ -1813,5 +1857,5 @@ weechat.hook_timer(QUEUE_INTERVAL_MS, 0, 0, "handle_queued_request_cb", "")
 if weechat.info_get("auto_connect", "") == "1":
     for name in config.tenant_names():
         autoconnect = config.get_tenant_value(name, "autoconnect")
-        if autoconnect:
+        if autoconnect == "on":
             connect_tenant(name)

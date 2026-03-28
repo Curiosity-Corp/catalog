@@ -1581,8 +1581,7 @@ def update_direct_message_channels_name(server_id, command, rc, out, err):
     server = servers[server_id]
 
     if rc != 0:
-        server.print_error("An error occurred while updating direct message channels name")
-        return weechat.WEECHAT_RC_ERROR
+        return weechat.WEECHAT_RC_OK  # silently ignore — DM status updates are non-critical
 
     response = json.loads(out)
 
