@@ -135,3 +135,31 @@
     state: link
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
+
+# =============================================================================
+# go.py (fuzzy buffer switcher)
+# =============================================================================
+# Use /go <partial-name> to jump to any buffer. Tab/Shift-Tab to navigate.
+# =============================================================================
+
+- name: Check if go.py is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.local/share/weechat/python/go.py"
+  register: _gopy_installed
+
+- name: Download go.py buffer switcher
+  ansible.builtin.get_url:
+    url: https://weechat.org/files/scripts/go.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/go.py"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  when: not _gopy_installed.stat.exists
+
+- name: Enable go.py autoload
+  ansible.builtin.file:
+    src: ../go.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/autoload/go.py"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
