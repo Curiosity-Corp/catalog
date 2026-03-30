@@ -174,7 +174,7 @@
       - php-xml
       - php-zip
       # --- .NET ---
-      - dotnet-sdk-9.0
+      - dotnet-sdk-10.0
       # --- Document conversion ---
       - pandoc
       - graphviz
