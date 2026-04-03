@@ -135,6 +135,14 @@
   when:
     - workstation_profile == 'desktop'
     - display_config_enabled | default(false)
+    - not (minimal_desktop_enabled | default(false))
+
+- name: Include minimal desktop (Openbox, LightDM, Firefox)
+  ansible.builtin.include_tasks: minimal-desktop.yml
+  tags: [minimal-desktop]
+  when:
+    - workstation_profile == 'desktop'
+    - minimal_desktop_enabled | default(false)
 
 - name: Include Sunshine remote streaming
   ansible.builtin.include_tasks: streaming.yml

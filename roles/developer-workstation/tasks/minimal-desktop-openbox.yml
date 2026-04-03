@@ -1,0 +1,36 @@
+---
+# =============================================================================
+# Minimal Desktop — Openbox Configuration
+# =============================================================================
+
+- name: Ensure Openbox config directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/openbox"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy Openbox rc.xml (keybindings, theme, window rules)
+  ansible.builtin.copy:
+    src: minimal-desktop/rc.xml
+    dest: "{{ dev_user_home }}/.config/openbox/rc.xml"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+- name: Deploy Openbox menu.xml
+  ansible.builtin.copy:
+    src: minimal-desktop/menu.xml
+    dest: "{{ dev_user_home }}/.config/openbox/menu.xml"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+- name: Deploy Openbox autostart
+  ansible.builtin.copy:
+    src: minimal-desktop/autostart
+    dest: "{{ dev_user_home }}/.config/openbox/autostart"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"

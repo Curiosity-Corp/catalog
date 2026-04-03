@@ -1,0 +1,41 @@
+---
+# =============================================================================
+# Minimal Desktop — Firefox Performance Profile
+# =============================================================================
+# Deploys a user.js with hardware acceleration, reduced animations,
+# telemetry disabled, and compact dark UI. Snap Firefox stores profiles
+# under ~/snap/firefox/common/.mozilla/firefox/.
+# =============================================================================
+
+- name: Ensure snap Firefox profile directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox/default"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy Firefox profiles.ini for snap
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox/profiles.ini"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      [General]
+      StartWithLastProfile=1
+
+      [Profile0]
+      Name=default
+      IsRelative=1
+      Path=default
+      Default=1
+    force: false
+
+- name: Deploy Firefox user.js (performance + dark theme + no telemetry)
+  ansible.builtin.copy:
+    src: minimal-desktop/firefox-user.js
+    dest: "{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox/default/user.js"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"

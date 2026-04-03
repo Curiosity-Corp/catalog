@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# Minimal Desktop — Package Installation
+# =============================================================================
+
+- name: Install minimal desktop packages
+  ansible.builtin.apt:
+    name:
+      # Window manager and display manager
+      - openbox
+      - obconf
+      - lightdm
+      - lightdm-gtk-greeter
+      # Compositor
+      - picom
+      # Panel and launcher
+      - tint2
+      - rofi
+      # Notifications
+      - dunst
+      # Terminal and file manager
+      - lxterminal
+      - xterm
+      - pcmanfm
+      # Wallpaper and appearance
+      - nitrogen
+      - lxappearance
+      - arc-theme
+      - adwaita-icon-theme
+      # System tray applets
+      - volumeicon-alsa
+      - network-manager-gnome
+      # X11 utilities
+      - x11-xserver-utils
+      - xdotool
+    state: present
+    update_cache: true

@@ -1,0 +1,48 @@
+---
+# =============================================================================
+# Minimal Desktop — LightDM Greeter Configuration
+# =============================================================================
+
+- name: Configure LightDM GTK greeter (dark, minimal, no animations)
+  ansible.builtin.copy:
+    dest: /etc/lightdm/lightdm-gtk-greeter.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [greeter]
+      theme-name = Arc-Dark
+      icon-theme-name = Adwaita
+      font-name = Sans 10
+      xft-antialias = true
+      xft-dpi = 96
+      xft-hintstyle = hintfull
+      xft-rgba = rgb
+      background = #1a1a2e
+      user-background = false
+      hide-user-image = true
+      transition-duration = 0
+      transition-type = none
+      indicators = ~clock;~power
+      clock-format = %H:%M
+      panel-position = top
+      position = 50% 50%
+
+- name: Configure LightDM auto-login
+  ansible.builtin.copy:
+    dest: /etc/lightdm/lightdm.conf.d/50-autologin.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Seat:*]
+      autologin-user={{ dev_user }}
+      autologin-session=openbox
+  when: minimal_desktop_autologin | default(true)
+
+- name: Set LightDM as default display manager
+  ansible.builtin.command: >
+    dpkg-reconfigure lightdm --frontend noninteractive
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  changed_when: true

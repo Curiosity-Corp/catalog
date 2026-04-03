@@ -1,0 +1,40 @@
+---
+# =============================================================================
+# Minimal Desktop — GTK Dark Theme
+# =============================================================================
+
+- name: Ensure GTK3 config directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/gtk-3.0"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy GTK2 theme config (Arc-Dark)
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.gtkrc-2.0"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      gtk-theme-name="Arc-Dark"
+      gtk-icon-theme-name="Adwaita"
+      gtk-font-name="Sans 10"
+      gtk-cursor-theme-name="Adwaita"
+      gtk-toolbar-style=GTK_TOOLBAR_ICONS
+      gtk-toolbar-icon-size=GTK_ICON_SIZE_SMALL_TOOLBAR
+
+- name: Deploy GTK3 theme config (Arc-Dark)
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.config/gtk-3.0/settings.ini"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      [Settings]
+      gtk-theme-name=Arc-Dark
+      gtk-icon-theme-name=Adwaita
+      gtk-font-name=Sans 10
+      gtk-cursor-theme-name=Adwaita
+      gtk-application-prefer-dark-theme=true
