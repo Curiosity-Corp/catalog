@@ -172,8 +172,8 @@
     <context name="Titlebar">
       <mousebind button="Left" action="Drag"><action name="Move"/></mousebind>
       <mousebind button="Left" action="DoubleClick"><action name="ToggleMaximize"/></mousebind>
-      <mousebind button="Up" action="Click"><action name="if"><shaded>no</shaded><then><action name="Shade"/></then><else><action name="Unshade"/></else></action></action></mousebind>
-      <mousebind button="Down" action="Click"><action name="if"><shaded>yes</shaded><then><action name="Unshade"/></then></action></action></mousebind>
+      <mousebind button="Up" action="Click"><action name="if"><shaded>no</shaded><then><action name="Shade"/></then><else><action name="Unshade"/></else></action></mousebind>
+      <mousebind button="Down" action="Click"><action name="if"><shaded>yes</shaded><then><action name="Unshade"/></then></action></mousebind>
     </context>
 
     <context name="Titlebar Top Right Bottom Left TLCorner TRCorner BRCorner BLCorner">
