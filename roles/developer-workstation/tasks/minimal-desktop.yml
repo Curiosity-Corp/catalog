@@ -34,6 +34,10 @@
   ansible.builtin.include_tasks: minimal-desktop-dunst.yml
   tags: [minimal-desktop, dunst]
 
+- name: Deploy touchpad configuration (tap-to-click, natural scroll)
+  ansible.builtin.include_tasks: minimal-desktop-touchpad.yml
+  tags: [minimal-desktop, touchpad]
+
 - name: Configure GTK dark theme
   ansible.builtin.include_tasks: minimal-desktop-gtk-theme.yml
   tags: [minimal-desktop, gtk]

@@ -1,0 +1,23 @@
+---
+# =============================================================================
+# Minimal Desktop — Touchpad Configuration (Synaptics / libinput)
+# =============================================================================
+# Enables tap-to-click, natural scrolling, two-finger scroll, clickfinger,
+# tap-drag with lock, palm rejection, and disable-while-typing.
+# =============================================================================
+
+- name: Ensure Xorg conf.d directory exists
+  ansible.builtin.file:
+    path: /etc/X11/xorg.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy touchpad libinput config
+  ansible.builtin.copy:
+    src: minimal-desktop/40-touchpad.conf
+    dest: /etc/X11/xorg.conf.d/40-touchpad.conf
+    owner: root
+    group: root
+    mode: "0644"
