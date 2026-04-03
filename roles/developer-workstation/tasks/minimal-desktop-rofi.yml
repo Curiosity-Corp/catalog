@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# Minimal Desktop — Rofi App Launcher Configuration
+# =============================================================================
+
+- name: Ensure rofi config directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/rofi"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy rofi config (Arc-Dark theme, drun/run/window modes)
+  ansible.builtin.copy:
+    src: minimal-desktop/rofi-config.rasi
+    dest: "{{ dev_user_home }}/.config/rofi/config.rasi"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
