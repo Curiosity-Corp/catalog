@@ -24,7 +24,7 @@
   </placement>
 
   <theme>
-    <name>Onyx</name>
+    <name>Onyx-Large</name>
     <titleLayout>NLIMC</titleLayout>
     <keepBorder>yes</keepBorder>
     <animateIconify>no</animateIconify>

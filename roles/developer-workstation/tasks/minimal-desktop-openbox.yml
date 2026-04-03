@@ -34,3 +34,19 @@
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0755"
+
+- name: Ensure Onyx-Large theme directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.themes/Onyx-Large/openbox-3"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy Onyx-Large theme (bigger titlebars)
+  ansible.builtin.copy:
+    src: minimal-desktop/onyx-large-themerc
+    dest: "{{ dev_user_home }}/.themes/Onyx-Large/openbox-3/themerc"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
