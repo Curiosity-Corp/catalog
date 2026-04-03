@@ -74,6 +74,9 @@
     <keybind key="W-d">
       <action name="Execute"><command>rofi -show drun -show-icons</command></action>
     </keybind>
+    <keybind key="W-space">
+      <action name="Execute"><command>rofi -show drun -show-icons</command></action>
+    </keybind>
     <keybind key="W-r">
       <action name="Execute"><command>rofi -show run</command></action>
     </keybind>
