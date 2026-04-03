@@ -33,5 +33,7 @@
       # X11 utilities
       - x11-xserver-utils
       - xdotool
+      # NSS cert tools (import internal CAs into Firefox snap cert store)
+      - libnss3-tools
     state: present
     update_cache: true

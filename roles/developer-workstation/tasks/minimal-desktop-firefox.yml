@@ -39,3 +39,27 @@
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0644"
+
+# --- Import internal CA certs into Firefox snap's NSS cert store ---
+# Snap Firefox uses its own cert store (cert9.db), not the system trust store.
+# Without this, internal services (Harbor, Ziti) show as untrusted in-browser.
+
+- name: Find internal CA certs to import into Firefox
+  ansible.builtin.find:
+    paths: /usr/local/share/ca-certificates
+    patterns: "*.crt"
+  register: _internal_certs
+
+- name: Import internal CAs into Firefox NSS cert store
+  ansible.builtin.command: >
+    certutil -A
+    -n "{{ item.path | basename | regex_replace('\\.crt$', '') }}"
+    -t "CT,C,C"
+    -i "{{ item.path }}"
+    -d "sql:{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox/default"
+  loop: "{{ _internal_certs.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  register: _certutil_result
+  changed_when: _certutil_result.rc == 0
+  failed_when: false
