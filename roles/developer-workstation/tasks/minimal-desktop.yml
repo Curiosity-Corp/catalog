@@ -1,0 +1,44 @@
+---
+# =============================================================================
+# Minimal Desktop (Openbox + LightDM + Firefox)
+# =============================================================================
+# Lightweight GUI environment for machines that only need a browser and
+# terminal. Replaces GNOME/GDM with Openbox/LightDM, picom compositor,
+# tint2 panel, dunst notifications, and rofi launcher.
+#
+# Enable with: -e minimal_desktop_enabled=true
+# Mutually exclusive with display_config_enabled (GDM/GNOME).
+# =============================================================================
+
+- name: Install minimal desktop packages
+  ansible.builtin.include_tasks: minimal-desktop-packages.yml
+  tags: [minimal-desktop, packages]
+
+- name: Configure LightDM greeter
+  ansible.builtin.include_tasks: minimal-desktop-lightdm.yml
+  tags: [minimal-desktop, lightdm]
+
+- name: Deploy Openbox configuration
+  ansible.builtin.include_tasks: minimal-desktop-openbox.yml
+  tags: [minimal-desktop, openbox]
+
+- name: Deploy picom compositor config
+  ansible.builtin.include_tasks: minimal-desktop-picom.yml
+  tags: [minimal-desktop, picom]
+
+- name: Deploy tint2 panel config
+  ansible.builtin.include_tasks: minimal-desktop-tint2.yml
+  tags: [minimal-desktop, tint2]
+
+- name: Deploy dunst notification config
+  ansible.builtin.include_tasks: minimal-desktop-dunst.yml
+  tags: [minimal-desktop, dunst]
+
+- name: Configure GTK dark theme
+  ansible.builtin.include_tasks: minimal-desktop-gtk-theme.yml
+  tags: [minimal-desktop, gtk]
+
+- name: Deploy Firefox performance profile
+  ansible.builtin.include_tasks: minimal-desktop-firefox.yml
+  tags: [minimal-desktop, firefox]
+  when: minimal_desktop_firefox_tweaks | default(true)

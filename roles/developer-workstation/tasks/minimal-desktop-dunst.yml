@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# Minimal Desktop — Dunst Notification Configuration
+# =============================================================================
+
+- name: Ensure dunst config directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/dunst"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy dunst config (dark theme, compact)
+  ansible.builtin.copy:
+    src: minimal-desktop/dunstrc
+    dest: "{{ dev_user_home }}/.config/dunst/dunstrc"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"

@@ -52,6 +52,13 @@ ziti_install_script_url: "https://get.openziti.io/tun/scripts/install-ubuntu.bas
 # Enable on iGPU passthrough VMs that need physical display + VNC
 display_config_enabled: false
 
+# Minimal desktop (Openbox + LightDM + Firefox)
+# Lightweight GUI for machines that only need a browser and terminal.
+# Mutually exclusive with display_config_enabled (GDM/GNOME).
+minimal_desktop_enabled: false
+minimal_desktop_autologin: true
+minimal_desktop_firefox_tweaks: true
+
 # Sunshine remote streaming (Moonlight-compatible, KMS capture + VAAPI encode)
 # Enabled by default — safe on machines without iGPU (falls back to software encode)
 # Set sunshine_enabled: false in extra-vars to explicitly disable

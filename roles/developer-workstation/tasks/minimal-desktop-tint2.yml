@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# Minimal Desktop — Tint2 Panel Configuration
+# =============================================================================
+
+- name: Ensure tint2 config directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/tint2"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy tint2 panel config (dark, 28px bottom bar)
+  ansible.builtin.copy:
+    src: minimal-desktop/tint2rc
+    dest: "{{ dev_user_home }}/.config/tint2/tint2rc"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
