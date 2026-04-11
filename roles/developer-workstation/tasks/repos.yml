@@ -195,6 +195,36 @@
     state: present
   notify: Update apt cache
 
+# --- Mozilla Firefox (non-snap, required for OpenZiti tun compatibility) ---
+# Snap Firefox sandbox blocks tun device traffic (ziti0), breaking access
+# to all Ziti-intercepted services. The Mozilla PPA provides a native .deb.
+- name: Download Mozilla APT signing key
+  ansible.builtin.shell:
+    cmd: wget -qO- https://packages.mozilla.org/apt/repo-signing-key.gpg | tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null
+    creates: /etc/apt/keyrings/packages.mozilla.org.asc
+
+- name: Add Mozilla APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main"
+    filename: mozilla
+    state: present
+  notify: Update apt cache
+
+- name: Pin Mozilla Firefox over Ubuntu snap stub
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/mozilla
+    content: |
+      Package: firefox*
+      Pin: origin packages.mozilla.org
+      Pin-Priority: 1001
+    mode: "0644"
+
+- name: Remove snap Firefox if present
+  community.general.snap:
+    name: firefox
+    state: absent
+  failed_when: false
+
 # --- Flush handlers to update apt cache before package installation ---
 - name: Flush handlers to update apt cache
   ansible.builtin.meta: flush_handlers

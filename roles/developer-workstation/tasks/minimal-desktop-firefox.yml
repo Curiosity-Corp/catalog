@@ -3,21 +3,21 @@
 # Minimal Desktop — Firefox Performance Profile
 # =============================================================================
 # Deploys a user.js with hardware acceleration, reduced animations,
-# telemetry disabled, and compact dark UI. Snap Firefox stores profiles
-# under ~/snap/firefox/common/.mozilla/firefox/.
+# telemetry disabled, and compact dark UI. Uses native .deb Firefox
+# (not snap) for OpenZiti tun interface compatibility.
 # =============================================================================
 
-- name: Ensure snap Firefox profile directory exists
+- name: Ensure Firefox profile directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox/default"
+    path: "{{ dev_user_home }}/.mozilla/firefox/default"
     state: directory
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0755"
 
-- name: Deploy Firefox profiles.ini for snap
+- name: Deploy Firefox profiles.ini
   ansible.builtin.copy:
-    dest: "{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox/profiles.ini"
+    dest: "{{ dev_user_home }}/.mozilla/firefox/profiles.ini"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0644"
@@ -35,31 +35,21 @@
 - name: Deploy Firefox user.js (performance + dark theme + no telemetry)
   ansible.builtin.copy:
     src: minimal-desktop/firefox-user.js
-    dest: "{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox/default/user.js"
+    dest: "{{ dev_user_home }}/.mozilla/firefox/default/user.js"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0644"
 
-# --- Import internal CA certs into Firefox snap's NSS cert store ---
-# Snap Firefox uses its own cert store (cert9.db), not the system trust store.
-# Without this, internal services (Harbor, Ziti) show as untrusted in-browser.
+# --- Enable system certificate trust ---
+# Native .deb Firefox can use system certs via enterprise_roots, avoiding
+# the need to manually import CAs into the NSS cert store.
 
-- name: Find internal CA certs to import into Firefox
-  ansible.builtin.find:
-    paths: /usr/local/share/ca-certificates
-    patterns: "*.crt"
-  register: _internal_certs
-
-- name: Import internal CAs into Firefox NSS cert store
-  ansible.builtin.command: >
-    certutil -A
-    -n "{{ item.path | basename | regex_replace('\\.crt$', '') }}"
-    -t "CT,C,C"
-    -i "{{ item.path }}"
-    -d "sql:{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox/default"
-  loop: "{{ _internal_certs.files }}"
-  loop_control:
-    label: "{{ item.path | basename }}"
-  register: _certutil_result
-  changed_when: _certutil_result.rc == 0
-  failed_when: false
+- name: Ensure Firefox uses system certificate store
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.mozilla/firefox/default/user.js"
+    regexp: 'security\.enterprise_roots\.enabled'
+    line: 'user_pref("security.enterprise_roots.enabled", true);'
+    create: true
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
