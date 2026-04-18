@@ -11,6 +11,8 @@ workstation_profile: desktop
 preferred_editor: "code --wait"
 
 node_major_version: "25"
+coder_cli_version: "2.31.5"
+coder_cli_install_script_url: "https://coder.com/install.sh"
 # Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
 # (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)
 apt_fallback_release: "noble"
