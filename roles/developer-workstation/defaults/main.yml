@@ -17,11 +17,16 @@ coder_cli_install_script_url: "https://coder.com/install.sh"
 # (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)
 apt_fallback_release: "noble"
 # Chezmoi dotfiles (per-user, zero-PII bootstrap)
-# Set to an empty string to skip. Each user supplies their own fork URL
-# via host_vars / group_vars or `-e user_dotfiles_repo=...`.
+# Set `user_dotfiles_repo` to the user's fork URL to enable; empty = skip.
 # Example (private fork): https://git.developerdojo.org/FocusApiary/dotfiles-<handle>.git
 # Shared skeleton:        https://git.developerdojo.org/FocusApiary/dotfiles-base.git
+#
+# Values for chezmoi_user_name / chezmoi_user_email MUST be set in
+# host_vars or group_vars per engineer — NEVER committed to this repo.
 user_dotfiles_repo: ""
+chezmoi_user_name: ""
+chezmoi_user_email: ""
+chezmoi_editor: ""
 
 # ansible-pull settings
 ansible_pull_repo: "https://github.com/Curiosity-Corp/catalog.git"

@@ -53,6 +53,13 @@
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+    # Non-interactive init — env vars feed the .chezmoi.toml.tmpl prompts.
+    # Set these in host_vars / group_vars. Empty strings keep the role
+    # PII-free; per-user values live only on the target machine.
+    CHEZMOI_NAME: "{{ chezmoi_user_name | default('') }}"
+    CHEZMOI_EMAIL: "{{ chezmoi_user_email | default('') }}"
+    CHEZMOI_PROFILE: "{{ 'workspace' if workstation_profile == 'workspace' else 'desktop' }}"
+    CHEZMOI_EDITOR: "{{ chezmoi_editor | default(preferred_editor | default('nvim')) }}"
   when:
     - user_dotfiles_repo | default('') | length > 0
     - not _chezmoi_src.stat.exists
