@@ -1,0 +1,69 @@
+---
+# =============================================================================
+# Chezmoi dotfiles bootstrap
+# =============================================================================
+# Installs chezmoi and applies the dotfiles repo configured via
+# `user_dotfiles_repo`. Skipped entirely when the variable is empty.
+#
+# System state (this role) owns packages, system config, and /etc/*.
+# User state ($HOME/.*) is delegated to chezmoi.
+# Zero-PII: no identity values are baked into this role — each user
+# supplies their own fork URL via group_vars/host_vars or `-e`.
+# =============================================================================
+
+- name: Resolve chezmoi download URL
+  ansible.builtin.set_fact:
+    _chezmoi_release_api: "https://api.github.com/repos/twpayne/chezmoi/releases/latest"
+  when: user_dotfiles_repo | default('') | length > 0
+
+- name: Query latest chezmoi release metadata
+  ansible.builtin.uri:
+    url: "{{ _chezmoi_release_api }}"
+    return_content: true
+  register: _chezmoi_release
+  when: user_dotfiles_repo | default('') | length > 0
+
+- name: Select chezmoi .deb asset for current architecture
+  ansible.builtin.set_fact:
+    _chezmoi_deb_url: >-
+      {{ (_chezmoi_release.json.assets
+          | selectattr('name', 'match', 'chezmoi_.*_linux_' ~ _deb_arch ~ '\\.deb$')
+          | map(attribute='browser_download_url')
+          | first) }}
+  vars:
+    _deb_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+  when: user_dotfiles_repo | default('') | length > 0
+
+- name: Install chezmoi from upstream .deb
+  ansible.builtin.apt:
+    deb: "{{ _chezmoi_deb_url }}"
+    state: present
+  when: user_dotfiles_repo | default('') | length > 0
+
+- name: Check whether chezmoi source-state is already initialized for dev_user
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.local/share/chezmoi/.git"
+  register: _chezmoi_src
+  when: user_dotfiles_repo | default('') | length > 0
+
+- name: Initialize chezmoi against the user's dotfiles repo
+  ansible.builtin.command:
+    cmd: "chezmoi init {{ user_dotfiles_repo }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when:
+    - user_dotfiles_repo | default('') | length > 0
+    - not _chezmoi_src.stat.exists
+  changed_when: true
+
+- name: Apply chezmoi state to $HOME
+  ansible.builtin.command:
+    cmd: "chezmoi apply"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when: user_dotfiles_repo | default('') | length > 0
+  changed_when: true
