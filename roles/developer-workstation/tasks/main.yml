@@ -125,9 +125,14 @@
   ansible.builtin.include_tasks: git-config.yml
   tags: [git]
 
-- name: Include user environment
+- name: Include user environment (system-level setup)
   ansible.builtin.include_tasks: user-env.yml
   tags: [user]
+
+- name: Include shell RC fallback (pre-chezmoi — skipped when dotfiles are opted in)
+  ansible.builtin.include_tasks: user-shell-fallback.yml
+  tags: [user, shell]
+  when: user_dotfiles_repo | default('') | length == 0
 
 - name: Include chezmoi dotfiles bootstrap
   ansible.builtin.include_tasks: dotfiles.yml
