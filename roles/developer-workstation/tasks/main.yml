@@ -86,6 +86,10 @@
   ansible.builtin.include_tasks: cli-tools.yml
   tags: [cli]
 
+- name: Include chezmoi init (opt-in via chezmoi_source_repo)
+  ansible.builtin.import_tasks: chezmoi-init.yml
+  tags: [chezmoi]
+
 - name: Include testing frameworks
   ansible.builtin.include_tasks: testing.yml
   tags: [testing]

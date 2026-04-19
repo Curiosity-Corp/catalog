@@ -1,0 +1,16 @@
+---
+# Initialize chezmoi from a source repo (gated — no-op if chezmoi_source_repo is unset).
+# Idempotent via `creates:` — only runs the first time, will not re-apply later.
+# To re-apply, users run `chezmoi apply` manually; this role doesn't fight them.
+- name: Chezmoi | initialize from source repo
+  ansible.builtin.command:
+    cmd: "chezmoi init --apply {{ chezmoi_source_repo }}"
+    creates: "{{ dev_user_home }}/.local/share/chezmoi/.git"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when:
+    - chezmoi_source_repo is defined
+    - chezmoi_source_repo | length > 0
+  tags: [chezmoi]
