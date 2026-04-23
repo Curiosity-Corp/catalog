@@ -12,7 +12,17 @@
     daemon_reload: true
 
 - name: Restart Sunshine user service
-  ansible.builtin.command: "loginctl kill-user {{ dev_user }}"
+  ansible.builtin.shell: |
+    set -e
+    uid=$(id -u "{{ dev_user }}")
+    runuser -u "{{ dev_user }}" -- env \
+      XDG_RUNTIME_DIR="/run/user/$uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+      systemctl --user daemon-reload
+    runuser -u "{{ dev_user }}" -- env \
+      XDG_RUNTIME_DIR="/run/user/$uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+      systemctl --user restart sunshine.service
   changed_when: true
   failed_when: false
 
