@@ -87,7 +87,7 @@
       RandomizedDelaySec=1h
       Persistent=true
 
-  [Install]
+      [Install]
       WantedBy=timers.target
   notify: Reload systemd
 
