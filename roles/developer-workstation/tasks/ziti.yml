@@ -85,7 +85,7 @@
     mode: "0755"
     owner: root
     group: root
-    content: |
+    content: !unsafe |
       #!/usr/bin/env bash
       # ziti-oidc-login.sh — authenticate all OIDC identities via ext-jwt-login
       set -euo pipefail
@@ -125,7 +125,7 @@
     mode: "0755"
     owner: root
     group: root
-    content: |
+    content: !unsafe |
       #!/usr/bin/env bash
       # ziti-oidc-logout.sh — deactivate all OIDC identities on screen lock
       set -euo pipefail
@@ -151,7 +151,7 @@
     mode: "0755"
     owner: root
     group: root
-    content: |
+    content: !unsafe |
       #!/usr/bin/env bash
       # ziti-oidc-reactivate.sh — reactivate OIDC identities on screen unlock
       set -euo pipefail
@@ -180,7 +180,7 @@
     mode: "0644"
     owner: root
     group: root
-    content: |
+    content: !unsafe |
       #!/usr/bin/env bash
       # ziti-oidc-session.sh — trigger OIDC login on graphical session start
       if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
@@ -197,7 +197,7 @@
     mode: "0755"
     owner: root
     group: root
-    content: |
+    content: !unsafe |
       #!/usr/bin/env bash
       # ziti-oidc-screensaver-monitor.sh — watch GNOME screensaver lock/unlock
       set -euo pipefail
@@ -222,7 +222,7 @@
     mode: "0644"
     owner: root
     group: root
-    content: |
+    content: !unsafe |
       [Unit]
       Description=Ziti OIDC screensaver lock/unlock monitor
       After=graphical-session.target
@@ -253,7 +253,7 @@
     mode: "0440"
     owner: root
     group: root
-    content: |
+    content: !unsafe |
       # Allow any user to run Ziti OIDC scripts as root without password
       ALL ALL=(root) NOPASSWD: /usr/local/bin/ziti-oidc-login.sh
       ALL ALL=(root) NOPASSWD: /usr/local/bin/ziti-oidc-logout.sh
