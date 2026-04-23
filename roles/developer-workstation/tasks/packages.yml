@@ -189,8 +189,6 @@
       - valgrind
       - cppcheck
       - xvfb
-      # --- Claude Desktop (native Linux app with MCP server support) ---
-      - claude-desktop
       # --- Containers (daemonless, no background daemon) ---
       - podman
       - buildah

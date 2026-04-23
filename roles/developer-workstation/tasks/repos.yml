@@ -155,17 +155,17 @@
     state: present
   notify: Update apt cache
 
-# --- Claude Desktop (aaddrick/claude-desktop-debian) ---
-- name: Download Claude Desktop GPG key
-  ansible.builtin.shell:
-    cmd: curl -fsSL https://aaddrick.github.io/claude-desktop-debian/KEY.gpg | gpg --dearmor -o /usr/share/keyrings/claude-desktop-archive-keyring.gpg
-    creates: /usr/share/keyrings/claude-desktop-archive-keyring.gpg
+# --- Retired Claude Desktop repository ---
+- name: Remove retired Claude Desktop repository
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/claude-desktop.list
+    state: absent
+  notify: Update apt cache
 
-- name: Add Claude Desktop repository
-  ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/claude-desktop-archive-keyring.gpg] https://aaddrick.github.io/claude-desktop-debian stable main"
-    filename: claude-desktop
-    state: present
+- name: Remove retired Claude Desktop archive keyring
+  ansible.builtin.file:
+    path: /usr/share/keyrings/claude-desktop-archive-keyring.gpg
+    state: absent
   notify: Update apt cache
 
 # --- Node.js (NodeSource) ---
