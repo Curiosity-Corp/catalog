@@ -31,19 +31,49 @@
         (_ziti_tunnel_version.stdout | default('0.0.0') is version('1.10.10', '<'))
       }}
 
-- name: Download ziti-edge-tunnel installer
-  ansible.builtin.get_url:
-    url: "{{ ziti_install_script_url }}"
-    dest: /tmp/install-ziti-edge-tunnel.bash
-    mode: "0755"
-    force: true
+- name: Set ziti-edge-tunnel apt distribution
+  ansible.builtin.set_fact:
+    _ziti_tunnel_apt_distribution: >-
+      {{
+        {
+          'bionic': 'bionic',
+          'cosmic': 'bionic',
+          'disco': 'bionic',
+          'eoan': 'bionic',
+          'focal': 'focal',
+          'groovy': 'focal',
+          'hirsute': 'focal',
+          'impish': 'focal',
+          'jammy': 'jammy',
+          'kinetic': 'jammy',
+          'lunar': 'jammy',
+          'mantic': 'jammy',
+          'noble': 'jammy',
+          'oracular': 'jammy',
+          'plucky': 'jammy',
+          'questing': 'jammy'
+        }.get(ansible_distribution_release, 'jammy')
+      }}
   when: _ziti_needs_upgrade
 
-- name: Install ziti-edge-tunnel via official installer
-  ansible.builtin.command:
-    cmd: /bin/bash /tmp/install-ziti-edge-tunnel.bash
-  register: _ziti_install_result
-  changed_when: _ziti_install_result.rc == 0
+- name: Configure ziti-edge-tunnel repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }}
+      signed-by=/usr/share/keyrings/openziti-archive-keyring.gpg]
+      https://packages.openziti.org/zitipax-openziti-deb-stable
+      {{ _ziti_tunnel_apt_distribution }}
+      main
+    filename: openziti-edge-tunnel
+    state: present
+    update_cache: true
+  when: _ziti_needs_upgrade
+
+- name: Install ziti-edge-tunnel package
+  ansible.builtin.apt:
+    name: ziti-edge-tunnel
+    state: present
+    update_cache: true
   when: _ziti_needs_upgrade
 
 # -----------------------------------------------------------------------------
