@@ -87,9 +87,9 @@
       RandomizedDelaySec=1h
       Persistent=true
 
-      [Install]
+  [Install]
       WantedBy=timers.target
-  notify: Reload systemd for profile cleanup
+  notify: Reload systemd
 
 - name: Enable profile cleanup timer
   ansible.builtin.systemd:
@@ -97,8 +97,3 @@
     enabled: true
     state: started
     daemon_reload: true
-
-- name: Reload systemd for profile cleanup
-  ansible.builtin.systemd:
-    daemon_reload: true
-  listen: Reload systemd for profile cleanup
