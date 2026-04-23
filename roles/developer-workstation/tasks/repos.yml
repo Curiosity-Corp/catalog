@@ -6,6 +6,19 @@
 # Uses apt_repository for source lists
 # =============================================================================
 
+# --- Retired Claude Desktop repository ---
+- name: Remove retired Claude Desktop repository before any apt cache refresh
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/claude-desktop.list
+    state: absent
+  notify: Update apt cache
+
+- name: Remove retired Claude Desktop archive keyring
+  ansible.builtin.file:
+    path: /usr/share/keyrings/claude-desktop-archive-keyring.gpg
+    state: absent
+  notify: Update apt cache
+
 # --- GitHub CLI ---
 - name: Download GitHub CLI GPG key
   ansible.builtin.shell:
@@ -153,19 +166,6 @@
     repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main"
     filename: brave-browser
     state: present
-  notify: Update apt cache
-
-# --- Retired Claude Desktop repository ---
-- name: Remove retired Claude Desktop repository
-  ansible.builtin.file:
-    path: /etc/apt/sources.list.d/claude-desktop.list
-    state: absent
-  notify: Update apt cache
-
-- name: Remove retired Claude Desktop archive keyring
-  ansible.builtin.file:
-    path: /usr/share/keyrings/claude-desktop-archive-keyring.gpg
-    state: absent
   notify: Update apt cache
 
 # --- Node.js (NodeSource) ---
