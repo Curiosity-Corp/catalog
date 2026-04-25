@@ -6,6 +6,19 @@
 # Excludes desktop/browser/enterprise-only repos.
 # =============================================================================
 
+# --- Retired Claude Desktop repository ---
+- name: Remove retired Claude Desktop repository before any apt cache refresh
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/claude-desktop.list
+    state: absent
+  notify: Update apt cache
+
+- name: Remove retired Claude Desktop archive keyring
+  ansible.builtin.file:
+    path: /usr/share/keyrings/claude-desktop-archive-keyring.gpg
+    state: absent
+  notify: Update apt cache
+
 # --- GitHub CLI ---
 - name: Download GitHub CLI GPG key
   ansible.builtin.shell:
