@@ -273,3 +273,66 @@
     name: ziti-edge-tunnel.service
     enabled: true
     state: started
+
+# -----------------------------------------------------------------------------
+# /etc/hosts pins for Ziti-only hostnames
+# -----------------------------------------------------------------------------
+# Many internal services exist only as Ziti intercepts (e.g. chat.focusbuzz.org,
+# coder.developerdojo.org). Their hostnames either return NXDOMAIN from public
+# DNS, or worse, resolve via the apex's Cloudflare wildcard and 404 at the
+# edge. systemd-resolved does not deterministically prefer the ziti0 link, and
+# Firefox DoH bypasses the system resolver entirely. nsswitch hits /etc/hosts
+# BEFORE any resolver path (DoH-enabled browser included), so an /etc/hosts
+# pin is the most reliable workaround until persistent routing-domain
+# ownership lands on ziti0.
+#
+# Each pinned hostname is resolved against Ziti's internal resolver
+# (100.64.0.2) and written into an ansible-managed block in /etc/hosts.
+# Re-running the task refreshes IPs (Ziti assigns intercepts dynamically per
+# host); removing a hostname from the list drops its line on the next run.
+#
+# First-run note: if the OIDC identity has not yet authenticated, Ziti's
+# resolver returns no answer for service hostnames and no pins are written
+# this run. The task is safe to re-run after login completes.
+#
+# Configure in group_vars / host_vars / -e (default empty == skip):
+#   ziti_etc_hosts_pins:
+#     - chat.focusbuzz.org
+#     - coder.developerdojo.org
+#     - git.developerdojo.org
+
+- name: Ensure dig is available for Ziti DNS lookups
+  ansible.builtin.apt:
+    name: dnsutils
+    state: present
+  when: ziti_etc_hosts_pins | default([]) | length > 0
+
+- name: Resolve Ziti intercept IP for each pinned hostname
+  ansible.builtin.command:
+    cmd: "dig +short +time=2 +tries=1 {{ item }} @100.64.0.2"
+  register: _ziti_pin_lookup
+  loop: "{{ ziti_etc_hosts_pins | default([]) }}"
+  changed_when: false
+  failed_when: false
+  when: ziti_etc_hosts_pins | default([]) | length > 0
+
+- name: Build /etc/hosts pin block for resolved Ziti hostnames
+  ansible.builtin.set_fact:
+    _ziti_etc_hosts_block: |-
+      {% for r in _ziti_pin_lookup.results | default([]) -%}
+      {% set ip = r.stdout | default('') | trim -%}
+      {% if r.rc == 0 and ip is match('^100\.64\.') -%}
+      {{ ip }}  {{ r.item }}
+      {% endif -%}
+      {% endfor %}
+  when: ziti_etc_hosts_pins | default([]) | length > 0
+
+- name: Pin Ziti-only hostnames in /etc/hosts
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE MANAGED BLOCK: Ziti DNS pins"
+    block: "{{ _ziti_etc_hosts_block | trim }}"
+    create: false
+  when:
+    - ziti_etc_hosts_pins | default([]) | length > 0
+    - _ziti_etc_hosts_block | default('') | trim | length > 0
