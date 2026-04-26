@@ -295,11 +295,12 @@
 # resolver returns no answer for service hostnames and no pins are written
 # this run. The task is safe to re-run after login completes.
 #
-# Configure in group_vars / host_vars / -e (default empty == skip):
-#   ziti_etc_hosts_pins:
-#     - chat.focusbuzz.org
-#     - coder.developerdojo.org
-#     - git.developerdojo.org
+# The default `ziti_etc_hosts_pins` list (see defaults/main.yml) ships the
+# canonical set of internal hostnames across the FocusApiary / DroidOps /
+# DreamLimited / HardMagic ecosystem. Names absent from a given operator's
+# Ziti policy resolve to nothing and are skipped — safe to ship a superset.
+# Override in group_vars / host_vars / -e to add machine-local pins or set
+# to [] to disable entirely.
 
 - name: Ensure dig is available for Ziti DNS lookups
   ansible.builtin.apt:
