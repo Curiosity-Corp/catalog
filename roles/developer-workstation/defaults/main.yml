@@ -62,6 +62,60 @@ keycloak_allowed_users: "ALL"
 ziti_enabled: true
 ziti_install_script_url: "https://get.openziti.io/tun/scripts/install-ubuntu.bash"
 
+# Ziti-only hostnames pinned in /etc/hosts.
+#
+# Each name is resolved against Ziti's internal DNS at 100.64.0.2 and pinned
+# to its assigned intercept IP. Names not present in the operator's Ziti
+# policy resolve to nothing and are silently skipped, so it is safe to ship
+# the union of all internal services here as a team baseline — every
+# workstation gets the same starting set, refreshed on every ansible-pull.
+#
+# Override or extend in group_vars / host_vars / -e to add machine-local
+# pins (e.g. lab-only services). To disable entirely on a host, set this
+# to an empty list.
+ziti_etc_hosts_pins:
+  # developerdojo.org — Coder + GitLab (apex on Cloudflare; subdomains 404 without a pin)
+  - developerdojo.org
+  - coder.developerdojo.org
+  - dashboard.coder.developerdojo.org
+  - git.developerdojo.org
+  # focuscell.org — platform services
+  - argocd.focuscell.org
+  - harbor.focuscell.org
+  - grafana.focuscell.org
+  - defectdojo.focuscell.org
+  - langfuse.focuscell.org
+  - prowler.focuscell.org
+  - domains.focuscell.org
+  - mail.focuscell.org
+  - mail-api.focuscell.org
+  - pbx.focuscell.org
+  - admin.focuscell.org
+  - api.focuscell.org
+  # focuspass.com — auth + secrets + fleet mgmt
+  - auth.focuspass.com
+  - vault.focuspass.com
+  - fleet.focuspass.com
+  # focusbuzz.org — Mattermost (apex on Cloudflare; chat. 404s without a pin)
+  - chat.focusbuzz.org
+  # dream{hive,decks}.org — DreamLimited proposal/capture stack
+  - support.dreamhive.org
+  - dreamdecks.org
+  - launch.dreamdecks.org
+  # hardmagic.com — HardMagic AI/ML services
+  - chat.hardmagic.com
+  - studio.hardmagic.com
+  - collab.hardmagic.com
+  - comfy.hardmagic.com
+  - api.comfy.hardmagic.com
+  - lora.hardmagic.com
+  - draw.hardmagic.com
+  - genstudio.hardmagic.com
+  - api.vllm.hardmagic.com
+  # hypersight.net / slidee.net
+  - studio.hypersight.net
+  - dev.slidee.net
+
 # Display configuration (GDM auto-login, x11vnc, dconf no-lock)
 # Enable on iGPU passthrough VMs that need physical display + VNC
 display_config_enabled: false
