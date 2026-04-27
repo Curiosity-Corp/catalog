@@ -178,6 +178,25 @@
     - _npm_mermaid_cli_result is failed
     - "'EACCES' not in (_npm_mermaid_cli_result.msg | default(''))"
 
+# --- @pnp/cli-microsoft365 ---
+- name: Check installed Microsoft 365 CLI version
+  ansible.builtin.shell: npm list -g @pnp/cli-microsoft365 --depth=0 2>/dev/null || echo MISSING
+  register: m365_cli_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade Microsoft 365 CLI {{ m365_cli_version }}
+  community.general.npm:
+    name: "@pnp/cli-microsoft365"
+    version: "{{ m365_cli_version }}"
+    global: true
+    state: present
+  when: "m365_cli_version not in m365_cli_current.stdout"
+  register: _npm_m365_cli_result
+  failed_when:
+    - _npm_m365_cli_result is failed
+    - "'EACCES' not in (_npm_m365_cli_result.msg | default(''))"
+
 # --- codewhale ---
 - name: Check installed codewhale version
   ansible.builtin.shell: npm list -g codewhale --depth=0 2>/dev/null || echo MISSING
