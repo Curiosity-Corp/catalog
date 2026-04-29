@@ -82,8 +82,16 @@
     # PII-free; per-user values live only on the target machine.
     CHEZMOI_NAME: "{{ chezmoi_user_name | default('') }}"
     CHEZMOI_EMAIL: "{{ chezmoi_user_email | default('') }}"
-    CHEZMOI_PROFILE: "{{ 'workspace' if workstation_profile == 'workspace' else 'desktop' }}"
-    CHEZMOI_EDITOR: "{{ chezmoi_editor | default(preferred_editor | default('nvim')) }}"
+    CHEZMOI_PROFILE: "{{ workstation_profile }}"
+    CHEZMOI_EDITOR: >-
+      {{
+        chezmoi_editor
+        | default(
+            ('nvim' if workstation_profile in ['workspace', 'thin-client']
+             else preferred_editor),
+            true
+          )
+      }}
   when:
     - user_dotfiles_repo | default('') | length > 0
     - not _chezmoi_src.stat.exists

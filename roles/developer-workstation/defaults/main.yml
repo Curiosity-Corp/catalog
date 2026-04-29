@@ -4,13 +4,27 @@ dev_user_home: /home/curiosity
 # Role profile:
 #   desktop   = full workstation (physical/VM desktop host)
 #   workspace = container-safe Coder workspace profile
+#   thin-client = access appliance for Coder + Ziti + browser
 workstation_profile: desktop
 
 # Default editor command written to shell rc files.
-# Workspace profile should override this to terminal-friendly editors.
+# Workspace/thin-client profiles should override this to terminal-friendly editors.
 preferred_editor: "code --wait"
 
 node_major_version: "25"
+
+# Tool group toggles
+coder_cli_enabled: true
+cloud_clis_enabled: true
+thin_client_playwright_enabled: false
+
+# Optional private/local thin-client TUI. Set missionctl_install_url to a direct
+# binary URL before enabling; the droidopsinc/missionctl release asset format is
+# intentionally not baked in here.
+missionctl_enabled: false
+missionctl_install_url: ""
+missionctl_install_path: /usr/local/bin/missionctl
+
 coder_cli_version: "2.31.5"
 coder_cli_install_script_url: "https://coder.com/install.sh"
 # Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
@@ -33,6 +47,7 @@ ansible_pull_repo: "https://github.com/Curiosity-Corp/catalog.git"
 ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
+ansible_pull_extra_vars: ""
 authd_archive_distribution: "{{ ansible_distribution_release }}"
 authd_archive_key_fingerprint: "155D766F2E771AED"
 authd_archive_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x{{ authd_archive_key_fingerprint }}"
@@ -181,6 +196,12 @@ hardware_profile: generic
 hardware_profiles:
   generic:
     description: "Generic developer workstation (no hardware-specific drivers)"
+    packages: []
+    services: []
+    pia_vpn: false
+
+  arm-thin-client:
+    description: "ARM thin client"
     packages: []
     services: []
     pia_vpn: false

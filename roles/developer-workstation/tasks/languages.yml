@@ -40,13 +40,19 @@
     path: "{{ dev_user_home }}/.rustup"
   register: rust_installed
 
-- name: Install Rust via rustup
+- name: Install Rust via rustup  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    cmd: |
+      set -o pipefail
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y
+    executable: /bin/bash
+  become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
   when: not rust_installed.stat.exists
+  changed_when: true
 
 # --- nvm (Node Version Manager) ---
 - name: Check if nvm is installed
@@ -54,9 +60,13 @@
     path: "{{ dev_user_home }}/.nvm/nvm.sh"
   register: nvm_installed
 
-- name: Install nvm
+- name: Install nvm  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | PROFILE=/dev/null bash
+    cmd: |
+      set -o pipefail
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh \
+        | PROFILE=/dev/null bash
+    executable: /bin/bash
     creates: "{{ dev_user_home }}/.nvm/nvm.sh"
   become: true
   become_user: "{{ dev_user }}"
@@ -74,6 +84,7 @@
     repo: https://github.com/pyenv/pyenv.git
     dest: "{{ dev_user_home }}/.pyenv"
     depth: 1
+    version: master
   become: true
   become_user: "{{ dev_user }}"
   when: not pyenv_installed.stat.exists
@@ -126,9 +137,13 @@
     state: absent
 
 # --- PHP Composer ---
-- name: Install Composer (PHP package manager)
+- name: Install Composer (PHP package manager)  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    cmd: |
+      set -o pipefail
+      curl -sS https://getcomposer.org/installer \
+        | php -- --install-dir=/usr/local/bin --filename=composer
+    executable: /bin/bash
     creates: /usr/local/bin/composer
 
 # --- SDKMAN (JVM version manager) ---
@@ -137,9 +152,12 @@
     path: "{{ dev_user_home }}/.sdkman/bin/sdkman-init.sh"
   register: sdkman_installed
 
-- name: Install SDKMAN
+- name: Install SDKMAN  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -s "https://get.sdkman.io?rcupdate=false" | bash
+    cmd: |
+      set -o pipefail
+      curl -s "https://get.sdkman.io?rcupdate=false" | bash
+    executable: /bin/bash
     creates: "{{ dev_user_home }}/.sdkman/bin/sdkman-init.sh"
   become: true
   become_user: "{{ dev_user }}"

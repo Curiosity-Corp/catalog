@@ -20,9 +20,13 @@
   notify: Update apt cache
 
 # --- GitHub CLI ---
-- name: Download GitHub CLI GPG key
+- name: Download GitHub CLI GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/githubcli-archive-keyring.gpg
 
 - name: Add GitHub CLI repository
@@ -41,9 +45,13 @@
     state: absent
   notify: Update apt cache
 
-- name: Download Microsoft GPG key
+- name: Download Microsoft GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+        | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/microsoft-archive-keyring.gpg
 
 - name: Add VS Code repository
@@ -63,9 +71,13 @@
   notify: Update apt cache
 
 # --- Google Cloud CLI ---
-- name: Download Google Cloud GPG key
+- name: Download Google Cloud GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud-google-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/cloud-google-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/cloud-google-archive-keyring.gpg
 
 - name: Add Google Cloud CLI repository
@@ -76,9 +88,13 @@
   notify: Update apt cache
 
 # --- Kubernetes (kubectl) ---
-- name: Download Kubernetes GPG key
+- name: Download Kubernetes GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key \
+        | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/kubernetes-archive-keyring.gpg
 
 - name: Add Kubernetes repository
@@ -89,9 +105,13 @@
   notify: Update apt cache
 
 # --- HashiCorp (terraform, packer, vault) ---
-- name: Download HashiCorp GPG key
+- name: Download HashiCorp GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://apt.releases.hashicorp.com/gpg \
+        | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
 
 - name: Add HashiCorp repository
@@ -102,9 +122,13 @@
   notify: Update apt cache
 
 # --- MongoDB (mongosh) ---
-- name: Download MongoDB GPG key
+- name: Download MongoDB GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc \
+        | gpg --dearmor -o /usr/share/keyrings/mongodb-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/mongodb-archive-keyring.gpg
 
 - name: Add MongoDB repository
@@ -124,9 +148,13 @@
     state: absent
   notify: Update apt cache
 
-- name: Download Google Chrome GPG key
+- name: Download Google Chrome GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+        | gpg --dearmor -o /usr/share/keyrings/google-chrome-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/google-chrome-archive-keyring.gpg
 
 - name: Add Google Chrome repository
@@ -137,9 +165,13 @@
   notify: Update apt cache
 
 # --- 1Password CLI ---
-- name: Download 1Password GPG key
+- name: Download 1Password GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | gpg --dearmor -o /usr/share/keyrings/1password-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://downloads.1password.com/linux/keys/1password.asc \
+        | gpg --dearmor -o /usr/share/keyrings/1password-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/1password-archive-keyring.gpg
 
 - name: Add 1Password CLI repository
@@ -157,9 +189,10 @@
   notify: Update apt cache
 
 - name: Download Brave Browser GPG key
-  ansible.builtin.shell:
-    cmd: curl -fsSL https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg -o /usr/share/keyrings/brave-browser-archive-keyring.gpg
-    creates: /usr/share/keyrings/brave-browser-archive-keyring.gpg
+  ansible.builtin.get_url:
+    url: https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+    dest: /usr/share/keyrings/brave-browser-archive-keyring.gpg
+    mode: "0644"
 
 - name: Add Brave Browser repository
   ansible.builtin.apt_repository:
@@ -170,9 +203,13 @@
 
 # --- Node.js (NodeSource) ---
 # NodeSource requires their setup script for proper configuration
-- name: Install Node.js repository via NodeSource setup script
+- name: Install Node.js repository via NodeSource setup script  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: "curl -fsSL https://deb.nodesource.com/setup_{{ node_major_version }}.x | bash -"
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://deb.nodesource.com/setup_{{ node_major_version }}.x \
+        | bash -
+    executable: /bin/bash
     creates: /etc/apt/sources.list.d/nodesource.list
   notify: Update apt cache
 
@@ -183,9 +220,13 @@
     state: absent
   notify: Update apt cache
 
-- name: Download OpenZiti GPG key
+- name: Download OpenZiti GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://get.openziti.io/tun/package-repos.gpg | gpg --dearmor -o /usr/share/keyrings/openziti-archive-keyring.gpg
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://get.openziti.io/tun/package-repos.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/openziti-archive-keyring.gpg
+    executable: /bin/bash
     creates: /usr/share/keyrings/openziti-archive-keyring.gpg
 
 - name: Add OpenZiti repository
@@ -198,9 +239,13 @@
 # --- Mozilla Firefox (non-snap, required for OpenZiti tun compatibility) ---
 # Snap Firefox sandbox blocks tun device traffic (ziti0), breaking access
 # to all Ziti-intercepted services. The Mozilla PPA provides a native .deb.
-- name: Download Mozilla APT signing key
+- name: Download Mozilla APT signing key  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: wget -qO- https://packages.mozilla.org/apt/repo-signing-key.gpg | tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null
+    cmd: |
+      set -o pipefail
+      wget -qO- https://packages.mozilla.org/apt/repo-signing-key.gpg \
+        | tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null
+    executable: /bin/bash
     creates: /etc/apt/keyrings/packages.mozilla.org.asc
 
 - name: Add Mozilla APT repository

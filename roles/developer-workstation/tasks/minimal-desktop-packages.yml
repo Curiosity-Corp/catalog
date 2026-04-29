@@ -3,7 +3,7 @@
 # Minimal Desktop — Package Installation
 # =============================================================================
 
-- name: Install minimal desktop packages
+- name: Install minimal desktop packages  # noqa: args
   ansible.builtin.apt:
     name:
       # Window manager and display manager

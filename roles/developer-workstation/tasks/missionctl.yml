@@ -1,0 +1,22 @@
+---
+# =============================================================================
+# missionctl
+# =============================================================================
+# Optional thin-client TUI install. The repository is private/not publicly
+# discoverable, so callers must provide a direct binary URL.
+# =============================================================================
+
+- name: Require missionctl_install_url when missionctl is enabled
+  ansible.builtin.assert:
+    that:
+      - missionctl_install_url | default('') | length > 0
+    fail_msg: >-
+      Set missionctl_install_url to a direct missionctl binary URL before
+      enabling missionctl.
+
+- name: Install missionctl
+  ansible.builtin.get_url:
+    url: "{{ missionctl_install_url }}"
+    dest: "{{ missionctl_install_path }}"
+    mode: "0755"
+    force: true

@@ -245,15 +245,18 @@
     path: /usr/local/bin/chezmoi
   register: chezmoi_installed
 
-- name: Install chezmoi
+- name: Install chezmoi  # noqa: command-instead-of-module
   ansible.builtin.shell:
     cmd: sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
     creates: /usr/local/bin/chezmoi
 
 # --- starship ---
-- name: Install starship
+- name: Install starship  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -sS https://starship.rs/install.sh | sh -s -- -y
+    cmd: |
+      set -o pipefail
+      curl -sS https://starship.rs/install.sh | sh -s -- -y
+    executable: /bin/bash
     creates: /usr/local/bin/starship
 
 # --- filebrowser (workspace profile) ---

@@ -1,0 +1,125 @@
+---
+# =============================================================================
+# APT Repository Setup (Thin Client Profile)
+# =============================================================================
+# Access appliances only need native browser access, OpenZiti, and optional
+# Node.js for local Playwright smoke tests.
+# =============================================================================
+
+- name: Ensure thin-client repository prerequisites are installed
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - wget
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Ensure APT keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# --- Retired Claude Desktop repository ---
+- name: Remove retired Claude Desktop repository before any apt cache refresh
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/claude-desktop.list
+    state: absent
+  notify: Update apt cache
+
+- name: Remove retired Claude Desktop archive keyring
+  ansible.builtin.file:
+    path: /usr/share/keyrings/claude-desktop-archive-keyring.gpg
+    state: absent
+  notify: Update apt cache
+
+# --- OpenZiti (ziti-edge-tunnel) ---
+- name: Remove pre-existing OpenZiti repo config (conflicting signed-by)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/openziti-release.list
+    state: absent
+  notify: Update apt cache
+
+- name: Download OpenZiti GPG key
+  ansible.builtin.get_url:
+    url: https://get.openziti.io/tun/package-repos.gpg
+    dest: /tmp/openziti-package-repos.gpg
+    mode: "0644"
+  register: _openziti_key_download
+
+- name: Check OpenZiti keyring presence
+  ansible.builtin.stat:
+    path: /usr/share/keyrings/openziti-archive-keyring.gpg
+  register: _openziti_keyring
+
+- name: Dearmor OpenZiti GPG key
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --dearmor
+      - --yes
+      - --output
+      - /usr/share/keyrings/openziti-archive-keyring.gpg
+      - /tmp/openziti-package-repos.gpg
+  changed_when: true
+  when: _openziti_key_download.changed or not _openziti_keyring.stat.exists
+
+- name: Add OpenZiti repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }}
+      signed-by=/usr/share/keyrings/openziti-archive-keyring.gpg]
+      https://packages.openziti.org/zitipax-openziti-deb-stable debian main
+    filename: openziti
+    state: present
+  notify: Update apt cache
+
+# --- Mozilla Firefox (non-snap, required for OpenZiti tun compatibility) ---
+- name: Download Mozilla APT signing key
+  ansible.builtin.get_url:
+    url: https://packages.mozilla.org/apt/repo-signing-key.gpg
+    dest: /etc/apt/keyrings/packages.mozilla.org.asc
+    mode: "0644"
+
+- name: Add Mozilla APT repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc]
+      https://packages.mozilla.org/apt mozilla main
+    filename: mozilla
+    state: present
+  notify: Update apt cache
+
+- name: Pin Mozilla Firefox over Ubuntu snap stub
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/mozilla
+    content: |
+      Package: firefox*
+      Pin: origin packages.mozilla.org
+      Pin-Priority: 1001
+    mode: "0644"
+
+- name: Remove snap Firefox if present
+  community.general.snap:
+    name: firefox
+    state: absent
+  failed_when: false
+
+# --- Node.js (optional, only for local Playwright on thin clients) ---
+- name: Install Node.js repository via NodeSource setup script  # noqa: command-instead-of-module
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://deb.nodesource.com/setup_{{ node_major_version }}.x \
+        | bash -
+    executable: /bin/bash
+    creates: /etc/apt/sources.list.d/nodesource.list
+  notify: Update apt cache
+  when: thin_client_playwright_enabled | default(false)
+
+- name: Flush handlers to update apt cache
+  ansible.builtin.meta: flush_handlers

@@ -86,7 +86,7 @@
     enabled: true
     state: started
 
-- name: Restart authd-oidc broker
+- name: Restart authd-oidc broker  # noqa: no-handler
   ansible.builtin.command: snap restart authd-oidc
   when: _broker_conf is changed
   changed_when: true

@@ -1,0 +1,65 @@
+---
+# =============================================================================
+# Coder CLI
+# =============================================================================
+# The Coder CLI is required on desktops, Coder workspaces, and thin clients.
+# Keep it separate from cloud provider CLIs so access-only machines do not pull
+# AWS/Azure/GitLab tooling.
+# =============================================================================
+
+- name: Check if Coder CLI is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/coder
+  register: coder_cli_installed
+
+- name: Get installed Coder CLI version
+  ansible.builtin.command:
+    cmd: /usr/local/bin/coder version --output json
+  register: coder_cli_version_json
+  changed_when: false
+  failed_when: false
+  when: coder_cli_installed.stat.exists
+
+- name: Set installed Coder CLI version
+  ansible.builtin.set_fact:
+    coder_cli_current_version: >-
+      {{
+        ((((coder_cli_version_json.stdout | default('{}')) | from_json).version
+        | default(''))
+        | regex_replace('^v', ''))
+      }}
+  when: coder_cli_installed.stat.exists
+
+- name: Set Coder CLI needs upgrade flag
+  ansible.builtin.set_fact:
+    coder_cli_needs_upgrade: >-
+      {{
+        (not coder_cli_installed.stat.exists) or
+        ((coder_cli_current_version | default('')) == '') or
+        ((coder_cli_current_version | default('0.0.0'))
+        is version(coder_cli_version, '!='))
+      }}
+
+- name: Download Coder CLI installer
+  ansible.builtin.get_url:
+    url: "{{ coder_cli_install_script_url }}"
+    dest: /tmp/install-coder.sh
+    mode: "0755"
+    force: true
+  when: coder_cli_needs_upgrade
+
+- name: Install Coder CLI
+  ansible.builtin.command:
+    cmd: >-
+      /bin/sh /tmp/install-coder.sh
+      --version {{ coder_cli_version }}
+      --method standalone
+  register: coder_cli_install_result
+  changed_when: coder_cli_install_result.rc == 0
+  when: coder_cli_needs_upgrade
+
+- name: Clean up Coder CLI installer
+  ansible.builtin.file:
+    path: /tmp/install-coder.sh
+    state: absent
+  when: coder_cli_needs_upgrade

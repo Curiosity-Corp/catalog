@@ -1,0 +1,78 @@
+---
+# =============================================================================
+# APT Package Installation (Thin Client Profile)
+# =============================================================================
+# Small access-appliance package set for Coder + Ziti + browser workflows.
+# Heavy development tooling belongs inside the Coder workspace image.
+# =============================================================================
+
+- name: Install thin-client APT packages  # noqa: args
+  ansible.builtin.apt:
+    name:
+      # --- System essentials ---
+      - ca-certificates
+      - curl
+      - wget
+      - gnupg
+      - lsb-release
+      - software-properties-common
+      - python3
+      - python3-apt
+      - ansible
+      # --- Access tools ---
+      - firefox
+      - openssh-client
+      - sshfs
+      - rsync
+      # --- Shell and diagnostics ---
+      - git
+      - jq
+      - dnsutils
+      - iproute2
+      - iputils-ping
+      - mtr-tiny
+      - traceroute
+      - netcat-openbsd
+      - tmux
+      - zsh
+      - vim
+      - nano
+      - ripgrep
+      - fd-find
+      - bat
+      - fzf
+      - tree
+      - btop
+      - unzip
+      - zip
+      # --- Desktop/session plumbing ---
+      - snapd
+      - dbus-x11
+      - xdg-utils
+      - libnss3-tools
+      - ufw
+    state: present
+    update_cache: true
+
+- name: Install optional thin-client Playwright Node.js package
+  ansible.builtin.apt:
+    name:
+      - nodejs
+    state: present
+    update_cache: true
+  when: thin_client_playwright_enabled | default(false)
+
+- name: Remove unwanted packages
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+      - docker-buildx-plugin
+      - rancher
+      - cloudflared
+      - tailscale
+    state: absent
+    purge: true

@@ -6,17 +6,23 @@
 # =============================================================================
 
 # --- Helm ---
-- name: Install Helm
+- name: Install Helm  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
+        | bash
+    executable: /bin/bash
     creates: /usr/local/bin/helm
 
 # --- Kustomize ---
-- name: Install Kustomize
+- name: Install Kustomize  # noqa: command-instead-of-module
   ansible.builtin.shell:
     cmd: |
+      set -o pipefail
       curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
       mv kustomize /usr/local/bin/kustomize
+    executable: /bin/bash
     creates: /usr/local/bin/kustomize
 
 # --- talosctl ---
@@ -124,9 +130,12 @@
     force: false
 
 # --- Flux CLI ---
-- name: Install Flux CLI
+- name: Install Flux CLI  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://fluxcd.io/install.sh | bash
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://fluxcd.io/install.sh | bash
+    executable: /bin/bash
     creates: /usr/local/bin/flux
 
 # --- Velero CLI ---
@@ -167,7 +176,7 @@
 - name: Install Krew
   ansible.builtin.shell:
     cmd: |
-      set -e
+      set -euo pipefail
       cd "$(mktemp -d)"
       OS="$(uname | tr '[:upper:]' '[:lower:]')"
       ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')"
@@ -175,6 +184,7 @@
       curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz"
       tar zxvf "${KREW}.tar.gz"
       ./"${KREW}" install krew
+    executable: /bin/bash
     creates: "{{ dev_user_home }}/.krew/bin/kubectl-krew"
   become: true
   become_user: "{{ dev_user }}"

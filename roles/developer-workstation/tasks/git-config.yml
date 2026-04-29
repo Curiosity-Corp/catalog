@@ -10,6 +10,7 @@
     name: "{{ item.name }}"
     value: "{{ item.value }}"
     scope: global
+  become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
@@ -32,6 +33,7 @@
     name: "{{ item.name }}"
     value: "{{ item.value }}"
     scope: global
+  become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
@@ -47,6 +49,7 @@
   ansible.builtin.command:
     cmd: git lfs install
     chdir: "{{ dev_user_home }}"
+  become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"

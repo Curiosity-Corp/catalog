@@ -6,7 +6,7 @@
 # Avoids desktop/browser/systemd-host dependencies.
 # =============================================================================
 
-- name: Install workspace APT packages
+- name: Install workspace APT packages  # noqa: args
   ansible.builtin.apt:
     name:
       # --- Build tools ---

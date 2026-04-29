@@ -8,6 +8,31 @@
 #   ansible_pull_interval, ansible_pull_dir
 # =============================================================================
 
+- name: Create ansible-pull wrapper
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      extra_args=()
+      if [[ -n "{{ ansible_pull_extra_vars }}" ]]; then
+        # shellcheck disable=SC2206
+        extra_args=({{ ansible_pull_extra_vars }})
+      fi
+
+      exec /usr/bin/ansible-pull \
+        -U {{ ansible_pull_repo }} \
+        -C {{ ansible_pull_branch }} \
+        -d {{ ansible_pull_dir }} \
+        {{ ansible_pull_playbook }} \
+        -e dev_user={{ dev_user }} \
+        -e dev_user_home={{ dev_user_home }} \
+        -e workstation_profile={{ workstation_profile }} \
+        -e hardware_profile={{ hardware_profile }} \
+        "${extra_args[@]}"
+    dest: /usr/local/sbin/curiosity-ansible-pull
+    mode: "0755"
+
 - name: Create ansible-pull service unit
   ansible.builtin.copy:
     content: |
@@ -20,7 +45,8 @@
       Type=oneshot
       Environment=HOME=/root
       Environment=ANSIBLE_INVALID_TASK_ATTRIBUTE_FAILED=False
-      ExecStart=/usr/bin/flock -n /var/lock/ansible-pull.lock /usr/bin/ansible-pull -U {{ ansible_pull_repo }} -C {{ ansible_pull_branch }} -d {{ ansible_pull_dir }} {{ ansible_pull_playbook }} -e dev_user={{ dev_user }} -e dev_user_home={{ dev_user_home }}
+      ExecStart=/usr/bin/flock -n /var/lock/ansible-pull.lock \
+        /usr/local/sbin/curiosity-ansible-pull
       TimeoutStartSec=3600
       StandardOutput=journal
       StandardError=journal

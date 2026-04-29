@@ -16,7 +16,7 @@
     cmd: python3 -m venv /opt/science-venv
     creates: /opt/science-venv/bin/activate
 
-- name: Install scientific Python packages into venv
+- name: Install scientific Python packages into venv  # noqa: args
   ansible.builtin.pip:
     name:
       # --- Core data science ---

@@ -100,7 +100,7 @@
       sleep-inactive-battery-type='nothing'
   register: _dconf_settings
 
-- name: Update dconf database
+- name: Update dconf database  # noqa: no-handler
   ansible.builtin.command: dconf update
   when: _dconf_settings is changed
   changed_when: true

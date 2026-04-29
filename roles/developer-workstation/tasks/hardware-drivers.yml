@@ -34,7 +34,7 @@
   loop: "{{ hardware_profiles[hardware_profile].udev_rules | default([]) }}"
   register: _udev_rules_result
 
-- name: Reload udev rules
+- name: Reload udev rules  # noqa: no-handler
   ansible.builtin.command: udevadm control --reload-rules
   when: _udev_rules_result is changed
   changed_when: true

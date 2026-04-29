@@ -44,12 +44,14 @@
   environment:
     HOME: "{{ dev_user_home }}"
   when: not omz_installed.stat.exists
+  changed_when: true
 
 - name: Install zsh-autosuggestions plugin
   ansible.builtin.git:
     repo: https://github.com/zsh-users/zsh-autosuggestions.git
     dest: "{{ dev_user_home }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
     depth: 1
+    version: master
   become: true
   become_user: "{{ dev_user }}"
 
@@ -58,5 +60,6 @@
     repo: https://github.com/zsh-users/zsh-syntax-highlighting.git
     dest: "{{ dev_user_home }}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
     depth: 1
+    version: master
   become: true
   become_user: "{{ dev_user }}"

@@ -102,7 +102,7 @@
       identities=("${IDENTITY_DIR}"/*-oidc.json)
       shopt -u nullglob
 
-      if [[ ${#identities[@]} -eq 0 ]]; then
+      if [[ -z "${identities[*]:-}" ]]; then
         logger -t ziti-oidc "No OIDC identity files found in ${IDENTITY_DIR}"
         exit 0
       fi
@@ -242,7 +242,7 @@
       [Install]
       WantedBy=graphical-session.target
 
-- name: Enable screensaver monitor for all desktop users
+- name: Enable screensaver monitor for all desktop users  # noqa: command-instead-of-module
   ansible.builtin.command:
     cmd: systemctl --global enable ziti-oidc-screensaver-monitor.service
   register: _screensaver_monitor_enable

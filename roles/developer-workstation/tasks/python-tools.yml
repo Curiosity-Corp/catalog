@@ -8,15 +8,20 @@
 
 - name: Ensure pipx is configured
   ansible.builtin.command: pipx ensurepath
+  become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
   changed_when: false
 
-- name: Install uv (fast pip replacement)
+- name: Install uv (fast pip replacement)  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://astral.sh/uv/install.sh | sh
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://astral.sh/uv/install.sh | sh
+    executable: /bin/bash
     creates: "{{ dev_user_home }}/.local/bin/uv"
+  become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
@@ -25,6 +30,7 @@
   community.general.pipx:
     name: "{{ item }}"
     state: present
+  become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"

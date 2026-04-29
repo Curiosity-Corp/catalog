@@ -6,7 +6,7 @@
 # for efficiency. Repos must be configured first (repos.yml).
 # =============================================================================
 
-- name: Install all APT packages
+- name: Install all APT packages  # noqa: args
   ansible.builtin.apt:
     name:
       # --- Build tools ---

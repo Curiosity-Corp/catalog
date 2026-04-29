@@ -137,6 +137,7 @@
       certutil -d sql:{{ item.path | dirname }}
       -A -t "CT,C,C" -n "Harbor Internal CA"
       -i /usr/local/share/ca-certificates/harbor-internal-ca.crt
+  become: true
   become_user: "{{ dev_user }}"
   loop: "{{ _snap_firefox_nssdb.files }}"
   loop_control:

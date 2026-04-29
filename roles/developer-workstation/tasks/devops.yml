@@ -6,9 +6,12 @@
 # =============================================================================
 
 # --- rclone ---
-- name: Install rclone
+- name: Install rclone  # noqa: command-instead-of-module
   ansible.builtin.shell:
-    cmd: curl -fsSL https://rclone.org/install.sh | bash
+    cmd: |
+      set -o pipefail
+      curl -fsSL https://rclone.org/install.sh | bash
+    executable: /bin/bash
     creates: /usr/bin/rclone
 
 # --- grpcurl ---

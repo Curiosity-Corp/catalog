@@ -23,13 +23,15 @@
     that:
       - _dev_user_home_stat.stat.exists
       - _dev_user_home_stat.stat.isdir
-    fail_msg: "Home directory {{ dev_user_home }} does not exist for user {{ dev_user }}"
+    fail_msg: >-
+      Home directory {{ dev_user_home }} does not exist for user {{ dev_user }}
 
 - name: Verify workstation profile is valid
   ansible.builtin.assert:
     that:
-      - workstation_profile in ['desktop', 'workspace']
-    fail_msg: "workstation_profile must be 'desktop' or 'workspace'"
+      - workstation_profile in ['desktop', 'workspace', 'thin-client']
+    fail_msg: >-
+      workstation_profile must be 'desktop', 'workspace', or 'thin-client'
 
 # =============================================================================
 # Task Includes
@@ -44,6 +46,11 @@
   tags: [repos]
   when: workstation_profile == 'workspace'
 
+- name: Include APT repository setup (thin client)
+  ansible.builtin.include_tasks: repos-thin-client.yml
+  tags: [repos]
+  when: workstation_profile == 'thin-client'
+
 - name: Include APT package installation (desktop)
   ansible.builtin.include_tasks: packages.yml
   tags: [packages]
@@ -54,45 +61,82 @@
   tags: [packages]
   when: workstation_profile == 'workspace'
 
+- name: Include APT package installation (thin client)
+  ansible.builtin.include_tasks: packages-thin-client.yml
+  tags: [packages]
+  when: workstation_profile == 'thin-client'
+
+- name: Include Coder CLI installation
+  ansible.builtin.include_tasks: coder-cli.yml
+  tags: [coder]
+  when: coder_cli_enabled | default(true)
+
 - name: Include cloud CLI installation
   ansible.builtin.include_tasks: cloud-clis.yml
   tags: [cloud]
+  when:
+    - workstation_profile in ['desktop', 'workspace']
+    - cloud_clis_enabled | default(true)
 
 - name: Include Kubernetes tools
   ansible.builtin.include_tasks: kubernetes.yml
   tags: [kubernetes]
+  when: workstation_profile in ['desktop', 'workspace']
 
 - name: Include DevOps utilities
   ansible.builtin.include_tasks: devops.yml
   tags: [devops]
+  when: workstation_profile in ['desktop', 'workspace']
 
 - name: Include language runtimes
   ansible.builtin.include_tasks: languages.yml
   tags: [languages]
+  when: workstation_profile in ['desktop', 'workspace']
 
 - name: Include Node.js packages
   ansible.builtin.include_tasks: node-packages.yml
   tags: [node]
+  when: workstation_profile in ['desktop', 'workspace']
 
 - name: Include Python tools
   ansible.builtin.include_tasks: python-tools.yml
   tags: [python]
+  when: workstation_profile in ['desktop', 'workspace']
 
 - name: Include scientific Python and data-science tools
   ansible.builtin.include_tasks: science-tools.yml
   tags: [science, data-science]
+  when: workstation_profile in ['desktop', 'workspace']
 
 - name: Include modern CLI tools
   ansible.builtin.include_tasks: cli-tools.yml
   tags: [cli]
+  when: workstation_profile in ['desktop', 'workspace']
 
 - name: Include testing frameworks
   ansible.builtin.include_tasks: testing.yml
   tags: [testing]
+  when:
+    - >-
+      workstation_profile in ['desktop', 'workspace'] or
+      (thin_client_playwright_enabled | default(false))
 
 - name: Include AI coding assistants
   ansible.builtin.include_tasks: ai-assistants.yml
   tags: [ai]
+  when: workstation_profile in ['desktop', 'workspace']
+
+- name: Include missionctl
+  ansible.builtin.include_tasks: missionctl.yml
+  tags: [missionctl]
+  when:
+    - workstation_profile == 'thin-client'
+    - missionctl_enabled | default(false)
+
+- name: Include internal CA trust
+  ansible.builtin.include_tasks: internal-cas.yml
+  tags: [security, certificates]
+  when: workstation_profile == 'thin-client'
 
 - name: Include security tools
   ansible.builtin.include_tasks: security.yml
@@ -112,7 +156,9 @@
 - name: Include WeeChat TUI chat client
   ansible.builtin.include_tasks: weechat.yml
   tags: [weechat, chat]
-  when: weechat_enabled | default(false)
+  when:
+    - workstation_profile != 'thin-client'
+    - weechat_enabled | default(false)
 
 - name: Include system tuning (swap, earlyoom, sysctl)
   ansible.builtin.include_tasks: system-tuning.yml
@@ -129,10 +175,12 @@
   ansible.builtin.include_tasks: user-env.yml
   tags: [user]
 
-- name: Include shell RC fallback (pre-chezmoi — skipped when dotfiles are opted in)
+- name: Include shell RC fallback
   ansible.builtin.include_tasks: user-shell-fallback.yml
   tags: [user, shell]
-  when: user_dotfiles_repo | default('') | length == 0
+  when:
+    - workstation_profile != 'thin-client'
+    - user_dotfiles_repo | default('') | length == 0
 
 - name: Include chezmoi dotfiles bootstrap
   ansible.builtin.include_tasks: dotfiles.yml
@@ -151,8 +199,12 @@
   ansible.builtin.include_tasks: minimal-desktop.yml
   tags: [minimal-desktop]
   when:
-    - workstation_profile == 'desktop'
-    - minimal_desktop_enabled | default(false)
+    - >-
+      workstation_profile == 'thin-client' or
+      (
+        workstation_profile == 'desktop' and
+        (minimal_desktop_enabled | default(false))
+      )
 
 - name: Include Sunshine remote streaming
   ansible.builtin.include_tasks: streaming.yml
@@ -165,34 +217,38 @@
   ansible.builtin.include_tasks: firewall.yml
   tags: [firewall]
   when:
-    - workstation_profile == 'desktop'
-    - firewall_enabled | default(false)
+    - >-
+      workstation_profile == 'thin-client' or
+      (
+        workstation_profile == 'desktop' and
+        (firewall_enabled | default(false))
+      )
 
 - name: Include Keycloak SSO (authd + authd-oidc)
   ansible.builtin.include_tasks: keycloak-sso.yml
   tags: [keycloak, sso]
   when:
-    - workstation_profile == 'desktop'
+    - workstation_profile in ['desktop', 'thin-client']
     - keycloak_sso_enabled | default(false)
 
 - name: Include Ziti edge tunnel + OIDC session hooks
   ansible.builtin.include_tasks: ziti.yml
   tags: [ziti, networking]
   when:
-    - workstation_profile == 'desktop'
+    - workstation_profile in ['desktop', 'thin-client']
     - ziti_enabled | default(false)
 
 - name: Include profile cleanup timer
   ansible.builtin.include_tasks: profile-cleanup.yml
   tags: [profile-cleanup]
   when:
-    - workstation_profile == 'desktop'
+    - workstation_profile in ['desktop', 'thin-client']
     - profile_cleanup_enabled | default(false)
 
 - name: Include hardware-specific drivers
   ansible.builtin.include_tasks: hardware-drivers.yml
   tags: [hardware]
-  when: workstation_profile == 'desktop'
+  when: workstation_profile in ['desktop', 'thin-client']
 
 - name: Include fonts
   ansible.builtin.include_tasks: fonts.yml
@@ -202,4 +258,4 @@
 - name: Include ansible-pull timer
   ansible.builtin.include_tasks: ansible-pull-timer.yml
   tags: [ansible-pull]
-  when: workstation_profile == 'desktop'
+  when: workstation_profile in ['desktop', 'thin-client']
