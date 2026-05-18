@@ -6,19 +6,50 @@
 # ziti-edge-tunnel flooding via imuxsock → rsyslog → /var/log/syslog).
 #
 # Strategy:
-#   1. Drop-in logrotate overrides (zz- prefix sorts after package stanzas).
-#   2. rsyslog imuxsock rate-limit to throttle socket floods at ingestion.
-#   3. Hourly logrotate.timer to ensure maxsize is enforced within the hour.
-#   4. ziti-edge-tunnel service drop-in: lower log verbosity to suppress noise.
+#   1. dpkg-divert the package-owned logrotate stanzas aside so our
+#      replacements own the canonical paths without duplicate-entry errors.
+#   2. Deploy replacement stanzas: daily + maxsize caps instead of weekly.
+#   3. rsyslog imuxsock rate-limit to throttle socket floods at ingestion.
+#   4. Hourly logrotate.timer so maxsize enforcement fires within the hour.
+#   5. ziti-edge-tunnel service drop-in: lower log verbosity to suppress noise.
+#
+# NOTE: dpkg-divert is idempotent — re-running when already diverted is safe.
+# The diverted paths live alongside the originals; only the canonical paths
+# are used by logrotate. On package upgrade dpkg will update the .dpkg-dist
+# copy, which we can review but which does not affect live rotation policy.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Logrotate: rsyslog override
+# Divert package-owned rsyslog logrotate stanza
 # -----------------------------------------------------------------------------
-- name: Deploy rsyslog logrotate override
+- name: Divert /etc/logrotate.d/rsyslog to .dpkg-dist
+  ansible.builtin.command:
+    cmd: >-
+      dpkg-divert --local --divert /etc/logrotate.d/rsyslog.dpkg-dist
+      --rename /etc/logrotate.d/rsyslog
+  register: _divert_rsyslog
+  changed_when: "'Adding' in _divert_rsyslog.stdout"
+  tags: [logrotate, logging]
+
+# -----------------------------------------------------------------------------
+# Divert package-owned ziti-tunnel logrotate stanza
+# -----------------------------------------------------------------------------
+- name: Divert /etc/logrotate.d/ziti-tunnel to .dpkg-dist
+  ansible.builtin.command:
+    cmd: >-
+      dpkg-divert --local --divert /etc/logrotate.d/ziti-tunnel.dpkg-dist
+      --rename /etc/logrotate.d/ziti-tunnel
+  register: _divert_ziti
+  changed_when: "'Adding' in _divert_ziti.stdout"
+  tags: [logrotate, logging]
+
+# -----------------------------------------------------------------------------
+# Deploy replacement rsyslog logrotate stanza
+# -----------------------------------------------------------------------------
+- name: Deploy rsyslog logrotate stanza
   ansible.builtin.template:
-    src: zz-curiosity-rsyslog-override.j2
-    dest: /etc/logrotate.d/zz-curiosity-rsyslog-override
+    src: curiosity-rsyslog-logrotate.j2
+    dest: /etc/logrotate.d/rsyslog
     owner: root
     group: root
     mode: "0644"
@@ -26,16 +57,31 @@
   tags: [logrotate, logging]
 
 # -----------------------------------------------------------------------------
-# Logrotate: ziti-tunnel override
+# Deploy replacement ziti-tunnel logrotate stanza
 # -----------------------------------------------------------------------------
-- name: Deploy ziti-tunnel logrotate override
+- name: Deploy ziti-tunnel logrotate stanza
   ansible.builtin.template:
-    src: zz-curiosity-ziti-tunnel-override.j2
-    dest: /etc/logrotate.d/zz-curiosity-ziti-tunnel-override
+    src: curiosity-ziti-tunnel-logrotate.j2
+    dest: /etc/logrotate.d/ziti-tunnel
     owner: root
     group: root
     mode: "0644"
     validate: "/usr/sbin/logrotate -d %s"
+  tags: [logrotate, logging]
+
+# -----------------------------------------------------------------------------
+# Remove old zz-curiosity-* stanzas if they exist from a prior run
+# -----------------------------------------------------------------------------
+- name: Remove legacy zz-curiosity-rsyslog-override if present
+  ansible.builtin.file:
+    path: /etc/logrotate.d/zz-curiosity-rsyslog-override
+    state: absent
+  tags: [logrotate, logging]
+
+- name: Remove legacy zz-curiosity-ziti-tunnel-override if present
+  ansible.builtin.file:
+    path: /etc/logrotate.d/zz-curiosity-ziti-tunnel-override
+    state: absent
   tags: [logrotate, logging]
 
 # -----------------------------------------------------------------------------

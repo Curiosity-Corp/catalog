@@ -1,5 +1,5 @@
 # Managed by Ansible — do not edit manually.
-# Overrides /etc/logrotate.d/rsyslog (zz- sorts last, wins the override).
+# Replaces the package-owned /etc/logrotate.d/rsyslog (diverted to .dpkg-dist).
 # Adds maxsize + daily cadence to prevent unbounded syslog growth between rotations.
 /var/log/syslog
 /var/log/auth.log

@@ -1,5 +1,6 @@
 # Managed by Ansible — do not edit manually.
-# Tighter rotation for ziti-edge-tunnel logs (overrides /etc/logrotate.d/ziti-tunnel).
+# Replaces the package-owned /etc/logrotate.d/ziti-tunnel (diverted to .dpkg-dist).
+# Tighter maxsize cap to prevent ziti debug floods from consuming disk.
 /var/log/ziti-tunnel.log
 /tmp/ziti-tunnel.log
 {
