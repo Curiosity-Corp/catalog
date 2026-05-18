@@ -3,6 +3,7 @@
 /var/log/ziti-tunnel.log
 /tmp/ziti-tunnel.log
 {
+    su root root
     daily
     rotate 3
     maxsize {{ logrotate_ziti_maxsize }}
