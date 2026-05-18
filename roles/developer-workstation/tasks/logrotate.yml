@@ -20,6 +20,19 @@
 # =============================================================================
 
 # -----------------------------------------------------------------------------
+# Remove orphan logrotate drop-ins from pre-refactor rollout
+# (zz- prefix naming scheme replaced by dpkg-divert ownership model)
+# -----------------------------------------------------------------------------
+- name: Remove orphan logrotate drop-ins from pre-refactor rollout
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/logrotate.d/zz-curiosity-rsyslog-override
+    - /etc/logrotate.d/zz-curiosity-ziti-tunnel-override
+  tags: [logrotate, logging, cleanup]
+
+# -----------------------------------------------------------------------------
 # Divert package-owned rsyslog logrotate stanza
 # -----------------------------------------------------------------------------
 - name: Divert /etc/logrotate.d/rsyslog to .dpkg-dist
@@ -67,21 +80,6 @@
     group: root
     mode: "0644"
     validate: "/usr/sbin/logrotate -d %s"
-  tags: [logrotate, logging]
-
-# -----------------------------------------------------------------------------
-# Remove old zz-curiosity-* stanzas if they exist from a prior run
-# -----------------------------------------------------------------------------
-- name: Remove legacy zz-curiosity-rsyslog-override if present
-  ansible.builtin.file:
-    path: /etc/logrotate.d/zz-curiosity-rsyslog-override
-    state: absent
-  tags: [logrotate, logging]
-
-- name: Remove legacy zz-curiosity-ziti-tunnel-override if present
-  ansible.builtin.file:
-    path: /etc/logrotate.d/zz-curiosity-ziti-tunnel-override
-    state: absent
   tags: [logrotate, logging]
 
 # -----------------------------------------------------------------------------
