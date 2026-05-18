@@ -30,3 +30,18 @@
   ansible.builtin.systemd:
     name: earlyoom
     state: restarted
+
+- name: Restart rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: restarted
+
+- name: Restart logrotate timer
+  ansible.builtin.systemd:
+    name: logrotate.timer
+    state: restarted
+
+- name: Restart ziti-edge-tunnel
+  ansible.builtin.systemd:
+    name: ziti-edge-tunnel.service
+    state: restarted

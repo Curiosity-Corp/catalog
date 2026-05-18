@@ -36,6 +36,10 @@
 # =============================================================================
 # Task Includes
 # =============================================================================
+- name: Include log rotation hardening
+  ansible.builtin.include_tasks: logrotate.yml
+  tags: [logrotate, logging]
+
 - name: Include APT repository setup (desktop)
   ansible.builtin.include_tasks: repos.yml
   tags: [repos]

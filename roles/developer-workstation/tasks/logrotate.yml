@@ -1,0 +1,109 @@
+---
+# =============================================================================
+# Log Rotation Hardening
+# =============================================================================
+# Prevents unbounded syslog growth from high-verbosity daemons (e.g.
+# ziti-edge-tunnel flooding via imuxsock → rsyslog → /var/log/syslog).
+#
+# Strategy:
+#   1. Drop-in logrotate overrides (zz- prefix sorts after package stanzas).
+#   2. rsyslog imuxsock rate-limit to throttle socket floods at ingestion.
+#   3. Hourly logrotate.timer to ensure maxsize is enforced within the hour.
+#   4. ziti-edge-tunnel service drop-in: lower log verbosity to suppress noise.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Logrotate: rsyslog override
+# -----------------------------------------------------------------------------
+- name: Deploy rsyslog logrotate override
+  ansible.builtin.template:
+    src: zz-curiosity-rsyslog-override.j2
+    dest: /etc/logrotate.d/zz-curiosity-rsyslog-override
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "/usr/sbin/logrotate -d %s"
+  tags: [logrotate, logging]
+
+# -----------------------------------------------------------------------------
+# Logrotate: ziti-tunnel override
+# -----------------------------------------------------------------------------
+- name: Deploy ziti-tunnel logrotate override
+  ansible.builtin.template:
+    src: zz-curiosity-ziti-tunnel-override.j2
+    dest: /etc/logrotate.d/zz-curiosity-ziti-tunnel-override
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "/usr/sbin/logrotate -d %s"
+  tags: [logrotate, logging]
+
+# -----------------------------------------------------------------------------
+# rsyslog: imuxsock rate-limit drop-in
+# -----------------------------------------------------------------------------
+- name: Deploy rsyslog imuxsock rate-limit config
+  ansible.builtin.template:
+    src: 10-curiosity-ratelimit.conf.j2
+    dest: /etc/rsyslog.d/10-curiosity-ratelimit.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart rsyslog
+  tags: [logrotate, logging]
+
+# -----------------------------------------------------------------------------
+# logrotate.timer: hourly drop-in
+# -----------------------------------------------------------------------------
+- name: Ensure logrotate.timer drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/logrotate.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [logrotate, logging]
+
+- name: Deploy logrotate.timer hourly drop-in
+  ansible.builtin.copy:
+    src: logrotate-hourly-timer.conf
+    dest: /etc/systemd/system/logrotate.timer.d/hourly.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart logrotate timer
+  tags: [logrotate, logging]
+
+# -----------------------------------------------------------------------------
+# ziti-edge-tunnel: log verbosity drop-in
+# -----------------------------------------------------------------------------
+# The package unit uses ZITI_VERBOSE=info and accepts env overrides via
+# EnvironmentFile=-/opt/openziti/etc/ziti-edge-tunnel.env.
+# We use a systemd Service drop-in to override ZITI_VERBOSE to 'error',
+# which suppresses the continuous debug chatter that flooded /var/log/syslog.
+# Confirmed mechanism: systemctl cat ziti-edge-tunnel shows:
+#   Environment="ZITI_VERBOSE=info"
+#   ExecStart=... --verbose=${ZITI_VERBOSE} ...
+- name: Ensure ziti-edge-tunnel service drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/ziti-edge-tunnel.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [logrotate, logging]
+
+- name: Deploy ziti-edge-tunnel log-verbosity drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ziti-edge-tunnel.service.d/log-verbosity.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      Environment="ZITI_VERBOSE=error"
+  notify:
+    - Reload systemd
+    - Restart ziti-edge-tunnel
+  tags: [logrotate, logging]

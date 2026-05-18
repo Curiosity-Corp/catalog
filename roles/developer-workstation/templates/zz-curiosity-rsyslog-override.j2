@@ -1,0 +1,23 @@
+# Managed by Ansible — do not edit manually.
+# Overrides /etc/logrotate.d/rsyslog (zz- sorts last, wins the override).
+# Adds maxsize + daily cadence to prevent unbounded syslog growth between rotations.
+/var/log/syslog
+/var/log/auth.log
+/var/log/kern.log
+/var/log/mail.log
+/var/log/ufw.log
+/var/log/cron.log
+/var/log/user.log
+{
+    daily
+    rotate {{ logrotate_rotate_count }}
+    maxsize {{ logrotate_maxsize }}
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}

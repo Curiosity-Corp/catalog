@@ -55,6 +55,13 @@ authd_archive_key_asc_path: "/etc/apt/keyrings/ubuntu-enterprise-desktop-authd.a
 authd_archive_keyring_path: "/etc/apt/keyrings/ubuntu-enterprise-desktop-authd.gpg"
 authd_archive_repo_url: "https://ppa.launchpadcontent.net/ubuntu-enterprise-desktop/authd/ubuntu"
 
+# Log rotation hardening
+logrotate_maxsize: "100M"
+logrotate_rotate_count: 7
+logrotate_ziti_maxsize: "50M"
+rsyslog_ratelimit_interval: 5
+rsyslog_ratelimit_burst: 1000
+
 # WeeChat TUI chat client (wee-slack + wee-most plugins)
 weechat_enabled: true
 

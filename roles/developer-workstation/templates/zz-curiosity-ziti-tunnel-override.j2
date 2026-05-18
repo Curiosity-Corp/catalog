@@ -1,0 +1,13 @@
+# Managed by Ansible — do not edit manually.
+# Tighter rotation for ziti-edge-tunnel logs (overrides /etc/logrotate.d/ziti-tunnel).
+/var/log/ziti-tunnel.log
+/tmp/ziti-tunnel.log
+{
+    daily
+    rotate 3
+    maxsize {{ logrotate_ziti_maxsize }}
+    missingok
+    notifempty
+    compress
+    copytruncate
+}

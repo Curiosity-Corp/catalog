@@ -1,0 +1,7 @@
+# Managed by Ansible — do not edit manually.
+# Rate-limits imuxsock to prevent high-verbosity daemons (e.g. ziti-edge-tunnel)
+# from flooding /var/log/syslog. At 1000 msgs/5 s a chatty daemon is throttled
+# to ~200 msg/s instead of saturating the socket without bound.
+module(load="imuxsock"
+       SysSock.RateLimit.Interval="{{ rsyslog_ratelimit_interval }}"
+       SysSock.RateLimit.Burst="{{ rsyslog_ratelimit_burst }}")
