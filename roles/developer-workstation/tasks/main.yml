@@ -29,9 +29,9 @@
 - name: Verify workstation profile is valid
   ansible.builtin.assert:
     that:
-      - workstation_profile in ['desktop', 'workspace', 'thin-client']
+      - workstation_profile in ['desktop', 'workspace', 'thin-client', 'byod-kiosk']
     fail_msg: >-
-      workstation_profile must be 'desktop', 'workspace', or 'thin-client'
+      workstation_profile must be 'desktop', 'workspace', 'thin-client', or 'byod-kiosk'
 
 # =============================================================================
 # Task Includes
@@ -55,6 +55,11 @@
   tags: [repos]
   when: workstation_profile == 'thin-client'
 
+- name: Include APT repository setup (byod-kiosk)
+  ansible.builtin.include_tasks: repos-thin-client.yml
+  tags: [repos]
+  when: workstation_profile == 'byod-kiosk'
+
 - name: Include APT package installation (desktop)
   ansible.builtin.include_tasks: packages.yml
   tags: [packages]
@@ -69,6 +74,11 @@
   ansible.builtin.include_tasks: packages-thin-client.yml
   tags: [packages]
   when: workstation_profile == 'thin-client'
+
+- name: Include APT package installation (byod-kiosk)
+  ansible.builtin.include_tasks: packages-thin-client.yml
+  tags: [packages]
+  when: workstation_profile == 'byod-kiosk'
 
 - name: Include Coder CLI installation
   ansible.builtin.include_tasks: coder-cli.yml
@@ -140,7 +150,7 @@
 - name: Include internal CA trust
   ansible.builtin.include_tasks: internal-cas.yml
   tags: [security, certificates]
-  when: workstation_profile == 'thin-client'
+  when: workstation_profile in ['thin-client', 'byod-kiosk']
 
 - name: Include security tools
   ansible.builtin.include_tasks: security.yml
@@ -205,10 +215,16 @@
   when:
     - >-
       workstation_profile == 'thin-client' or
+      workstation_profile == 'byod-kiosk' or
       (
         workstation_profile == 'desktop' and
         (minimal_desktop_enabled | default(false))
       )
+
+- name: Include kiosk session lockdown (Chromium kiosk, no shell, idle lock)
+  ansible.builtin.include_tasks: kiosk-session.yml
+  tags: [kiosk, lockdown]
+  when: workstation_profile == 'byod-kiosk'
 
 - name: Include Sunshine remote streaming
   ansible.builtin.include_tasks: streaming.yml
@@ -222,7 +238,7 @@
   tags: [firewall]
   when:
     - >-
-      workstation_profile == 'thin-client' or
+      workstation_profile in ['thin-client', 'byod-kiosk'] or
       (
         workstation_profile == 'desktop' and
         (firewall_enabled | default(false))
@@ -232,27 +248,27 @@
   ansible.builtin.include_tasks: keycloak-sso.yml
   tags: [keycloak, sso]
   when:
-    - workstation_profile in ['desktop', 'thin-client']
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - keycloak_sso_enabled | default(false)
 
 - name: Include Ziti edge tunnel + OIDC session hooks
   ansible.builtin.include_tasks: ziti.yml
   tags: [ziti, networking]
   when:
-    - workstation_profile in ['desktop', 'thin-client']
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - ziti_enabled | default(false)
 
 - name: Include profile cleanup timer
   ansible.builtin.include_tasks: profile-cleanup.yml
   tags: [profile-cleanup]
   when:
-    - workstation_profile in ['desktop', 'thin-client']
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - profile_cleanup_enabled | default(false)
 
 - name: Include hardware-specific drivers
   ansible.builtin.include_tasks: hardware-drivers.yml
   tags: [hardware]
-  when: workstation_profile in ['desktop', 'thin-client']
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
 - name: Include fonts
   ansible.builtin.include_tasks: fonts.yml
@@ -262,4 +278,4 @@
 - name: Include ansible-pull timer
   ansible.builtin.include_tasks: ansible-pull-timer.yml
   tags: [ansible-pull]
-  when: workstation_profile in ['desktop', 'thin-client']
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']

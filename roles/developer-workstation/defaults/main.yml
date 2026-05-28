@@ -185,6 +185,12 @@ vscode_extensions:
   - yzhang.markdown-all-in-one
   - ms-vscode-remote.remote-ssh
 
+# Kiosk session (byod-kiosk profile)
+# Target URL for the full-screen kiosk browser session.
+kiosk_target_url: "https://developerdojo.org"
+# Idle timeout before screen lock, in minutes.
+kiosk_idle_lock_minutes: 15
+
 # UFW firewall (SSH open, VNC restricted to ziti0)
 firewall_enabled: false
 
@@ -211,6 +217,24 @@ hardware_profiles:
     description: "ARM thin client"
     packages: []
     services: []
+    pia_vpn: false
+
+  x86-byod-laptop:
+    description: "x86_64 BYOD kiosk laptop (Lenovo T460 and similar)"
+    packages:
+      # ThinkPad power management and fan control
+      - acpi
+      - acpid
+      - tlp
+      - tlp-rdw
+      # Intel graphics firmware and video acceleration
+      - intel-media-va-driver
+      - i965-va-driver
+      # Suspend/resume reliability
+      - pm-utils
+    services:
+      - acpid
+      - tlp
     pia_vpn: false
 
   z590:
