@@ -28,6 +28,14 @@
       panel-position = top
       position = 50% 50%
 
+- name: Ensure /etc/lightdm/lightdm.conf.d exists
+  ansible.builtin.file:
+    path: /etc/lightdm/lightdm.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Configure LightDM auto-login
   ansible.builtin.copy:
     dest: /etc/lightdm/lightdm.conf.d/50-autologin.conf
