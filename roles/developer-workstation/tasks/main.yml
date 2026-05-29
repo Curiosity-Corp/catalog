@@ -266,6 +266,7 @@
   when:
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - keycloak_sso_enabled | default(false)
+    - ansible_distribution == 'Ubuntu'
 
 - name: Include Ziti edge tunnel + OIDC session hooks
   ansible.builtin.include_tasks: ziti.yml
