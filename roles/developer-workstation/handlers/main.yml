@@ -35,6 +35,7 @@
   ansible.builtin.systemd:
     name: rsyslog
     state: restarted
+  failed_when: false
 
 - name: Restart logrotate timer
   ansible.builtin.systemd:
