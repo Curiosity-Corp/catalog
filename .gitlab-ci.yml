@@ -9,7 +9,8 @@ variables:
   # Do NOT set PREFLIGHT_IMAGE to python:slim — pip drops bins to
   # /tmp/.local/bin (not on PATH) and it runs as root (issue #19).
   PREFLIGHT_COMMANDS: >-
-    python3 -m pip install --quiet ansible-core ansible-lint pyyaml &&
+    python3 -m pip install --quiet --break-system-packages
+    ansible-core ansible-lint pyyaml &&
     ansible-galaxy collection install -r requirements.yml >/dev/null &&
     ansible-playbook --syntax-check playbooks/site.yml &&
     ansible-lint playbooks/site.yml roles
