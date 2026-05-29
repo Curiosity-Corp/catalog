@@ -13,8 +13,10 @@ variables:
     /tmp/venv/bin/pip install --quiet ansible-core ansible-lint pyyaml &&
     /tmp/venv/bin/ansible-galaxy collection install -r requirements.yml
     >/dev/null &&
-    /tmp/venv/bin/ansible-playbook --syntax-check playbooks/site.yml &&
-    /tmp/venv/bin/ansible-lint playbooks/site.yml roles
+    ANSIBLE_ROLES_PATH=roles /tmp/venv/bin/ansible-playbook
+    --syntax-check playbooks/site.yml &&
+    ANSIBLE_ROLES_PATH=roles /tmp/venv/bin/ansible-lint
+    playbooks/site.yml roles
   TEST_COMMANDS: >-
     python3 -c "import json, pathlib;
     json.loads(pathlib.Path('renovate.json').read_text());
