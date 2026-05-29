@@ -54,3 +54,4 @@
   environment:
     HOME: "{{ dev_user_home }}"
   changed_when: false
+  failed_when: false

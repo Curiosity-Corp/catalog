@@ -18,6 +18,7 @@
       - python3-apt
       - ansible
       - rsyslog
+      - git-lfs
       # --- Access tools ---
       - firefox
       - openssh-client
