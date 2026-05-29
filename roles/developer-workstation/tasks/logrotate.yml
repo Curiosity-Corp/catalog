@@ -85,6 +85,15 @@
 # -----------------------------------------------------------------------------
 # rsyslog: imuxsock rate-limit drop-in
 # -----------------------------------------------------------------------------
+- name: Ensure /etc/rsyslog.d exists (rsyslog may be present but not yet configured)
+  ansible.builtin.file:
+    path: /etc/rsyslog.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [logrotate, logging]
+
 - name: Deploy rsyslog imuxsock rate-limit config
   ansible.builtin.template:
     src: 10-curiosity-ratelimit.conf.j2
