@@ -5,19 +5,15 @@ include:
     file: '/pipelines/validate-only.yml'
 
 variables:
-  PREFLIGHT_IMAGE: "harbor.focuscell.org/dockerhub-proxy/python:3.13-slim"
+  # alpine/k8s ships python3, pip, curl, jq, yq, kubectl, helm.
+  # Do NOT set PREFLIGHT_IMAGE to python:slim — pip drops bins to
+  # /tmp/.local/bin (not on PATH) and it runs as root (issue #19).
   PREFLIGHT_COMMANDS: >-
-    export PATH="$HOME/.local/bin:$PATH" &&
-    python -m pip install --upgrade pip >/dev/null &&
-    python -m pip install ansible-core ansible-lint pyyaml >/dev/null &&
+    python3 -m pip install --quiet ansible-core ansible-lint pyyaml &&
     ansible-galaxy collection install -r requirements.yml >/dev/null &&
     ansible-playbook --syntax-check playbooks/site.yml &&
     ansible-lint playbooks/site.yml roles
   TEST_COMMANDS: >-
-    python - <<'PY'
-    import json
-    from pathlib import Path
-    json.loads(Path("renovate.json").read_text(encoding="utf-8"))
-    print("renovate.json ok")
-    PY
-  SAST_IMAGE: "harbor.focuscell.org/dockerhub-proxy/python:3.13-slim"
+    python3 -c "import json, pathlib;
+    json.loads(pathlib.Path('renovate.json').read_text());
+    print('renovate.json ok')"
