@@ -21,3 +21,6 @@ variables:
     python3 -c "import json, pathlib;
     json.loads(pathlib.Path('renovate.json').read_text());
     print('renovate.json ok')"
+  # Use the dockerhub-proxy path until harbor.focuscell.org/infra/semgrep
+  # is populated.  The proxy pulls semgrep/semgrep on-demand from Docker Hub.
+  SAST_IMAGE: "harbor.focuscell.org/dockerhub-proxy/semgrep/semgrep:latest"
