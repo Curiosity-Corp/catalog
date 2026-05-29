@@ -15,7 +15,6 @@
       - wget
       - gnupg
       - lsb-release
-      - software-properties-common
       - python3
       - python3-apt
       - ansible
