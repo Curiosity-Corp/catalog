@@ -266,6 +266,20 @@
     validate: "visudo -cf %s"
 
 # -----------------------------------------------------------------------------
+# Identity directory permissions
+# -----------------------------------------------------------------------------
+# The ziti-edge-tunnel package installs /opt/openziti/etc/identities as
+# 0700 root:ziti on some builds, which prevents the ziti service user from
+# listing or reading identity files. Ensure 0750 so the ziti group can access.
+- name: Ensure ziti identities directory is group-accessible
+  ansible.builtin.file:
+    path: /opt/openziti/etc/identities
+    state: directory
+    owner: root
+    group: ziti
+    mode: "0750"
+
+# -----------------------------------------------------------------------------
 # Enable ziti-edge-tunnel service
 # -----------------------------------------------------------------------------
 - name: Enable ziti-edge-tunnel service
