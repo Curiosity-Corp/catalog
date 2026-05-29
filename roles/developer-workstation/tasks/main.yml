@@ -34,6 +34,22 @@
       workstation_profile must be 'desktop', 'workspace', 'thin-client', or 'byod-kiosk'
 
 # =============================================================================
+# Home directory ownership repair
+# =============================================================================
+# On server ISO builds the firstboot script may create the home directory as
+# root before the user account exists, leaving /home/<dev_user> root-owned.
+# Any subsequent become_user task (e.g. git_config --global) will fail with
+# "Permission denied" trying to write into the home directory.
+# Repair ownership here, once, idempotently, before any user-scope tasks run.
+- name: Ensure dev_user owns their home directory
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    state: directory
+    recurse: false
+
+# =============================================================================
 # Task Includes
 # =============================================================================
 - name: Include log rotation hardening
