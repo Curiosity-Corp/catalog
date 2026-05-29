@@ -8,7 +8,7 @@
 /var/log/cron.log
 /var/log/user.log
 {
-    su root syslog
+    su root adm
     daily
     rotate {{ logrotate_rotate_count }}
     maxsize {{ logrotate_maxsize }}
