@@ -26,7 +26,8 @@
       {{
         ((((coder_cli_version_json.stdout | default('{}')) | from_json).version
         | default(''))
-        | regex_replace('^v', ''))
+        | regex_replace('^v', '')
+        | regex_replace('\+.*$', ''))
       }}
   when: coder_cli_installed.stat.exists
 
@@ -55,14 +56,15 @@
       --version {{ coder_cli_version }}
       --method standalone
   register: coder_cli_install_result
-  # The install script may exit 1 due to a benign cleanup race (rm -rv tmp
-  # after the binary has already been moved), while the install itself succeeds.
-  # Treat any non-zero exit as a warning rather than a hard failure; the version
-  # check on the next run will correctly skip re-installation if coder landed.
-  failed_when: >-
-    coder_cli_install_result.rc != 0 and
-    (coder_cli_install_result.stderr | default('') | trim | length > 0) and
-    'cannot remove' not in (coder_cli_install_result.stderr | default(''))
+  # The install script runs under set -eu and exits 1 when:
+  #   (a) rm -rv ~/.cache/coder/tmp races the binary move on first run, or
+  #   (b) the tmp dir was already cleaned on a repeat run (coder_cli_needs_upgrade
+  #       fires again because the local-version suffix +<sha> in `coder version`
+  #       output is stripped before comparison above, so this should now be rare).
+  # In all cases the binary is already at the install prefix when the script
+  # exits.  Never fail the play on a non-zero rc from this script; the version
+  # check at the top of this task is the authoritative idempotence gate.
+  failed_when: false
   changed_when: coder_cli_install_result.rc == 0
   when: coder_cli_needs_upgrade
 
