@@ -266,7 +266,7 @@
     validate: "visudo -cf %s"
 
 # -----------------------------------------------------------------------------
-# Identity directory permissions
+# Identity directory and file permissions
 # -----------------------------------------------------------------------------
 # The ziti-edge-tunnel package installs /opt/openziti/etc/identities as
 # 0700 root:ziti on some builds, which prevents the ziti service user from
@@ -278,6 +278,19 @@
     owner: root
     group: ziti
     mode: "0750"
+
+# Identity files created by the firstboot enroll_ziti() function are written
+# as root:root 0600. The ziti service runs as user=ziti and cannot renew certs
+# on files it cannot write. Fix ownership so the ziti service can manage them.
+- name: Fix ownership of existing ziti identity files to root:ziti
+  ansible.builtin.shell: |
+    find /opt/openziti/etc/identities/ -maxdepth 1 -name '*.json' \
+      -exec chown root:ziti {} \; \
+      -exec chmod 0640 {} \;
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
 
 # -----------------------------------------------------------------------------
 # Enable ziti-edge-tunnel service
