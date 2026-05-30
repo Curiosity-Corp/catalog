@@ -275,6 +275,13 @@
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - ziti_enabled | default(false)
 
+- name: Include Ziti split-DNS configuration (dual-stack resolver)
+  ansible.builtin.include_tasks: ziti-split-dns.yml
+  tags: [ziti, networking, dns]
+  when:
+    - workstation_profile in ['thin-client', 'byod-kiosk']
+    - ziti_enabled | default(false)
+
 - name: Include profile cleanup timer
   ansible.builtin.include_tasks: profile-cleanup.yml
   tags: [profile-cleanup]

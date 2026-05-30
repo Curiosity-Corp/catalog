@@ -279,31 +279,17 @@
   failed_when: false
 
 # -----------------------------------------------------------------------------
-# Ziti DNS routing via systemd-resolved drop-in
+# Ziti DNS routing
 # -----------------------------------------------------------------------------
-- name: Ensure systemd-resolved drop-in directory exists
-  ansible.builtin.file:
-    path: /etc/systemd/resolved.conf.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Configure systemd-resolved for Ziti DNS routing
-  ansible.builtin.copy:
-    dest: /etc/systemd/resolved.conf.d/ziti.conf
-    owner: root
-    group: root
-    mode: "0644"
-    content: |
-      # Ziti DNS routing for kiosk devices.
-      # 100.64.0.2 is the Ziti intercept DNS resolver; queries for
-      # Ziti-only hostnames resolve here when the tunnel is active.
-      [Resolve]
-      DNS=127.0.0.53 100.64.0.2
-      FallbackDNS=1.1.1.1 8.8.8.8
-      DNSStubListener=yes
-  notify: Reload systemd
+# Split-DNS is handled by ziti-split-dns.yml (included from main.yml after
+# ziti.yml). That task file detects whether systemd-resolved or NetworkManager
+# is the active resolver and applies the appropriate mechanism:
+#   - systemd-resolved present:  resolvectl routing-domain assignment on ziti0
+#     via ExecStartPost override + systemd-networkd drop-in.
+#   - NM-only (RPi OS / no resolved): dnsmasq plugin with per-domain server=
+#     stubs in /etc/NetworkManager/dnsmasq.d/.
+# Nothing to do here — split-DNS is not kiosk-specific and runs for both
+# thin-client and byod-kiosk profiles.
 
 # -----------------------------------------------------------------------------
 # Disable package management for kiosk user (no apt-get, no snap)
