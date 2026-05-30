@@ -138,16 +138,18 @@
       ExecStart=/usr/bin/chromium \
         --kiosk \
         --no-first-run \
+        --noerrdialogs \
         --disable-translate \
         --disable-infobars \
         --disable-suggestions-service \
         --disable-save-password-bubble \
         --disable-session-crashed-bubble \
-        --disable-features=TranslateUI \
+        --disable-features=TranslateUI,Translate \
         --disable-pinch \
         --overscroll-history-navigation=0 \
         --no-default-browser-check \
         --check-for-update-interval=31536000 \
+        --password-store=basic \
         --app=https://developerdojo.org
       Restart=always
       RestartSec=3
