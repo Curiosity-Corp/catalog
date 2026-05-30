@@ -1,0 +1,313 @@
+---
+# =============================================================================
+# Ziti Split-DNS — dual-stack resolver configuration
+# =============================================================================
+# Routes the Ziti overlay domains to 100.64.0.2 (ziti-edge-tunnel DNS listener)
+# so kiosk traffic traverses the overlay instead of reaching the public internet.
+#
+# Two device classes require different mechanisms:
+#
+#   systemd-resolved present (x86 / Ubuntu Server):
+#     Use resolved routing-domain drop-in so queries for Ziti intercept domains
+#     are forwarded to 100.64.0.2 on the ziti0 interface. All other traffic uses
+#     the upstream resolver configured by DHCP.
+#
+#   NO systemd-resolved (Raspberry Pi OS / Debian with NetworkManager only):
+#     systemd-resolved is inactive and resolvectl is absent. NetworkManager
+#     writes /etc/resolv.conf directly. Install the dnsmasq package, enable
+#     NetworkManager's built-in dnsmasq plugin (dns=dnsmasq in NM.conf), and
+#     deploy a per-domain forwarding stub so dnsmasq relays only the Ziti
+#     intercept domains to 100.64.0.2 and forwards everything else upstream.
+#
+# Both paths are idempotent and converge on every ansible-pull run.
+#
+# Authoritative intercept domains sourced from focusapiary/ziti configure_services.sh
+# (SERVICES and OPENCLAW_SERVICES arrays). Safe to include a superset —
+# domains absent from the active Ziti policy return NXDOMAIN from 100.64.0.2
+# which is the same result as a mis-resolved public name for internal-only
+# services.
+#
+# Ordering guarantee: this task file is included AFTER ziti.yml so
+# ziti-edge-tunnel is already configured. The script executed as
+# ExecStartPost in the systemd override (systemd-resolved path) ensures the
+# routing-domain assignment re-runs whenever the tunnel restarts.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Detect resolver stack
+# ---------------------------------------------------------------------------
+# Use the presence of resolvectl as the authoritative indicator: it exists
+# only when systemd-resolved is installed and active. The stat module avoids
+# the command-instead-of-module lint rule and is idempotent.
+- name: Check whether resolvectl (systemd-resolved) is present
+  ansible.builtin.stat:
+    path: /usr/bin/resolvectl
+  register: _resolvectl_stat
+
+- name: Set resolver stack facts
+  ansible.builtin.set_fact:
+    _ziti_dns_has_resolved: "{{ _resolvectl_stat.stat.exists }}"
+    _ziti_dns_nm_only: "{{ not _resolvectl_stat.stat.exists }}"
+
+# ===========================================================================
+# Path A — systemd-resolved present (x86 / Ubuntu Server)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# A1. Routing-domain drop-in via resolved
+# ---------------------------------------------------------------------------
+# The drop-in approach configures 100.64.0.2 as the per-link DNS server for
+# ziti0 and assigns routing domains (~developerdojo.org etc.) so resolved
+# sends only matching queries there. All other queries go to the default
+# interface resolver. This is strictly better than the global-DNS approach
+# previously used in kiosk-session.yml because:
+#   * It does not override the upstream DHCP nameserver.
+#   * It survives resolved restarts — the drop-in is re-read at startup.
+#   * The ExecStartPost override (A2) re-applies the link-scope rule whenever
+#     ziti-edge-tunnel restarts and ziti0 re-appears.
+
+- name: Remove obsolete global Ziti DNS resolved drop-in (kiosk-session.yml era)
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d/ziti.conf
+    state: absent
+  when: _ziti_dns_has_resolved
+  notify: Reload systemd
+
+- name: Deploy ziti0 link-scoped resolved routing-domain drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/10-ziti0-dns.network
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Ziti overlay split-DNS — managed by Ansible, do not edit.
+      # Binds 100.64.0.2 as the DNS server for the ziti0 interface and assigns
+      # routing domains so systemd-resolved forwards only Ziti intercept domain
+      # queries there. Everything else goes to the upstream/DHCP resolver.
+      [Match]
+      Name=ziti0
+
+      [Network]
+      DNS=100.64.0.2
+      Domains=~developerdojo.org ~focuspass.com ~hardmagic.com ~focuscell.org ~focusbuzz.org ~dreamhive.org ~dreamdecks.org ~dreamtrack.org ~dreamdash.org ~focuschef.com ~hyperlens.net ~slidee.net ~hypersight.net
+  when: _ziti_dns_has_resolved
+  notify: Reload systemd
+
+# ---------------------------------------------------------------------------
+# A2. ziti-edge-tunnel systemd override — ExecStartPost re-applies link DNS
+# ---------------------------------------------------------------------------
+# systemd-networkd may not manage ziti0 (it is a tun device created by the
+# tunnel process). Use resolvectl to explicitly assign the DNS server and
+# routing domains to the link after the tunnel starts.
+
+- name: Ensure ziti-edge-tunnel systemd override directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/ziti-edge-tunnel.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: _ziti_dns_has_resolved
+
+- name: Deploy ziti-edge-tunnel ExecStartPost override (systemd-resolved)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ziti-edge-tunnel.service.d/10-split-dns-resolved.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Ziti split-DNS ExecStartPost — managed by Ansible, do not edit.
+      # Re-applies the ziti0 routing-domain assignment whenever the tunnel
+      # restarts. ExecStartPost runs after the main ExecStart process forks
+      # and the ziti0 interface is up.
+      [Service]
+      ExecStartPost=/bin/bash -c ' \
+        for i in 1 2 3 4 5; do \
+          ip link show ziti0 >/dev/null 2>&1 && break; \
+          sleep 1; \
+        done; \
+        resolvectl dns ziti0 100.64.0.2 && \
+        resolvectl domain ziti0 \
+          ~developerdojo.org \
+          ~focuspass.com \
+          ~hardmagic.com \
+          ~focuscell.org \
+          ~focusbuzz.org \
+          ~dreamhive.org \
+          ~dreamdecks.org \
+          ~dreamtrack.org \
+          ~dreamdash.org \
+          ~focuschef.com \
+          ~hyperlens.net \
+          ~slidee.net \
+          ~hypersight.net && \
+        logger -t ziti-split-dns "applied routing domains to ziti0 (systemd-resolved)" || \
+        logger -t ziti-split-dns "WARNING: resolvectl failed — split-DNS not active"'
+  when: _ziti_dns_has_resolved
+  notify:
+    - Reload systemd
+    - Restart ziti-edge-tunnel
+
+# Remove NM-dnsmasq override if present (left over from a previous run on a
+# device that later upgraded to Ubuntu/systemd-resolved).
+- name: Remove NetworkManager dnsmasq Ziti stub if resolved is now active
+  ansible.builtin.file:
+    path: /etc/NetworkManager/dnsmasq.d/ziti-split-dns.conf
+    state: absent
+  when: _ziti_dns_has_resolved
+
+# ===========================================================================
+# Path B — NetworkManager only, no systemd-resolved (Raspberry Pi OS / Debian)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# B1. Install dnsmasq
+# ---------------------------------------------------------------------------
+# NetworkManager has a built-in dnsmasq split-DNS plugin; when dns=dnsmasq is
+# set, NM spawns a dnsmasq process bound to 127.0.0.1:53 and rewrites
+# /etc/resolv.conf to point there. Per-domain stub files in
+# /etc/NetworkManager/dnsmasq.d/ forward matching domains to 100.64.0.2 and
+# everything else to the upstream DHCP resolver.
+#
+# This is idempotent — dnsmasq is the same package whether NM manages it or
+# it is running standalone.
+
+- name: Install dnsmasq for NetworkManager split-DNS plugin (RPi OS / NM-only path)
+  ansible.builtin.apt:
+    name: dnsmasq
+    state: present
+    update_cache: false
+  when: _ziti_dns_nm_only
+
+# Ensure the standalone dnsmasq service is stopped and disabled — NM spawns
+# its own dnsmasq instance; a competing standalone instance would conflict on
+# port 53.
+- name: Disable standalone dnsmasq service (NM owns dnsmasq)
+  ansible.builtin.systemd:
+    name: dnsmasq
+    enabled: false
+    state: stopped
+  when: _ziti_dns_nm_only
+  failed_when: false
+
+# ---------------------------------------------------------------------------
+# B2. Enable dns=dnsmasq in NetworkManager global config
+# ---------------------------------------------------------------------------
+- name: Ensure NetworkManager [main] dns=dnsmasq is set (RPi OS)
+  community.general.ini_file:
+    path: /etc/NetworkManager/NetworkManager.conf
+    section: main
+    option: dns
+    value: dnsmasq
+    owner: root
+    group: root
+    mode: "0644"
+  when: _ziti_dns_nm_only
+  notify: Restart NetworkManager
+
+# ---------------------------------------------------------------------------
+# B3. Deploy per-domain dnsmasq stub for Ziti intercept domains
+# ---------------------------------------------------------------------------
+- name: Ensure NetworkManager dnsmasq.d directory exists
+  ansible.builtin.file:
+    path: /etc/NetworkManager/dnsmasq.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: _ziti_dns_nm_only
+
+- name: Deploy Ziti domain forwarding stub for NM dnsmasq plugin
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/dnsmasq.d/ziti-split-dns.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Ziti split-DNS forwarding stubs — managed by Ansible, do not edit.
+      # NetworkManager's dnsmasq plugin reads these on start/reload.
+      # Queries for Ziti intercept domains are forwarded to 100.64.0.2
+      # (ziti-edge-tunnel DNS listener on the ziti0 tun). Everything else
+      # is forwarded to the upstream resolver supplied by DHCP.
+      #
+      # Intercept domain list sourced from focusapiary/ziti configure_services.sh.
+      server=/developerdojo.org/100.64.0.2
+      server=/focuspass.com/100.64.0.2
+      server=/hardmagic.com/100.64.0.2
+      server=/focuscell.org/100.64.0.2
+      server=/focusbuzz.org/100.64.0.2
+      server=/dreamhive.org/100.64.0.2
+      server=/dreamdecks.org/100.64.0.2
+      server=/dreamtrack.org/100.64.0.2
+      server=/dreamdash.org/100.64.0.2
+      server=/focuschef.com/100.64.0.2
+      server=/hyperlens.net/100.64.0.2
+      server=/slidee.net/100.64.0.2
+      server=/hypersight.net/100.64.0.2
+  when: _ziti_dns_nm_only
+  notify: Restart NetworkManager
+
+# ---------------------------------------------------------------------------
+# B4. ziti-edge-tunnel systemd override — ExecStartPost reloads NM dnsmasq
+# ---------------------------------------------------------------------------
+# When ziti-edge-tunnel restarts the 100.64.0.2 listener temporarily drops.
+# Signal NM's dnsmasq to reload after the tunnel is back so forwarding
+# resumes. We send SIGHUP to the dnsmasq process NM owns; NM re-reads its
+# dnsmasq.d stubs on reload.
+
+- name: Ensure ziti-edge-tunnel systemd override directory exists (NM path)
+  ansible.builtin.file:
+    path: /etc/systemd/system/ziti-edge-tunnel.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: _ziti_dns_nm_only
+
+- name: Deploy ziti-edge-tunnel ExecStartPost override (NM dnsmasq reload)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ziti-edge-tunnel.service.d/10-split-dns-nm.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Ziti split-DNS ExecStartPost (NetworkManager dnsmasq path) —
+      # managed by Ansible, do not edit.
+      # Waits for ziti0 to appear then sends SIGHUP to the NM-managed dnsmasq
+      # process so it re-establishes forwarding rules against the now-live
+      # 100.64.0.2 listener.
+      [Service]
+      ExecStartPost=/bin/bash -c ' \
+        for i in 1 2 3 4 5; do \
+          ip link show ziti0 >/dev/null 2>&1 && break; \
+          sleep 1; \
+        done; \
+        dnsmasq_pid=$(cat /run/NetworkManager/dnsmasq.pid 2>/dev/null || \
+          pgrep -f "dnsmasq.*--pid-file=/run/NetworkManager" 2>/dev/null); \
+        if [ -n "$dnsmasq_pid" ]; then \
+          kill -HUP "$dnsmasq_pid" 2>/dev/null && \
+            logger -t ziti-split-dns "SIGHUP sent to NM dnsmasq (pid=$dnsmasq_pid) — Ziti forwarding active" || \
+            logger -t ziti-split-dns "WARNING: SIGHUP to NM dnsmasq failed"; \
+        else \
+          nmcli general reload dns-full 2>/dev/null && \
+            logger -t ziti-split-dns "nmcli dns-full reload triggered (dnsmasq pid not found)" || \
+            logger -t ziti-split-dns "WARNING: nmcli dns reload failed — split-DNS may not be active"; \
+        fi'
+  when: _ziti_dns_nm_only
+  notify:
+    - Reload systemd
+    - Restart ziti-edge-tunnel
+
+# Remove resolved override if present (left over from a previous run on a
+# device that started without systemd-resolved).
+- name: Remove resolved ExecStartPost override if NM-only path is active
+  ansible.builtin.file:
+    path: /etc/systemd/system/ziti-edge-tunnel.service.d/10-split-dns-resolved.conf
+    state: absent
+  when: _ziti_dns_nm_only
+
+- name: Remove systemd-networkd ziti0 network file if NM-only path is active
+  ansible.builtin.file:
+    path: /etc/systemd/network/10-ziti0-dns.network
+    state: absent
+  when: _ziti_dns_nm_only
