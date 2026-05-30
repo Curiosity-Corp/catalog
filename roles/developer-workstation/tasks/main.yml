@@ -47,6 +47,7 @@
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     state: directory
+    mode: "0750"
     recurse: false
 
 # =============================================================================
