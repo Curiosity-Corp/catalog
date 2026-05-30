@@ -17,7 +17,7 @@
 - name: Install Chromium browser for kiosk session
   ansible.builtin.apt:
     name:
-      - chromium-browser
+      - chromium
       - xdotool
       - unclutter
     state: present
@@ -52,6 +52,7 @@
       # Launch the kiosk browser service (auto-restarts on crash via systemd).
       systemctl --user start curiosity-kiosk-browser.service
 
+# yamllint disable rule:line-length
 - name: Deploy kiosk Openbox rc.xml (no keybindings, no window decorations)
   ansible.builtin.copy:
     dest: "{{ dev_user_home }}/.config/openbox/rc.xml"
@@ -106,6 +107,7 @@
           </application>
         </applications>
       </openbox_config>
+# yamllint enable rule:line-length
 
 # -----------------------------------------------------------------------------
 # Chromium kiosk browser systemd user service (auto-restart on crash)
@@ -133,7 +135,7 @@
       [Service]
       Type=simple
       Environment=DISPLAY=:0
-      ExecStart=/usr/bin/chromium-browser \
+      ExecStart=/usr/bin/chromium \
         --kiosk \
         --no-first-run \
         --disable-translate \
@@ -195,7 +197,15 @@
 # -----------------------------------------------------------------------------
 # Idle screen lock via systemd-logind (15 min default)
 # -----------------------------------------------------------------------------
-- name: Configure systemd-logind idle action (lock after {{ kiosk_idle_lock_minutes | default(15) }} min)
+- name: Ensure systemd-logind conf drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure systemd-logind idle action (lock after {{ kiosk_idle_lock_minutes | default(15) }} min)  # noqa: name[template]
   ansible.builtin.copy:
     dest: /etc/systemd/logind.conf.d/kiosk-idle.conf
     owner: root
@@ -206,14 +216,6 @@
       IdleAction=lock
       IdleActionSec={{ (kiosk_idle_lock_minutes | default(15)) * 60 }}
   notify: Reload systemd
-
-- name: Ensure systemd-logind conf drop-in directory exists
-  ansible.builtin.file:
-    path: /etc/systemd/logind.conf.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
 
 # -----------------------------------------------------------------------------
 # Ziti DNS routing via systemd-resolved drop-in
