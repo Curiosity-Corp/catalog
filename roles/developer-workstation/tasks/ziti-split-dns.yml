@@ -89,7 +89,10 @@
 
       [Network]
       DNS=100.64.0.2
-      Domains=~developerdojo.org ~focuspass.com ~hardmagic.com ~focuscell.org ~focusbuzz.org ~dreamhive.org ~dreamdecks.org ~dreamtrack.org ~dreamdash.org ~focuschef.com ~hyperlens.net ~slidee.net ~hypersight.net
+      # IMPORTANT: ~focuspass.com is NOT used — controller addresses
+      # (ziti.focuspass.com, ctrl1/2/3, enroll) must resolve via public DNS.
+      # Only the Ziti-intercepted service subdomains are forwarded.
+      Domains=~developerdojo.org ~auth.focuspass.com ~vault.focuspass.com ~fleet.focuspass.com ~hardmagic.com ~focuscell.org ~focusbuzz.org ~dreamhive.org ~dreamdecks.org ~dreamtrack.org ~dreamdash.org ~focuschef.com ~hyperlens.net ~slidee.net ~hypersight.net
   when: _ziti_dns_has_resolved
   notify: Reload systemd
 
@@ -129,7 +132,9 @@
         resolvectl dns ziti0 100.64.0.2 && \
         resolvectl domain ziti0 \
           ~developerdojo.org \
-          ~focuspass.com \
+          ~auth.focuspass.com \
+          ~vault.focuspass.com \
+          ~fleet.focuspass.com \
           ~hardmagic.com \
           ~focuscell.org \
           ~focusbuzz.org \
@@ -231,8 +236,14 @@
       # is forwarded to the upstream resolver supplied by DHCP.
       #
       # Intercept domain list sourced from focusapiary/ziti configure_services.sh.
+      # IMPORTANT: focuspass.com is NOT forwarded wholesale — the controller
+      # addresses (ziti.focuspass.com, ctrl1/2/3.focuspass.com,
+      # enroll.focuspass.com) must resolve via public DNS, not the Ziti DNS
+      # listener. Only the Ziti-intercepted service hostnames are forwarded.
       server=/developerdojo.org/100.64.0.2
-      server=/focuspass.com/100.64.0.2
+      server=/auth.focuspass.com/100.64.0.2
+      server=/vault.focuspass.com/100.64.0.2
+      server=/fleet.focuspass.com/100.64.0.2
       server=/hardmagic.com/100.64.0.2
       server=/focuscell.org/100.64.0.2
       server=/focusbuzz.org/100.64.0.2
