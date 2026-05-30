@@ -11,6 +11,33 @@
 # Keep the two in sync when updating either side.
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# Ensure dotfiles exist before any lineinfile/blockinfile tasks run.
+# On fresh installs the user may be created without skel content (e.g.
+# useradd --no-create-home, or home created before skel was applied).
+# Seed .bashrc from /etc/skel/.bashrc so it starts with distro defaults;
+# touch .zshrc if absent so Oh My Zsh tasks don't abort on a missing file.
+# Both tasks are idempotent: they are no-ops when the file already exists.
+# -----------------------------------------------------------------------------
+- name: Seed .bashrc from /etc/skel if absent
+  ansible.builtin.copy:
+    src: /etc/skel/.bashrc
+    dest: "{{ dev_user_home }}/.bashrc"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    force: false
+
+- name: Ensure .zshrc exists for shell-fallback tasks
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.zshrc"
+    state: touch
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
+
 - name: Disable Oh My Zsh theme (using starship instead)
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.zshrc"
