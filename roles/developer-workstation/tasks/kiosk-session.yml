@@ -197,7 +197,7 @@
     state: absent
 
 # -----------------------------------------------------------------------------
-# Idle screen lock via systemd-logind (15 min default)
+# Power management: kiosks must never suspend, hibernate, or blank
 # -----------------------------------------------------------------------------
 - name: Ensure systemd-logind conf drop-in directory exists
   ansible.builtin.file:
@@ -207,17 +207,76 @@
     group: root
     mode: "0755"
 
-- name: Configure systemd-logind idle action (lock after {{ kiosk_idle_lock_minutes | default(15) }} min)  # noqa: name[template]
+# Remove any old idle-lock drop-in so it does not conflict.
+- name: Remove obsolete kiosk-idle.conf if present
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d/kiosk-idle.conf
+    state: absent
+
+- name: Deploy logind no-sleep policy for kiosk
   ansible.builtin.copy:
-    dest: /etc/systemd/logind.conf.d/kiosk-idle.conf
+    dest: /etc/systemd/logind.conf.d/10-kiosk-nosleep.conf
     owner: root
     group: root
     mode: "0644"
     content: |
+      # Kiosk power policy — managed by Ansible, do not edit.
+      # All suspend/hibernate/idle actions disabled; lid switch ignored.
       [Login]
-      IdleAction=lock
-      IdleActionSec={{ (kiosk_idle_lock_minutes | default(15)) * 60 }}
+      HandleLidSwitch=ignore
+      HandleLidSwitchExternalPower=ignore
+      HandleLidSwitchDocked=ignore
+      HandleSuspendKey=ignore
+      HandleHibernateKey=ignore
+      HandlePowerKey=ignore
+      IdleAction=ignore
+      IdleActionSec=0
   notify: Reload systemd
+
+- name: Mask systemd sleep targets (prevent suspend/hibernate via any path)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+    enabled: false
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+  failed_when: false
+
+# Reload logind now so the no-sleep policy takes effect without waiting
+# for the next boot.  HUP is safe over SSH — it re-reads config without
+# dropping the current session, unlike a full service restart.
+- name: Reload systemd-logind to apply no-sleep config
+  ansible.builtin.command:
+    cmd: systemctl kill -s HUP systemd-logind
+  changed_when: true
+
+# Belt-and-suspenders for x86 laptops running GNOME power daemon:
+# if gnome-settings-daemon power plugin schema exists, silence it too.
+- name: Disable GNOME power-daemon sleep if schema is present
+  ansible.builtin.command: >-
+    runuser -u {{ dev_user }} --
+    gsettings set {{ item.schema }} {{ item.key }} {{ item.value }}
+  environment:
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ (lookup('pipe', 'id -u ' + dev_user)) }}/bus"
+  loop:
+    - schema: org.gnome.settings-daemon.plugins.power
+      key: sleep-inactive-ac-type
+      value: "'nothing'"
+    - schema: org.gnome.settings-daemon.plugins.power
+      key: sleep-inactive-battery-type
+      value: "'nothing'"
+    - schema: org.gnome.settings-daemon.plugins.power
+      key: idle-dim
+      value: "false"
+    - schema: org.gnome.desktop.session
+      key: idle-delay
+      value: "uint32 0"
+  register: _gnome_power_result
+  changed_when: _gnome_power_result.rc == 0
+  failed_when: false
 
 # -----------------------------------------------------------------------------
 # Ziti DNS routing via systemd-resolved drop-in
