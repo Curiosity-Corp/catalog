@@ -54,3 +54,15 @@
   environment:
     DEBIAN_FRONTEND: noninteractive
   changed_when: true
+
+- name: Get current systemd default target
+  ansible.builtin.command:
+    cmd: systemctl get-default
+  register: _systemd_default_target
+  changed_when: false
+
+- name: Set graphical.target as systemd default (enables LightDM on boot)
+  ansible.builtin.command:
+    cmd: systemctl set-default graphical.target
+  when: _systemd_default_target.stdout | trim != 'graphical.target'
+  changed_when: true
