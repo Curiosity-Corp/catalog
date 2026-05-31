@@ -43,6 +43,8 @@
     content: |
       #!/usr/bin/env bash
       # Kiosk autostart — Chromium in full-screen kiosk mode.
+      # Force US keyboard layout — physical keyboards are US; Pi/Ubuntu defaults to GB.
+      setxkbmap us
       # unclutter hides the cursor after 1 second of inactivity.
       unclutter -idle 1 -root &
       # Disable screen blanking and DPMS while the kiosk session is active.

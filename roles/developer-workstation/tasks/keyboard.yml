@@ -1,0 +1,44 @@
+---
+# =============================================================================
+# Keyboard layout — enforce US for thin-client and byod-kiosk profiles
+# =============================================================================
+# Physical keyboards in the fleet are US layout.  Raspberry Pi OS and Ubuntu
+# Server both default to GB (en-GB locale), producing the classic mismatch
+# where @ produces " at the login prompt.  These tasks set XKBLAYOUT=us in
+# /etc/default/keyboard, reconfigure keyboard-configuration, and reload the
+# console keymap.  Works identically on arm64 (Pi 4/5) and x86_64 (T460).
+# =============================================================================
+
+- name: Write /etc/default/keyboard (XKBLAYOUT=us)
+  ansible.builtin.copy:
+    dest: /etc/default/keyboard
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # KEYBOARD CONFIGURATION FILE
+      # Managed by Ansible — do not edit manually.
+      # Consult the keyboard(5) manual page.
+
+      XKBMODEL="pc105"
+      XKBLAYOUT="us"
+      XKBVARIANT=""
+      XKBOPTIONS=""
+
+      BACKSPACE="guess"
+
+- name: Reconfigure keyboard-configuration (dpkg non-interactive)
+  ansible.builtin.command:
+    cmd: dpkg-reconfigure -f noninteractive keyboard-configuration
+  changed_when: true
+
+- name: Reload console keymap via setupcon
+  ansible.builtin.command:
+    cmd: setupcon --save-only
+  changed_when: true
+  failed_when: false
+
+- name: Trigger udev input subsystem to apply new keymap
+  ansible.builtin.command:
+    cmd: udevadm trigger --subsystem-match=input --action=change
+  changed_when: true

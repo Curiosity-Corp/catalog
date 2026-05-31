@@ -238,6 +238,11 @@
         (minimal_desktop_enabled | default(false))
       )
 
+- name: Include keyboard layout enforcement (US physical keyboards)
+  ansible.builtin.include_tasks: keyboard.yml
+  tags: [keyboard, system]
+  when: workstation_profile in ['thin-client', 'byod-kiosk']
+
 - name: Include kiosk session lockdown (Chromium kiosk, no shell, idle lock)
   ansible.builtin.include_tasks: kiosk-session.yml
   tags: [kiosk, lockdown]
