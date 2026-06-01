@@ -276,3 +276,40 @@ hardware_profiles:
           ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0b05", ATTR{idProduct}=="1976", RUN+="/sbin/modprobe r8152"
     # Private Internet Access VPN
     pia_vpn: true
+
+  t460:
+    description: "Lenovo ThinkPad T460 — Skylake i5-6300U (kiosk/developer laptops)"
+    packages:
+      # HWE kernel — latest in-kernel drivers (i915, iwlwifi, e1000e, btusb, snd-hda-intel)
+      - linux-generic-hwe-24.04
+      # Intel Skylake iGPU video acceleration (VA-API)
+      - i965-va-driver-shaders
+      - intel-media-va-driver-non-free
+      - intel-gpu-tools
+      # Audio — PipeWire stack (replaces bare ALSA)
+      - pipewire
+      - pipewire-pulse
+      - pipewire-alsa
+      - wireplumber
+      # Thermal and hardware monitoring
+      - lm-sensors
+      # Webcam userspace tools (Chicony Integrated Camera)
+      - v4l-utils
+      # Bluetooth stack
+      - bluez
+      - bluez-tools
+      # Intel CPU microcode and firmware
+      - intel-microcode
+      - linux-firmware
+      # GPU and display diagnostics
+      - mesa-utils
+      - vulkan-tools
+      # ThinkPad power management
+      - tlp
+      - thermald
+    services:
+      - bluetooth
+      - thermald
+      - tlp
+    udev_rules: []
+    pia_vpn: false
