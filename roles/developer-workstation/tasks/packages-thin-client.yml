@@ -76,3 +76,9 @@
       - tailscale
     state: absent
     purge: true
+    notify: Update apt cache
+
+- name: Remove Cloudflare APT repo file if present
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/cloudflared.list
+    state: absent
