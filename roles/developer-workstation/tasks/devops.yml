@@ -6,94 +6,97 @@
 # =============================================================================
 
 # --- rclone ---
-- name: Install rclone  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://rclone.org/install.sh | bash
-    executable: /bin/bash
-    creates: /usr/bin/rclone
+- name: Check installed rclone version
+  ansible.builtin.shell: rclone version 2>&1 || echo MISSING
+  register: rclone_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade rclone {{ rclone_version }}
+  when: "rclone_version not in rclone_current.stdout"
+  block:
+    - name: Download rclone {{ rclone_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/rclone/rclone/releases/download/v{{ rclone_version }}/rclone-v{{ rclone_version }}-linux-amd64.zip"
+        dest: /tmp
+        remote_src: true
+
+    - name: Install rclone binary
+      ansible.builtin.copy:
+        src: "/tmp/rclone-v{{ rclone_version }}-linux-amd64/rclone"
+        dest: /usr/local/bin/rclone
+        mode: "0755"
+        remote_src: true
+
+    - name: Clean up rclone temp files
+      ansible.builtin.file:
+        path: "/tmp/rclone-v{{ rclone_version }}-linux-amd64"
+        state: absent
 
 # --- grpcurl ---
-- name: Check if grpcurl is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/grpcurl
-  register: grpcurl_installed
+- name: Check installed grpcurl version
+  ansible.builtin.shell: grpcurl --version 2>&1 || echo MISSING
+  register: grpcurl_current
+  changed_when: false
+  failed_when: false
 
-- name: Get grpcurl latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/fullstorydev/grpcurl/releases/latest
-    return_content: true
-  register: grpcurl_release
-  when: not grpcurl_installed.stat.exists
-
-- name: Install grpcurl
-  ansible.builtin.unarchive:
-    src: "https://github.com/fullstorydev/grpcurl/releases/download/{{ grpcurl_release.json.tag_name }}/grpcurl_{{ grpcurl_release.json.tag_name | regex_replace('^v', '') }}_linux_x86_64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [grpcurl]
-  when: not grpcurl_installed.stat.exists
+- name: Install/upgrade grpcurl {{ grpcurl_version }}
+  when: "grpcurl_version not in grpcurl_current.stdout"
+  block:
+    - name: Download grpcurl {{ grpcurl_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/fullstorydev/grpcurl/releases/download/v{{ grpcurl_version }}/grpcurl_{{ grpcurl_version }}_linux_x86_64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [grpcurl]
 
 # --- crane (container registry tool) ---
-- name: Check if crane is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/crane
-  register: crane_installed
+- name: Check installed crane version
+  ansible.builtin.shell: crane version 2>&1 || echo MISSING
+  register: crane_current
+  changed_when: false
+  failed_when: false
 
-- name: Get crane latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/google/go-containerregistry/releases/latest
-    return_content: true
-  register: crane_release
-  when: not crane_installed.stat.exists
-
-- name: Install crane
-  ansible.builtin.unarchive:
-    src: "https://github.com/google/go-containerregistry/releases/download/{{ crane_release.json.tag_name }}/go-containerregistry_Linux_x86_64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [crane]
-  when: not crane_installed.stat.exists
+- name: Install/upgrade crane {{ crane_version }}
+  when: "crane_version not in crane_current.stdout"
+  block:
+    - name: Download crane {{ crane_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/google/go-containerregistry/releases/download/v{{ crane_version }}/go-containerregistry_Linux_x86_64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [crane]
 
 # --- OpenTofu ---
-- name: Check if tofu is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/tofu
-  register: tofu_installed
+- name: Check installed tofu version
+  ansible.builtin.shell: tofu --version 2>&1 || echo MISSING
+  register: tofu_current
+  changed_when: false
+  failed_when: false
 
-- name: Get OpenTofu latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/opentofu/opentofu/releases/latest
-    return_content: true
-  register: tofu_release
-  when: not tofu_installed.stat.exists
-
-- name: Install OpenTofu
-  ansible.builtin.unarchive:
-    src: "https://github.com/opentofu/opentofu/releases/download/{{ tofu_release.json.tag_name }}/tofu_{{ tofu_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64.zip"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [tofu]
-  when: not tofu_installed.stat.exists
+- name: Install/upgrade tofu {{ tofu_version }}
+  when: "tofu_version not in tofu_current.stdout"
+  block:
+    - name: Download tofu {{ tofu_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/opentofu/opentofu/releases/download/v{{ tofu_version }}/tofu_{{ tofu_version }}_linux_amd64.zip"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [tofu]
 
 # --- act (GitHub Actions local runner) ---
-- name: Check if act is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/act
-  register: act_installed
+- name: Check installed act version
+  ansible.builtin.shell: act --version 2>&1 || echo MISSING
+  register: act_current
+  changed_when: false
+  failed_when: false
 
-- name: Get act latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/nektos/act/releases/latest
-    return_content: true
-  register: act_release
-  when: not act_installed.stat.exists
-
-- name: Install act
-  ansible.builtin.unarchive:
-    src: "https://github.com/nektos/act/releases/download/{{ act_release.json.tag_name }}/act_Linux_x86_64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [act]
-  when: not act_installed.stat.exists
+- name: Install/upgrade act {{ act_version }}
+  when: "act_version not in act_current.stdout"
+  block:
+    - name: Download act {{ act_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/nektos/act/releases/download/v{{ act_version }}/act_Linux_x86_64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [act]

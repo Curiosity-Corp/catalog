@@ -57,6 +57,10 @@ velero_version: "1.18.1"
 kubeconform_version: "0.8.0"
 stern_version: "1.34.0"
 filebrowser_version: "2.63.15"
+tofu_version: "1.12.3"
+act_version: "0.2.89"
+argocd_version: "3.4.4"
+kubectx_version: "0.11.0"
 coder_cli_install_script_url: "https://coder.com/install.sh"
 # Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
 # (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)
