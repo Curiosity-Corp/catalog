@@ -16,7 +16,7 @@
     cmd: python3 -m venv /opt/science-venv
     creates: /opt/science-venv/bin/activate
 
-- name: Install scientific Python packages into venv  # noqa: args
+- name: Install/upgrade scientific Python packages into venv  # noqa: args
   ansible.builtin.pip:
     name:
       # --- Core data science ---
@@ -52,7 +52,7 @@
       - qutip
       - astropy
     virtualenv: /opt/science-venv
-    state: present
+    state: latest
 
 - name: Add science-venv bin to PATH for all interactive shells
   ansible.builtin.copy:
@@ -86,3 +86,46 @@
       --display-name "Python 3 (Science)"
       --prefix /usr/local
     creates: /usr/local/share/jupyter/kernels/science/kernel.json
+
+# --- Periodic upgrade of key packages ---
+# Runs on every ansible-pull to keep core packages current beyond the declared
+# list. This catches transitive dependencies and new additions to the
+# scientific ecosystem.
+- name: Upgrade all pip packages in science-venv (periodic)
+  ansible.builtin.pip:
+    name:
+      # Core data-science stack — upgrade all pinned deps
+      - numpy
+      - scipy
+      - pandas
+      - matplotlib
+      - sympy
+      - scikit-learn
+      - seaborn
+      - requests
+      - httpx
+      - pytest
+      - boto3
+      - Pillow
+      - ipykernel
+      - ipywidgets
+      - ipympl
+      - plotly
+      - h5py
+    virtualenv: /opt/science-venv
+    state: latest
+
+# --- Check for outdated packages (non-blocking diagnostic) ---
+- name: Show outdated pip packages in science-venv
+  ansible.builtin.command:
+    cmd: /opt/science-venv/bin/pip list --outdated --format=columns
+  register: pip_outdated
+  changed_when: false
+  failed_when: false
+
+- name: Report outdated pip packages
+  ansible.builtin.debug:
+    msg: |
+      Outdated pip packages in /opt/science-venv:
+      {{ pip_outdated.stdout_lines | default([]) | join('\n') }}
+  when: pip_outdated.stdout_lines | length > 1
