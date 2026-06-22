@@ -20,7 +20,7 @@
         cmd: |
           set -o pipefail
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
-            | bash
+            | bash -s -- --version "v{{ helm_version }}"
         executable: /bin/bash
       changed_when: true
 
