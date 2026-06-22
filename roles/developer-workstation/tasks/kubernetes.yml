@@ -58,25 +58,21 @@
         mode: "0755"
 
 # --- k9s ---
-- name: Check if k9s is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/k9s
-  register: k9s_installed
+- name: Check installed k9s version
+  ansible.builtin.shell: k9s version 2>&1 || echo MISSING
+  register: k9s_current
+  changed_when: false
+  failed_when: false
 
-- name: Get k9s latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/derailed/k9s/releases/latest
-    return_content: true
-  register: k9s_release
-  when: not k9s_installed.stat.exists
-
-- name: Install k9s
-  ansible.builtin.unarchive:
-    src: "https://github.com/derailed/k9s/releases/download/{{ k9s_release.json.tag_name }}/k9s_Linux_amd64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [k9s]
-  when: not k9s_installed.stat.exists
+- name: Install/upgrade k9s {{ k9s_version }}
+  when: "k9s_version not in k9s_current.stdout"
+  block:
+    - name: Download k9s {{ k9s_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/derailed/k9s/releases/download/v{{ k9s_version }}/k9s_Linux_amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [k9s]
 
 # --- kubectx + kubens ---
 - name: Check if kubectx is installed
@@ -113,25 +109,21 @@
   when: not kubens_installed.stat.exists
 
 # --- stern ---
-- name: Check if stern is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/stern
-  register: stern_installed
+- name: Check installed stern version
+  ansible.builtin.shell: stern --version 2>&1 || echo MISSING
+  register: stern_current
+  changed_when: false
+  failed_when: false
 
-- name: Get stern latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/stern/stern/releases/latest
-    return_content: true
-  register: stern_release
-  when: not stern_installed.stat.exists
-
-- name: Install stern
-  ansible.builtin.unarchive:
-    src: "https://github.com/stern/stern/releases/download/{{ stern_release.json.tag_name }}/stern_{{ stern_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [stern]
-  when: not stern_installed.stat.exists
+- name: Install/upgrade stern {{ stern_version }}
+  when: "stern_version not in stern_current.stdout"
+  block:
+    - name: Download stern {{ stern_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/stern/stern/releases/download/v{{ stern_version }}/stern_{{ stern_version }}_linux_amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [stern]
 
 # --- ArgoCD CLI ---
 - name: Install ArgoCD CLI
@@ -142,47 +134,49 @@
     force: false
 
 # --- Flux CLI ---
-- name: Install Flux CLI  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://fluxcd.io/install.sh | bash
-    executable: /bin/bash
-    creates: /usr/local/bin/flux
+- name: Check installed flux version
+  ansible.builtin.shell: flux version --client 2>&1 || echo MISSING
+  register: flux_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade flux {{ flux_version }}
+  when: "flux_version not in flux_current.stdout"
+  block:
+    - name: Download flux {{ flux_version }} install script  # noqa: command-instead-of-module
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          curl -fsSL https://fluxcd.io/install.sh | VERSION="{{ flux_version }}" bash
+        executable: /bin/bash
 
 # --- Velero CLI ---
-- name: Check if velero is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/velero
-  register: velero_installed
+- name: Check installed velero version
+  ansible.builtin.shell: velero version --client-only 2>&1 || echo MISSING
+  register: velero_current
+  changed_when: false
+  failed_when: false
 
-- name: Get Velero latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/vmware-tanzu/velero/releases/latest
-    return_content: true
-  register: velero_release
-  when: not velero_installed.stat.exists
+- name: Install/upgrade velero {{ velero_version }}
+  when: "velero_version not in velero_current.stdout"
+  block:
+    - name: Download Velero {{ velero_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/vmware-tanzu/velero/releases/download/v{{ velero_version }}/velero-v{{ velero_version }}-linux-amd64.tar.gz"
+        dest: /tmp
+        remote_src: true
 
-- name: Install Velero CLI
-  ansible.builtin.unarchive:
-    src: "https://github.com/vmware-tanzu/velero/releases/download/{{ velero_release.json.tag_name }}/velero-{{ velero_release.json.tag_name }}-linux-amd64.tar.gz"
-    dest: /tmp
-    remote_src: true
-  when: not velero_installed.stat.exists
+    - name: Move Velero binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: "/tmp/velero-v{{ velero_version }}-linux-amd64/velero"
+        dest: /usr/local/bin/velero
+        mode: "0755"
+        remote_src: true
 
-- name: Move Velero binary to /usr/local/bin
-  ansible.builtin.copy:
-    src: "/tmp/velero-{{ velero_release.json.tag_name }}-linux-amd64/velero"
-    dest: /usr/local/bin/velero
-    mode: "0755"
-    remote_src: true
-  when: not velero_installed.stat.exists
-
-- name: Clean up Velero temp files
-  ansible.builtin.file:
-    path: "/tmp/velero-{{ velero_release.json.tag_name }}-linux-amd64"
-    state: absent
-  when: not velero_installed.stat.exists
+    - name: Clean up Velero temp files
+      ansible.builtin.file:
+        path: "/tmp/velero-v{{ velero_version }}-linux-amd64"
+        state: absent
 
 # --- Krew (kubectl plugin manager) ---
 - name: Install Krew
