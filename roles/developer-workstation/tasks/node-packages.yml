@@ -2,25 +2,197 @@
 # =============================================================================
 # Node.js Global Packages
 # =============================================================================
-# Installed via npm global. Node.js itself is installed via APT (packages.yml).
+# Installed via npm global with version pinning. Node.js itself is installed
+# via APT (packages.yml). Each package is checked against its pinned version
+# in defaults/main.yml before installing/upgrading.
 # =============================================================================
 
-- name: Install npm global packages
+# --- pnpm ---
+- name: Check installed pnpm version
+  ansible.builtin.shell: npm list -g pnpm --depth=0 2>/dev/null || echo MISSING
+  register: pnpm_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade pnpm {{ pnpm_version }}
   community.general.npm:
-    name: "{{ item }}"
+    name: pnpm
+    version: "{{ pnpm_version }}"
     global: true
     state: present
-  loop:
-    - pnpm
-    - yarn
-    - typescript
-    - ts-node
-    - tsx
-    - turbo
-    - eslint
-    - prettier
-    - "@mermaid-js/mermaid-cli"
-  register: _npm_result
+  when: "pnpm_version not in pnpm_current.stdout"
+  register: _npm_pnpm_result
   failed_when:
-    - _npm_result is failed
-    - "'EACCES' not in (_npm_result.msg | default(''))"
+    - _npm_pnpm_result is failed
+    - "'EACCES' not in (_npm_pnpm_result.msg | default(''))"
+
+# --- yarn ---
+- name: Check installed yarn version
+  ansible.builtin.shell: npm list -g yarn --depth=0 2>/dev/null || echo MISSING
+  register: yarn_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade yarn {{ yarn_version }}
+  community.general.npm:
+    name: yarn
+    version: "{{ yarn_version }}"
+    global: true
+    state: present
+  when: "yarn_version not in yarn_current.stdout"
+  register: _npm_yarn_result
+  failed_when:
+    - _npm_yarn_result is failed
+    - "'EACCES' not in (_npm_yarn_result.msg | default(''))"
+
+# --- typescript ---
+- name: Check installed typescript version
+  ansible.builtin.shell: npm list -g typescript --depth=0 2>/dev/null || echo MISSING
+  register: typescript_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade typescript {{ typescript_version }}
+  community.general.npm:
+    name: typescript
+    version: "{{ typescript_version }}"
+    global: true
+    state: present
+  when: "typescript_version not in typescript_current.stdout"
+  register: _npm_typescript_result
+  failed_when:
+    - _npm_typescript_result is failed
+    - "'EACCES' not in (_npm_typescript_result.msg | default(''))"
+
+# --- ts-node ---
+- name: Check installed ts-node version
+  ansible.builtin.shell: npm list -g ts-node --depth=0 2>/dev/null || echo MISSING
+  register: ts_node_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade ts-node {{ ts_node_version }}
+  community.general.npm:
+    name: ts-node
+    version: "{{ ts_node_version }}"
+    global: true
+    state: present
+  when: "ts_node_version not in ts_node_current.stdout"
+  register: _npm_ts_node_result
+  failed_when:
+    - _npm_ts_node_result is failed
+    - "'EACCES' not in (_npm_ts_node_result.msg | default(''))"
+
+# --- tsx ---
+- name: Check installed tsx version
+  ansible.builtin.shell: npm list -g tsx --depth=0 2>/dev/null || echo MISSING
+  register: tsx_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade tsx {{ tsx_version }}
+  community.general.npm:
+    name: tsx
+    version: "{{ tsx_version }}"
+    global: true
+    state: present
+  when: "tsx_version not in tsx_current.stdout"
+  register: _npm_tsx_result
+  failed_when:
+    - _npm_tsx_result is failed
+    - "'EACCES' not in (_npm_tsx_result.msg | default(''))"
+
+# --- turbo ---
+- name: Check installed turbo version
+  ansible.builtin.shell: npm list -g turbo --depth=0 2>/dev/null || echo MISSING
+  register: turbo_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade turbo {{ turbo_version }}
+  community.general.npm:
+    name: turbo
+    version: "{{ turbo_version }}"
+    global: true
+    state: present
+  when: "turbo_version not in turbo_current.stdout"
+  register: _npm_turbo_result
+  failed_when:
+    - _npm_turbo_result is failed
+    - "'EACCES' not in (_npm_turbo_result.msg | default(''))"
+
+# --- eslint ---
+- name: Check installed eslint version
+  ansible.builtin.shell: npm list -g eslint --depth=0 2>/dev/null || echo MISSING
+  register: eslint_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade eslint {{ eslint_version }}
+  community.general.npm:
+    name: eslint
+    version: "{{ eslint_version }}"
+    global: true
+    state: present
+  when: "eslint_version not in eslint_current.stdout"
+  register: _npm_eslint_result
+  failed_when:
+    - _npm_eslint_result is failed
+    - "'EACCES' not in (_npm_eslint_result.msg | default(''))"
+
+# --- prettier ---
+- name: Check installed prettier version
+  ansible.builtin.shell: npm list -g prettier --depth=0 2>/dev/null || echo MISSING
+  register: prettier_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade prettier {{ prettier_version }}
+  community.general.npm:
+    name: prettier
+    version: "{{ prettier_version }}"
+    global: true
+    state: present
+  when: "prettier_version not in prettier_current.stdout"
+  register: _npm_prettier_result
+  failed_when:
+    - _npm_prettier_result is failed
+    - "'EACCES' not in (_npm_prettier_result.msg | default(''))"
+
+# --- @mermaid-js/mermaid-cli ---
+- name: Check installed mermaid-cli version
+  ansible.builtin.shell: npm list -g @mermaid-js/mermaid-cli --depth=0 2>/dev/null || echo MISSING
+  register: mermaid_cli_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade mermaid-cli {{ mermaid_cli_version }}
+  community.general.npm:
+    name: "@mermaid-js/mermaid-cli"
+    version: "{{ mermaid_cli_version }}"
+    global: true
+    state: present
+  when: "mermaid_cli_version not in mermaid_cli_current.stdout"
+  register: _npm_mermaid_cli_result
+  failed_when:
+    - _npm_mermaid_cli_result is failed
+    - "'EACCES' not in (_npm_mermaid_cli_result.msg | default(''))"
+
+# --- codewhale ---
+- name: Check installed codewhale version
+  ansible.builtin.shell: npm list -g codewhale --depth=0 2>/dev/null || echo MISSING
+  register: codewhale_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade codewhale {{ codewhale_version }}
+  community.general.npm:
+    name: codewhale
+    version: "{{ codewhale_version }}"
+    global: true
+    state: present
+  when: "codewhale_version not in codewhale_current.stdout"
+  register: _npm_codewhale_result
+  failed_when:
+    - _npm_codewhale_result is failed
+    - "'EACCES' not in (_npm_codewhale_result.msg | default(''))"

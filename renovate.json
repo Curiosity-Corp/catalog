@@ -534,11 +534,121 @@
       "matchStrings": [
         "(?:PREFLIGHT_IMAGE|SAST_IMAGE):\\s+\"(?<depName>[^\":]+(?:/[^\":]+)+):(?<currentValue>[^\"]+)\""
       ]
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "pnpm_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "pnpm",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "yarn_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "yarn",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "typescript_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "typescript",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "ts_node_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "ts-node",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "tsx_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "tsx",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "turbo_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "turbo",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "eslint_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "eslint",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "prettier_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "prettier",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "mermaid_cli_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "@mermaid-js/mermaid-cli",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "codewhale_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "codewhale",
+      "datasourceTemplate": "npm"
     }
   ],
   "packageRules": [
     {
-      "matchDatasources": ["github-releases", "gitlab-releases"],
+      "matchDatasources": ["github-releases", "gitlab-releases", "npm"],
       "matchPackageNames": [
         "LizardByte/Sunshine",
         "gitlab-org/cli",
@@ -584,7 +694,17 @@
         "golangci/golangci-lint",
         "charmbracelet/gum",
         "budimanjojo/talhelper",
-        "getsops/sops"
+        "getsops/sops",
+        "pnpm",
+        "yarn",
+        "typescript",
+        "ts-node",
+        "tsx",
+        "turbo",
+        "eslint",
+        "prettier",
+        "@mermaid-js/mermaid-cli",
+        "codewhale"
       ],
       "groupName": "workstation pinned releases"
     },
