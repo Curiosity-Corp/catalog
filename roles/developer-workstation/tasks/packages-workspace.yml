@@ -188,5 +188,10 @@
       - rancher
       - cloudflared
       - tailscale
+      # Removed apt-managed tools — now direct-download managed
+      - kubectl
+      - terraform
+      - packer
+      - vault
     state: absent
     purge: true
