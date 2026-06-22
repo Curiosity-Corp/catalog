@@ -22,6 +22,7 @@
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
             | bash
         executable: /bin/bash
+      changed_when: true
 
 # --- Kustomize ---
 - name: Check installed kustomize version
@@ -33,13 +34,14 @@
 - name: Install/upgrade kustomize {{ kustomize_version }}
   when: "kustomize_version not in kustomize_current.stdout"
   block:
-    - name: Install Kustomize {{ kustomize_version }}  # noqa: command-instead-of-module
+    - name: Install Kustomize v{{ kustomize_version }}  # noqa: command-instead-of-module
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
           curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s {{ kustomize_version }}
           mv kustomize /usr/local/bin/kustomize
         executable: /bin/bash
+      changed_when: true
 
 # --- talosctl ---
 - name: Check installed talosctl version
@@ -141,12 +143,13 @@
 - name: Install/upgrade flux {{ flux_version }}
   when: "flux_version not in flux_current.stdout"
   block:
-    - name: Download flux {{ flux_version }} install script  # noqa: command-instead-of-module
+    - name: Download flux install script v{{ flux_version }}  # noqa: command-instead-of-module
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
           curl -fsSL https://fluxcd.io/install.sh | VERSION="{{ flux_version }}" bash
         executable: /bin/bash
+      changed_when: true
 
 # --- Velero CLI ---
 - name: Check installed velero version

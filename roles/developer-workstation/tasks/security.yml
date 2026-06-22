@@ -18,13 +18,14 @@
 - name: Install/upgrade trivy {{ trivy_version }}
   when: "trivy_version not in trivy_current.stdout"
   block:
-    - name: Install Trivy {{ trivy_version }}  # noqa: command-instead-of-module
+    - name: Install Trivy v{{ trivy_version }}  # noqa: command-instead-of-module
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sh -s -- -b /usr/local/bin v{{ trivy_version }}
         executable: /bin/bash
+      changed_when: true
 
 # --- kubeseal (Sealed Secrets) ---
 - name: Check installed kubeseal version
