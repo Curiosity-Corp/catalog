@@ -40,35 +40,29 @@
   when: not aws_cli_installed.stat.exists
 
 # --- GitLab CLI (glab) ---
-- name: Check if glab is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/glab
-  register: glab_installed
+- name: Check installed glab version
+  ansible.builtin.shell: glab version 2>&1 || echo MISSING
+  register: glab_current
+  changed_when: false
+  failed_when: false
 
-- name: Get glab latest version from GitLab API
-  ansible.builtin.uri:
-    url: https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest
-    return_content: true
-  register: glab_release
-  when: not glab_installed.stat.exists
+- name: Install/upgrade glab {{ glab_version }}
+  when: "glab_version not in glab_current.stdout"
+  block:
+    - name: Download glab {{ glab_version }}
+      ansible.builtin.unarchive:
+        src: "https://gitlab.com/gitlab-org/cli/-/releases/v{{ glab_version }}/downloads/glab_{{ glab_version }}_linux_amd64.tar.gz"
+        dest: /tmp
+        remote_src: true
 
-- name: Install glab
-  ansible.builtin.unarchive:
-    src: "https://gitlab.com/gitlab-org/cli/-/releases/{{ glab_release.json.tag_name }}/downloads/glab_{{ glab_release.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
-    dest: /tmp
-    remote_src: true
-  when: not glab_installed.stat.exists
+    - name: Move glab binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: "/tmp/bin/glab"
+        dest: /usr/local/bin/glab
+        mode: "0755"
+        remote_src: true
 
-- name: Move glab binary to /usr/local/bin
-  ansible.builtin.copy:
-    src: "/tmp/bin/glab"
-    dest: /usr/local/bin/glab
-    mode: "0755"
-    remote_src: true
-  when: not glab_installed.stat.exists
-
-- name: Clean up glab temp files
-  ansible.builtin.file:
-    path: /tmp/bin/glab
-    state: absent
-  when: not glab_installed.stat.exists
+    - name: Clean up glab temp files
+      ansible.builtin.file:
+        path: /tmp/bin/glab
+        state: absent

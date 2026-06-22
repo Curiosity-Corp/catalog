@@ -75,38 +75,28 @@
         include: [k9s]
 
 # --- kubectx + kubens ---
-- name: Check if kubectx is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/kubectx
-  register: kubectx_installed
+- name: Check installed kubectx version
+  ansible.builtin.shell: kubectx --version 2>&1 || echo MISSING
+  register: kubectx_current
+  changed_when: false
+  failed_when: false
 
-- name: Check if kubens is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/kubens
-  register: kubens_installed
+- name: Install/upgrade kubectx + kubens {{ kubectx_version }}
+  when: "kubectx_version not in kubectx_current.stdout"
+  block:
+    - name: Download kubectx {{ kubectx_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/ahmetb/kubectx/releases/download/v{{ kubectx_version }}/kubectx_v{{ kubectx_version }}_linux_x86_64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [kubectx]
 
-- name: Get kubectx latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/ahmetb/kubectx/releases/latest
-    return_content: true
-  register: kubectx_release
-  when: not kubectx_installed.stat.exists or not kubens_installed.stat.exists
-
-- name: Install kubectx
-  ansible.builtin.unarchive:
-    src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/kubectx_{{ kubectx_release.json.tag_name }}_linux_x86_64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [kubectx]
-  when: not kubectx_installed.stat.exists
-
-- name: Install kubens
-  ansible.builtin.unarchive:
-    src: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_release.json.tag_name }}/kubens_{{ kubectx_release.json.tag_name }}_linux_x86_64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [kubens]
-  when: not kubens_installed.stat.exists
+    - name: Download kubens {{ kubectx_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/ahmetb/kubectx/releases/download/v{{ kubectx_version }}/kubens_v{{ kubectx_version }}_linux_x86_64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [kubens]
 
 # --- stern ---
 - name: Check installed stern version
@@ -126,12 +116,20 @@
         include: [stern]
 
 # --- ArgoCD CLI ---
-- name: Install ArgoCD CLI
-  ansible.builtin.get_url:
-    url: https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-    dest: /usr/local/bin/argocd
-    mode: "0755"
-    force: false
+- name: Check installed argocd version
+  ansible.builtin.shell: argocd version --client 2>&1 || echo MISSING
+  register: argocd_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade argocd {{ argocd_version }}
+  when: "argocd_version not in argocd_current.stdout"
+  block:
+    - name: Download argocd {{ argocd_version }}
+      ansible.builtin.get_url:
+        url: "https://github.com/argoproj/argo-cd/releases/download/v{{ argocd_version }}/argocd-linux-amd64"
+        dest: /usr/local/bin/argocd
+        mode: "0755"
 
 # --- Flux CLI ---
 - name: Check installed flux version
