@@ -87,13 +87,13 @@
 # Downloads the GitHub release binary. Compares installed version and removes
 # any ~/go/bin/sops shadow to ensure the catalog-managed version is used.
 - name: Check installed sops version
-  ansible.builtin.shell: sops --version 2>&1 || echo MISSING
+  ansible.builtin.shell: sops --version 2>&1 | head -1 || echo MISSING
   register: sops_current
   changed_when: false
   failed_when: false
 
 - name: Install/upgrade sops {{ sops_version }}
-  when: "sops_version not in sops_current.stdout"
+  when: "'sops ' ~ sops_version not in sops_current.stdout"
   block:
     - name: Download sops {{ sops_version }}
       ansible.builtin.get_url:
