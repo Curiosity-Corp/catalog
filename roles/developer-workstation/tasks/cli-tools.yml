@@ -76,126 +76,104 @@
         include: [zoxide]
 
 # --- dust ---
-- name: Check if dust is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/dust
-  register: dust_installed
+- name: Check installed dust version
+  ansible.builtin.shell: dust --version 2>&1 || echo MISSING
+  register: dust_current
+  changed_when: false
+  failed_when: false
 
-- name: Get dust latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/bootandy/dust/releases/latest
-    return_content: true
-  register: dust_release
-  when: not dust_installed.stat.exists
-
-- name: Install dust
-  ansible.builtin.unarchive:
-    src: "https://github.com/bootandy/dust/releases/download/{{ dust_release.json.tag_name }}/dust-{{ dust_release.json.tag_name }}-x86_64-unknown-linux-gnu.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: ["dust-{{ dust_release.json.tag_name }}-x86_64-unknown-linux-gnu/dust"]
-    extra_opts:
-      - --strip-components=1
-  when: not dust_installed.stat.exists
+- name: Install/upgrade dust {{ dust_version }}
+  when: "dust_version not in dust_current.stdout"
+  block:
+    - name: Download dust {{ dust_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/bootandy/dust/releases/download/v{{ dust_version }}/dust-v{{ dust_version }}-x86_64-unknown-linux-gnu.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: ["dust-v{{ dust_version }}-x86_64-unknown-linux-gnu/dust"]
+        extra_opts:
+          - --strip-components=1
 
 # --- duf ---
-- name: Check if duf is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/duf
-  register: duf_installed
+- name: Check installed duf version
+  ansible.builtin.shell: duf --version 2>&1 || echo MISSING
+  register: duf_current
+  changed_when: false
+  failed_when: false
 
-- name: Get duf latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/muesli/duf/releases/latest
-    return_content: true
-  register: duf_release
-  when: not duf_installed.stat.exists
-
-- name: Install duf
-  ansible.builtin.unarchive:
-    src: "https://github.com/muesli/duf/releases/download/{{ duf_release.json.tag_name }}/duf_{{ duf_release.json.tag_name | regex_replace('^v', '') }}_linux_x86_64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [duf]
-  when: not duf_installed.stat.exists
+- name: Install/upgrade duf {{ duf_version }}
+  when: "duf_version not in duf_current.stdout"
+  block:
+    - name: Download duf {{ duf_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/muesli/duf/releases/download/v{{ duf_version }}/duf_{{ duf_version }}_linux_x86_64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [duf]
 
 # --- glow ---
-- name: Check if glow is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/glow
-  register: glow_installed
+- name: Check installed glow version
+  ansible.builtin.shell: glow --version 2>&1 || echo MISSING
+  register: glow_current
+  changed_when: false
+  failed_when: false
 
-- name: Get glow latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/charmbracelet/glow/releases/latest
-    return_content: true
-  register: glow_release
-  when: not glow_installed.stat.exists
+- name: Install/upgrade glow {{ glow_version }}
+  when: "glow_version not in glow_current.stdout"
+  block:
+    - name: Download glow {{ glow_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/charmbracelet/glow/releases/download/v{{ glow_version }}/glow_{{ glow_version }}_Linux_x86_64.tar.gz"
+        dest: /tmp
+        remote_src: true
 
-- name: Install glow
-  ansible.builtin.unarchive:
-    src: "https://github.com/charmbracelet/glow/releases/download/{{ glow_release.json.tag_name }}/glow_{{ glow_release.json.tag_name | regex_replace('^v', '') }}_Linux_x86_64.tar.gz"
-    dest: /tmp
-    remote_src: true
-  when: not glow_installed.stat.exists
+    - name: Move glow binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: "/tmp/glow_{{ glow_version }}_Linux_x86_64/glow"
+        dest: /usr/local/bin/glow
+        mode: '0755'
+        remote_src: true
 
-- name: Move glow binary to /usr/local/bin
-  ansible.builtin.copy:
-    src: "/tmp/glow_{{ glow_release.json.tag_name | regex_replace('^v', '') }}_Linux_x86_64/glow"
-    dest: /usr/local/bin/glow
-    mode: '0755'
-    remote_src: true
-  when: not glow_installed.stat.exists
-
-- name: Clean up glow temp files
-  ansible.builtin.file:
-    path: "/tmp/glow_{{ glow_release.json.tag_name | regex_replace('^v', '') }}_Linux_x86_64"
-    state: absent
-  when: not glow_installed.stat.exists
+    - name: Clean up glow temp files
+      ansible.builtin.file:
+        path: "/tmp/glow_{{ glow_version }}_Linux_x86_64"
+        state: absent
 
 # --- just ---
-- name: Check if just is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/just
-  register: just_installed
+- name: Check installed just version
+  ansible.builtin.shell: just --version 2>&1 || echo MISSING
+  register: just_current
+  changed_when: false
+  failed_when: false
 
-- name: Get just latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/casey/just/releases/latest
-    return_content: true
-  register: just_release
-  when: not just_installed.stat.exists
-
-- name: Install just
-  ansible.builtin.unarchive:
-    src: "https://github.com/casey/just/releases/download/{{ just_release.json.tag_name }}/just-{{ just_release.json.tag_name }}-x86_64-unknown-linux-musl.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [just]
-  when: not just_installed.stat.exists
+- name: Install/upgrade just {{ just_version }}
+  when: "just_version not in just_current.stdout"
+  block:
+    - name: Download just {{ just_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/casey/just/releases/download/{{ just_version }}/just-{{ just_version }}-x86_64-unknown-linux-musl.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [just]
 
 # --- watchexec ---
-- name: Check if watchexec is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/watchexec
-  register: watchexec_installed
+- name: Check installed watchexec version
+  ansible.builtin.shell: watchexec --version 2>&1 || echo MISSING
+  register: watchexec_current
+  changed_when: false
+  failed_when: false
 
-- name: Get watchexec latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/watchexec/watchexec/releases/latest
-    return_content: true
-  register: watchexec_release
-  when: not watchexec_installed.stat.exists
-
-- name: Install watchexec
-  ansible.builtin.unarchive:
-    src: "https://github.com/watchexec/watchexec/releases/download/{{ watchexec_release.json.tag_name }}/watchexec-{{ watchexec_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-gnu.tar.xz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: ["watchexec-{{ watchexec_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-gnu/watchexec"]
-    extra_opts:
-      - --strip-components=1
-  when: not watchexec_installed.stat.exists
+- name: Install/upgrade watchexec {{ watchexec_version }}
+  when: "watchexec_version not in watchexec_current.stdout"
+  block:
+    - name: Download watchexec {{ watchexec_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/watchexec/watchexec/releases/download/v{{ watchexec_version }}/watchexec-{{ watchexec_version }}-x86_64-unknown-linux-gnu.tar.xz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: ["watchexec-{{ watchexec_version }}-x86_64-unknown-linux-gnu/watchexec"]
+        extra_opts:
+          - --strip-components=1
 
 # --- tokei (installed via apt in packages.yml) ---
 # Note: tokei GitHub releases have no binaries since v13. Using apt package instead.
