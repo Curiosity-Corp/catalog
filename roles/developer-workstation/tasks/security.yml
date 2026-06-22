@@ -83,41 +83,28 @@
         path: /tmp/age
         state: absent
 
-# --- SOPS (PQ-capable, built from main) ---
-# Only install if sops is not already in PATH. Existing PQ-capable
-# installs (e.g. ~/go/bin/sops) are left untouched.
-- name: Check if sops is available
-  ansible.builtin.command: which sops
-  register: sops_which_check
+# --- SOPS v3 (version-checked, direct download, PQ support) ---
+# Downloads the GitHub release binary. Compares installed version and removes
+# any ~/go/bin/sops shadow to ensure the catalog-managed version is used.
+- name: Check installed sops version
+  ansible.builtin.shell: sops --version 2>&1 || echo MISSING
+  register: sops_current
   changed_when: false
   failed_when: false
 
-- name: Build and install SOPS from main (PQ support)
-  when: sops_which_check.rc != 0
+- name: Install/upgrade sops {{ sops_version }}
+  when: "sops_version not in sops_current.stdout"
   block:
-    - name: Check Go is available for SOPS build
-      ansible.builtin.command: go version
-      register: go_check
-      changed_when: false
-      failed_when: false
-
-    - name: Build SOPS from main via go install
-      ansible.builtin.command:
-        cmd: go install github.com/getsops/sops/v3/cmd/sops@main
-      environment:
-        HOME: /root
-        GOPATH: /root/go
-        GOBIN: /root/go/bin
-      when: go_check.rc == 0
-      changed_when: true
-
-    - name: Install SOPS binary to /usr/local/bin
-      ansible.builtin.copy:
-        src: /root/go/bin/sops
+    - name: Download sops {{ sops_version }}
+      ansible.builtin.get_url:
+        url: "https://github.com/getsops/sops/releases/download/v{{ sops_version }}/sops-v{{ sops_version }}.linux.amd64"
         dest: /usr/local/bin/sops
         mode: "0755"
-        remote_src: true
-      when: go_check.rc == 0
+
+    - name: Remove ~/go/bin/sops shadow (outdated catalog-managed alternative)
+      ansible.builtin.file:
+        path: "{{ dev_user_home }}/go/bin/sops"
+        state: absent
 
 # --- PQ age keypair generation (per-user, idempotent) ---
 # Uses ~/.keys/age.key (org convention). Skips if any age key already exists.

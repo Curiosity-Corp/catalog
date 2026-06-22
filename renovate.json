@@ -493,6 +493,42 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "golangci_lint_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "golangci/golangci-lint",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "gum_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "charmbracelet/gum",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "talhelper_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "budimanjojo/talhelper",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
         "/^\\.gitlab-ci\\.yml$/"
       ],
       "matchStrings": [
@@ -544,9 +580,25 @@
         "opentofu/opentofu",
         "nektos/act",
         "argoproj/argo-cd",
-        "filebrowser/filebrowser"
+        "filebrowser/filebrowser",
+        "golangci/golangci-lint",
+        "charmbracelet/gum",
+        "budimanjojo/talhelper",
+        "getsops/sops"
       ],
       "groupName": "workstation pinned releases"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "sops_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "getsops/sops",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
     },
     {
       "matchDatasources": ["docker"],

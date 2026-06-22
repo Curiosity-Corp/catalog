@@ -242,6 +242,70 @@
         path: /tmp/starship.tar.gz
         state: absent
 
+# --- golangci-lint ---
+- name: Check installed golangci-lint version
+  ansible.builtin.shell: golangci-lint --version 2>&1 || echo MISSING
+  register: golangci_lint_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade golangci-lint {{ golangci_lint_version }}
+  when: "golangci_lint_version not in golangci_lint_current.stdout"
+  block:
+    - name: Download golangci-lint {{ golangci_lint_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/golangci/golangci-lint/releases/download/v{{ golangci_lint_version }}/golangci-lint-{{ golangci_lint_version }}-linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: ["golangci-lint-{{ golangci_lint_version }}-linux-amd64/golangci-lint"]
+        extra_opts:
+          - --strip-components=1
+
+# --- gum (charmbracelet) ---
+- name: Check installed gum version
+  ansible.builtin.shell: gum --version 2>&1 || echo MISSING
+  register: gum_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade gum {{ gum_version }}
+  when: "gum_version not in gum_current.stdout"
+  block:
+    - name: Download gum {{ gum_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/charmbracelet/gum/releases/download/v{{ gum_version }}/gum_{{ gum_version }}_Linux_x86_64.tar.gz"
+        dest: /tmp
+        remote_src: true
+
+    - name: Move gum binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: "/tmp/gum_{{ gum_version }}_Linux_x86_64/gum"
+        dest: /usr/local/bin/gum
+        mode: '0755'
+        remote_src: true
+
+    - name: Clean up gum temp files
+      ansible.builtin.file:
+        path: "/tmp/gum_{{ gum_version }}_Linux_x86_64"
+        state: absent
+
+# --- talhelper ---
+- name: Check installed talhelper version
+  ansible.builtin.shell: talhelper version 2>&1 || echo MISSING
+  register: talhelper_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade talhelper {{ talhelper_version }}
+  when: "talhelper_version not in talhelper_current.stdout"
+  block:
+    - name: Download talhelper {{ talhelper_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/budimanjojo/talhelper/releases/download/v{{ talhelper_version }}/talhelper_linux_amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [talhelper]
+
 # --- filebrowser (workspace profile) ---
 - name: Check installed filebrowser version
   ansible.builtin.shell: filebrowser version 2>&1 || filebrowser --version 2>&1 || echo MISSING
