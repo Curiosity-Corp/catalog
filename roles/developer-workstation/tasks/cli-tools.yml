@@ -7,89 +7,73 @@
 # =============================================================================
 
 # --- lazygit ---
-- name: Check if lazygit is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/lazygit
-  register: lazygit_installed
+- name: Check installed lazygit version
+  ansible.builtin.shell: lazygit --version 2>&1 || echo MISSING
+  register: lazygit_current
+  changed_when: false
+  failed_when: false
 
-- name: Get lazygit latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/jesseduffield/lazygit/releases/latest
-    return_content: true
-  register: lazygit_release
-  when: not lazygit_installed.stat.exists
-
-- name: Install lazygit
-  ansible.builtin.unarchive:
-    src: "https://github.com/jesseduffield/lazygit/releases/download/{{ lazygit_release.json.tag_name }}/lazygit_{{ lazygit_release.json.tag_name | regex_replace('^v', '') }}_Linux_x86_64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [lazygit]
-  when: not lazygit_installed.stat.exists
+- name: Install/upgrade lazygit {{ lazygit_version }}
+  when: "lazygit_version not in lazygit_current.stdout"
+  block:
+    - name: Download lazygit {{ lazygit_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/jesseduffield/lazygit/releases/download/v{{ lazygit_version }}/lazygit_{{ lazygit_version }}_Linux_x86_64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [lazygit]
 
 # --- yq ---
-- name: Check if yq is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/yq
-  register: yq_installed
+- name: Check installed yq version
+  ansible.builtin.shell: yq --version 2>&1 || echo MISSING
+  register: yq_current
+  changed_when: false
+  failed_when: false
 
-- name: Get yq latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/mikefarah/yq/releases/latest
-    return_content: true
-  register: yq_release
-  when: not yq_installed.stat.exists
-
-- name: Install yq
-  ansible.builtin.get_url:
-    url: "https://github.com/mikefarah/yq/releases/download/{{ yq_release.json.tag_name }}/yq_linux_amd64"
-    dest: /usr/local/bin/yq
-    mode: '0755'
-  when: not yq_installed.stat.exists
+- name: Install/upgrade yq {{ yq_version }}
+  when: "yq_version not in yq_current.stdout"
+  block:
+    - name: Download yq {{ yq_version }}
+      ansible.builtin.get_url:
+        url: "https://github.com/mikefarah/yq/releases/download/v{{ yq_version }}/yq_linux_amd64"
+        dest: /usr/local/bin/yq
+        mode: '0755'
 
 # --- delta ---
-- name: Check if delta is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/delta
-  register: delta_installed
+- name: Check installed delta version
+  ansible.builtin.shell: delta --version 2>&1 || echo MISSING
+  register: delta_current
+  changed_when: false
+  failed_when: false
 
-- name: Get delta latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/dandavison/delta/releases/latest
-    return_content: true
-  register: delta_release
-  when: not delta_installed.stat.exists
-
-- name: Install delta
-  ansible.builtin.unarchive:
-    src: "https://github.com/dandavison/delta/releases/download/{{ delta_release.json.tag_name }}/delta-{{ delta_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-gnu.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: ["delta-{{ delta_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-gnu/delta"]
-    extra_opts:
-      - --strip-components=1
-  when: not delta_installed.stat.exists
+- name: Install/upgrade delta {{ delta_version }}
+  when: "delta_version not in delta_current.stdout"
+  block:
+    - name: Download delta {{ delta_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/dandavison/delta/releases/download/{{ delta_version }}/delta-{{ delta_version }}-x86_64-unknown-linux-gnu.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: ["delta-{{ delta_version }}-x86_64-unknown-linux-gnu/delta"]
+        extra_opts:
+          - --strip-components=1
 
 # --- zoxide ---
-- name: Check if zoxide is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/zoxide
-  register: zoxide_installed
+- name: Check installed zoxide version
+  ansible.builtin.shell: zoxide --version 2>&1 || echo MISSING
+  register: zoxide_current
+  changed_when: false
+  failed_when: false
 
-- name: Get zoxide latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/ajeetdsouza/zoxide/releases/latest
-    return_content: true
-  register: zoxide_release
-  when: not zoxide_installed.stat.exists
-
-- name: Install zoxide
-  ansible.builtin.unarchive:
-    src: "https://github.com/ajeetdsouza/zoxide/releases/download/{{ zoxide_release.json.tag_name }}/zoxide-{{ zoxide_release.json.tag_name | regex_replace('^v', '') }}-x86_64-unknown-linux-musl.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [zoxide]
-  when: not zoxide_installed.stat.exists
+- name: Install/upgrade zoxide {{ zoxide_version }}
+  when: "zoxide_version not in zoxide_current.stdout"
+  block:
+    - name: Download zoxide {{ zoxide_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/ajeetdsouza/zoxide/releases/download/v{{ zoxide_version }}/zoxide-{{ zoxide_version }}-x86_64-unknown-linux-musl.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [zoxide]
 
 # --- dust ---
 - name: Check if dust is installed

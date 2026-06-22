@@ -198,22 +198,18 @@
     HOME: "{{ dev_user_home }}"
 
 # --- kubeconform ---
-- name: Check if kubeconform is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/kubeconform
-  register: kubeconform_installed
+- name: Check installed kubeconform version
+  ansible.builtin.shell: kubeconform -v 2>&1 || echo MISSING
+  register: kubeconform_current
+  changed_when: false
+  failed_when: false
 
-- name: Get kubeconform latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/yannh/kubeconform/releases/latest
-    return_content: true
-  register: kubeconform_release
-  when: not kubeconform_installed.stat.exists
-
-- name: Install kubeconform
-  ansible.builtin.unarchive:
-    src: "https://github.com/yannh/kubeconform/releases/download/{{ kubeconform_release.json.tag_name }}/kubeconform-linux-amd64.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [kubeconform]
-  when: not kubeconform_installed.stat.exists
+- name: Install/upgrade kubeconform {{ kubeconform_version }}
+  when: "kubeconform_version not in kubeconform_current.stdout"
+  block:
+    - name: Download kubeconform {{ kubeconform_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/yannh/kubeconform/releases/download/v{{ kubeconform_version }}/kubeconform-linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [kubeconform]
