@@ -86,7 +86,8 @@
 
 # --- Terraform ---
 - name: Check installed terraform version
-  ansible.builtin.shell: terraform version 2>&1 || echo MISSING
+  ansible.builtin.shell: >-
+    terraform --version 2>&1 | head -1 | sed 's/Terraform v//' || echo MISSING
   register: terraform_current
   changed_when: false
   failed_when: false
