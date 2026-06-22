@@ -261,10 +261,10 @@
         extra_opts:
           - --strip-components=1
 
-    - name: Remove ~/go/bin/golangci-lint shadow
-      ansible.builtin.file:
-        path: "{{ dev_user_home }}/go/bin/golangci-lint"
-        state: absent
+- name: Remove ~/go/bin/golangci-lint shadow
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/go/bin/golangci-lint"
+    state: absent
 
 # --- gum (charmbracelet) ---
 - name: Check installed gum version
@@ -294,10 +294,10 @@
         path: "/tmp/gum_{{ gum_version }}_Linux_x86_64"
         state: absent
 
-    - name: Remove ~/go/bin/gum shadow
-      ansible.builtin.file:
-        path: "{{ dev_user_home }}/go/bin/gum"
-        state: absent
+- name: Remove ~/go/bin/gum shadow
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/go/bin/gum"
+    state: absent
 
 # --- talhelper ---
 - name: Check installed talhelper version
@@ -316,10 +316,10 @@
         remote_src: true
         include: [talhelper]
 
-    - name: Remove ~/go/bin/talhelper shadow
-      ansible.builtin.file:
-        path: "{{ dev_user_home }}/go/bin/talhelper"
-        state: absent
+- name: Remove ~/go/bin/talhelper shadow
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/go/bin/talhelper"
+    state: absent
 
 # --- filebrowser (workspace profile) ---
 - name: Check installed filebrowser version
