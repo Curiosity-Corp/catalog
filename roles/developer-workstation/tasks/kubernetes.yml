@@ -6,44 +6,56 @@
 # =============================================================================
 
 # --- Helm ---
-- name: Install Helm  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
-        | bash
-    executable: /bin/bash
-    creates: /usr/local/bin/helm
+- name: Check installed helm version
+  ansible.builtin.shell: helm version 2>&1 || echo MISSING
+  register: helm_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade helm {{ helm_version }}
+  when: "helm_version not in helm_current.stdout"
+  block:
+    - name: Install Helm  # noqa: command-instead-of-module
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
+            | bash
+        executable: /bin/bash
 
 # --- Kustomize ---
-- name: Install Kustomize  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-      mv kustomize /usr/local/bin/kustomize
-    executable: /bin/bash
-    creates: /usr/local/bin/kustomize
+- name: Check installed kustomize version
+  ansible.builtin.shell: kustomize version 2>&1 || echo MISSING
+  register: kustomize_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade kustomize {{ kustomize_version }}
+  when: "kustomize_version not in kustomize_current.stdout"
+  block:
+    - name: Install Kustomize {{ kustomize_version }}  # noqa: command-instead-of-module
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s {{ kustomize_version }}
+          mv kustomize /usr/local/bin/kustomize
+        executable: /bin/bash
 
 # --- talosctl ---
-- name: Check if talosctl is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/talosctl
-  register: talosctl_installed
+- name: Check installed talosctl version
+  ansible.builtin.shell: talosctl version --client 2>&1 || echo MISSING
+  register: talosctl_current
+  changed_when: false
+  failed_when: false
 
-- name: Get talosctl latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/siderolabs/talos/releases/latest
-    return_content: true
-  register: talosctl_release
-  when: not talosctl_installed.stat.exists
-
-- name: Install talosctl
-  ansible.builtin.get_url:
-    url: "https://github.com/siderolabs/talos/releases/download/{{ talosctl_release.json.tag_name }}/talosctl-linux-amd64"
-    dest: /usr/local/bin/talosctl
-    mode: "0755"
-  when: not talosctl_installed.stat.exists
+- name: Install/upgrade talosctl {{ talosctl_version }}
+  when: "talosctl_version not in talosctl_current.stdout"
+  block:
+    - name: Download talosctl {{ talosctl_version }}
+      ansible.builtin.get_url:
+        url: "https://github.com/siderolabs/talos/releases/download/v{{ talosctl_version }}/talosctl-linux-amd64"
+        dest: /usr/local/bin/talosctl
+        mode: "0755"
 
 # --- k9s ---
 - name: Check if k9s is installed

@@ -6,6 +6,16 @@
 # Excludes desktop/browser/enterprise-only repos.
 # =============================================================================
 
+# --- Remove Cloudflare APT repo before any apt cache refresh ---
+# Cloudflare does not publish packages for Ubuntu 25.10 ("questing"), causing
+# apt update to fail. The stale repo must be removed before the first apt
+# operation to prevent the nightly ansible-pull from deadlocking.
+- name: Remove stale Cloudflare APT repository before any apt cache refresh
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/cloudflared.list
+    state: absent
+  notify: Update apt cache
+
 # --- Retired Claude Desktop repository ---
 - name: Remove retired Claude Desktop repository before any apt cache refresh
   ansible.builtin.file:
