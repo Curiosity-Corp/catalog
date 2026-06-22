@@ -424,6 +424,30 @@
         "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
       ],
       "matchStrings": [
+        "vault_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "hashicorp/vault",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
+        "packer_version: \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "hashicorp/packer",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
+      ],
+      "matchStrings": [
         "tofu_version: \"(?<currentValue>[^\"]+)\""
       ],
       "depNameTemplate": "opentofu/opentofu",
@@ -488,6 +512,8 @@
         "kubernetes/kubernetes",
         "siderolabs/talos",
         "hashicorp/terraform",
+        "hashicorp/vault",
+        "hashicorp/packer",
         "fluxcd/flux2",
         "derailed/k9s",
         "mikefarah/yq",

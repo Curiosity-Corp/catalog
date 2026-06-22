@@ -80,40 +80,6 @@
     state: present
   notify: Update apt cache
 
-# --- Kubernetes (kubectl) ---
-- name: Download Kubernetes GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key \
-        | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/kubernetes-archive-keyring.gpg
-
-- name: Add Kubernetes repository
-  ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /"
-    filename: kubernetes
-    state: present
-  notify: Update apt cache
-
-# --- HashiCorp (terraform, packer, vault) ---
-- name: Download HashiCorp GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://apt.releases.hashicorp.com/gpg \
-        | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
-
-- name: Add HashiCorp repository
-  ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com {{ apt_fallback_release }} main"
-    filename: hashicorp
-    state: present
-  notify: Update apt cache
-
 # --- MongoDB (mongosh) ---
 - name: Download MongoDB GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:

@@ -5,6 +5,22 @@
 # Binary downloads from GitHub releases and install scripts
 # =============================================================================
 
+# --- kubectl ---
+- name: Check installed kubectl version
+  ansible.builtin.shell: kubectl version --client 2>&1 || echo MISSING
+  register: kubectl_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade kubectl {{ kubectl_version }}
+  when: "kubectl_version not in kubectl_current.stdout"
+  block:
+    - name: Download kubectl {{ kubectl_version }}
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/release/v{{ kubectl_version }}/bin/linux/amd64/kubectl"
+        dest: /usr/local/bin/kubectl
+        mode: "0755"
+
 # --- Helm ---
 - name: Check installed helm version
   ansible.builtin.shell: helm version 2>&1 || echo MISSING

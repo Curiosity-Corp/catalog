@@ -50,11 +50,13 @@
       - brave-browser
       - firefox
       # --- Kubernetes ---
-      - kubectl
+      # kubectl — installed via direct download in kubernetes.yml
+      # - kubectl
       # --- HashiCorp ---
-      - terraform
-      - packer
-      - vault
+      # terraform, packer, vault — installed via direct download in devops.yml
+      # - terraform
+      # - packer
+      # - vault
       # --- 1Password ---
       - 1password-cli
       # --- Ansible ---

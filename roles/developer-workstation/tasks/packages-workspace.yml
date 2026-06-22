@@ -43,11 +43,13 @@
       # --- Google Cloud CLI ---
       - google-cloud-cli
       # --- Kubernetes ---
-      - kubectl
+      # kubectl — installed via direct download in kubernetes.yml
+      # - kubectl
       # --- HashiCorp ---
-      - terraform
-      - packer
-      - vault
+      # terraform, packer, vault — installed via direct download in devops.yml
+      # - terraform
+      # - packer
+      # - vault
       # --- Ansible ---
       - ansible
       - ansible-lint
