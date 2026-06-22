@@ -179,70 +179,85 @@
 # Note: tokei GitHub releases have no binaries since v13. Using apt package instead.
 
 # --- hyperfine ---
-- name: Check if hyperfine is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/hyperfine
-  register: hyperfine_installed
+- name: Check installed hyperfine version
+  ansible.builtin.shell: hyperfine --version 2>&1 || echo MISSING
+  register: hyperfine_current
+  changed_when: false
+  failed_when: false
 
-- name: Get hyperfine latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/sharkdp/hyperfine/releases/latest
-    return_content: true
-  register: hyperfine_release
-  when: not hyperfine_installed.stat.exists
-
-- name: Install hyperfine
-  ansible.builtin.unarchive:
-    src: "https://github.com/sharkdp/hyperfine/releases/download/{{ hyperfine_release.json.tag_name }}/hyperfine-{{ hyperfine_release.json.tag_name }}-x86_64-unknown-linux-gnu.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: ["hyperfine-{{ hyperfine_release.json.tag_name }}-x86_64-unknown-linux-gnu/hyperfine"]
-    extra_opts:
-      - --strip-components=1
-  when: not hyperfine_installed.stat.exists
+- name: Install/upgrade hyperfine {{ hyperfine_version }}
+  when: "hyperfine_version not in hyperfine_current.stdout"
+  block:
+    - name: Download hyperfine {{ hyperfine_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/sharkdp/hyperfine/releases/download/v{{ hyperfine_version }}/hyperfine-v{{ hyperfine_version }}-x86_64-unknown-linux-gnu.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: ["hyperfine-v{{ hyperfine_version }}-x86_64-unknown-linux-gnu/hyperfine"]
+        extra_opts:
+          - --strip-components=1
 
 # --- chezmoi ---
-- name: Check if chezmoi is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/chezmoi
-  register: chezmoi_installed
+- name: Check installed chezmoi version
+  ansible.builtin.shell: chezmoi --version 2>&1 || echo MISSING
+  register: chezmoi_current
+  changed_when: false
+  failed_when: false
 
-- name: Install chezmoi  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: sh -c "$(curl -fsLS get.chezmoi.io)" -- -b /usr/local/bin
-    creates: /usr/local/bin/chezmoi
+- name: Install/upgrade chezmoi {{ chezmoi_version }}
+  when: "chezmoi_version not in chezmoi_current.stdout"
+  block:
+    - name: Download chezmoi {{ chezmoi_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/twpayne/chezmoi/releases/download/v{{ chezmoi_version }}/chezmoi_{{ chezmoi_version }}_linux_amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [chezmoi]
 
 # --- starship ---
-- name: Install starship  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -sS https://starship.rs/install.sh | sh -s -- -y
-    executable: /bin/bash
-    creates: /usr/local/bin/starship
+- name: Check installed starship version
+  ansible.builtin.shell: starship --version 2>&1 || echo MISSING
+  register: starship_current
+  changed_when: false
+  failed_when: false
+
+- name: Install/upgrade starship {{ starship_version }}
+  when: "starship_version not in starship_current.stdout"
+  block:
+    - name: Download starship {{ starship_version }}
+      ansible.builtin.get_url:
+        url: "https://github.com/starship/starship/releases/download/v{{ starship_version }}/starship-x86_64-unknown-linux-gnu.tar.gz"
+        dest: /tmp/starship.tar.gz
+        mode: "0644"
+
+    - name: Extract starship binary
+      ansible.builtin.unarchive:
+        src: /tmp/starship.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: [starship]
+
+    - name: Clean up starship tarball
+      ansible.builtin.file:
+        path: /tmp/starship.tar.gz
+        state: absent
 
 # --- filebrowser (workspace profile) ---
-- name: Check if filebrowser is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/filebrowser
-  register: filebrowser_installed
+- name: Check installed filebrowser version
+  ansible.builtin.shell: filebrowser version 2>&1 || filebrowser --version 2>&1 || echo MISSING
+  register: filebrowser_current
+  changed_when: false
+  failed_when: false
   when: workstation_profile == 'workspace'
 
-- name: Get filebrowser latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/filebrowser/filebrowser/releases/latest
-    return_content: true
-  register: filebrowser_release
+- name: Install/upgrade filebrowser {{ filebrowser_version }}
   when:
     - workstation_profile == 'workspace'
-    - not filebrowser_installed.stat.exists
-
-- name: Install filebrowser
-  ansible.builtin.unarchive:
-    src: "https://github.com/filebrowser/filebrowser/releases/download/{{ filebrowser_release.json.tag_name }}/linux-amd64-filebrowser.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    include: [filebrowser]
-  when:
-    - workstation_profile == 'workspace'
-    - not filebrowser_installed.stat.exists
+    - filebrowser_version not in filebrowser_current.stdout
+  block:
+    - name: Download filebrowser {{ filebrowser_version }}
+      ansible.builtin.unarchive:
+        src: "https://github.com/filebrowser/filebrowser/releases/download/v{{ filebrowser_version }}/linux-amd64-filebrowser.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [filebrowser]
