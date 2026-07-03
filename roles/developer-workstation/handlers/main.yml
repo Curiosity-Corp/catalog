@@ -2,6 +2,8 @@
 - name: Update apt cache
   ansible.builtin.apt:
     update_cache: true
+    update_cache_retries: 5
+    update_cache_retry_max_delay: 12
 
 - name: Update font cache
   ansible.builtin.command: fc-cache -f

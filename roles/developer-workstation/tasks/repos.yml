@@ -166,6 +166,7 @@
     repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/claude-desktop-archive-keyring.gpg] https://aaddrick.github.io/claude-desktop-debian stable main"
     filename: claude-desktop
     state: present
+    update_cache: false
   notify: Update apt cache
 
 # --- Node.js (NodeSource) ---
