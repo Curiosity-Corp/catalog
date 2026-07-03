@@ -1,0 +1,20 @@
+---
+# =============================================================================
+# Per-host developer user mapping
+# =============================================================================
+# This repo has no Ansible inventory (ansible-pull runs against "localhost"
+# on every machine), so the usual inventory host_vars/ mechanism can't
+# distinguish one machine from another. Instead we key off the gathered
+# fact `ansible_hostname`, which is set to each machine's real hostname —
+# and by convention (see the ansible-pull checkout dir naming) that hostname
+# is unique per person/machine.
+#
+# Add an entry here for any host that is NOT a shared "curiosity" account
+# machine (e.g. the Z590 office desktops). Anything not listed here keeps
+# using the role's default dev_user ("curiosity") so existing shared
+# machines are unaffected.
+# =============================================================================
+host_dev_users:
+  Suzanne-ThinkPad-T460:
+    dev_user: suzanne
+    dev_user_home: /home/suzanne

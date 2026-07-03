@@ -1,5 +1,23 @@
 ---
 # =============================================================================
+# Per-host developer user resolution
+# =============================================================================
+# dev_user/dev_user_home default to the shared "curiosity" account (see
+# defaults/main.yml) for machines that use it. Machines belonging to a
+# specific person are listed in vars/host-users.yml, keyed by hostname, and
+# override dev_user/dev_user_home here — no host in that map is required to
+# be named "curiosity".
+- name: Load per-host developer user map
+  ansible.builtin.include_vars:
+    file: host-users.yml
+
+- name: Apply per-host dev_user override, if this host is listed
+  ansible.builtin.set_fact:
+    dev_user: "{{ host_dev_users[ansible_hostname].dev_user }}"
+    dev_user_home: "{{ host_dev_users[ansible_hostname].dev_user_home }}"
+  when: ansible_hostname in host_dev_users
+
+# =============================================================================
 # Pre-flight Validation
 # =============================================================================
 - name: Verify running as root
