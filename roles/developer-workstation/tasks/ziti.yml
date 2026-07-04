@@ -28,7 +28,7 @@
     _ziti_needs_upgrade: >-
       {{
         (not _ziti_tunnel_bin.stat.exists) or
-        (_ziti_tunnel_version.stdout | default('0.0.0') is version('1.10.10', '<'))
+        (_ziti_tunnel_version.stdout | default('0.0.0') | regex_replace('^v', '') is version('1.10.10', '<'))
       }}
 
 - name: Download ziti-edge-tunnel installer
