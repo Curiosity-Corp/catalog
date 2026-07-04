@@ -57,6 +57,7 @@
     group: root
     content: |
       #!/usr/bin/env bash
+      {% raw %}
       # ziti-oidc-login.sh — authenticate all OIDC identities via ext-jwt-login
       set -euo pipefail
 
@@ -85,6 +86,7 @@
           logger -t ziti-oidc "No auth URL extracted for ${id_file} — output: ${output}"
         fi
       done
+      {% endraw %}
 
 # -----------------------------------------------------------------------------
 # OIDC Logout Script
