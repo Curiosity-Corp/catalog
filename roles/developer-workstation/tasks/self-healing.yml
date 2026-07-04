@@ -1,0 +1,378 @@
+---
+# =============================================================================
+# Self-Healing & Dead-Man's-Switch Monitoring
+# =============================================================================
+# Automated recovery (failed-unit sweeps, SMART disk alerts, safe automatic
+# reboots) plus two deliberate "a human needs to know" exceptions: disk
+# health degradation and dead-man's-switch checks (disk space, ansible-pull
+# staleness, Ubuntu Pro cert expiry). Also takes over the previously
+# unmanaged nightly-reboot.timer/.service and adds a busy-host safety gate.
+# =============================================================================
+
+- name: Ensure /var/log/curiosity exists
+  ansible.builtin.file:
+    path: /var/log/curiosity
+    state: directory
+    mode: "0755"
+
+- name: Ensure /var/lib/curiosity exists
+  ansible.builtin.file:
+    path: /var/lib/curiosity
+    state: directory
+    mode: "0755"
+
+# =============================================================================
+# 1. Failed-units sweep (nightly, 05:00)
+# =============================================================================
+
+- name: Create curiosity-failed-units-sweep script
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      systemctl --failed --no-legend >> /var/log/curiosity/failed-units.log
+      systemctl reset-failed
+    dest: /usr/local/sbin/curiosity-failed-units-sweep
+    mode: "0755"
+
+- name: Create curiosity-failed-units-sweep service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Sweep and clear systemd failed units
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/curiosity-failed-units-sweep
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-failed-units-sweep.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-failed-units-sweep timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-failed-units-sweep nightly
+
+      [Timer]
+      OnCalendar=*-*-* 05:00:00
+      RandomizedDelaySec=10min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-failed-units-sweep.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-failed-units-sweep timer
+  ansible.builtin.systemd:
+    name: curiosity-failed-units-sweep.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# =============================================================================
+# 2. smartmontools + SMART alerting
+# =============================================================================
+
+- name: Install smartmontools
+  ansible.builtin.apt:
+    name: smartmontools
+    state: present
+
+- name: Create curiosity-smart-alert script
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      # Invoked by smartd (via `-M exec`) with SMARTD_* environment variables set.
+      set -euo pipefail
+
+      webhook="{{ deadmans_switch_webhook }}"
+      message="${SMARTD_MESSAGE:-unknown SMART event}"
+      device="${SMARTD_DEVICE:-unknown device}"
+      timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      if [[ -z "${webhook}" ]]; then
+        echo "${timestamp} device=${device} message=${message}" >> /var/log/curiosity/smart-alerts.log
+        exit 0
+      fi
+
+      curl -sf -X POST -H 'Content-Type: application/json' \
+        -d "{\"source\":\"smartd\",\"device\":\"${device}\",\"message\":\"${message}\",\"timestamp\":\"${timestamp}\"}" \
+        "${webhook}" \
+        || echo "${timestamp} device=${device} message=${message} (webhook POST failed)" >> /var/log/curiosity/smart-alerts.log
+
+      exit 0
+    dest: /usr/local/sbin/curiosity-smart-alert.sh
+    mode: "0755"
+
+- name: Wire curiosity-smart-alert.sh into smartd.conf
+  ansible.builtin.lineinfile:
+    path: /etc/smartd.conf
+    line: "DEVICESCAN -m root -M exec /usr/local/sbin/curiosity-smart-alert.sh"
+    regexp: "^DEVICESCAN"
+  register: smartd_conf_updated
+
+- name: Enable smartmontools service
+  ansible.builtin.systemd:
+    name: smartmontools.service
+    enabled: true
+    state: started
+
+- name: Restart smartmontools service after config change
+  ansible.builtin.systemd:
+    name: smartmontools.service
+    state: restarted
+  when: smartd_conf_updated.changed
+
+# =============================================================================
+# 3. Dead-man's-switch check (daily, 06:00)
+# =============================================================================
+
+- name: Create curiosity-deadmans-check script
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      set -uo pipefail
+
+      webhook="{{ deadmans_switch_webhook }}"
+      disk_free_threshold_pct="{{ deadmans_disk_free_threshold_pct }}"
+      ansible_pull_stale_days="{{ deadmans_ansible_pull_stale_days }}"
+      cert_expiry_warn_days="{{ deadmans_cert_expiry_warn_days }}"
+      log_file="/var/log/curiosity/deadmans.log"
+      timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      alert() {
+        local check="$1"
+        local detail="$2"
+        echo "${timestamp} check=${check} detail=${detail}" >> "${log_file}"
+
+        if [[ -z "${webhook}" ]]; then
+          return 0
+        fi
+
+        curl -sf -X POST -H 'Content-Type: application/json' \
+          -d "{\"source\":\"deadmans-check\",\"check\":\"${check}\",\"detail\":\"${detail}\",\"timestamp\":\"${timestamp}\"}" \
+          "${webhook}" \
+          || echo "${timestamp} check=${check} detail=${detail} (webhook POST failed)" >> "${log_file}"
+      }
+
+      # --- a. Disk free space ---
+      while read -r target pcent; do
+        used="${pcent%\%}"
+        free=$((100 - used))
+        if (( free < disk_free_threshold_pct )); then
+          alert "disk_free" "${target} has only ${free}% free (threshold ${disk_free_threshold_pct}%)"
+        fi
+      done < <(df --output=target,pcent -x tmpfs -x overlay | tail -n +2)
+
+      # --- b. ansible-pull staleness ---
+      lockfile="/var/lock/ansible-pull.lock"
+      if [[ -e "${lockfile}" ]]; then
+        lock_mtime="$(stat -c %Y "${lockfile}")"
+        now="$(date +%s)"
+        age_days=$(( (now - lock_mtime) / 86400 ))
+        if (( age_days > ansible_pull_stale_days )); then
+          alert "ansible_pull_stale" "ansible-pull.lock last touched ${age_days} days ago (threshold ${ansible_pull_stale_days} days)"
+        fi
+      fi
+
+      # --- c. Ubuntu Pro contract expiry ---
+      if command -v pro >/dev/null 2>&1; then
+        pro_json="$(pro status --format json 2>/dev/null || true)"
+        if [[ -n "${pro_json}" ]]; then
+          expires="$(echo "${pro_json}" | grep -o '"expires"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"([0-9T:.Z+-]+)"$/\1/')"
+          if [[ -n "${expires}" ]]; then
+            expires_epoch="$(date -d "${expires}" +%s 2>/dev/null || true)"
+            if [[ -n "${expires_epoch}" ]]; then
+              now="$(date +%s)"
+              days_left=$(( (expires_epoch - now) / 86400 ))
+              if (( days_left <= cert_expiry_warn_days )); then
+                alert "pro_cert_expiry" "Ubuntu Pro contract expires in ${days_left} days (threshold ${cert_expiry_warn_days} days)"
+              fi
+            fi
+          fi
+        fi
+      fi
+
+      exit 0
+    dest: /usr/local/sbin/curiosity-deadmans-check.sh
+    mode: "0755"
+
+- name: Create curiosity-deadmans-check service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Dead-man's-switch health check (disk, ansible-pull staleness, Pro cert expiry)
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/curiosity-deadmans-check.sh
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-deadmans-check.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-deadmans-check timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-deadmans-check daily
+
+      [Timer]
+      OnCalendar=*-*-* 06:00:00
+      RandomizedDelaySec=10min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-deadmans-check.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-deadmans-check timer
+  ansible.builtin.systemd:
+    name: curiosity-deadmans-check.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# =============================================================================
+# 4. Reboot-safety gate + managed nightly-reboot unit
+# =============================================================================
+# Takes over the previously unmanaged nightly-reboot.timer/.service, which
+# blindly ran `systemctl reboot` every other night at 3am with no safety
+# check. ExecStart now short-circuits on a nonzero exit from the safety
+# script, so a busy host simply skips the reboot that night.
+# =============================================================================
+
+- name: Create curiosity-reboot-safety-check script
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      # Exit 0 => safe to reboot. Exit nonzero => skip tonight's reboot.
+      set -uo pipefail
+
+      max_deferral_days="{{ deadmans_reboot_max_deferral_days }}"
+      state_dir="/var/lib/curiosity"
+      deferral_file="${state_dir}/reboot-deferrals"
+      mkdir -p "${state_dir}"
+
+      deferrals="0"
+      if [[ -f "${deferral_file}" ]]; then
+        deferrals="$(cat "${deferral_file}")"
+      fi
+      [[ "${deferrals}" =~ ^[0-9]+$ ]] || deferrals="0"
+
+      busy=false
+      reasons=()
+
+      # Active SSH sessions
+      if ss -tn state established '( dport = :22 or sport = :22 )' 2>/dev/null | grep -q .; then
+        busy=true
+        reasons+=("active SSH session")
+      fi
+
+      # tmux / screen sessions
+      if pgrep -x tmux >/dev/null 2>&1; then
+        busy=true
+        reasons+=("tmux running")
+      fi
+      if pgrep -x screen >/dev/null 2>&1; then
+        busy=true
+        reasons+=("screen running")
+      fi
+
+      # Load average vs core count
+      load1="$(awk '{print $1}' /proc/loadavg)"
+      nproc_count="$(nproc)"
+      if awk -v l="${load1}" -v n="${nproc_count}" 'BEGIN{exit !(l > n)}'; then
+        busy=true
+        reasons+=("load average ${load1} exceeds ${nproc_count} cores")
+      fi
+
+      # GPU utilization
+      if command -v nvidia-smi >/dev/null 2>&1; then
+        gpu_util="$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | sort -rn | head -1)"
+        if [[ -n "${gpu_util}" ]] && (( gpu_util > 0 )); then
+          busy=true
+          reasons+=("GPU utilization ${gpu_util}%")
+        fi
+      fi
+
+      # Job schedulers
+      if command -v squeue >/dev/null 2>&1; then
+        if squeue --states=RUNNING --noheader 2>/dev/null | grep -q .; then
+          busy=true
+          reasons+=("squeue has RUNNING jobs")
+        fi
+      fi
+      if command -v qstat >/dev/null 2>&1; then
+        if qstat 2>/dev/null | grep -q ' R '; then
+          busy=true
+          reasons+=("qstat has RUNNING jobs")
+        fi
+      fi
+
+      if [[ "${busy}" == "true" ]]; then
+        deferrals=$((deferrals + 1))
+        if (( deferrals >= max_deferral_days )); then
+          wall "Critical update reboot proceeding despite active use — deferred the maximum allowed number of nights."
+          echo "0" > "${deferral_file}"
+          exit 0
+        fi
+        echo "${deferrals}" > "${deferral_file}"
+        echo "Reboot skipped (deferral ${deferrals}/${max_deferral_days}): ${reasons[*]}" >&2
+        exit 1
+      fi
+
+      echo "0" > "${deferral_file}"
+      exit 0
+    dest: /usr/local/sbin/curiosity-reboot-safety-check.sh
+    mode: "0755"
+
+- name: Create managed nightly-reboot service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Nightly automatic reboot (every other night at ~3am), gated by curiosity-reboot-safety-check
+      Documentation=https://www.freedesktop.org/software/systemd/man/systemctl.html
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/curiosity-reboot-safety-check.sh && /usr/bin/systemctl reboot
+    dest: /etc/systemd/system/nightly-reboot.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create managed nightly-reboot timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Every-other-night reboot at ~3am
+
+      [Timer]
+      # Every other day of the month at 03:00 (1st, 3rd, 5th, ...).
+      OnCalendar=*-*-1/2 03:00:00
+      # Small jitter so it's "around 3am" rather than exactly 3:00:00.
+      RandomizedDelaySec=10m
+      # If the laptop was off at 3am, don't reboot retroactively on next boot.
+      Persistent=false
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/nightly-reboot.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable nightly-reboot timer
+  ansible.builtin.systemd:
+    name: nightly-reboot.timer
+    enabled: true
+    state: started
+    daemon_reload: true

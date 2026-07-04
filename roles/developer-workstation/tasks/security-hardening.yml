@@ -1,0 +1,423 @@
+---
+# =============================================================================
+# Security Hardening & Compliance Scanning
+# =============================================================================
+# Free/open-source CIS-style compliance scanning and general host-security
+# tooling: OpenSCAP + ComplianceAsCode content, sec-cvescan, debsecan,
+# needrestart, AIDE, auditd, and rkhunter. No Canonical account involved
+# (see ubuntu-pro.yml for Pro-gated tooling).
+# =============================================================================
+
+- name: Ensure /var/log/curiosity exists for scan output
+  ansible.builtin.file:
+    path: /var/log/curiosity
+    state: directory
+    mode: "0755"
+
+# =============================================================================
+# OpenSCAP scanner + ComplianceAsCode content
+# =============================================================================
+# NOTE: "libopenscap8" (as named in the original task ask) does not exist as
+# an apt package on current Ubuntu releases -- the shared library package is
+# SONAME-versioned (e.g. libopenscap33 on Ubuntu 25.10/questing) and its exact
+# name changes across releases. Installing "openscap-scanner" pulls in
+# whichever libopenscap<N> is correct for the running release automatically,
+# so it is installed on its own rather than pinning a library package name
+# that will drift. See the final report for details.
+- name: Install openscap-scanner
+  ansible.builtin.apt:
+    name: openscap-scanner
+    state: present
+
+# ComplianceAsCode publishes one combined "content" release tarball containing
+# per-product SCAP data-stream files (e.g. ssg-ubuntu2404-ds.xml,
+# ssg-ubuntu2204-ds.xml) -- there is no single per-Ubuntu-release asset on the
+# GitHub Releases page to get_url directly. We therefore download the pinned
+# release tarball idempotently (force: false -- skipped once present) and
+# extract only the data-stream file for {{ compliance_content_product }}.
+- name: Check if ComplianceAsCode data-stream is already staged
+  ansible.builtin.stat:
+    path: /usr/local/share/openscap/ubuntu-ds.xml
+  register: compliance_ds_check
+
+- name: Stage ComplianceAsCode content {{ compliance_content_version }}
+  when: not compliance_ds_check.stat.exists
+  block:
+    - name: Ensure /usr/local/share/openscap exists
+      ansible.builtin.file:
+        path: /usr/local/share/openscap
+        state: directory
+        mode: "0755"
+
+    - name: Download ComplianceAsCode content {{ compliance_content_version }} release tarball
+      ansible.builtin.get_url:
+        url: "https://github.com/ComplianceAsCode/content/releases/download/v{{ compliance_content_version }}/scap-security-guide-{{ compliance_content_version }}.tar.gz"
+        dest: "/usr/local/share/openscap/scap-security-guide-{{ compliance_content_version }}.tar.gz"
+        mode: "0644"
+        force: false
+
+    - name: Extract {{ compliance_content_product }} data-stream from content tarball
+      ansible.builtin.unarchive:
+        src: "/usr/local/share/openscap/scap-security-guide-{{ compliance_content_version }}.tar.gz"
+        dest: /usr/local/share/openscap
+        remote_src: true
+        include:
+          - "scap-security-guide-{{ compliance_content_version }}/ssg-{{ compliance_content_product }}-ds.xml"
+        extra_opts:
+          - --strip-components=1
+
+    - name: Place data-stream at expected path
+      ansible.builtin.copy:
+        src: "/usr/local/share/openscap/ssg-{{ compliance_content_product }}-ds.xml"
+        dest: /usr/local/share/openscap/ubuntu-ds.xml
+        remote_src: true
+        mode: "0644"
+
+# --- Nightly CIS-level-1 audit (report-only unless cis_remediate_enabled) ---
+# A wrapper script is used (rather than a Jinja conditional inline in the
+# unit file) to build the optional --remediate/--tailoring-file arguments,
+# matching the wrapper-script pattern already used for the conditional
+# ansible-pull extra_args in ansible-pull-timer.yml.
+- name: Create curiosity-cis-audit wrapper script
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      results_file="/var/log/curiosity/cis-audit-$(date +%F).xml"
+      args=(--profile xccdf_org.ssgproject.content_profile_cis_level1_workstation
+            --results "${results_file}")
+
+      if [[ "{{ cis_remediate_enabled | lower }}" == "true" && -n "{{ cis_tailoring_file }}" ]]; then
+        args+=(--remediate --tailoring-file "{{ cis_tailoring_file }}")
+      fi
+
+      exec oscap xccdf eval "${args[@]}" /usr/local/share/openscap/ubuntu-ds.xml
+    dest: /usr/local/sbin/curiosity-cis-audit
+    mode: "0755"
+
+- name: Create curiosity-cis-audit service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Curiosity CIS-level-1 OpenSCAP compliance audit
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/curiosity-cis-audit
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-cis-audit.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-cis-audit timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-cis-audit nightly
+
+      [Timer]
+      OnCalendar=*-*-* 03:30:00
+      RandomizedDelaySec=5min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-cis-audit.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-cis-audit timer
+  ansible.builtin.systemd:
+    name: curiosity-cis-audit.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# =============================================================================
+# sec-cvescan (Canonical, pip-published, no Pro account required)
+# =============================================================================
+- name: Install sec-cvescan via pip
+  ansible.builtin.pip:
+    name: sec-cvescan
+    executable: pip3
+    extra_args: --break-system-packages
+
+- name: Create curiosity-cvescan service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Curiosity sec-cvescan nightly scan
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'cvescan >> /var/log/curiosity/cvescan.log 2>&1'
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-cvescan.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-cvescan timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-cvescan nightly
+
+      [Timer]
+      OnCalendar=*-*-* 03:40:00
+      RandomizedDelaySec=5min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-cvescan.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-cvescan timer
+  ansible.builtin.systemd:
+    name: curiosity-cvescan.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# =============================================================================
+# debsecan
+# =============================================================================
+- name: Install debsecan
+  ansible.builtin.apt:
+    name: debsecan
+    state: present
+
+- name: Create curiosity-debsecan service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Curiosity debsecan nightly scan
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'debsecan --suite $(lsb_release -cs) >> /var/log/curiosity/debsecan.log 2>&1'
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-debsecan.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-debsecan timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-debsecan nightly
+
+      [Timer]
+      OnCalendar=*-*-* 03:45:00
+      RandomizedDelaySec=5min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-debsecan.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-debsecan timer
+  ansible.builtin.systemd:
+    name: curiosity-debsecan.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# =============================================================================
+# needrestart
+# =============================================================================
+# No further config needed -- unattended-upgrades auto-invokes it once present.
+- name: Install needrestart
+  ansible.builtin.apt:
+    name: needrestart
+    state: present
+
+# =============================================================================
+# AIDE (file integrity monitoring)
+# =============================================================================
+- name: Install aide and aide-common
+  ansible.builtin.apt:
+    name:
+      - aide
+      - aide-common
+    state: present
+
+- name: Check if AIDE database already exists
+  ansible.builtin.stat:
+    path: /var/lib/aide/aide.db
+  register: aide_db_check
+
+- name: Initialize AIDE database (one-time)
+  when: not aide_db_check.stat.exists
+  block:
+    - name: Run aideinit
+      ansible.builtin.command: aideinit -y -f
+      changed_when: true
+
+    - name: Check for aide.db.new produced by aideinit
+      ansible.builtin.stat:
+        path: /var/lib/aide/aide.db.new
+      register: aide_db_new_check
+
+    - name: Move aide.db.new to aide.db
+      ansible.builtin.command:
+        cmd: mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+        creates: /var/lib/aide/aide.db
+      when: aide_db_new_check.stat.exists
+
+- name: Create curiosity-aide-check service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Curiosity AIDE integrity check
+      After=local-fs.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'aide --check >> /var/log/curiosity/aide-check.log 2>&1'
+      SuccessExitStatus=0 1 2 3 4 5 6 7
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-aide-check.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-aide-check timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-aide-check nightly
+
+      [Timer]
+      OnCalendar=*-*-* 03:50:00
+      RandomizedDelaySec=5min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-aide-check.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-aide-check timer
+  ansible.builtin.systemd:
+    name: curiosity-aide-check.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# =============================================================================
+# auditd (audit framework + hardening ruleset)
+# =============================================================================
+- name: Install auditd and audispd-plugins
+  ansible.builtin.apt:
+    name:
+      - auditd
+      - audispd-plugins
+    state: present
+
+- name: Deploy curiosity audit hardening ruleset
+  ansible.builtin.copy:
+    content: |
+      # =============================================================================
+      # Curiosity Hardening Ruleset
+      # =============================================================================
+      # Minimal CIS-style audit rules: login/logout monitoring, sudoers changes,
+      # and use of privileged commands.
+      # =============================================================================
+
+      # Login/logout monitoring
+      -w /var/log/faillog -p wa -k logins
+      -w /var/log/lastlog -p wa -k logins
+      -w /var/run/faillock -p wa -k logins
+      -w /var/log/tallylog -p wa -k logins
+
+      # Sudoers changes
+      -w /etc/sudoers -p wa -k actions
+      -w /etc/sudoers.d/ -p wa -k actions
+
+      # Use of privileged commands
+      -a always,exit -F path=/usr/bin/sudo -F perm=x -F auid>=1000 -F auid!=4294967295 -k privileged
+      -a always,exit -F path=/usr/bin/passwd -F perm=x -F auid>=1000 -F auid!=4294967295 -k privileged
+      -a always,exit -F path=/usr/bin/su -F perm=x -F auid>=1000 -F auid!=4294967295 -k privileged
+      -a always,exit -F path=/usr/bin/chsh -F perm=x -F auid>=1000 -F auid!=4294967295 -k privileged
+      -a always,exit -F path=/usr/bin/chage -F perm=x -F auid>=1000 -F auid!=4294967295 -k privileged
+      -a always,exit -F path=/usr/bin/gpasswd -F perm=x -F auid>=1000 -F auid!=4294967295 -k privileged
+      -a always,exit -F path=/usr/bin/newgrp -F perm=x -F auid>=1000 -F auid!=4294967295 -k privileged
+    dest: /etc/audit/rules.d/curiosity-hardening.rules
+    mode: "0640"
+  register: audit_rules_copy
+
+- name: Restart auditd after ruleset change
+  ansible.builtin.systemd:
+    name: auditd
+    state: restarted
+  when: audit_rules_copy.changed
+
+# =============================================================================
+# rkhunter
+# =============================================================================
+- name: Install rkhunter
+  ansible.builtin.apt:
+    name: rkhunter
+    state: present
+
+- name: Disable rkhunter's own cron.daily run (managed via systemd timer instead)
+  ansible.builtin.lineinfile:
+    path: /etc/default/rkhunter
+    regexp: '^CRON_DAILY_RUN='
+    line: 'CRON_DAILY_RUN="no"'
+    create: true
+    mode: "0644"
+
+- name: Create curiosity-rkhunter service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Curiosity rkhunter nightly scan
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'rkhunter --update && rkhunter --check --skip-keypress >> /var/log/curiosity/rkhunter.log 2>&1'
+      SuccessExitStatus=0 1
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-rkhunter.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-rkhunter timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-rkhunter nightly
+
+      [Timer]
+      OnCalendar=*-*-* 03:55:00
+      RandomizedDelaySec=5min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-rkhunter.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-rkhunter timer
+  ansible.builtin.systemd:
+    name: curiosity-rkhunter.timer
+    enabled: true
+    state: started
+    daemon_reload: true

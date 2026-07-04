@@ -333,3 +333,23 @@ hardware_profiles:
           ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0b05", ATTR{idProduct}=="1976", RUN+="/sbin/modprobe r8152"
     # Private Internet Access VPN
     pia_vpn: true
+
+# =============================================================================
+# Ubuntu Pro / OS hardening / self-healing
+# =============================================================================
+# Ubuntu Pro attach + Livepatch. Leave pro_token empty to skip attach entirely.
+pro_token: ""
+livepatch_enabled: false
+
+# Security hardening (OpenSCAP/CIS audit, CVE + rootkit scanning)
+compliance_content_version: "0.1.81"
+compliance_content_product: "ubuntu2404"
+cis_remediate_enabled: false
+cis_tailoring_file: ""
+
+# Self-healing (dead man's switch, SMART/cert/disk/reboot monitoring)
+deadmans_switch_webhook: ""
+deadmans_disk_free_threshold_pct: 10
+deadmans_ansible_pull_stale_days: 3
+deadmans_cert_expiry_warn_days: 14
+deadmans_reboot_max_deferral_days: 6

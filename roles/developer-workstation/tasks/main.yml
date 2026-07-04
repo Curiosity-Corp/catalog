@@ -139,6 +139,11 @@
   tags: [science, data-science]
   when: workstation_profile in ['desktop', 'workspace']
 
+- name: Include research environment cleanup timer
+  ansible.builtin.include_tasks: research-cleanup.yml
+  tags: [research-cleanup, cleanup]
+  when: workstation_profile in ['desktop', 'workspace']
+
 - name: Include modern CLI tools
   ansible.builtin.include_tasks: cli-tools.yml
   tags: [cli]
@@ -172,6 +177,21 @@
 - name: Include security tools
   ansible.builtin.include_tasks: security.yml
   tags: [security]
+  when: workstation_profile == 'desktop'
+
+- name: Include OS patching and update automation
+  ansible.builtin.include_tasks: os-patching.yml
+  tags: [os-patching, updates]
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+
+- name: Include Ubuntu Pro / Livepatch enrollment
+  ansible.builtin.include_tasks: ubuntu-pro.yml
+  tags: [ubuntu-pro]
+  when: workstation_profile == 'desktop'
+
+- name: Include security hardening (CIS/OpenSCAP audit, CVE and rootkit scanning)
+  ansible.builtin.include_tasks: security-hardening.yml
+  tags: [security, hardening]
   when: workstation_profile == 'desktop'
 
 - name: Include VS Code extensions
@@ -308,4 +328,9 @@
 - name: Include ansible-pull timer
   ansible.builtin.include_tasks: ansible-pull-timer.yml
   tags: [ansible-pull]
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+
+- name: Include self-healing (dead man's switch, SMART/cert/disk monitoring)
+  ansible.builtin.include_tasks: self-healing.yml
+  tags: [self-healing, monitoring]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']

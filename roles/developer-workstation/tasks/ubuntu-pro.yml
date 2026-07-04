@@ -1,0 +1,42 @@
+---
+# =============================================================================
+# Ubuntu Pro (free personal tier, up to 5 machines)
+# =============================================================================
+# Attaches the host to Ubuntu Pro when a token is configured and enables the
+# free esm-infra/esm-apps security feeds (and optionally Livepatch). Safe
+# no-op on hosts with no {{ pro_token }} set — this is the free-for-personal-
+# use tier, not the paid enterprise product.
+# =============================================================================
+
+- name: Check ubuntu-advantage attachment state
+  ansible.builtin.stat:
+    path: /var/lib/ubuntu-advantage/private/machine-token.json
+  register: _pro_attached
+
+- name: Attach Ubuntu Pro token
+  ansible.builtin.command: pro attach {{ pro_token }}
+  no_log: true
+  when:
+    - pro_token | length > 0
+    - not _pro_attached.stat.exists
+
+- name: Enable ESM security feeds
+  ansible.builtin.command: pro enable esm-infra esm-apps --assume-yes
+  register: pro_enable_esm
+  changed_when: "'already enabled' not in pro_enable_esm.stdout"
+  failed_when: pro_enable_esm.rc != 0 and 'already enabled' not in pro_enable_esm.stdout
+  when: pro_token | length > 0 or _pro_attached.stat.exists
+
+- name: Enable Livepatch
+  ansible.builtin.command: pro enable livepatch --assume-yes
+  register: pro_enable_livepatch
+  changed_when: "'already enabled' not in pro_enable_livepatch.stdout"
+  failed_when: pro_enable_livepatch.rc != 0 and 'already enabled' not in pro_enable_livepatch.stdout
+  when:
+    - livepatch_enabled | bool
+    - pro_token | length > 0 or _pro_attached.stat.exists
+
+# NOTE: ua-timer.timer ships with ubuntu-advantage-tools by default and
+# self-activates once /var/lib/ubuntu-advantage/private/machine-token.json
+# exists (the stock unit gates itself on that path via ConditionPathExists),
+# so no new timer needs to be created here.

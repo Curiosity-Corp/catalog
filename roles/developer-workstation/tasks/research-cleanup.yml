@@ -1,0 +1,68 @@
+---
+# =============================================================================
+# Research Cache Cleanup
+# =============================================================================
+# Weekly disk hygiene for research-lab conda/pip/npm caches. Runs as the dev
+# user (not root) since these caches live under {{ dev_user_home }}.
+# =============================================================================
+
+- name: Create research cache cleanup wrapper
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      if command -v conda >/dev/null 2>&1; then
+        conda clean -a -y
+      fi
+
+      if command -v pip3 >/dev/null 2>&1; then
+        pip cache purge
+      fi
+
+      if command -v npm >/dev/null 2>&1; then
+        npm cache clean --force
+      fi
+    dest: /usr/local/sbin/curiosity-research-cache-cleanup
+    mode: "0755"
+
+- name: Create research cache cleanup service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Curiosity Research Cache Cleanup (conda/pip/npm)
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      User={{ dev_user }}
+      ExecStart=/usr/local/sbin/curiosity-research-cache-cleanup
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-research-cache-cleanup.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create research cache cleanup timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run research cache cleanup weekly
+
+      [Timer]
+      OnCalendar=weekly
+      RandomizedDelaySec=2h
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-research-cache-cleanup.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable research cache cleanup timer
+  ansible.builtin.systemd:
+    name: curiosity-research-cache-cleanup.timer
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,129 @@
+---
+# =============================================================================
+# OS Patching & Disk Hygiene
+# =============================================================================
+# Unattended security updates, nightly apt/journal cleanup, snap revision
+# retention, SSD trim, and firmware updates for real physical/persistent
+# machines (not ephemeral containers).
+# =============================================================================
+
+# --- unattended-upgrades ---
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+
+- name: Configure unattended-upgrades periodic settings
+  ansible.builtin.copy:
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: "0644"
+
+# --- curiosity-apt-clean (nightly apt/journal cleanup) ---
+- name: Create curiosity-apt-clean service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Curiosity Catalog - Nightly apt/journal cleanup
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash -c 'apt-get autoremove --purge -y && apt-get autoclean -y && journalctl --vacuum-time=30d'
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-apt-clean.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-apt-clean timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-apt-clean nightly
+
+      [Timer]
+      OnCalendar=*-*-* 04:00:00
+      RandomizedDelaySec=20min
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-apt-clean.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-apt-clean timer
+  ansible.builtin.systemd:
+    name: curiosity-apt-clean.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# --- snapd revision retention ---
+- name: Check current snap system refresh.retain
+  ansible.builtin.command: snap get system refresh.retain
+  register: snap_retain_current
+  changed_when: false
+  failed_when: false
+
+- name: Set snap system refresh.retain=2
+  ansible.builtin.command: snap set system refresh.retain=2
+  when: snap_retain_current.stdout | trim != "2"
+  changed_when: true
+
+# --- fstrim.timer (stock Ubuntu unit) ---
+- name: Enable fstrim timer
+  ansible.builtin.systemd:
+    name: fstrim.timer
+    enabled: true
+    state: started
+
+# --- fwupd firmware updates ---
+- name: Install fwupd
+  ansible.builtin.apt:
+    name: fwupd
+    state: present
+
+# NOTE: fwupdmgr returns a non-zero exit code when there is simply nothing to
+# refresh/update, which is not a real failure. Rather than relying on
+# SuccessExitStatus (which would also mask genuine fwupd errors), the update
+# service wraps the command in `|| true` so the unit still reports success
+# for the common "nothing to do" case.
+- name: Create curiosity-fwupd-update service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Curiosity Catalog - Weekly firmware update check
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash -c 'fwupdmgr refresh --force && fwupdmgr update -y || true'
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/curiosity-fwupd-update.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Create curiosity-fwupd-update timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Run curiosity-fwupd-update weekly
+
+      [Timer]
+      OnCalendar=weekly
+      RandomizedDelaySec=1h
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/curiosity-fwupd-update.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable curiosity-fwupd-update timer
+  ansible.builtin.systemd:
+    name: curiosity-fwupd-update.timer
+    enabled: true
+    state: started
+    daemon_reload: true

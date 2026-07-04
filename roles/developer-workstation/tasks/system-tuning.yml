@@ -118,3 +118,24 @@
     name: earlyoom
     enabled: true
     state: started
+
+# =============================================================================
+# TLP — Laptop Power Management
+# =============================================================================
+# Tunes CPU, disk, and battery power settings for improved battery life and
+# reduced heat on laptop hardware. Skipped entirely on desktops/servers/VMs
+# via the built-in ansible_form_factor fact (gathered from dmidecode).
+# =============================================================================
+
+- name: Install tlp
+  ansible.builtin.apt:
+    name: tlp
+    state: present
+  when: ansible_form_factor == 'Laptop'
+
+- name: Ensure tlp is enabled and running
+  ansible.builtin.systemd:
+    name: tlp
+    enabled: true
+    state: started
+  when: ansible_form_factor == 'Laptop'
