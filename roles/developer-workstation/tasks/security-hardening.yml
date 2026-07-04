@@ -137,13 +137,21 @@
     daemon_reload: true
 
 # =============================================================================
-# sec-cvescan (Canonical, pip-published, no Pro account required)
+# CVEScan (Canonical, snap-published, no Pro account required)
 # =============================================================================
-- name: Install sec-cvescan via pip
-  ansible.builtin.pip:
-    name: sec-cvescan
-    executable: pip3
-    extra_args: --break-system-packages
+# NOTE: the "sec-cvescan" PyPI name does not exist (404) and is unrelated to
+# Canonical's tool - the real package name is "cvescan", distributed as a
+# snap, not via pip. See github.com/canonical/sec-cvescan.
+- name: Check installed cvescan snap
+  ansible.builtin.command: snap list cvescan
+  register: cvescan_snap_check
+  changed_when: false
+  failed_when: false
+
+- name: Install cvescan via snap
+  community.general.snap:
+    name: cvescan
+  when: cvescan_snap_check.rc != 0
 
 - name: Create curiosity-cvescan service unit
   ansible.builtin.copy:
