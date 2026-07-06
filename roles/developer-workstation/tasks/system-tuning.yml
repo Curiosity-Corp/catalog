@@ -118,3 +118,47 @@
     name: earlyoom
     enabled: true
     state: started
+
+# =============================================================================
+# fstrim — SSD/NVMe TRIM
+# =============================================================================
+# Ships with util-linux; the unit just needs enabling.
+# =============================================================================
+
+- name: Ensure fstrim.timer is enabled and running
+  ansible.builtin.systemd:
+    name: fstrim.timer
+    enabled: true
+    state: started
+
+# =============================================================================
+# TLP — laptop power management (skipped on desktops/VMs)
+# =============================================================================
+# DMI chassis_type 8/9/10/14/31/32 cover laptop/notebook/sub-notebook/
+# convertible/detachable form factors. See:
+# https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.2.0.pdf
+# =============================================================================
+
+- name: Read DMI chassis type
+  ansible.builtin.slurp:
+    src: /sys/class/dmi/id/chassis_type
+  register: _chassis_type_raw
+  failed_when: false
+
+- name: Determine if this is laptop hardware
+  ansible.builtin.set_fact:
+    _is_laptop: "{{ (_chassis_type_raw.content | default('') | b64decode | trim) in ['8', '9', '10', '14', '31', '32'] }}"
+
+- name: Install and enable TLP (laptops only)
+  when: _is_laptop
+  block:
+    - name: Install tlp
+      ansible.builtin.apt:
+        name: tlp
+        state: present
+
+    - name: Ensure tlp is enabled and running
+      ansible.builtin.systemd:
+        name: tlp
+        enabled: true
+        state: started

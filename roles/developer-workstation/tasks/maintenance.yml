@@ -1,0 +1,239 @@
+---
+# =============================================================================
+# Free/Open-Source Maintenance Stack
+# =============================================================================
+# "Up to date" and "Clean" sections of the free-alternatives catalog. Free,
+# open-source equivalents of the Ubuntu Pro auto-maintenance timers — no
+# Canonical account required except where noted (ubuntu_pro_token).
+# =============================================================================
+
+# =============================================================================
+# Up to date
+# =============================================================================
+
+# --- unattended-upgrades: standard security-update auto-apply ---
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+
+- name: Configure unattended-upgrades (security + old kernel cleanup)
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/51-workstation-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by Ansible — developer-workstation role
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+
+- name: Enable daily apt update + unattended-upgrade timers
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Ensure apt-daily timers are enabled
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+
+# --- Ubuntu Pro ESM + Livepatch: free tier (up to 5 machines), opt-in via token ---
+# ubuntu_pro_token is empty by default — nothing below runs unless a token is
+# set (host_vars/group_vars, never committed). Individuals get ESM + Livepatch
+# free for up to 5 machines; no paid subscription implied.
+- name: Check Ubuntu Pro attach status
+  ansible.builtin.command: pro status --format json
+  register: _pro_status
+  changed_when: false
+  failed_when: false
+  when: ubuntu_pro_token | default('') | length > 0
+
+- name: Determine Ubuntu Pro attach state
+  ansible.builtin.set_fact:
+    _pro_attached: "{{ (_pro_status.stdout | default('{}') | from_json).attached | default(false) }}"
+  when: ubuntu_pro_token | default('') | length > 0
+
+- name: Attach Ubuntu Pro (enables ESM by default)
+  ansible.builtin.command: "pro attach {{ ubuntu_pro_token }}"
+  when:
+    - ubuntu_pro_token | default('') | length > 0
+    - not (_pro_attached | default(false))
+  changed_when: true
+  no_log: true
+
+- name: Enable Livepatch (kernel-only — inherently reboot-sensitive scope)
+  ansible.builtin.command: pro enable livepatch --assume-yes
+  register: _livepatch_enable
+  changed_when: "'already enabled' not in (_livepatch_enable.stdout | default(''))"
+  failed_when: false
+  when: ubuntu_pro_token | default('') | length > 0
+
+# --- fwupd: firmware updates (BIOS, SSD, peripherals) ---
+- name: Install fwupd
+  ansible.builtin.apt:
+    name: fwupd
+    state: present
+
+- name: Create weekly fwupd refresh script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/fwupd-weekly-refresh.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      fwupdmgr refresh --force || true
+      {% if fwupd_auto_apply | default(false) %}
+      fwupdmgr update -y || true
+      {% else %}
+      fwupdmgr get-updates || true
+      logger -t fwupd-weekly "Firmware updates available (fwupd_auto_apply=false — review manually with fwupdmgr update)"
+      {% endif %}
+
+- name: Create fwupd weekly refresh systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/fwupd-weekly-refresh.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly fwupd firmware metadata refresh
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/fwupd-weekly-refresh.sh
+  notify: Reload systemd
+
+- name: Create fwupd weekly refresh timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/fwupd-weekly-refresh.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly fwupd firmware refresh
+
+      [Timer]
+      OnCalendar=weekly
+      RandomizedDelaySec=1h
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable fwupd weekly refresh timer
+  ansible.builtin.systemd:
+    name: fwupd-weekly-refresh.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# =============================================================================
+# Clean
+# =============================================================================
+
+- name: Create weekly cleanup script (apt, journal, snap, caches)
+  ansible.builtin.copy:
+    dest: /usr/local/bin/workstation-weekly-cleanup.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by Ansible — developer-workstation role
+      set -uo pipefail
+
+      logger -t workstation-cleanup "Starting weekly cleanup"
+
+      # apt: remove unused packages/old kernels, clear archive cache
+      apt-get -y autoremove --purge
+      apt-get -y autoclean
+
+      # journald: cap retention (belt-and-suspenders alongside journald.conf.d)
+      journalctl --vacuum-time=30d
+
+      # snap: keep only 2 revisions per snap
+      snap set system refresh.retain=2
+
+      # dev_user caches — conda / pip / npm
+      su - "{{ dev_user }}" -c 'command -v conda >/dev/null 2>&1 && conda clean -a -y || true'
+      su - "{{ dev_user }}" -c 'command -v pip >/dev/null 2>&1 && pip cache purge || true'
+      su - "{{ dev_user }}" -c 'command -v npm >/dev/null 2>&1 && npm cache clean --force || true'
+
+      logger -t workstation-cleanup "Weekly cleanup complete"
+
+- name: Create weekly cleanup systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/workstation-weekly-cleanup.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly apt/journal/snap/cache cleanup
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/workstation-weekly-cleanup.sh
+  notify: Reload systemd
+
+- name: Create weekly cleanup timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/workstation-weekly-cleanup.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly workstation cleanup
+
+      [Timer]
+      OnCalendar=Sat *-*-* 04:00:00
+      RandomizedDelaySec=1h
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable weekly cleanup timer
+  ansible.builtin.systemd:
+    name: workstation-weekly-cleanup.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# --- journald: native 30-day retention cap (belt-and-suspenders) ---
+- name: Ensure journald.conf.d directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure journald retention (30 days)
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/99-workstation-retention.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Journal]
+      MaxRetentionSec=30day
+  notify: Restart systemd-journald

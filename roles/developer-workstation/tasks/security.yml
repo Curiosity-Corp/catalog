@@ -225,3 +225,236 @@
         url: "https://github.com/FiloSottile/mkcert/releases/download/v{{ mkcert_version }}/mkcert-v{{ mkcert_version }}-linux-amd64"
         dest: /usr/local/bin/mkcert
         mode: "0755"
+
+# =============================================================================
+# Free/Open-Source Security Hardening Stack
+# =============================================================================
+# All packaged/free — no Canonical Pro account needed. CIS content is
+# scan-only here: openscap can auto-remediate, but doing that unattended on a
+# workstation risks disabling services or changing permissions in ways nobody
+# reviewed. We install the scanner + content and generate a report; applying
+# remediation is a separate, human-reviewed step.
+# =============================================================================
+
+- name: Install needrestart (auto-restart services after lib upgrades)
+  ansible.builtin.apt:
+    name: needrestart
+    state: present
+
+- name: Install debsecan (Debian/Ubuntu vulnerability scanner)
+  ansible.builtin.apt:
+    name: debsecan
+    state: present
+
+- name: Install AIDE (file integrity monitoring)
+  ansible.builtin.apt:
+    name:
+      - aide
+      - aide-common
+    state: present
+
+- name: Check if AIDE database is initialized
+  ansible.builtin.stat:
+    path: /var/lib/aide/aide.db
+  register: _aide_db
+
+- name: Initialize AIDE database (first run only — can take a while)
+  ansible.builtin.command: aideinit -y -f
+  when: not _aide_db.stat.exists
+  changed_when: true
+
+- name: Install auditd (audit daemon)
+  ansible.builtin.apt:
+    name: auditd
+    state: present
+
+- name: Ensure auditd is enabled and running
+  ansible.builtin.systemd:
+    name: auditd
+    enabled: true
+    state: started
+
+- name: Install rkhunter (rootkit hunter)
+  ansible.builtin.apt:
+    name: rkhunter
+    state: present
+
+- name: Update rkhunter file properties baseline (first run only)
+  ansible.builtin.command: rkhunter --propupd
+  args:
+    creates: /var/lib/rkhunter/db/rkhunter.dat
+
+- name: Install fail2ban (paired with ufw — see firewall.yml)
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+
+- name: Configure fail2ban sshd jail (ships with nothing enabled by default)
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — developer-workstation role
+      [sshd]
+      enabled = true
+      backend = systemd
+  notify: Restart fail2ban
+
+- name: Ensure fail2ban is enabled and running
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started
+
+- name: Install canonical/sec-cvescan (Ubuntu Security Notices CVE scanner)
+  community.general.pipx:
+    name: cvescan
+    state: present
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  failed_when: false
+
+# --- CIS hardening content — scan/report only, no auto-remediation ---
+- name: Install OpenSCAP scanner and Debian-derived CIS content
+  ansible.builtin.apt:
+    name:
+      - openscap-scanner
+      - ssg-debderived
+    state: present
+
+- name: Ensure OpenSCAP report directory exists
+  ansible.builtin.file:
+    path: /var/log/openscap
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Find installed SCAP Security Guide datastream for this distro
+  ansible.builtin.find:
+    paths: /usr/share/xml/scap/ssg/content
+    patterns: "ssg-{{ ansible_distribution | lower }}-ds.xml"
+  register: _ssg_datastream
+
+- name: Create weekly CIS/OpenSCAP evaluation script (report only, no --remediate)
+  ansible.builtin.copy:
+    dest: /usr/local/bin/openscap-weekly-eval.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by Ansible — developer-workstation role
+      # Report-only: generates findings for human review. Does NOT remediate —
+      # unattended CIS remediation can disable services this workstation needs.
+      set -uo pipefail
+      DATASTREAM="{{ _ssg_datastream.files[0].path | default('') }}"
+      if [ -z "$DATASTREAM" ]; then
+        logger -t openscap-weekly "No SCAP datastream found for {{ ansible_distribution }} — skipping"
+        exit 0
+      fi
+      oscap xccdf eval \
+        --profile xccdf_org.ssgproject.content_profile_cis_level1_workstation \
+        --results /var/log/openscap/results-$(date +%Y%m%d).xml \
+        --report /var/log/openscap/report-$(date +%Y%m%d).html \
+        "$DATASTREAM" || true
+      logger -t openscap-weekly "CIS evaluation complete — see /var/log/openscap/report-$(date +%Y%m%d).html"
+
+- name: Create weekly OpenSCAP eval systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/openscap-weekly-eval.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly CIS/OpenSCAP evaluation (report only)
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/openscap-weekly-eval.sh
+  notify: Reload systemd
+
+- name: Create weekly OpenSCAP eval timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/openscap-weekly-eval.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly CIS/OpenSCAP evaluation
+
+      [Timer]
+      OnCalendar=Sun *-*-* 05:00:00
+      RandomizedDelaySec=1h
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable weekly OpenSCAP eval timer
+  ansible.builtin.systemd:
+    name: openscap-weekly-eval.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Create weekly debsecan + rkhunter scan script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/vuln-scan-weekly.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by Ansible — developer-workstation role
+      set -uo pipefail
+      debsecan --suppress-msg --format summary 2>/dev/null | logger -t debsecan-weekly || true
+      rkhunter --check --sk --nocolors 2>/dev/null | logger -t rkhunter-weekly || true
+
+- name: Create weekly vuln-scan systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/vuln-scan-weekly.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly debsecan + rkhunter scan
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/vuln-scan-weekly.sh
+  notify: Reload systemd
+
+- name: Create weekly vuln-scan timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/vuln-scan-weekly.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly debsecan + rkhunter scan
+
+      [Timer]
+      OnCalendar=Wed *-*-* 05:00:00
+      RandomizedDelaySec=1h
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable weekly vuln-scan timer
+  ansible.builtin.systemd:
+    name: vuln-scan-weekly.timer
+    enabled: true
+    state: started
+    daemon_reload: true

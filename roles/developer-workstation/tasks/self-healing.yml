@@ -1,0 +1,80 @@
+---
+# =============================================================================
+# Self-Healing / Debugged
+# =============================================================================
+# Visibility into failed units and disk health. Restart=on-failure /
+# RestartSec= is already the established convention for custom long-running
+# services in this role (see streaming.yml, ziti.yml) — no separate task
+# needed for that item.
+# =============================================================================
+
+- name: Create systemctl --failed sweep script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/systemd-failed-sweep.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by Ansible — developer-workstation role
+      set -uo pipefail
+      failed=$(systemctl --failed --no-legend --plain)
+      if [ -n "$failed" ]; then
+        logger -t systemd-failed-sweep "Failed units detected:"
+        echo "$failed" | while IFS= read -r line; do
+          logger -t systemd-failed-sweep "$line"
+        done
+      fi
+
+- name: Create systemctl --failed sweep systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/systemd-failed-sweep.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Sweep for failed systemd units and log them
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/systemd-failed-sweep.sh
+  notify: Reload systemd
+
+- name: Create systemctl --failed sweep timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/systemd-failed-sweep.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Hourly sweep for failed systemd units
+
+      [Timer]
+      OnCalendar=hourly
+      RandomizedDelaySec=5min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable systemctl --failed sweep timer
+  ansible.builtin.systemd:
+    name: systemd-failed-sweep.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# --- smartmontools: disk health monitoring, self-healing early warning ---
+- name: Install smartmontools
+  ansible.builtin.apt:
+    name: smartmontools
+    state: present
+
+- name: Ensure smartd is enabled and running
+  ansible.builtin.systemd:
+    name: smartmontools
+    enabled: true
+    state: started
