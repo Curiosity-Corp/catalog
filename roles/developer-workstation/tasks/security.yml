@@ -253,15 +253,83 @@
       - aide-common
     state: present
 
+# AIDE's stock config (99_aide_root: "/ 0 Full") is a deliberately
+# unrestricted catch-all that checksums the ENTIRE filesystem, including every
+# user's home directory. On a real developer workstation that's the wrong
+# scope: home directories here hold gigabytes of node_modules/venvs/container
+# images/personal documents with near-zero intrusion-detection value per byte
+# hashed. A from-scratch init against this box's /home ran 30+ minutes,
+# peaked at 7.9GB RAM, and still didn't finish.
+#
+# AIDE's actual value is protecting *system* integrity (binaries, configs) —
+# so we prune all of /home from the catch-all and re-add a small set of
+# genuinely security-relevant paths within it. AIDE uses a deepest-match
+# algorithm (see aide.conf(5)), so a more specific rule below still applies
+# even though a shorter prefix was pruned above it.
+#
+# Important AIDE syntax notes, verified via `aide --config-check`, not
+# assumed from generic docs:
+#   1. "!" (recursive negative rule) only excludes the matched entry itself —
+#      AIDE still recurses into its children. Our first attempt used "!" on
+#      directories like ~/.claude and it kept scanning everything inside
+#      them anyway. "-" (non-recursive negative rule, AIDE v0.19+) is the one
+#      that actually prunes — no descent at all.
+#   2. Regex must start with a literal "/" — a bare ".*" as the first
+#      character breaks the parser ("unexpected character '!'" reported on
+#      the *next* line, not this one — a confusing error to track down).
+#   3. Negative-rule lines need a trailing file-type letter ("d" for
+#      directory), matching every rule already shipped in
+#      /etc/aide/aide.conf.d/*.
+- name: Prune home directories from AIDE's default full-filesystem scan
+  ansible.builtin.copy:
+    dest: /etc/aide/aide.conf.d/zz_workstation_excludes
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — developer-workstation role
+      -/home/[^/]+$ d
+      -/var/lib/docker$ d
+      -/var/lib/containers$ d
+      -/var/lib/snapd$ d
+      -/snap$ d
+      # Swap file content is meaningless to integrity-monitor (changes every
+      # boot) and, at 16G on this host, was the single largest contributor
+      # to AIDE's scan time/memory — found via `find / -xdev -size +200M`,
+      # not guessed.
+      -/swap\.img$ f
+
+      # Re-include specific security-relevant files despite the /home prune
+      # above — AIDE's deepest-match means these more specific rules win.
+      /home/[^/]+/\.ssh$ d R
+      /home/[^/]+/\.ssh/authorized_keys$ f R
+      /home/[^/]+/\.ssh/config$ f R
+      /home/[^/]+/\.bashrc$ f R
+      /home/[^/]+/\.bash_profile$ f R
+      /home/[^/]+/\.profile$ f R
+      /home/[^/]+/\.zshrc$ f R
+
 - name: Check if AIDE database is initialized
   ansible.builtin.stat:
     path: /var/lib/aide/aide.db
   register: _aide_db
 
-- name: Initialize AIDE database (first run only — can take a while)
-  ansible.builtin.command: aideinit -y -f
+- name: Initialize AIDE database (first run only)
+  ansible.builtin.command: timeout 1800 aideinit -y -f
+  register: _aideinit
   when: not _aide_db.stat.exists
-  changed_when: true
+  changed_when: _aideinit.rc == 0
+  failed_when: _aideinit.rc not in [0, 124]
+
+- name: Warn if AIDE database init timed out
+  ansible.builtin.debug:
+    msg: >-
+      aideinit did not finish within 30 minutes even with dev-directory
+      excludes applied — investigate further before relying on AIDE here
+      (check /var/log/aide/aideinit.log). Database was not created.
+  when:
+    - not _aide_db.stat.exists
+    - _aideinit.rc == 124
 
 - name: Install auditd (audit daemon)
   ansible.builtin.apt:
@@ -308,15 +376,16 @@
     enabled: true
     state: started
 
-- name: Install canonical/sec-cvescan (Ubuntu Security Notices CVE scanner)
-  community.general.pipx:
-    name: cvescan
-    state: present
-  become: true
-  become_user: "{{ dev_user }}"
-  environment:
-    HOME: "{{ dev_user_home }}"
-  failed_when: false
+# canonical/sec-cvescan is deliberately NOT installed here. The repo is
+# archived and its own README says: "CVEScan is not supported - instead it
+# is recommended to use one of the available data formats." It's also only
+# distributed as a snap (snapcraft.io/cvescan), not via pip — the PyPI
+# package literally named "cvescan" is an unrelated third-party tool that
+# scans dependency lockfiles (requirements.txt/pyproject.toml), not Ubuntu
+# system packages. An earlier version of this task installed that wrong
+# package by name collision; installing deprecated, unsupported security
+# tooling (under the wrong name, no less) isn't a real substitute for this
+# catalog item.
 
 # --- CIS hardening content — scan/report only, no auto-remediation ---
 - name: Install OpenSCAP scanner and Debian-derived CIS content
