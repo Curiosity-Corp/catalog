@@ -406,7 +406,10 @@
 - name: Find installed SCAP Security Guide datastream for this distro
   ansible.builtin.find:
     paths: /usr/share/xml/scap/ssg/content
-    patterns: "ssg-{{ ansible_distribution | lower }}-ds.xml"
+    # ssg-debderived ships datastreams as ssg-<distro><version>-ds.xml (e.g.
+    # ssg-ubuntu2404-ds.xml) — the release number is required, so a glob is
+    # needed here rather than matching on ansible_distribution alone.
+    patterns: "ssg-{{ ansible_distribution | lower }}*-ds.xml"
   register: _ssg_datastream
 
 - name: Create weekly CIS/OpenSCAP evaluation script (report only, no --remediate)

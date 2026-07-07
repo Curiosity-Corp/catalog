@@ -24,6 +24,17 @@
         echo "$failed" | while IFS= read -r line; do
           logger -t systemd-failed-sweep "$line"
         done
+        # Optional: forward to any incoming-webhook-compatible endpoint
+        # (Mattermost/Slack/Teams/generic). No-op if unset — logging above
+        # always happens regardless.
+        webhook_url="{{ failed_sweep_webhook_url }}"
+        if [ -n "$webhook_url" ]; then
+          summary=$(echo "$failed" | tr '\n' '; ')
+          curl -fsS -m 10 -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\": \"⚠️ $(hostname): failed systemd units — ${summary}\"}" \
+            "$webhook_url" >/dev/null 2>&1 || \
+            logger -t systemd-failed-sweep "webhook alert failed to send"
+        fi
       fi
 
 - name: Create systemctl --failed sweep systemd service

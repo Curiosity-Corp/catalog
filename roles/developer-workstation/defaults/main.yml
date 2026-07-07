@@ -275,6 +275,12 @@ ubuntu_pro_token: ""
 # unattended can brick hardware, so this stays opt-in.
 fwupd_auto_apply: false
 
+# Incoming-webhook URL (Mattermost/Slack/Teams/generic) for the hourly
+# systemctl --failed sweep. Empty by default — the sweep always logs to
+# syslog regardless; this just adds a push alert on top. Set in
+# host_vars/group_vars, never commit a real URL.
+failed_sweep_webhook_url: ""
+
 # =============================================================================
 # Hardware Profiles
 # =============================================================================
