@@ -403,14 +403,21 @@
     group: root
     mode: "0750"
 
-- name: Find installed SCAP Security Guide datastream for this distro
+- name: Find installed SCAP Security Guide datastreams for this distro
   ansible.builtin.find:
     paths: /usr/share/xml/scap/ssg/content
-    # ssg-debderived ships datastreams as ssg-<distro><version>-ds.xml (e.g.
-    # ssg-ubuntu2404-ds.xml) — the release number is required, so a glob is
-    # needed here rather than matching on ansible_distribution alone.
+    # ssg-debderived ships one datastream per supported release, e.g.
+    # ssg-ubuntu2404-ds.xml, ssg-ubuntu2204-ds.xml — often several at once.
     patterns: "ssg-{{ ansible_distribution | lower }}*-ds.xml"
   register: _ssg_datastream
+
+- name: Pick the datastream matching this host's release, falling back to newest available
+  ansible.builtin.set_fact:
+    _ssg_datastream_path: >-
+      {%- set candidates = _ssg_datastream.files | map(attribute='path') | list -%}
+      {%- set exact_suffix = 'ssg-' + (ansible_distribution | lower) + (ansible_distribution_version | replace('.', '')) + '-ds.xml' -%}
+      {%- set exact = candidates | select('match', '.*' + exact_suffix) | list -%}
+      {{ exact[0] if exact else (candidates | sort | last | default('')) }}
 
 - name: Create weekly CIS/OpenSCAP evaluation script (report only, no --remediate)
   ansible.builtin.copy:
@@ -424,7 +431,7 @@
       # Report-only: generates findings for human review. Does NOT remediate —
       # unattended CIS remediation can disable services this workstation needs.
       set -uo pipefail
-      DATASTREAM="{{ _ssg_datastream.files[0].path | default('') }}"
+      DATASTREAM="{{ _ssg_datastream_path }}"
       if [ -z "$DATASTREAM" ]; then
         logger -t openscap-weekly "No SCAP datastream found for {{ ansible_distribution }} — skipping"
         exit 0
