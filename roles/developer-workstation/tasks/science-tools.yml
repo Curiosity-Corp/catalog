@@ -16,7 +16,7 @@
     cmd: python3 -m venv /opt/science-venv
     creates: /opt/science-venv/bin/activate
 
-- name: Install/upgrade scientific Python packages into venv  # noqa: args
+- name: Install/upgrade scientific Python packages into venv  # noqa: args package-latest
   ansible.builtin.pip:
     name:
       # --- Core data science ---
@@ -91,7 +91,7 @@
 # Runs on every ansible-pull to keep core packages current beyond the declared
 # list. This catches transitive dependencies and new additions to the
 # scientific ecosystem.
-- name: Upgrade all pip packages in science-venv (periodic)
+- name: Upgrade all pip packages in science-venv (periodic)  # noqa: package-latest
   ansible.builtin.pip:
     name:
       # Core data-science stack — upgrade all pinned deps

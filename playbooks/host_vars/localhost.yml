@@ -1,0 +1,62 @@
+---
+# Host-specific overrides for mrh-ThinkPad-T560 (auto-loaded by Ansible
+# relative to playbooks/site.yml, which targets `hosts: localhost` with no
+# inventory file).
+#
+# developerdojo.org and its three subdomains no longer need an /etc/hosts
+# pin on this host: /etc/systemd/resolved.conf.d/ziti.conf already routes
+# the whole ~developerdojo.org zone to Ziti's resolver (100.64.0.2) as a
+# global systemd-resolved routing domain, and ziti-mrh-tunnel now carries
+# the ziti0-default-route-disable fix (FocusApiary/infrastructure's
+# ziti_tunneler role, 20-fix-dns-routing.conf, added 2026-07-08) that stops
+# the Wi-Fi resolver from racing it for those names. The static pins were a
+# workaround for that race; with the race fixed, the pins do more harm than
+# good — Ziti reassigns intercept IPs periodically, so a stale pin silently
+# misroutes the host once the assignment changes (exactly what happened
+# here: all four pins were pointing at dead intercept IPs on 2026-07-08).
+#
+# This is a deliberate full copy of roles/developer-workstation/defaults/
+# main.yml's ziti_etc_hosts_pins (as of commit 753fc79) with only those 4
+# entries removed — host_vars cannot safely self-reference a role-default
+# variable of the same name (self-templating a var against its own name
+# risks Ansible's "recursive loop detected" error across ALL vars sharing
+# that name, not just this override), so this must be kept in sync by hand
+# if the team-wide baseline list changes. If more hostnames are added there
+# and this host should also skip pinning them, add them below too.
+ziti_etc_hosts_pins:
+  # focuscell.org — platform services
+  - argocd.focuscell.org
+  - harbor.focuscell.org
+  - grafana.focuscell.org
+  - defectdojo.focuscell.org
+  - langfuse.focuscell.org
+  - prowler.focuscell.org
+  - domains.focuscell.org
+  - mail.focuscell.org
+  - mail-api.focuscell.org
+  - pbx.focuscell.org
+  - admin.focuscell.org
+  - api.focuscell.org
+  # focuspass.com — auth + secrets + fleet mgmt
+  - auth.focuspass.com
+  - vault.focuspass.com
+  - fleet.focuspass.com
+  # focusbuzz.org — Mattermost (apex on Cloudflare; chat. 404s without a pin)
+  - chat.focusbuzz.org
+  # dream{hive,decks}.org — DreamLimited proposal/capture stack
+  - support.dreamhive.org
+  - dreamdecks.org
+  - launch.dreamdecks.org
+  # hardmagic.com — HardMagic AI/ML services
+  - chat.hardmagic.com
+  - studio.hardmagic.com
+  - collab.hardmagic.com
+  - comfy.hardmagic.com
+  - api.comfy.hardmagic.com
+  - lora.hardmagic.com
+  - draw.hardmagic.com
+  - genstudio.hardmagic.com
+  - api.vllm.hardmagic.com
+  # hypersight.net / slidee.net
+  - studio.hypersight.net
+  - dev.slidee.net
