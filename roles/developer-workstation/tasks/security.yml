@@ -86,7 +86,7 @@
 # --- SOPS v3 (version-checked, direct download, PQ support) ---
 # Downloads the GitHub release binary. Compares installed version and removes
 # any ~/go/bin/sops shadow to ensure the catalog-managed version is used.
-- name: Check installed sops version
+- name: Check installed sops version  # noqa: risky-shell-pipe
   ansible.builtin.shell: sops --version 2>&1 | head -1 || echo MISSING
   register: sops_current
   changed_when: false

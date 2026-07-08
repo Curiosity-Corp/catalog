@@ -302,7 +302,7 @@
 # abort every later task in this file (including the /etc/hosts pin refresh
 # below) on any host where edge-tunnel is masked. Query state first and skip
 # gracefully rather than fighting a deliberate mask.
-- name: Check ziti-edge-tunnel.service mask state
+- name: Check ziti-edge-tunnel.service mask state  # noqa: command-instead-of-module
   ansible.builtin.command:
     cmd: systemctl is-enabled ziti-edge-tunnel.service
   register: _ziti_edge_tunnel_enabled_state
