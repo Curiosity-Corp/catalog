@@ -295,11 +295,26 @@
 # -----------------------------------------------------------------------------
 # Enable ziti-edge-tunnel service
 # -----------------------------------------------------------------------------
+# Some operators intentionally mask this unit (e.g. a cert-based always-on
+# tunnel identity owns the TUN device instead — see
+# FocusApiary/infrastructure's ziti_tunneler role, ADR-0004). systemd refuses
+# to enable/start a masked unit, which previously made this task fail and
+# abort every later task in this file (including the /etc/hosts pin refresh
+# below) on any host where edge-tunnel is masked. Query state first and skip
+# gracefully rather than fighting a deliberate mask.
+- name: Check ziti-edge-tunnel.service mask state
+  ansible.builtin.command:
+    cmd: systemctl is-enabled ziti-edge-tunnel.service
+  register: _ziti_edge_tunnel_enabled_state
+  changed_when: false
+  failed_when: false
+
 - name: Enable ziti-edge-tunnel service
   ansible.builtin.systemd:
     name: ziti-edge-tunnel.service
     enabled: true
     state: started
+  when: _ziti_edge_tunnel_enabled_state.stdout | default('') != 'masked'
 
 # -----------------------------------------------------------------------------
 # /etc/hosts pins for Ziti-only hostnames
