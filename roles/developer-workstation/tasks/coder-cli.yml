@@ -80,18 +80,15 @@
 
 - name: Install Coder CLI
   ansible.builtin.command:
-    cmd: >-
-      /bin/sh /tmp/install-coder.sh
-      --method standalone
+    cmd: /bin/sh /tmp/install-coder.sh
   register: coder_cli_install_result
-  # The install script runs under set -eu and exits 1 when:
-  #   (a) rm -rv ~/.cache/coder/tmp races the binary move on first run, or
-  #   (b) the tmp dir was already cleaned on a repeat run (coder_cli_needs_upgrade
-  #       fires again because the local-version suffix +<sha> in `coder version`
-  #       output is stripped before comparison above, so this should now be rare).
-  # In all cases the binary is already at the install prefix when the script
-  # exits.  Never fail the play on a non-zero rc from this script; the version
-  # check at the top of this task is the authoritative idempotence gate.
+  # This deployment-served install.sh (as opposed to the generic
+  # coder.com/install.sh) always downloads the standalone binary matching
+  # this Coder server and takes no --method/--version flags; passing either
+  # makes it exit 1 with "Unknown flag" before downloading anything. Keep
+  # failed_when: false as a safety net for transient download hiccups, since
+  # the version check at the top of this task is the authoritative
+  # idempotence gate and will simply retry the install on the next run.
   failed_when: false
   changed_when: coder_cli_install_result.rc == 0
   when: coder_cli_needs_upgrade
