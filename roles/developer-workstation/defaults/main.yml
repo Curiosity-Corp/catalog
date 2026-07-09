@@ -337,3 +337,22 @@ hardware_profiles:
           ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0b05", ATTR{idProduct}=="1976", RUN+="/sbin/modprobe r8152"
     # Private Internet Access VPN
     pia_vpn: true
+
+  t460:
+    description: "Lenovo ThinkPad T460/T560 — Intel HD 520 (Skylake GT2) + Validity VFS5011 fingerprint"
+    packages:
+      # Intel iGPU video acceleration (Skylake GT2 / HD Graphics 520)
+      - intel-media-va-driver
+      - intel-gpu-tools
+      # Logitech Unifying receiver management (wireless mouse)
+      - solaar
+      # Firmware blobs (Intel WiFi, GPU microcode, ThinkPad ACPI)
+      - linux-firmware
+      # Fingerprint scanner (Validity VFS5011 138a:0017)
+      - fprintd
+      - libpam-fprintd
+      - libfprint-2-tod1
+    services: []
+    pipx_packages: []
+    udev_rules: []
+    pia_vpn: false
