@@ -261,6 +261,27 @@ profile_cleanup_enabled: true
 profile_cleanup_days: 60
 
 # =============================================================================
+# Free/Open-Source Maintenance & Security Hardening Stack
+# =============================================================================
+# See maintenance.yml, self-healing.yml, and the "Secure"/"Optimized" sections
+# of security.yml / system-tuning.yml.
+
+# Ubuntu Pro token — empty by default, so ESM/Livepatch attach is skipped
+# entirely. Canonical's free tier covers ESM + Livepatch for up to 5 machines
+# for individuals; set this in host_vars/group_vars, NEVER commit a real token.
+ubuntu_pro_token: ""
+
+# fwupd refreshes metadata weekly regardless; auto-*applying* firmware
+# unattended can brick hardware, so this stays opt-in.
+fwupd_auto_apply: false
+
+# Incoming-webhook URL (Mattermost/Slack/Teams/generic) for the hourly
+# systemctl --failed sweep. Empty by default — the sweep always logs to
+# syslog regardless; this just adds a push alert on top. Set in
+# host_vars/group_vars, never commit a real URL.
+failed_sweep_webhook_url: ""
+
+# =============================================================================
 # Hardware Profiles
 # =============================================================================
 # Select via: -e hardware_profile=z590
