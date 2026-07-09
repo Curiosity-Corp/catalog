@@ -352,18 +352,6 @@
         "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
       ],
       "matchStrings": [
-        "coder_cli_version: \"(?<currentValue>[^\"]+)\""
-      ],
-      "depNameTemplate": "coder/coder",
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v(?<version>.*)$"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^roles\\/developer-workstation\\/defaults\\/main\\.yml$/"
-      ],
-      "matchStrings": [
         "kubectx_version: \"(?<currentValue>[^\"]+)\""
       ],
       "depNameTemplate": "ahmetb/kubectx",
