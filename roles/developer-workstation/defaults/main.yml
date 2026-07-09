@@ -1,6 +1,9 @@
 ---
 dev_user: curiosity
 dev_user_home: /home/curiosity
+# Optional machine-local override file. Keep per-person/user values here on the
+# target host instead of committing host-specific maps to this repo.
+developer_workstation_local_vars_file: /etc/ansible/local-vars.yml
 # Role profile:
 #   desktop   = full workstation (physical/VM desktop host)
 #   workspace = container-safe Coder workspace profile

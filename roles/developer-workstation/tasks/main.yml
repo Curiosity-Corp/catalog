@@ -1,5 +1,37 @@
 ---
 # =============================================================================
+# Local Host Overrides
+# =============================================================================
+# Optional host-local file for non-PII repo defaults:
+#   /etc/ansible/local-vars.yml
+#
+# Example:
+#   dev_user: suzanne
+#   hardware_profile: t460
+#   user_dotfiles_repo: https://git.developerdojo.org/FocusApiary/dotfiles-suzanne.git
+#
+# Extra vars still win over this file, so Coder workspace sync can keep passing
+# dev_user=coder/dev_user_home=/home/coder explicitly.
+# =============================================================================
+- name: Check for local workstation vars file
+  ansible.builtin.stat:
+    path: "{{ developer_workstation_local_vars_file }}"
+  register: _local_workstation_vars
+
+- name: Load local workstation vars
+  ansible.builtin.include_vars:
+    file: "{{ developer_workstation_local_vars_file }}"
+  when: _local_workstation_vars.stat.exists
+
+- name: Derive dev_user_home when only dev_user was locally overridden
+  ansible.builtin.set_fact:
+    dev_user_home: "/home/{{ dev_user }}"
+  when:
+    - dev_user | default('') | length > 0
+    - dev_user != 'curiosity'
+    - dev_user_home == '/home/curiosity'
+
+# =============================================================================
 # Pre-flight Validation
 # =============================================================================
 - name: Verify running as root

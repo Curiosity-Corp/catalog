@@ -72,7 +72,12 @@
 
 - name: Initialize chezmoi against the user's dotfiles repo
   ansible.builtin.command:
-    cmd: "chezmoi init {{ user_dotfiles_repo }}"
+    argv:
+      - chezmoi
+      - init
+      - --apply
+      - --force
+      - "{{ user_dotfiles_repo }}"
   become: true
   become_user: "{{ dev_user }}"
   environment:
@@ -97,12 +102,54 @@
     - not _chezmoi_src.stat.exists
   changed_when: true
 
-- name: Apply chezmoi state to $HOME
+- name: Update chezmoi source state for existing dotfiles checkout
   ansible.builtin.command:
-    cmd: "chezmoi apply"
+    argv:
+      - chezmoi
+      - update
+      - --force
   become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+    CHEZMOI_NAME: "{{ chezmoi_user_name | default('') }}"
+    CHEZMOI_EMAIL: "{{ chezmoi_user_email | default('') }}"
+    CHEZMOI_PROFILE: "{{ workstation_profile }}"
+    CHEZMOI_EDITOR: >-
+      {{
+        chezmoi_editor
+        | default(
+            ('nvim' if workstation_profile in ['workspace', 'thin-client']
+             else preferred_editor),
+            true
+          )
+      }}
+  when:
+    - user_dotfiles_repo | default('') | length > 0
+    - _chezmoi_src.stat.exists
+  changed_when: true
+
+- name: Apply chezmoi state to $HOME
+  ansible.builtin.command:
+    argv:
+      - chezmoi
+      - apply
+      - --force
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    CHEZMOI_NAME: "{{ chezmoi_user_name | default('') }}"
+    CHEZMOI_EMAIL: "{{ chezmoi_user_email | default('') }}"
+    CHEZMOI_PROFILE: "{{ workstation_profile }}"
+    CHEZMOI_EDITOR: >-
+      {{
+        chezmoi_editor
+        | default(
+            ('nvim' if workstation_profile in ['workspace', 'thin-client']
+             else preferred_editor),
+            true
+          )
+      }}
   when: user_dotfiles_repo | default('') | length > 0
   changed_when: true
