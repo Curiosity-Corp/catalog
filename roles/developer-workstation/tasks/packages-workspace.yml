@@ -40,6 +40,15 @@
       - git-lfs
       - tig
       - gh
+      # --- gh keyring + dbus prerequisites (gh v2.45+ migrates oauth_token to
+      # the system keyring on first run; without dbus-launch + libsecret it
+      # aborts with "couldn't find oauth token for github.com"). Workspaces
+      # are headless so we ship the runtime instead of suppressing the migration.
+      - dbus-x11
+      - libsecret-1-0
+      # --- File transfer / sync (used by laptop-side credential bootstrap
+      # and chezmoi `chezmoi cd` round-trips between machines) ---
+      - rsync
       # --- Google Cloud CLI ---
       - google-cloud-cli
       # --- Kubernetes ---

@@ -87,6 +87,7 @@ turbo_version: "2.9.18"
 eslint_version: "10.5.0"
 prettier_version: "3.8.4"
 mermaid_cli_version: "11.15.0"
+m365_cli_version: "11.9.0"
 codewhale_version: "0.8.63"
 # Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
 # (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)
