@@ -73,6 +73,10 @@
 - name: Initialize chezmoi against the user's dotfiles repo
   ansible.builtin.command:
     argv:
+      - flock
+      - -w
+      - "120"
+      - /tmp/.chezmoi-sync.lock
       - chezmoi
       - init
       - --apply
@@ -105,6 +109,10 @@
 - name: Update chezmoi source state for existing dotfiles checkout
   ansible.builtin.command:
     argv:
+      - flock
+      - -w
+      - "120"
+      - /tmp/.chezmoi-sync.lock
       - chezmoi
       - update
       - --force
@@ -132,6 +140,10 @@
 - name: Apply chezmoi state to $HOME
   ansible.builtin.command:
     argv:
+      - flock
+      - -w
+      - "120"
+      - /tmp/.chezmoi-sync.lock
       - chezmoi
       - apply
       - --force
