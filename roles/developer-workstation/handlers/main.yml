@@ -42,10 +42,31 @@
     name: logrotate.timer
     state: restarted
 
+# Some operators intentionally mask ziti-edge-tunnel.service (e.g. a
+# cert-based always-on tunnel identity owns the TUN device instead — see
+# FocusApiary/infrastructure's ziti_tunneler role, ADR-0004). tasks/ziti.yml's
+# own "Enable ziti-edge-tunnel service" task already skips gracefully on a
+# masked unit for exactly this reason, but this handler did not, and is
+# notified independently by tasks/logrotate.yml (log-verbosity drop-in) and
+# tasks/ziti-split-dns.yml (two resolver-reload paths). On any host where the
+# unit is masked, systemd refuses the restart and this handler's failure
+# aborted the whole play — which is what silently broke the nightly
+# ansible-pull.timer reconciliation run. Mirror ziti.yml's query-first guard
+# here so the handler is safe regardless of which task notifies it.
+- name: Check ziti-edge-tunnel.service mask state before restart handler  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: systemctl is-enabled ziti-edge-tunnel.service
+  register: _ziti_edge_tunnel_handler_mask_state
+  changed_when: false
+  failed_when: false
+  listen: Restart ziti-edge-tunnel
+
 - name: Restart ziti-edge-tunnel
   ansible.builtin.systemd:
     name: ziti-edge-tunnel.service
     state: restarted
+  when: _ziti_edge_tunnel_handler_mask_state.stdout | default('') != 'masked'
+  listen: Restart ziti-edge-tunnel
 
 - name: Restart NetworkManager
   ansible.builtin.systemd:
