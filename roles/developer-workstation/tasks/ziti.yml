@@ -317,6 +317,66 @@
   when: _ziti_edge_tunnel_enabled_state.stdout | default('') != 'masked'
 
 # -----------------------------------------------------------------------------
+# Drift protection for the custom pcb2048 + session-reauth tunneler build
+# -----------------------------------------------------------------------------
+# On hosts where ziti-edge-tunnel.service is masked (above — an
+# infrastructure-managed always-on cert-based identity owns the tunnel
+# instead), the ziti-edge-tunnel *package* still matters: its binary is what
+# that always-on identity's systemd unit actually runs, built from
+# FocusApiary/ziti-tunnel-sdk-c's custom `<version>-focusapiary1` series.
+# FocusApiary/infrastructure's ziti_tunneler role pins this package with a
+# dpkg hold and asserts it during its own runs, but that role is manual-
+# apply-only — this ansible-pull.timer is the only automation that
+# reconciles this host DAILY, so the hold-drift check is duplicated here,
+# read-only, so drift is caught within 24h even when infrastructure's role
+# hasn't been re-applied.
+#
+# See infra#193's postmortem: an earlier custom build was silently
+# overwritten by unattended-upgrades within ~11 hours because no hold was
+# set. If this assertion ever fails, whichever of the custom series' carried
+# patches is currently pinned is what has been silently lost:
+#   1. lwIP TCP-PCB pool bump (pcb2048, infra#193)
+#   2. legacy cert-based auth/refresh watchdog recovery fix (upstream PR
+#      openziti/ziti-sdk-c#1086; carried in FocusApiary/ziti-tunnel-sdk-c's
+#      patch series as a fast-follow until it merges/releases upstream)
+#
+# No remediation is attempted here — this repo has no AKV credentials and no
+# install logic for the custom artifact, it only reads state. On failure,
+# re-run FocusApiary/infrastructure's ziti_tunneler role to re-apply the
+# hold (or `apt-mark hold ziti-edge-tunnel` as an immediate stopgap), then
+# investigate what removed it (e.g. a manual `apt-mark unhold`).
+- name: Capture live dpkg selection state for ziti-edge-tunnel (drift check)
+  ansible.builtin.command: >-
+    dpkg-query -W -f='${Version}|${Status}\n' ziti-edge-tunnel
+  register: _ziti_dpkg_drift_check
+  changed_when: false
+  failed_when: false
+  when: _ziti_edge_tunnel_enabled_state.stdout | default('') == 'masked'
+
+- name: Assert ziti-edge-tunnel is actually held (fail loudly, not silently)
+  ansible.builtin.assert:
+    that:
+      - _ziti_dpkg_drift_check.rc == 0
+      - "'hold ok installed' in _ziti_dpkg_drift_check.stdout"
+    fail_msg: >
+      DRIFT PROTECTION FAILED: ziti-edge-tunnel is not held (dpkg state:
+      "{{ _ziti_dpkg_drift_check.stdout
+      | default('query failed, rc=' ~ _ziti_dpkg_drift_check.rc) }}") on a
+      host where ziti-edge-tunnel.service is masked in favor of an
+      infrastructure-managed always-on tunnel identity. This means apt /
+      unattended-upgrades can silently replace the custom
+      `<version>-focusapiary1` build with stock upstream, losing BOTH
+      carried patches: (1) the lwIP TCP-PCB pool bump (pcb2048, infra#193)
+      and (2) the legacy cert-based auth/refresh watchdog recovery fix
+      (openziti/ziti-sdk-c#1086, carried as a fast-follow in
+      FocusApiary/ziti-tunnel-sdk-c's patch series until it merges/releases
+      upstream). Re-run FocusApiary/infrastructure's ziti_tunneler role to
+      re-apply the hold, or `apt-mark hold ziti-edge-tunnel` as an
+      immediate stopgap, then investigate what removed it (e.g. a manual
+      `apt-mark unhold`).
+  when: _ziti_edge_tunnel_enabled_state.stdout | default('') == 'masked'
+
+# -----------------------------------------------------------------------------
 # /etc/hosts pins for Ziti-only hostnames
 # -----------------------------------------------------------------------------
 # Many internal services exist only as Ziti intercepts (e.g. chat.focusbuzz.org,
