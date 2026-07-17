@@ -14,8 +14,6 @@ workstation_profile: desktop
 # Workspace/thin-client profiles should override this to terminal-friendly editors.
 preferred_editor: "code --wait"
 
-node_major_version: "25"
-
 # Tool group toggles
 coder_cli_enabled: true
 cloud_clis_enabled: true
@@ -26,6 +24,7 @@ thin_client_playwright_enabled: false
 # intentionally not baked in here.
 missionctl_enabled: false
 missionctl_install_url: ""
+missionctl_install_sha256: ""
 missionctl_install_path: /usr/local/bin/missionctl
 
 # Coder CLI tracks the deployment's own server version at install time
@@ -35,63 +34,258 @@ coder_deployment_url: "https://coder.developerdojo.org"
 coder_cli_install_script_url: "{{ coder_deployment_url }}/install.sh"
 coder_cli_buildinfo_url: "{{ coder_deployment_url }}/api/v2/buildinfo"
 
-# Pinned tool versions - managed by Renovate
-glab_version: "1.103.0"
-gh_version: "2.95.0"
-helm_version: "4.2.2"
-kustomize_version: "5.8.1"
-kubectl_version: "1.36.2"
-talosctl_version: "1.13.4"
-terraform_version: "1.15.6"
-vault_version: "1.19.1"
-packer_version: "1.15.4"
-flux_version: "2.8.8"
-k9s_version: "0.51.0"
-yq_version: "4.53.3"
-lazygit_version: "0.62.2"
-delta_version: "0.19.2"
-zoxide_version: "0.9.9"
-dust_version: "1.2.4"
-duf_version: "0.9.1"
-glow_version: "2.1.2"
-just_version: "1.53.0"
-watchexec_version: "2.5.1"
-hyperfine_version: "1.20.0"
-grpcurl_version: "1.9.3"
-crane_version: "0.21.7"
-rclone_version: "1.74.3"
-chezmoi_version: "2.70.5"
-starship_version: "1.25.1"
-trivy_version: "0.71.2"
-velero_version: "1.18.1"
-kubeconform_version: "0.8.0"
-stern_version: "1.34.0"
-filebrowser_version: "2.63.15"
-tofu_version: "1.12.3"
-act_version: "0.2.89"
-argocd_version: "3.4.4"
-kubectx_version: "0.11.0"
-kubeseal_version: "0.38.1"
-cosign_version: "3.1.1"
-step_version: "0.30.6"
-mkcert_version: "1.4.4"
-golangci_lint_version: "2.12.2"
-gum_version: "0.17.0"
-talhelper_version: "3.1.11"
-sops_version: "3.13.1"
+# Upstream release metadata used by the binary installers. These are repository
+# identities, not release pins: the tasks query each upstream's latest release
+# during every ansible-pull and install the matching current Linux asset.
+github_api_token: ""
+latest_github_repositories:
+  lazygit: jesseduffield/lazygit
+  delta: dandavison/delta
+  zoxide: ajeetdsouza/zoxide
+  dust: bootandy/dust
+  duf: muesli/duf
+  glow: charmbracelet/glow
+  just: casey/just
+  watchexec: watchexec/watchexec
+  hyperfine: sharkdp/hyperfine
+  gum: charmbracelet/gum
+  golangci_lint: golangci/golangci-lint
+  trivy: aquasecurity/trivy
+  tofu: opentofu/opentofu
+  helm: helm/helm
+  kustomize: kubernetes-sigs/kustomize
+  kubectx: ahmetb/kubectx
+  krew: kubernetes-sigs/krew
+  stern: stern/stern
+  velero: vmware-tanzu/velero
+  kubeseal: bitnami-labs/sealed-secrets
+  sops: getsops/sops
+  age: FiloSottile/age
+  sunshine: LizardByte/Sunshine
+  deno: denoland/deno
+  bun: oven-sh/bun
+  starship: starship/starship
+  talhelper: budimanjojo/talhelper
+  yq: mikefarah/yq
+  chezmoi: twpayne/chezmoi
+  filebrowser: filebrowser/filebrowser
+  talos: siderolabs/talos
+  k9s: derailed/k9s
+  argocd: argoproj/argo-cd
+  kubeconform: yannh/kubeconform
+  crane: google/go-containerregistry
+  act: nektos/act
+  cosign: sigstore/cosign
+  step: smallstep/cli
+  flux: fluxcd/flux2
+  mattermost_desktop: mattermost/desktop
+  nerd_fonts: ryanoasis/nerd-fonts
 
-# Pinned npm global package versions - managed by Renovate
-pnpm_version: "11.8.0"
-yarn_version: "1.22.22"
-typescript_version: "6.0.3"
-ts_node_version: "10.9.2"
-tsx_version: "4.22.4"
-turbo_version: "2.9.18"
-eslint_version: "10.5.0"
-prettier_version: "3.8.4"
-mermaid_cli_version: "11.15.0"
-m365_cli_version: "11.9.0"
-codewhale_version: "0.8.63"
+# Every API-backed release source also has an explicit application contract.
+# The contract is inventory/provenance data, not a release pin: it says how an
+# application is obtained and how its installed result can be checked.
+latest_release_contracts:
+  lazygit: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/lazygit, --version]}
+  delta: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/delta, --version]}
+  zoxide: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/zoxide, --version]}
+  dust: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/dust, --version]}
+  duf: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/duf, --version]}
+  glow: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/glow, --version]}
+  just: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/just, --version]}
+  watchexec: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/watchexec, --version]}
+  hyperfine: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/hyperfine, --version]}
+  gum: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/gum, --version]}
+  golangci_lint: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/golangci-lint, --version]}
+  trivy: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/trivy, --version]}
+  tofu: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/tofu, version]}
+  helm: {installer: helm-release, verification: helm-sha256, healthcheck: [/usr/local/bin/helm, version]}
+  kustomize: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kustomize, version]}
+  kubectx: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kubectx, --version]}
+  stern: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/stern, --version]}
+  velero: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/velero, version, --client-only]}
+  kubeseal: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kubeseal, --version]}
+  sops: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/sops, --version]}
+  age: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/age, --version]}
+  sunshine: {installer: github-deb, verification: github-asset-digest, healthcheck: [/usr/bin/sunshine, --version]}
+  deno: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/deno, --version]}
+  bun: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/bun, --version]}
+  starship: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/starship, --version]}
+  talhelper: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/talhelper, --version]}
+  yq: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/yq, --version]}
+  chezmoi: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/chezmoi, --version]}
+  filebrowser: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/filebrowser, version]}
+  talos: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/talosctl, version, --client]}
+  k9s: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/k9s, version]}
+  argocd: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/argocd, version, --client]}
+  krew: {installer: github-archive, verification: github-asset-digest, scope: user, healthcheck: [.krew/bin/kubectl-krew, help]}
+  kubeconform: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kubeconform, -v]}
+  crane: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/crane, version]}
+  act: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/act, --version]}
+  cosign: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/cosign, version]}
+  step: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/step, version]}
+  flux: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/flux, --version]}
+  mattermost_desktop: {installer: github-archive, verification: github-asset-digest, healthcheck: [/opt/mattermost-desktop/mattermost-desktop, --version]}
+  nerd_fonts: {installer: github-archive, verification: github-asset-digest, healthcheck: [fc-cache, -V]}
+
+# Applications whose native update channel is not a GitHub release API. They
+# still participate in the same health, provenance, and rollback contract.
+workstation_application_contracts:
+  coder: {installer: deployment-buildinfo, verification: deployment-version, healthcheck: [/usr/local/bin/coder, version, --output, json]}
+  go: {installer: go-release, verification: go-sha256, healthcheck: [/usr/local/go/bin/go, version]}
+  kubectl: {installer: kubectl-release, verification: kubectl-sha256, healthcheck: [/usr/local/bin/kubectl, version, --client=true]}
+  composer: {installer: composer-installer, verification: composer-sha384, healthcheck: [/usr/local/bin/composer, --version]}
+  grpcurl: {installer: go-module, verification: go-module-sumdb, healthcheck: [/usr/local/bin/grpcurl, -version]}
+  mkcert: {installer: apt, verification: apt-signature, healthcheck: [/usr/bin/mkcert, -version]}
+  aws: {installer: aws-cli-pgp, verification: aws-cli-signing-key, healthcheck: [/usr/local/bin/aws, --version]}
+  glab: {installer: gitlab-release, verification: gitlab-checksum, healthcheck: [/usr/local/bin/glab, version]}
+  rclone: {installer: rclone-release, verification: rclone-sha256, healthcheck: [/usr/local/bin/rclone, version]}
+  terraform: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/terraform, version]}
+  vault: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/vault, version]}
+  packer: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/packer, version]}
+  m365-cli: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/m365", --version]}
+  codex: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/codex", --version]}
+  uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
+
+# =============================================================================
+# Workstation update control plane (local until fleet.focuscell.org exists)
+# =============================================================================
+# The default ring is canary because this is an R&D lab. Host/group vars can
+# move a machine to early/general without introducing a release pin.
+workstation_update_ring: canary
+workstation_update_ring_min_age_seconds:
+  canary: 0
+  early: 21600
+  general: 86400
+workstation_update_ring_randomized_delay_seconds:
+  canary: 900
+  early: 21600
+  general: 86400
+workstation_update_state_dir: /var/lib/curiosity/workstation-updates
+workstation_update_artifact_cache_dir: /var/cache/curiosity/artifacts
+workstation_update_manifest_path: /var/lib/curiosity/workstation-updates/last-run.json
+workstation_update_sbom_path: /var/lib/curiosity/workstation-updates/sbom.cdx.json
+workstation_update_snapshot_retention: 3
+workstation_update_cache_retention_days: 30
+workstation_update_quarantine_seconds: 3600
+workstation_update_healthcheck_enabled: true
+workstation_update_sbom_enabled: true
+workstation_update_managed_paths:
+  - /usr/local/bin/lazygit
+  - /usr/local/bin/delta
+  - /usr/local/bin/zoxide
+  - /usr/local/bin/dust
+  - /usr/local/bin/duf
+  - /usr/local/bin/glow
+  - /usr/local/bin/just
+  - /usr/local/bin/watchexec
+  - /usr/local/bin/hyperfine
+  - /usr/local/bin/gum
+  - /usr/local/bin/golangci-lint
+  - /usr/local/bin/trivy
+  - /usr/local/bin/grpcurl
+  - /usr/local/bin/tofu
+  - /usr/local/bin/helm
+  - /usr/local/bin/kustomize
+  - /usr/local/bin/kubectl
+  - /usr/local/bin/kubectx
+  - /usr/local/bin/kubens
+  - "{{ dev_user_home }}/.krew/bin/kubectl-krew"
+  - /usr/local/bin/stern
+  - /usr/local/bin/velero
+  - /usr/local/bin/kubeseal
+  - /usr/local/bin/sops
+  - /usr/local/bin/age
+  - /usr/local/bin/age-keygen
+  - /usr/local/bin/deno
+  - /usr/local/bin/bun
+  - /usr/local/bin/starship
+  - /usr/local/bin/talhelper
+  - /usr/local/bin/yq
+  - /usr/local/bin/chezmoi
+  - /usr/local/bin/filebrowser
+  - /usr/local/bin/talosctl
+  - /usr/local/bin/k9s
+  - /usr/local/bin/argocd
+  - /usr/local/bin/kubeconform
+  - /usr/local/bin/crane
+  - /usr/local/bin/act
+  - /usr/local/bin/cosign
+  - /usr/local/bin/step
+  - /usr/local/bin/flux
+  - /usr/local/bin/mattermost-desktop
+  - /usr/local/go/bin/go
+  - /usr/local/bin/coder
+  - /usr/local/bin/aws
+  - /usr/local/bin/glab
+  - /usr/local/bin/rclone
+  - /usr/local/bin/composer
+  - "{{ dev_user_home }}/.local/bin/uv"
+  - /usr/bin/sunshine
+  - /usr/local/bin/terraform
+  - /usr/local/bin/vault
+  - /usr/local/bin/packer
+  - "{{ npm_global_prefix }}/bin/npm"
+  - "{{ npm_global_prefix }}/bin/m365"
+  - "{{ npm_global_prefix }}/bin/codex"
+  - "{{ npm_global_prefix }}/bin/pnpm"
+  - "{{ npm_global_prefix }}/bin/yarn"
+  - "{{ npm_global_prefix }}/bin/tsc"
+  - "{{ npm_global_prefix }}/bin/ts-node"
+  - "{{ npm_global_prefix }}/bin/tsx"
+  - "{{ npm_global_prefix }}/bin/turbo"
+  - "{{ npm_global_prefix }}/bin/eslint"
+  - "{{ npm_global_prefix }}/bin/prettier"
+  - "{{ npm_global_prefix }}/bin/mmdc"
+  - "{{ npm_global_prefix }}/bin/playwright"
+  - "{{ npm_global_prefix }}/bin/claude"
+  - "{{ npm_global_prefix }}/bin/gemini"
+  - "{{ npm_global_prefix }}/bin/qwen"
+  - "{{ npm_global_prefix }}/bin/codewhale"
+workstation_update_non_removable_paths:
+  # These are package-owned files. Removing a newly-created binary on
+  # rollback would leave dpkg's ownership database inconsistent.
+  - /usr/bin/sunshine
+
+# Fail-closed is available as soon as the catalog signing key is provisioned.
+# Current public history is not uniformly signed, so warn is the safe bootstrap
+# default; set `catalog_integrity_mode: enforce` on signed installations.
+catalog_integrity_mode: warn
+catalog_signing_key_fingerprint: ""
+
+# npm globals are user-facing applications. They always follow the registry's
+# latest dist-tag; there is deliberately no compatibility-pin mode.
+npm_global_prefix: "{{ dev_user_home }}/.npm-global"
+npm_global_executable: "/usr/bin/npm"
+npm_global_packages:
+  - npm
+  - pnpm
+  - yarn
+  - typescript
+  - ts-node
+  - tsx
+  - turbo
+  - eslint
+  - prettier
+  - "@mermaid-js/mermaid-cli"
+  - "@pnp/cli-microsoft365"
+  - codewhale
+
+# AI coding assistants are also user-scoped and refreshed nightly. Keep the
+# package list in defaults so every workstation profile gets the same policy.
+ai_assistant_packages:
+  - "@anthropic-ai/claude-code"
+  - "@google/gemini-cli"
+  - "@openai/codex"
+  - "@qwen-code/qwen-code"
+
+# Package-manager updates are enabled by default for every profile. This is a
+# safe APT upgrade (no removals); reboot-sensitive changes remain pending until
+# the user reboots.
+apt_upgrade_enabled: true
+# NodeSource repository trust anchor. This authenticates the repository key,
+# not an application release, so it does not constrain bleeding-edge versions.
+nodesource_key_fingerprint: "6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+openziti_key_fingerprint: "34CBCF18427D8814B5BDBB0DDE3623EF08C996E5"
 # Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
 # (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)
 apt_fallback_release: "noble"
@@ -113,6 +307,7 @@ ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
 ansible_pull_extra_vars: ""
+ansible_pull_verify_commit: "{{ catalog_integrity_mode == 'enforce' }}"
 authd_archive_distribution: "{{ ansible_distribution_release }}"
 authd_archive_key_fingerprint: "155D766F2E771AED"
 authd_archive_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x{{ authd_archive_key_fingerprint }}"
@@ -218,8 +413,6 @@ minimal_desktop_firefox_tweaks: true
 # Enabled by default — safe on machines without iGPU (falls back to software encode)
 # Set sunshine_enabled: false in extra-vars to explicitly disable
 sunshine_enabled: true
-sunshine_version: "v2025.924.154138"
-sunshine_deb_url: "https://github.com/LizardByte/Sunshine/releases/download/v2025.924.154138/sunshine-debian-trixie-amd64.deb"
 sunshine_default_user: sunshine
 sunshine_default_pass: sunshine
 

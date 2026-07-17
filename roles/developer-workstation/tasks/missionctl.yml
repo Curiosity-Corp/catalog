@@ -14,9 +14,18 @@
       Set missionctl_install_url to a direct missionctl binary URL before
       enabling missionctl.
 
+- name: Require a SHA-256 for the optional missionctl artifact
+  ansible.builtin.assert:
+    that:
+      - missionctl_install_sha256 | default('') is match('^[0-9a-fA-F]{64}$')
+    fail_msg: >-
+      Set missionctl_install_sha256 to the trusted SHA-256 of the missionctl
+      artifact before enabling missionctl.
+
 - name: Install missionctl
   ansible.builtin.get_url:
     url: "{{ missionctl_install_url }}"
     dest: "{{ missionctl_install_path }}"
+    checksum: "sha256:{{ missionctl_install_sha256 }}"
     mode: "0755"
-    force: true
+    force: false

@@ -18,9 +18,10 @@ variables:
     ANSIBLE_ROLES_PATH=roles /tmp/venv/bin/ansible-lint
     playbooks/site.yml roles
   TEST_COMMANDS: >-
-    python3 -c "import json, pathlib;
+    /tmp/venv/bin/python -c "import json, pathlib;
     json.loads(pathlib.Path('renovate.json').read_text());
-    print('renovate.json ok')"
+    print('renovate.json ok')" &&
+    /tmp/venv/bin/python tests/test_update_policy.py
 
 # SAST is temporarily non-blocking: harbor.focuscell.org/infra/semgrep does
 # not yet exist and the dockerhub-proxy has no semgrep image either.  The

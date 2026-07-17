@@ -1,0 +1,144 @@
+---
+# =============================================================================
+# Local update observability and provenance
+# =============================================================================
+# This is deliberately local and append-friendly. The future fleet service can
+# collect these two files without changing the workstation convergence logic.
+# =============================================================================
+
+- name: Collect Debian package inventory
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - -W
+      - -f=${Package}\t${Version}\n
+  register: _workstation_dpkg_inventory
+  changed_when: false
+  failed_when: false
+
+- name: Collect user npm inventory
+  ansible.builtin.command:
+    argv:
+      - "{{ npm_global_executable }}"
+      - ls
+      - --global
+      - --depth=0
+      - --json
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _workstation_npm_inventory
+  changed_when: false
+  failed_when: false
+
+- name: Collect pipx inventory
+  ansible.builtin.command: pipx list --json
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    PATH: "{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _workstation_pipx_inventory
+  changed_when: false
+  failed_when: false
+
+- name: Check whether Trivy can produce a local SBOM
+  ansible.builtin.stat:
+    path: /usr/local/bin/trivy
+  register: _workstation_trivy_stat
+
+- name: Generate CycloneDX SBOM for catalog-managed local software
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/trivy
+      - fs
+      - --scanners
+      - vuln
+      - --format
+      - cyclonedx
+      - --output
+      - "{{ workstation_update_sbom_path }}"
+      - /usr/local
+  register: _workstation_trivy_sbom
+  changed_when: true
+  failed_when: false
+  when:
+    - workstation_update_sbom_enabled | default(true)
+    - _workstation_trivy_stat.stat.exists
+
+- name: Write fallback CycloneDX inventory when Trivy is unavailable
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'bomFormat': 'CycloneDX',
+          'specVersion': '1.5',
+          'version': 1,
+          'metadata': {
+            'timestamp': ansible_date_time.iso8601,
+            'component': {
+              'type': 'operating-system',
+              'name': ansible_distribution,
+              'version': ansible_distribution_version
+            }
+          },
+          'components': [],
+          'properties': [
+            {'name': 'curiosity:catalog-commit', 'value': workstation_catalog_commit},
+            {'name': 'curiosity:dpkg-inventory', 'value': _workstation_dpkg_inventory.stdout | default('')},
+            {'name': 'curiosity:npm-inventory', 'value': _workstation_npm_inventory.stdout | default('')},
+            {'name': 'curiosity:pipx-inventory', 'value': _workstation_pipx_inventory.stdout | default('')}
+          ]
+        } | to_nice_json
+      }}
+    dest: "{{ workstation_update_sbom_path }}"
+    owner: root
+    group: root
+    mode: "0640"
+  when:
+    - workstation_update_sbom_enabled | default(true)
+    - not (_workstation_trivy_stat.stat.exists and (_workstation_trivy_sbom.rc | default(1) == 0))
+
+- name: Write the local workstation update manifest
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'schema': 'curiosity.workstation.update/v1',
+          'run_id': workstation_update_run_id,
+          'status': workstation_update_status | default('success'),
+          'started_at': workstation_update_started_at,
+          'finished_at': ansible_date_time.iso8601,
+          'host': inventory_hostname,
+          'profile': workstation_profile,
+          'update_ring': workstation_update_ring,
+          'ring_blockers': workstation_update_ring_blockers | default([]),
+          'quarantine_active': workstation_update_quarantine_active | default(false),
+          'install_allowed': workstation_update_install_allowed | default(true),
+          'catalog_commit': workstation_catalog_commit,
+          'catalog_commit_verified': workstation_catalog_commit_verified | default(false),
+          'catalog_signer_fingerprint': workstation_catalog_signer_fingerprint | default(''),
+          'catalog_integrity_mode': catalog_integrity_mode,
+          'catalog_trusted_fingerprint': catalog_signing_key_fingerprint | default(''),
+          'application_contracts': workstation_all_application_contracts | default({}),
+          'upstream_releases': latest_github_release_summary | default({}),
+          'asset_checksums': latest_github_asset_checksums | default({}),
+          'before': workstation_update_before_inventory | default([]),
+          'after': workstation_update_after_inventory | default([]),
+          'healthcheck_failures': workstation_update_healthcheck_failures | default([]),
+          'failure': workstation_update_failure | default({}),
+          'package_inventory': {
+            'dpkg': _workstation_dpkg_inventory.stdout | default(''),
+            'npm': _workstation_npm_inventory.stdout | default(''),
+            'pipx': _workstation_pipx_inventory.stdout | default('')
+          },
+          'sbom': workstation_update_sbom_path
+        } | to_nice_json
+      }}
+    dest: "{{ workstation_update_manifest_path }}"
+    owner: root
+    group: root
+    mode: "0640"

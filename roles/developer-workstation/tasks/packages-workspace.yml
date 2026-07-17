@@ -31,7 +31,7 @@
       # --- Node.js ---
       - nodejs
       # --- Java ---
-      - openjdk-21-jdk
+      # The newest available OpenJDK package is selected below.
       # --- Ruby ---
       - ruby
       - ruby-dev
@@ -154,7 +154,7 @@
       - php-xml
       - php-zip
       # --- .NET ---
-      - dotnet-sdk-10.0
+      # The newest available .NET SDK package is selected below.
       # --- Document conversion ---
       - pandoc
       - graphviz
@@ -184,6 +184,42 @@
       - libegl1
     state: present
     update_cache: true
+
+- name: Discover newest OpenJDK package in configured repositories  # noqa: command-instead-of-shell risky-shell-pipe
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt-cache pkgnames \
+        | awk '/^openjdk-[0-9]+-jdk$/' \
+        | sort -V \
+        | tail -n 1
+    executable: /bin/bash
+  register: _latest_openjdk_package
+  changed_when: false
+
+- name: Install newest OpenJDK package  # noqa: package-latest
+  ansible.builtin.apt:
+    name: "{{ _latest_openjdk_package.stdout | trim }}"
+    state: latest
+  when: _latest_openjdk_package.stdout | trim | length > 0
+
+- name: Discover newest .NET SDK package in configured repositories  # noqa: command-instead-of-shell risky-shell-pipe
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      apt-cache pkgnames \
+        | awk '/^dotnet-sdk-[0-9]+\\.0$/' \
+        | sort -V \
+        | tail -n 1
+    executable: /bin/bash
+  register: _latest_dotnet_sdk_package
+  changed_when: false
+
+- name: Install newest .NET SDK package  # noqa: package-latest
+  ansible.builtin.apt:
+    name: "{{ _latest_dotnet_sdk_package.stdout | trim }}"
+    state: latest
+  when: _latest_dotnet_sdk_package.stdout | trim | length > 0
 
 - name: Remove unwanted packages
   ansible.builtin.apt:

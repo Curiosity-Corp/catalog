@@ -13,16 +13,19 @@
 # No .deb available since v6.x.
 # =============================================================================
 
-- name: Get Mattermost Desktop latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/mattermost/desktop/releases/latest
-    return_content: true
-  register: mattermost_desktop_release
-
-- name: Set Mattermost Desktop version facts
+- name: Resolve Mattermost Desktop latest verified asset
   ansible.builtin.set_fact:
-    mattermost_desktop_version: "{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}"
-    mattermost_desktop_dir: "/opt/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-x64"
+    mattermost_desktop_version: "{{ latest_github_releases.mattermost_desktop.tag_name | regex_replace('^v', '') }}"
+    mattermost_desktop_asset: >-
+      {{ latest_github_releases.mattermost_desktop.assets
+         | selectattr('name', 'match', '^mattermost-desktop-.*-linux-x64\\.tar\\.gz$') | first }}
+    mattermost_desktop_dir: "/opt/mattermost-desktop-{{ latest_github_releases.mattermost_desktop.tag_name | regex_replace('^v', '') }}-linux-x64"
+
+- name: Require a verified Mattermost Desktop asset
+  ansible.builtin.assert:
+    that:
+      - mattermost_desktop_asset | default({}) | length > 0
+      - mattermost_desktop_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
 
 - name: Check Mattermost Desktop path state
   ansible.builtin.stat:
@@ -30,9 +33,17 @@
     follow: false
   register: mattermost_desktop_path
 
-- name: Download and extract Mattermost Desktop desired version
+- name: Download Mattermost Desktop desired version
+  ansible.builtin.get_url:
+    url: "{{ mattermost_desktop_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/mattermost-desktop-{{ mattermost_desktop_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ mattermost_desktop_asset.digest }}"
+    mode: "0644"
+    force: false
+
+- name: Extract Mattermost Desktop desired version
   ansible.builtin.unarchive:
-    src: "https://github.com/mattermost/desktop/releases/download/{{ mattermost_desktop_release.json.tag_name }}/mattermost-desktop-{{ mattermost_desktop_release.json.tag_name | regex_replace('^v', '') }}-linux-x64.tar.gz"
+    src: "{{ workstation_update_artifact_cache_dir }}/mattermost-desktop-{{ mattermost_desktop_asset.digest | regex_replace('^sha256:', '') }}.archive"
     dest: /opt
     remote_src: true
     creates: "{{ mattermost_desktop_dir }}"

@@ -5,30 +5,39 @@
 # Playwright for browser automation testing
 # =============================================================================
 
-- name: Check if playwright is installed
-  ansible.builtin.command:
-    cmd: npm list -g playwright
-  register: _playwright_check
-  changed_when: false
-  failed_when: false
-
-- name: Install Playwright via npm
+- name: Update user-scoped Playwright package to latest
   community.general.npm:
     name: playwright
     global: true
-    state: present
-  when: _playwright_check.rc != 0
+    state: latest
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _playwright_npm_result
+  failed_when: _playwright_npm_result is failed
 
-- name: Check if Playwright Chromium is installed
-  ansible.builtin.find:
-    paths: /root/.cache/ms-playwright
-    patterns: "chrome"
-    recurse: true
-    file_type: file
-  register: _playwright_chromium
+- name: Ensure Playwright browser cache directory
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.cache/ms-playwright"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+  become: true
+  become_user: "{{ dev_user }}"
 
-- name: Install Playwright Chromium browser
+- name: Update Playwright Chromium browser to match the latest package
   ansible.builtin.command:
-    cmd: npx playwright install --with-deps chromium
+    cmd: "{{ npm_global_prefix }}/bin/playwright install chromium"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PLAYWRIGHT_BROWSERS_PATH: "{{ dev_user_home }}/.cache/ms-playwright"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
   changed_when: true
-  when: _playwright_chromium.matched == 0

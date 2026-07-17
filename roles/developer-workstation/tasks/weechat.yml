@@ -49,20 +49,21 @@
     path: "{{ dev_user_home }}/.local/share/weechat/python/slack.py"
   register: _weeslack_installed
 
-- name: Clone wee-slack source  # noqa: latest[git]
+- name: Clone or update wee-slack source  # noqa: latest[git]
   ansible.builtin.git:
     repo: https://github.com/wee-slack/wee-slack.git
     dest: /tmp/wee-slack
     depth: 1
     force: true
-  when: not _weeslack_installed.stat.exists
+  register: _weeslack_source
 
 - name: Build wee-slack (compile multi-file source into single slack.py)  # noqa: command-instead-of-shell
   ansible.builtin.shell:
     cmd: bash build.sh
     chdir: /tmp/wee-slack
     creates: /tmp/wee-slack/build/slack.py
-  when: not _weeslack_installed.stat.exists
+  when:
+    - _weeslack_source.changed or not _weeslack_installed.stat.exists
 
 - name: Install wee-slack plugin
   ansible.builtin.copy:
@@ -72,7 +73,8 @@
     group: "{{ dev_user }}"
     mode: "0644"
     remote_src: true
-  when: not _weeslack_installed.stat.exists
+  when:
+    - _weeslack_source.changed or not _weeslack_installed.stat.exists
 
 - name: Enable wee-slack autoload
   ansible.builtin.file:
@@ -154,7 +156,6 @@
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0644"
-  when: not _gopy_installed.stat.exists
 
 - name: Enable go.py autoload
   ansible.builtin.file:

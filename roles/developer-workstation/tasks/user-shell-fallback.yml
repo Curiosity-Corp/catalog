@@ -120,13 +120,13 @@
 - name: Add PATH additions to .bashrc
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.bashrc"
-    line: 'export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.krew/bin:/usr/local/go/bin:$PATH"'
+    line: 'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/go/bin:$HOME/.krew/bin:/usr/local/go/bin:$PATH"'
     regexp: 'krew/bin'
 
 - name: Add PATH additions to .zshrc
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.zshrc"
-    line: 'export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.krew/bin:/usr/local/go/bin:$PATH"'
+    line: 'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$HOME/go/bin:$HOME/.krew/bin:/usr/local/go/bin:$PATH"'
     regexp: 'krew/bin'
 
 # --- SOPS ---

@@ -44,7 +44,7 @@
 - name: Install hardware-specific pipx packages ({{ hardware_profile }})
   community.general.pipx:
     name: "{{ item }}"
-    state: present
+    state: latest
   become: true
   become_user: "{{ dev_user }}"
   environment:
@@ -53,34 +53,73 @@
   failed_when: false
 
 # ---- Private Internet Access VPN ----
+# PIA publishes versioned installers from its download page, so resolve the
+# current URL there instead of embedding a release number in the catalog.
 
-- name: Check if PIA VPN is installed
-  ansible.builtin.stat:
-    path: /opt/piavpn/bin/piactl
-  register: _pia_installed
+- name: Query latest PIA Linux installer page
+  ansible.builtin.uri:
+    url: https://www.privateinternetaccess.com/download
+    return_content: true
+  register: _pia_download_page
+  changed_when: false
   when: hardware_profiles[hardware_profile].pia_vpn | default(false)
 
-- name: Download PIA VPN installer
-  ansible.builtin.get_url:
-    url: https://installers.privateinternetaccess.com/download/pia-linux-3.7-08412.run
-    dest: /tmp/pia-linux.run
-    mode: "0755"
-  when:
-    - hardware_profiles[hardware_profile].pia_vpn | default(false)
-    - not (_pia_installed.stat.exists | default(false))
+- name: Select latest PIA Linux installer for the target architecture
+  ansible.builtin.set_fact:
+    _pia_latest_installers: >-
+      {{
+        _pia_download_page.content
+        | regex_findall('https://installers\\.privateinternetaccess\\.com/download/pia-linux-[^" ]+\\.run')
+      }}
 
-- name: Install PIA VPN
-  ansible.builtin.command: /tmp/pia-linux.run
-  when:
-    - hardware_profiles[hardware_profile].pia_vpn | default(false)
-    - not (_pia_installed.stat.exists | default(false))
-  changed_when: true
+- name: Choose latest PIA Linux installer for the target architecture
+  ansible.builtin.set_fact:
+    _pia_latest_installer_url: >-
+      {{
+        (
+          _pia_latest_installers
+          | select('search', 'pia-linux-arm64-')
+          | first
+        )
+        if ansible_architecture == 'aarch64'
+        else (
+          _pia_latest_installers
+          | reject('search', 'pia-linux-arm')
+          | first
+        )
+      }}
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
 
-- name: Clean up PIA installer
+- name: Require a current PIA Linux installer
+  ansible.builtin.assert:
+    that: _pia_latest_installer_url | default('') | length > 0
+    fail_msg: "PIA did not publish a current installer for {{ ansible_architecture }}"
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Ensure PIA installer cache directory exists
   ansible.builtin.file:
-    path: /tmp/pia-linux.run
-    state: absent
+    path: /var/cache/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
   when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Download latest PIA VPN installer
+  ansible.builtin.get_url:
+    url: "{{ _pia_latest_installer_url }}"
+    dest: "/var/cache/curiosity/{{ _pia_latest_installer_url | basename }}"
+    mode: "0755"
+    force: false
+  register: _pia_installer_download
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Install or update PIA VPN
+  ansible.builtin.command: "/var/cache/curiosity/{{ _pia_latest_installer_url | basename }}"
+  when:
+    - hardware_profiles[hardware_profile].pia_vpn | default(false)
+    - _pia_installer_download.changed
+  changed_when: true
 
 - name: Enable PIA VPN daemon
   ansible.builtin.systemd:

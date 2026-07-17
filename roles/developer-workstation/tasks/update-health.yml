@@ -1,0 +1,183 @@
+---
+# =============================================================================
+# Post-update health gate
+# =============================================================================
+# Health checks are intentionally opportunistic: a contract is checked when
+# its executable exists on this profile. A failed check is not swallowed; it
+# fails the transaction and sends control to update-rollback.yml.
+# =============================================================================
+
+- name: Build healthcheck definitions from application contracts
+  ansible.builtin.set_fact:
+    workstation_update_healthcheck_definitions: >-
+      {{ workstation_update_healthcheck_definitions | default([]) + [
+        {
+          'name': item.key,
+          'scope': item.value.scope | default('system'),
+          'argv': ((([item.value.healthcheck[0]] if (item.value.healthcheck[0] is match('^/'))
+                    else [dev_user_home ~ '/' ~ item.value.healthcheck[0]]) + item.value.healthcheck[1:])
+                   if (item.value.scope | default('system')) == 'user'
+                   else item.value.healthcheck)
+        }
+      ] }}
+  loop: "{{ (workstation_all_application_contracts | default(latest_release_contracts)) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Select system-scoped contract healthchecks
+  ansible.builtin.set_fact:
+    workstation_update_system_healthchecks: >-
+      {{ workstation_update_healthcheck_definitions | default([])
+         | selectattr('scope', 'equalto', 'system') | list }}
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Select user-scoped contract healthchecks
+  ansible.builtin.set_fact:
+    workstation_update_user_contract_healthchecks: >-
+      {{ workstation_update_healthcheck_definitions | default([])
+         | selectattr('scope', 'equalto', 'user') | list }}
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Add user-scoped npm healthchecks
+  ansible.builtin.set_fact:
+    workstation_update_user_healthchecks:
+      - name: npm
+        argv: ["{{ npm_global_prefix }}/bin/npm", --version]
+      - name: pnpm
+        argv: ["{{ npm_global_prefix }}/bin/pnpm", --version]
+      - name: playwright
+        argv: ["{{ npm_global_prefix }}/bin/playwright", --version]
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Add user-scoped contract healthchecks
+  ansible.builtin.set_fact:
+    workstation_update_user_healthchecks: >-
+      {{ workstation_update_user_healthchecks | default([]) + [item] }}
+  loop: "{{ workstation_update_user_contract_healthchecks | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Check which contract executables exist
+  ansible.builtin.stat:
+    path: "{{ item.argv[0] }}"
+  loop: "{{ workstation_update_system_healthchecks | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _workstation_healthcheck_paths
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Run installed system application healthchecks
+  ansible.builtin.command:
+    argv: "{{ item.item.argv }}"
+  loop: "{{ _workstation_healthcheck_paths.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  register: _workstation_system_healthchecks
+  changed_when: false
+  failed_when: false
+  when:
+    - workstation_update_healthcheck_enabled | default(true)
+    - item.stat.exists | default(false)
+
+- name: Check which user application executables exist
+  ansible.builtin.stat:
+    path: "{{ item.argv[0] }}"
+    follow: true
+  become: true
+  become_user: "{{ dev_user }}"
+  loop: "{{ workstation_update_user_healthchecks | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _workstation_user_healthcheck_paths
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Run installed user application healthchecks
+  ansible.builtin.command:
+    argv: "{{ item.item.argv }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  loop: "{{ _workstation_user_healthcheck_paths.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  register: _workstation_user_healthchecks
+  changed_when: false
+  failed_when: false
+  when:
+    - workstation_update_healthcheck_enabled | default(true)
+    - item.stat.exists | default(false)
+
+- name: Check package-manager consistency
+  ansible.builtin.command: dpkg --audit
+  register: _workstation_dpkg_audit
+  changed_when: false
+  failed_when: false
+  when:
+    - workstation_update_healthcheck_enabled | default(true)
+    - ansible_facts.os_family == 'Debian'
+
+- name: Build healthcheck failure inventory
+  ansible.builtin.set_fact:
+    workstation_update_healthcheck_failures: >-
+      {{
+        (_workstation_system_healthchecks.results | default([])
+          | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+          | map(attribute='item.name') | list)
+        +
+        (_workstation_user_healthchecks.results | default([])
+          | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+          | map(attribute='item.name') | list)
+        +
+        (['dpkg'] if (_workstation_dpkg_audit.rc | default(0) != 0) else [])
+      }}
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Require all installed application healthchecks to pass
+  ansible.builtin.assert:
+    that:
+      - workstation_update_healthcheck_failures | default([]) | length == 0
+    fail_msg: >-
+      Post-update healthchecks failed for: {{ workstation_update_healthcheck_failures | join(', ') }}.
+      The update transaction will be rolled back.
+  when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Capture post-update managed binary inventory
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+    checksum_algorithm: sha256
+  loop: "{{ workstation_update_managed_paths }}"
+  loop_control:
+    label: "{{ item }}"
+  register: _workstation_managed_paths_after
+
+- name: Build the post-update binary inventory
+  ansible.builtin.set_fact:
+    workstation_update_after_inventory: >-
+      {{ workstation_update_after_inventory | default([]) + [
+        {
+          'path': item.item,
+          'exists': item.stat.exists | default(false),
+          'checksum': item.stat.checksum | default('')
+        }
+      ] }}
+  loop: "{{ _workstation_managed_paths_after.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Mark the update transaction healthy
+  ansible.builtin.set_fact:
+    workstation_update_status: >-
+      {{ 'success' if (workstation_update_install_allowed | default(true)) else 'held' }}
+
+- name: Clear a prior quarantine after a successful update
+  ansible.builtin.file:
+    path: "{{ workstation_update_state_dir }}/quarantine.json"
+    state: absent
+  when:
+    - workstation_update_status == 'success'
+    - not (workstation_update_quarantine_active | default(false))

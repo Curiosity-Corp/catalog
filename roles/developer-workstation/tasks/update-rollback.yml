@@ -1,0 +1,61 @@
+---
+# =============================================================================
+# Failed update rollback
+# =============================================================================
+
+- name: Record the failed transaction details
+  ansible.builtin.set_fact:
+    workstation_update_status: rolled_back
+    workstation_update_failure:
+      task: "{{ ansible_failed_task.name | default('unknown task') }}"
+      message: "{{ ansible_failed_result.msg | default('update transaction failed') }}"
+      recorded_at: "{{ ansible_date_time.iso8601 }}"
+
+- name: Restore managed binaries from the pre-update snapshot
+  ansible.builtin.copy:
+    src: "{{ workstation_update_snapshot_dir }}/{{ item.path | basename }}"
+    dest: "{{ item.path }}"
+    remote_src: true
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop: "{{ workstation_update_before_inventory | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when:
+    - item.exists | default(false)
+
+- name: Remove binaries created by the failed transaction
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ workstation_update_before_inventory | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when:
+    - not (item.exists | default(false))
+    - item.path not in (workstation_update_non_removable_paths | default([]))
+
+- name: Persist a short-lived update quarantine marker
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'schema': 'curiosity.workstation.update-quarantine/v1',
+          'run_id': workstation_update_run_id,
+          'status': workstation_update_status,
+          'retry_after_seconds': workstation_update_quarantine_seconds,
+          'failure': workstation_update_failure
+        } | to_nice_json
+      }}
+
+    dest: "{{ workstation_update_state_dir }}/quarantine.json"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Fail the pull after rollback so the local service reports failure
+  ansible.builtin.fail:
+    msg: >-
+      Workstation update transaction failed and was rolled back:
+      {{ workstation_update_failure.message }}

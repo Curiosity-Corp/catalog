@@ -10,32 +10,6 @@
 # -----------------------------------------------------------------------------
 # Install / Update ziti-edge-tunnel
 # -----------------------------------------------------------------------------
-- name: Check if ziti-edge-tunnel is already installed
-  ansible.builtin.stat:
-    path: /opt/openziti/bin/ziti-edge-tunnel
-  register: _ziti_tunnel_bin
-
-- name: Get installed ziti-edge-tunnel version
-  ansible.builtin.command:
-    cmd: /opt/openziti/bin/ziti-edge-tunnel version
-  register: _ziti_tunnel_version
-  changed_when: false
-  failed_when: false
-  when: _ziti_tunnel_bin.stat.exists
-
-- name: Set ziti-edge-tunnel needs upgrade flag
-  ansible.builtin.set_fact:
-    _ziti_needs_upgrade: >-
-      {{
-        (not _ziti_tunnel_bin.stat.exists) or
-        (
-          _ziti_tunnel_version.stdout
-          | default('0.0.0')
-          | trim
-          | regex_replace('^v', '')
-        ) is version('1.10.10', '<')
-      }}
-
 - name: Set ziti-edge-tunnel apt distribution
   ansible.builtin.set_fact:
     _ziti_tunnel_apt_distribution: >-
@@ -59,7 +33,6 @@
           'questing': 'jammy'
         }.get(ansible_distribution_release, 'jammy')
       }}
-  when: _ziti_needs_upgrade
 
 - name: Configure ziti-edge-tunnel repository
   ansible.builtin.apt_repository:
@@ -72,14 +45,12 @@
     filename: openziti-edge-tunnel
     state: present
     update_cache: true
-  when: _ziti_needs_upgrade
 
-- name: Install ziti-edge-tunnel package
+- name: Install or update ziti-edge-tunnel package  # noqa: package-latest
   ansible.builtin.apt:
     name: ziti-edge-tunnel
-    state: present
+    state: latest
     update_cache: true
-  when: _ziti_needs_upgrade
 
 # -----------------------------------------------------------------------------
 # OIDC Login Script

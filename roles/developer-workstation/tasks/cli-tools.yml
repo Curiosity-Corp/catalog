@@ -1,342 +1,262 @@
 ---
 # =============================================================================
-# Modern CLI Tools (GitHub Binary Downloads)
+# Modern CLI Tools (upstream latest releases)
 # =============================================================================
-# Uses stat + uri + unarchive/get_url pattern for idempotent installs.
-# Each tool is only downloaded if not already present.
+# Every release source is resolved from its upstream latest release metadata.
+# There are intentionally no checked-in release versions in this task.
 # =============================================================================
 
-# --- lazygit ---
-- name: Check installed lazygit version
-  ansible.builtin.shell: lazygit --version 2>&1 || echo MISSING
-  register: lazygit_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade lazygit {{ lazygit_version }}
-  when: "lazygit_version not in lazygit_current.stdout"
-  block:
-    - name: Download lazygit {{ lazygit_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/jesseduffield/lazygit/releases/download/v{{ lazygit_version }}/lazygit_{{ lazygit_version }}_Linux_x86_64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
+- name: Define latest CLI archive sources
+  ansible.builtin.set_fact:
+    latest_cli_archives:
+      - name: lazygit
+        asset: >-
+          {{
+            latest_github_releases.lazygit.assets
+            | selectattr('name', 'match', '^lazygit_.*_linux_x86_64\\.tar\\.gz$')
+            | first
+          }}
         include: [lazygit]
-
-# --- yq ---
-- name: Check installed yq version
-  ansible.builtin.shell: yq --version 2>&1 || echo MISSING
-  register: yq_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade yq {{ yq_version }}
-  when: "yq_version not in yq_current.stdout"
-  block:
-    - name: Download yq {{ yq_version }}
-      ansible.builtin.get_url:
-        url: "https://github.com/mikefarah/yq/releases/download/v{{ yq_version }}/yq_linux_amd64"
-        dest: /usr/local/bin/yq
-        mode: '0755'
-
-# --- delta ---
-- name: Check installed delta version
-  ansible.builtin.shell: delta --version 2>&1 || echo MISSING
-  register: delta_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade delta {{ delta_version }}
-  when: "delta_version not in delta_current.stdout"
-  block:
-    - name: Download delta {{ delta_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/dandavison/delta/releases/download/{{ delta_version }}/delta-{{ delta_version }}-x86_64-unknown-linux-gnu.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: ["delta-{{ delta_version }}-x86_64-unknown-linux-gnu/delta"]
-        extra_opts:
-          - --strip-components=1
-
-# --- zoxide ---
-- name: Check installed zoxide version
-  ansible.builtin.shell: zoxide --version 2>&1 || echo MISSING
-  register: zoxide_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade zoxide {{ zoxide_version }}
-  when: "zoxide_version not in zoxide_current.stdout"
-  block:
-    - name: Download zoxide {{ zoxide_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/ajeetdsouza/zoxide/releases/download/v{{ zoxide_version }}/zoxide-{{ zoxide_version }}-x86_64-unknown-linux-musl.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
+        extra_opts: []
+      - name: delta
+        asset: >-
+          {{
+            latest_github_releases.delta.assets
+            | selectattr('name', 'match', '^delta-.*-x86_64-unknown-linux-gnu\\.tar\\.gz$')
+            | first
+          }}
+        include: ["*/delta"]
+        extra_opts: [--strip-components=1]
+      - name: zoxide
+        asset: >-
+          {{
+            latest_github_releases.zoxide.assets
+            | selectattr('name', 'match', '^zoxide-.*-x86_64-unknown-linux-musl\\.tar\\.gz$')
+            | first
+          }}
         include: [zoxide]
-
-# --- dust ---
-- name: Check installed dust version
-  ansible.builtin.shell: dust --version 2>&1 || echo MISSING
-  register: dust_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade dust {{ dust_version }}
-  when: "dust_version not in dust_current.stdout"
-  block:
-    - name: Download dust {{ dust_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/bootandy/dust/releases/download/v{{ dust_version }}/dust-v{{ dust_version }}-x86_64-unknown-linux-gnu.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: ["dust-v{{ dust_version }}-x86_64-unknown-linux-gnu/dust"]
-        extra_opts:
-          - --strip-components=1
-
-# --- duf ---
-- name: Check installed duf version
-  ansible.builtin.shell: duf --version 2>&1 || echo MISSING
-  register: duf_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade duf {{ duf_version }}
-  when: "duf_version not in duf_current.stdout"
-  block:
-    - name: Download duf {{ duf_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/muesli/duf/releases/download/v{{ duf_version }}/duf_{{ duf_version }}_linux_x86_64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
+        extra_opts: []
+      - name: dust
+        asset: >-
+          {{
+            latest_github_releases.dust.assets
+            | selectattr('name', 'match', '^dust-v.*-x86_64-unknown-linux-gnu\\.tar\\.gz$')
+            | first
+          }}
+        include: ["*/dust"]
+        extra_opts: [--strip-components=1]
+      - name: duf
+        asset: >-
+          {{
+            latest_github_releases.duf.assets
+            | selectattr('name', 'match', '^duf_.*_linux_x86_64\\.tar\\.gz$')
+            | first
+          }}
         include: [duf]
-
-# --- glow ---
-- name: Check installed glow version
-  ansible.builtin.shell: glow --version 2>&1 || echo MISSING
-  register: glow_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade glow {{ glow_version }}
-  when: "glow_version not in glow_current.stdout"
-  block:
-    - name: Download glow {{ glow_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/charmbracelet/glow/releases/download/v{{ glow_version }}/glow_{{ glow_version }}_Linux_x86_64.tar.gz"
-        dest: /tmp
-        remote_src: true
-
-    - name: Move glow binary to /usr/local/bin
-      ansible.builtin.copy:
-        src: "/tmp/glow_{{ glow_version }}_Linux_x86_64/glow"
-        dest: /usr/local/bin/glow
-        mode: '0755'
-        remote_src: true
-
-    - name: Clean up glow temp files
-      ansible.builtin.file:
-        path: "/tmp/glow_{{ glow_version }}_Linux_x86_64"
-        state: absent
-
-# --- just ---
-- name: Check installed just version
-  ansible.builtin.shell: just --version 2>&1 || echo MISSING
-  register: just_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade just {{ just_version }}
-  when: "just_version not in just_current.stdout"
-  block:
-    - name: Download just {{ just_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/casey/just/releases/download/{{ just_version }}/just-{{ just_version }}-x86_64-unknown-linux-musl.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
+        extra_opts: []
+      - name: glow
+        asset: >-
+          {{
+            latest_github_releases.glow.assets
+            | selectattr('name', 'match', '^glow_.*_Linux_x86_64\\.tar\\.gz$')
+            | first
+          }}
+        include: ["*/glow"]
+        extra_opts: [--strip-components=1]
+      - name: just
+        asset: >-
+          {{
+            latest_github_releases.just.assets
+            | selectattr('name', 'match', '^just-.*-x86_64-unknown-linux-musl\\.tar\\.gz$')
+            | first
+          }}
         include: [just]
+        extra_opts: []
+      - name: watchexec
+        asset: >-
+          {{
+            latest_github_releases.watchexec.assets
+            | selectattr('name', 'match', '^watchexec-.*-x86_64-unknown-linux-gnu\\.tar\\.xz$')
+            | first
+          }}
+        include: ["*/watchexec"]
+        extra_opts: [--strip-components=1]
+      - name: hyperfine
+        asset: >-
+          {{
+            latest_github_releases.hyperfine.assets
+            | selectattr('name', 'match', '^hyperfine-v.*-x86_64-unknown-linux-gnu\\.tar\\.gz$')
+            | first
+          }}
+        include: ["*/hyperfine"]
+        extra_opts: [--strip-components=1]
+      - name: gum
+        asset: >-
+          {{
+            latest_github_releases.gum.assets
+            | selectattr('name', 'match', '^gum_.*_Linux_x86_64\\.tar\\.gz$')
+            | first
+          }}
+        include: ["*/gum"]
+        extra_opts: [--strip-components=1]
 
-# --- watchexec ---
-- name: Check installed watchexec version
-  ansible.builtin.shell: watchexec --version 2>&1 || echo MISSING
-  register: watchexec_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade watchexec {{ watchexec_version }}
-  when: "watchexec_version not in watchexec_current.stdout"
-  block:
-    - name: Download watchexec {{ watchexec_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/watchexec/watchexec/releases/download/v{{ watchexec_version }}/watchexec-{{ watchexec_version }}-x86_64-unknown-linux-gnu.tar.xz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: ["watchexec-{{ watchexec_version }}-x86_64-unknown-linux-gnu/watchexec"]
-        extra_opts:
-          - --strip-components=1
-
-# --- tokei (installed via apt in packages.yml) ---
-# Note: tokei GitHub releases have no binaries since v13. Using apt package instead.
-
-# --- hyperfine ---
-- name: Check installed hyperfine version
-  ansible.builtin.shell: hyperfine --version 2>&1 || echo MISSING
-  register: hyperfine_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade hyperfine {{ hyperfine_version }}
-  when: "hyperfine_version not in hyperfine_current.stdout"
-  block:
-    - name: Download hyperfine {{ hyperfine_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/sharkdp/hyperfine/releases/download/v{{ hyperfine_version }}/hyperfine-v{{ hyperfine_version }}-x86_64-unknown-linux-gnu.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: ["hyperfine-v{{ hyperfine_version }}-x86_64-unknown-linux-gnu/hyperfine"]
-        extra_opts:
-          - --strip-components=1
-
-# --- chezmoi ---
-- name: Check installed chezmoi version
-  ansible.builtin.shell: chezmoi --version 2>&1 || echo MISSING
-  register: chezmoi_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade chezmoi {{ chezmoi_version }}
-  when: "chezmoi_version not in chezmoi_current.stdout"
-  block:
-    - name: Download chezmoi {{ chezmoi_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/twpayne/chezmoi/releases/download/v{{ chezmoi_version }}/chezmoi_{{ chezmoi_version }}_linux_amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [chezmoi]
-
-# --- starship ---
-- name: Check installed starship version
-  ansible.builtin.shell: starship --version 2>&1 || echo MISSING
-  register: starship_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade starship {{ starship_version }}
-  when: "starship_version not in starship_current.stdout"
-  block:
-    - name: Download starship {{ starship_version }}
-      ansible.builtin.get_url:
-        url: "https://github.com/starship/starship/releases/download/v{{ starship_version }}/starship-x86_64-unknown-linux-gnu.tar.gz"
-        dest: /tmp/starship.tar.gz
-        mode: "0644"
-
-    - name: Extract starship binary
-      ansible.builtin.unarchive:
-        src: /tmp/starship.tar.gz
-        dest: /usr/local/bin
-        remote_src: true
+      # These projects publish stable "latest/download" asset names.
+      - name: starship
+        asset: >-
+          {{ latest_github_releases.starship.assets
+             | selectattr('name', 'equalto', 'starship-x86_64-unknown-linux-gnu.tar.gz')
+             | first }}
         include: [starship]
-
-    - name: Clean up starship tarball
-      ansible.builtin.file:
-        path: /tmp/starship.tar.gz
-        state: absent
-
-# --- golangci-lint ---
-- name: Check installed golangci-lint version
-  ansible.builtin.shell: golangci-lint --version 2>&1 || echo MISSING
-  register: golangci_lint_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade golangci-lint {{ golangci_lint_version }}
-  when: "golangci_lint_version not in golangci_lint_current.stdout"
-  block:
-    - name: Download golangci-lint {{ golangci_lint_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/golangci/golangci-lint/releases/download/v{{ golangci_lint_version }}/golangci-lint-{{ golangci_lint_version }}-linux-amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: ["golangci-lint-{{ golangci_lint_version }}-linux-amd64/golangci-lint"]
-        extra_opts:
-          - --strip-components=1
-
-- name: Remove ~/go/bin/golangci-lint shadow
-  ansible.builtin.file:
-    path: "{{ dev_user_home }}/go/bin/golangci-lint"
-    state: absent
-
-# --- gum (charmbracelet) ---
-- name: Check installed gum version
-  ansible.builtin.shell: gum --version 2>&1 || echo MISSING
-  register: gum_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade gum {{ gum_version }}
-  when: "gum_version not in gum_current.stdout"
-  block:
-    - name: Download gum {{ gum_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/charmbracelet/gum/releases/download/v{{ gum_version }}/gum_{{ gum_version }}_Linux_x86_64.tar.gz"
-        dest: /tmp
-        remote_src: true
-
-    - name: Move gum binary to /usr/local/bin
-      ansible.builtin.copy:
-        src: "/tmp/gum_{{ gum_version }}_Linux_x86_64/gum"
-        dest: /usr/local/bin/gum
-        mode: '0755'
-        remote_src: true
-
-    - name: Clean up gum temp files
-      ansible.builtin.file:
-        path: "/tmp/gum_{{ gum_version }}_Linux_x86_64"
-        state: absent
-
-- name: Remove ~/go/bin/gum shadow
-  ansible.builtin.file:
-    path: "{{ dev_user_home }}/go/bin/gum"
-    state: absent
-
-# --- talhelper ---
-- name: Check installed talhelper version
-  ansible.builtin.shell: talhelper version 2>&1 || echo MISSING
-  register: talhelper_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade talhelper {{ talhelper_version }}
-  when: "talhelper_version not in talhelper_current.stdout"
-  block:
-    - name: Download talhelper {{ talhelper_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/budimanjojo/talhelper/releases/download/v{{ talhelper_version }}/talhelper_linux_amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
+        extra_opts: []
+      - name: talhelper
+        asset: >-
+          {{ latest_github_releases.talhelper.assets
+             | selectattr('name', 'equalto', 'talhelper_linux_amd64.tar.gz')
+             | first }}
         include: [talhelper]
+        extra_opts: []
 
-- name: Remove ~/go/bin/talhelper shadow
+- name: Assert latest CLI asset resolution
+  ansible.builtin.assert:
+    that:
+      - item.asset | default({}) | length > 0
+      - item.asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "No current Linux asset matched for {{ item.name }}"
+  loop: "{{ latest_cli_archives }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Download latest CLI archives
+  ansible.builtin.get_url:
+    url: "{{ item.asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/{{ item.name }}-{{ item.asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ item.asset.digest }}"
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+  loop: "{{ latest_cli_archives }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install latest CLI archives
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/{{ item.name }}-{{ item.asset.digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: "{{ item.include }}"
+    extra_opts: "{{ item.extra_opts | default([]) }}"
+  loop: "{{ latest_cli_archives }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Define latest direct CLI binaries
+  ansible.builtin.set_fact:
+    latest_cli_direct:
+      - name: yq
+        asset: >-
+          {{ latest_github_releases.yq.assets
+             | selectattr('name', 'equalto', 'yq_linux_amd64') | first }}
+        dest: /usr/local/bin/yq
+      - name: chezmoi
+        asset: >-
+          {{ latest_github_releases.chezmoi.assets
+             | selectattr('name', 'equalto', 'chezmoi-linux-amd64') | first }}
+        dest: /usr/local/bin/chezmoi
+
+- name: Assert latest direct CLI asset resolution
+  ansible.builtin.assert:
+    that:
+      - item.asset | default({}) | length > 0
+      - item.asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "No verified current direct CLI asset matched for {{ item.name }}"
+  loop: "{{ latest_cli_direct }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install latest direct CLI binaries
+  ansible.builtin.get_url:
+    url: "{{ item.asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/{{ item.name }}-{{ item.asset.digest | regex_replace('^sha256:', '') }}.binary"
+    checksum: "{{ item.asset.digest }}"
+    mode: "0644"
+    force: false
+  loop: "{{ latest_cli_direct }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Atomically install latest direct CLI binaries
+  ansible.builtin.copy:
+    src: "{{ workstation_update_artifact_cache_dir }}/{{ item.name }}-{{ item.asset.digest | regex_replace('^sha256:', '') }}.binary"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    mode: "0755"
+  loop: "{{ latest_cli_direct }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Resolve latest golangci-lint Linux archive
+  ansible.builtin.set_fact:
+    _latest_golangci_lint_asset: >-
+      {{
+        latest_github_releases.golangci_lint.assets
+        | selectattr('name', 'match', '^golangci-lint-.*-linux-amd64\\.tar\\.gz$')
+        | first
+      }}
+
+- name: Require latest golangci-lint Linux archive
+  ansible.builtin.assert:
+    that:
+      - _latest_golangci_lint_asset | default({}) | length > 0
+      - _latest_golangci_lint_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "golangci-lint did not publish a current Linux amd64 archive"
+
+- name: Download latest golangci-lint
+  ansible.builtin.get_url:
+    url: "{{ _latest_golangci_lint_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/golangci-lint-{{ _latest_golangci_lint_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ _latest_golangci_lint_asset.digest }}"
+    mode: "0644"
+    force: false
+
+- name: Install latest golangci-lint
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/golangci-lint-{{ _latest_golangci_lint_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["*/golangci-lint"]
+    extra_opts: [--strip-components=1]
+
+- name: Remove user shadows for catalog-managed CLI binaries
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/go/bin/talhelper"
+    path: "{{ item }}"
     state: absent
+  loop:
+    - "{{ dev_user_home }}/go/bin/golangci-lint"
+    - "{{ dev_user_home }}/go/bin/gum"
+    - "{{ dev_user_home }}/go/bin/talhelper"
 
-# --- filebrowser (workspace profile) ---
-- name: Check installed filebrowser version
-  ansible.builtin.shell: filebrowser version 2>&1 || filebrowser --version 2>&1 || echo MISSING
-  register: filebrowser_current
-  changed_when: false
-  failed_when: false
+- name: Download latest filebrowser for workspace profile
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.filebrowser.assets
+          | selectattr('name', 'equalto', 'linux-amd64-filebrowser.tar.gz')
+          | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/filebrowser-{{ (latest_github_releases.filebrowser.assets | selectattr('name', 'equalto', 'linux-amd64-filebrowser.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.filebrowser.assets
+          | selectattr('name', 'equalto', 'linux-amd64-filebrowser.tar.gz')
+          | first).digest }}
+    mode: "0644"
+    force: false
   when: workstation_profile == 'workspace'
 
-- name: Install/upgrade filebrowser {{ filebrowser_version }}
-  when:
-    - workstation_profile == 'workspace'
-    - filebrowser_version not in filebrowser_current.stdout
-  block:
-    - name: Download filebrowser {{ filebrowser_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/filebrowser/filebrowser/releases/download/v{{ filebrowser_version }}/linux-amd64-filebrowser.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [filebrowser]
+- name: Install latest filebrowser for workspace profile
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/filebrowser-{{ (latest_github_releases.filebrowser.assets | selectattr('name', 'equalto', 'linux-amd64-filebrowser.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [filebrowser]
+  when: workstation_profile == 'workspace'

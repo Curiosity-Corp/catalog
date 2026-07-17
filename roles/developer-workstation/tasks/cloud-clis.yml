@@ -6,63 +6,186 @@
 # =============================================================================
 
 # --- Azure CLI ---
-- name: Install Azure CLI  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-    executable: /bin/bash
-    creates: /usr/bin/az
+- name: Upgrade Azure CLI to the repository latest  # noqa: package-latest
+  ansible.builtin.apt:
+    name: azure-cli
+    state: latest
+    update_cache: true
 
 # --- AWS CLI v2 ---
+# The AWS installer supports in-place updates with --update. Download the
+# versioned archive URL on every pull (get_url uses validators when unchanged)
+# so an install that predates the catalog is updated too.
+- name: Create isolated AWS CLI verification keyring
+  ansible.builtin.file:
+    path: "{{ workstation_update_state_dir }}/aws-cli-gnupg"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check for the AWS CLI signing key
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --homedir
+      - "{{ workstation_update_state_dir }}/aws-cli-gnupg"
+      - --batch
+      - --list-keys
+      - A6310ACC4672475C
+  register: _aws_cli_key_present
+  changed_when: false
+  failed_when: false
+
+- name: Import the AWS CLI signing key by its pinned fingerprint
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --homedir
+      - "{{ workstation_update_state_dir }}/aws-cli-gnupg"
+      - --batch
+      - --keyserver
+      - hkps://keys.openpgp.org
+      - --recv-keys
+      - A6310ACC4672475C
+  register: _aws_cli_key_import
+  changed_when: "'not changed' not in (_aws_cli_key_import.stderr | default(''))"
+  when: _aws_cli_key_present.rc != 0
+
+- name: Verify the AWS CLI signing key fingerprint
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --homedir
+      - "{{ workstation_update_state_dir }}/aws-cli-gnupg"
+      - --batch
+      - --fingerprint
+      - A6310ACC4672475C
+  register: _aws_cli_key_fingerprint
+  changed_when: false
+  failed_when: >-
+    'FB5DB77FD5C118B80511ADA8A6310ACC4672475C' not in
+    (_aws_cli_key_fingerprint.stdout | default('') | regex_replace('[\n\r ]', ''))
+
+- name: Download AWS CLI v2 installer
+  ansible.builtin.get_url:
+    url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+    dest: "{{ workstation_update_artifact_cache_dir }}/awscliv2.zip"
+    mode: "0644"
+    # This is AWS's moving latest artifact URL, not a digest-addressed cache
+    # path. Revalidate it every pull so AWS CLI cannot remain stale forever.
+    force: true
+  register: _aws_cli_archive
+
+- name: Download AWS CLI v2 installer signature
+  ansible.builtin.get_url:
+    url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip.sig
+    dest: "{{ workstation_update_artifact_cache_dir }}/awscliv2.zip.sig"
+    mode: "0644"
+    force: true
+
+- name: Verify AWS CLI v2 installer signature
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --homedir
+      - "{{ workstation_update_state_dir }}/aws-cli-gnupg"
+      - --batch
+      - --status-fd
+      - "1"
+      - --verify
+      - "{{ workstation_update_artifact_cache_dir }}/awscliv2.zip.sig"
+      - "{{ workstation_update_artifact_cache_dir }}/awscliv2.zip"
+  register: _aws_cli_signature
+  changed_when: false
+  failed_when: >-
+    _aws_cli_signature.rc != 0 or
+    'VALIDSIG FB5DB77FD5C118B80511ADA8A6310ACC4672475C' not in
+    ((_aws_cli_signature.stdout | default('')) | regex_replace('[\n\r ]', ''))
+
+- name: Check extracted AWS CLI installer
+  ansible.builtin.stat:
+    path: /tmp/aws/install
+  register: _aws_cli_installer
+
+- name: Remove stale extracted AWS CLI installer
+  ansible.builtin.file:
+    path: /tmp/aws
+    state: absent
+  when:
+    - _aws_cli_archive.changed
+    - _aws_cli_installer.stat.exists
+
+- name: Extract AWS CLI v2 installer
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/awscliv2.zip"
+    dest: /tmp
+    remote_src: true
+  when: _aws_cli_archive.changed or not _aws_cli_installer.stat.exists
+
 - name: Check if AWS CLI is installed
   ansible.builtin.stat:
     path: /usr/local/bin/aws
   register: aws_cli_installed
 
-- name: Download AWS CLI v2
-  ansible.builtin.unarchive:
-    src: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
-    dest: /tmp
-    remote_src: true
-  when: not aws_cli_installed.stat.exists
-
-- name: Install AWS CLI v2
+- name: Install or update AWS CLI v2
   ansible.builtin.command:
-    cmd: /tmp/aws/install
-    creates: /usr/local/bin/aws
-  when: not aws_cli_installed.stat.exists
+    cmd: >-
+      /tmp/aws/install{{ ' --update' if aws_cli_installed.stat.exists else '' }}
+  register: _aws_cli_install
+  changed_when: >-
+    'latest version' not in (_aws_cli_install.stdout | default('') | lower)
 
-- name: Clean up AWS CLI installer
+- name: Clean up AWS CLI installer files
   ansible.builtin.file:
-    path: /tmp/aws
+    path: "{{ item }}"
     state: absent
-  when: not aws_cli_installed.stat.exists
+  loop:
+    - /tmp/aws
 
 # --- GitLab CLI (glab) ---
-- name: Check installed glab version
-  ansible.builtin.shell: glab version 2>&1 || echo MISSING
-  register: glab_current
+- name: Query latest GitLab CLI release
+  ansible.builtin.uri:
+    url: https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest
+    return_content: true
+  register: _glab_release
   changed_when: false
-  failed_when: false
 
-- name: Install/upgrade glab {{ glab_version }}
-  when: "glab_version not in glab_current.stdout"
-  block:
-    - name: Download glab {{ glab_version }}
-      ansible.builtin.unarchive:
-        src: "https://gitlab.com/gitlab-org/cli/-/releases/v{{ glab_version }}/downloads/glab_{{ glab_version }}_linux_amd64.tar.gz"
-        dest: /tmp
-        remote_src: true
+- name: Select latest GitLab CLI Linux archive
+  ansible.builtin.set_fact:
+    _glab_latest_url: >-
+      {{
+        _glab_release.json.assets.links
+        | selectattr('name', 'match', '^glab_.*_linux_amd64\\.tar\\.gz$')
+        | map(attribute='url')
+        | first
+      }}
+    _glab_checksums_url: >-
+      {{
+        _glab_release.json.assets.links
+        | selectattr('name', 'equalto', 'checksums.txt')
+        | map(attribute='url')
+        | first
+      }}
+    _glab_release_version: "{{ _glab_release.json.tag_name | regex_replace('^v', '') }}"
 
-    - name: Move glab binary to /usr/local/bin
-      ansible.builtin.copy:
-        src: "/tmp/bin/glab"
-        dest: /usr/local/bin/glab
-        mode: "0755"
-        remote_src: true
+- name: Require latest GitLab CLI asset
+  ansible.builtin.assert:
+    that: _glab_latest_url | default('') | length > 0
+    fail_msg: "GitLab did not publish a current amd64 glab archive"
 
-    - name: Clean up glab temp files
-      ansible.builtin.file:
-        path: /tmp/bin/glab
-        state: absent
+- name: Download latest GitLab CLI
+  ansible.builtin.get_url:
+    url: "{{ _glab_latest_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/glab-{{ _glab_release_version }}.archive"
+    checksum: "sha256:{{ _glab_checksums_url }}"
+    mode: "0644"
+    force: false
+
+- name: Install latest GitLab CLI
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/glab-{{ _glab_release_version }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [glab]
+    extra_opts: [--strip-components=1]

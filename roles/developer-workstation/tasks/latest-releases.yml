@@ -1,0 +1,113 @@
+---
+# =============================================================================
+# Upstream release discovery
+# =============================================================================
+# The lab deliberately has no application release pins. Query the upstream
+# release APIs once per ansible-pull and let each installer select its native
+# Linux asset from the current release.
+# =============================================================================
+
+- name: Query latest GitHub releases for binary applications
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ item.value }}/releases/latest"
+    headers: >-
+      {{
+        {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'curiosity-catalog-workstation-updater'
+        }
+        | combine(
+            ({'Authorization': 'Bearer ' ~ github_api_token}
+             if (github_api_token | default('') | length > 0) else {})
+          )
+      }}
+    return_content: true
+    status_code: [200]
+  loop: "{{ latest_github_repositories | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} ({{ item.value }})"
+  register: _latest_release_queries
+  retries: 3
+  delay: 2
+  until: (_latest_release_queries.status | default(0)) == 200
+  failed_when: false
+  changed_when: false
+
+- name: Index latest GitHub release metadata
+  ansible.builtin.set_fact:
+    latest_github_releases: >-
+      {{ latest_github_releases | default({}) |
+         combine({item.item.key: item.json}) }}
+  loop: "{{ _latest_release_queries.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - item.status | default(0) == 200
+    - item.json.tag_name is defined
+
+- name: Require latest metadata for every binary release source
+  ansible.builtin.assert:
+    that:
+      - item in (latest_github_releases | default({}))
+      - (latest_github_releases[item].assets | default([]) | length) > 0
+    fail_msg: >-
+      Could not resolve a current upstream release for {{ item }}. The lab
+      refuses to fall back to a stale version or silently keep an old binary.
+  loop: "{{ latest_github_repositories.keys() | list }}"
+
+- name: Build the compact upstream release manifest
+  ansible.builtin.set_fact:
+    latest_github_release_summary: >-
+      {{ latest_github_release_summary | default({}) | combine({
+        item.key: {
+          'repository': latest_github_repositories[item.key],
+          'tag_name': item.value.tag_name,
+          'name': item.value.name | default(item.value.tag_name),
+          'published_at': item.value.published_at | default(''),
+          'html_url': item.value.html_url | default(''),
+          'assets': item.value.assets | map(attribute='name') | list
+        }
+      }) }}
+  loop: "{{ latest_github_releases | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Index verified GitHub asset digests
+  ansible.builtin.set_fact:
+    latest_github_asset_checksums: >-
+      {{ latest_github_asset_checksums | default({}) | combine({
+        item.1.browser_download_url: item.1.digest
+      }) }}
+  with_subelements:
+    - "{{ latest_github_releases | dict2items }}"
+    - value.assets
+  when:
+    - item.1.browser_download_url is defined
+    - item.1.digest is defined
+    - item.1.digest is match('^sha256:[0-9a-f]{64}$')
+
+- name: Require GitHub asset digests for verification
+  ansible.builtin.assert:
+    that:
+      - latest_github_asset_checksums | default({}) | length > 0
+    fail_msg: >-
+      GitHub returned no SHA-256 asset digests. The workstation refuses to
+      install release artifacts without a verifiable digest.
+
+- name: Persist the verified upstream release manifest locally
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'schema': 'curiosity.workstation.upstream/v1',
+          'resolved_at': ansible_date_time.iso8601,
+          'catalog_commit': workstation_catalog_commit,
+          'releases': latest_github_release_summary,
+          'asset_checksums': latest_github_asset_checksums
+        } | to_nice_json
+      }}
+    dest: "{{ workstation_update_state_dir }}/observations/{{ workstation_update_run_id }}-upstream.json"
+    owner: root
+    group: root
+    mode: "0600"

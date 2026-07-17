@@ -3,22 +3,25 @@
 # AI Coding Assistants
 # =============================================================================
 # CLI tools for AI-assisted development, plus provider configuration.
+# The package update is user-scoped and explicitly uses npm's latest state so
+# existing installs are refreshed on every nightly ansible-pull.
 # =============================================================================
 
-- name: Install AI coding assistants
+- name: Update user-scoped AI coding assistants to latest
   community.general.npm:
     name: "{{ item }}"
     global: true
-    state: present
-  loop:
-    - "@anthropic-ai/claude-code"
-    - "@google/gemini-cli"
-    - "@openai/codex"
-    - "@qwen-code/qwen-code"
+    state: latest
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  loop: "{{ ai_assistant_packages }}"
   register: _ai_npm_result
-  failed_when:
-    - _ai_npm_result is failed
-    - "'EACCES' not in (_ai_npm_result.msg | default(''))"
+  failed_when: _ai_npm_result is failed
 
 # =============================================================================
 # Qwen Code — NVIDIA NIM Provider Configuration

@@ -28,23 +28,35 @@
     state: link
     force: true
 
+# User-scoped npm packages are the canonical owner of Node.js CLI commands.
+# Put that bin directory before system-wide shims so every login shell runs the
+# copy that the nightly update task actually refreshes.
+- name: Put user npm global binaries first in login-shell PATH
+  ansible.builtin.copy:
+    dest: /etc/profile.d/curiosity-npm-global.sh
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the Curiosity developer-workstation role.
+      if [ -d "$HOME/.npm-global/bin" ]; then
+        export PATH="$HOME/.npm-global/bin:$PATH"
+      fi
+
 # --- Oh My Zsh ---
 # Installed in $HOME regardless of dotfiles strategy. chezmoi's .zshrc
 # sources $HOME/.oh-my-zsh/oh-my-zsh.sh if present.
-- name: Check if Oh My Zsh is installed
-  ansible.builtin.stat:
-    path: "{{ dev_user_home }}/.oh-my-zsh"
-  register: omz_installed
-
-- name: Install Oh My Zsh
-  ansible.builtin.shell:
-    cmd: sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+- name: Install or update Oh My Zsh from its Git repository
+  ansible.builtin.git:
+    repo: https://github.com/ohmyzsh/ohmyzsh.git
+    dest: "{{ dev_user_home }}/.oh-my-zsh"
+    depth: 1
+    version: master
+    force: false
   become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
-  when: not omz_installed.stat.exists
-  changed_when: true
 
 - name: Install zsh-autosuggestions plugin
   ansible.builtin.git:

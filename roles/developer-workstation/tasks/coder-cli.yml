@@ -86,12 +86,23 @@
   # coder.com/install.sh) always downloads the standalone binary matching
   # this Coder server and takes no --method/--version flags; passing either
   # makes it exit 1 with "Unknown flag" before downloading anything. Keep
-  # failed_when: false as a safety net for transient download hiccups, since
-  # the version check at the top of this task is the authoritative
-  # idempotence gate and will simply retry the install on the next run.
-  failed_when: false
+  # the deployment-version verification below as the authoritative gate.
+  failed_when: coder_cli_install_result.rc != 0
   changed_when: coder_cli_install_result.rc == 0
   when: coder_cli_needs_upgrade
+
+- name: Verify Coder CLI matches the live deployment version
+  ansible.builtin.command:
+    cmd: /usr/local/bin/coder version --output json
+  register: _coder_cli_post_install_version
+  changed_when: false
+  failed_when: >-
+    _coder_cli_post_install_version.rc != 0 or
+    coder_cli_deployment_version not in
+    (_coder_cli_post_install_version.stdout | default(''))
+  when:
+    - coder_cli_needs_upgrade
+    - coder_cli_deployment_version | default('') | length > 0
 
 - name: Clean up Coder CLI installer
   ansible.builtin.file:

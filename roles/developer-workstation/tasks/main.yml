@@ -82,6 +82,13 @@
     mode: "0750"
     recurse: false
 
+- name: Initialize workstation update control plane
+  ansible.builtin.include_tasks:
+    file: update-foundation.yml
+    apply:
+      tags: [updates, releases, provenance, rollback]
+  tags: [updates, releases, provenance, rollback]
+
 # =============================================================================
 # Task Includes
 # =============================================================================
@@ -129,109 +136,59 @@
   tags: [packages]
   when: workstation_profile == 'byod-kiosk'
 
-- name: Include Coder CLI installation
-  ansible.builtin.include_tasks: coder-cli.yml
-  tags: [coder]
-  when: coder_cli_enabled | default(true)
+- name: Resolve upstream releases and evaluate the update ring
+  tags: [updates, releases, rings]
+  block:
+    - name: Include upstream latest-release discovery
+      ansible.builtin.include_tasks:
+        file: latest-releases.yml
+        apply:
+          tags: [updates, releases]
+      tags: [updates, releases]
+      when: workstation_profile in ['desktop', 'workspace']
 
-- name: Include cloud CLI installation
-  ansible.builtin.include_tasks: cloud-clis.yml
-  tags: [cloud]
-  when:
-    - workstation_profile in ['desktop', 'workspace']
-    - cloud_clis_enabled | default(true)
+    - name: Evaluate workstation update ring
+      ansible.builtin.include_tasks:
+        file: update-ring.yml
+        apply:
+          tags: [updates, releases, rings]
+      tags: [updates, releases, rings]
+      when: workstation_profile in ['desktop', 'workspace']
+  rescue:
+    - name: Record upstream resolution failure
+      ansible.builtin.set_fact:
+        workstation_update_status: failed
+        workstation_update_failure:
+          task: "{{ ansible_failed_task.name | default('upstream release resolution') }}"
+          message: "{{ ansible_failed_result.msg | default('upstream release resolution failed') }}"
+          recorded_at: "{{ ansible_date_time.iso8601 }}"
 
-- name: Include Kubernetes tools
-  ansible.builtin.include_tasks: kubernetes.yml
-  tags: [kubernetes]
-  when: workstation_profile in ['desktop', 'workspace']
+    - name: Write local manifest for upstream resolution failure
+      ansible.builtin.include_tasks: update-manifest.yml
 
-- name: Include DevOps utilities
-  ansible.builtin.include_tasks: devops.yml
-  tags: [devops]
-  when: workstation_profile in ['desktop', 'workspace']
-
-- name: Include language runtimes
-  ansible.builtin.include_tasks: languages.yml
-  tags: [languages]
-  when: workstation_profile in ['desktop', 'workspace']
-
-- name: Include Node.js packages
-  ansible.builtin.include_tasks: node-packages.yml
-  tags: [node]
-  when: workstation_profile in ['desktop', 'workspace']
-
-- name: Include Python tools
-  ansible.builtin.include_tasks: python-tools.yml
-  tags: [python]
-  when: workstation_profile in ['desktop', 'workspace']
-
-- name: Include scientific Python and data-science tools
-  ansible.builtin.include_tasks: science-tools.yml
-  tags: [science, data-science]
-  when: workstation_profile in ['desktop', 'workspace']
-
-- name: Include modern CLI tools
-  ansible.builtin.include_tasks: cli-tools.yml
-  tags: [cli]
-  when: workstation_profile in ['desktop', 'workspace']
-
-- name: Include testing frameworks
-  ansible.builtin.include_tasks: testing.yml
-  tags: [testing]
-  when:
-    - >-
-      workstation_profile in ['desktop', 'workspace'] or
-      (thin_client_playwright_enabled | default(false))
-
-- name: Include AI coding assistants
-  ansible.builtin.include_tasks: ai-assistants.yml
-  tags: [ai]
-  when: workstation_profile in ['desktop', 'workspace']
-
-- name: Include missionctl
-  ansible.builtin.include_tasks: missionctl.yml
-  tags: [missionctl]
-  when:
-    - workstation_profile == 'thin-client'
-    - missionctl_enabled | default(false)
+    - name: Fail the pull after recording upstream resolution failure
+      ansible.builtin.fail:
+        msg: "Upstream release resolution failed; no stale fallback was installed"
 
 - name: Include internal CA trust
   ansible.builtin.include_tasks: internal-cas.yml
   tags: [security, certificates]
   when: workstation_profile in ['thin-client', 'byod-kiosk']
 
-- name: Include security tools
-  ansible.builtin.include_tasks: security.yml
-  tags: [security]
-  when: workstation_profile == 'desktop'
+- name: Run workstation software update transaction
+  tags: [updates, packages, releases, provenance, rollback]
+  block:
+    - name: Apply managed software updates
+      ansible.builtin.include_tasks: managed-updates.yml
 
-- name: Include free/open-source maintenance stack (up-to-date, clean)
-  ansible.builtin.include_tasks: maintenance.yml
-  tags: [maintenance]
-  when: workstation_profile == 'desktop'
-
-- name: Include self-healing tasks (failed-unit sweep, smartd)
-  ansible.builtin.include_tasks: self-healing.yml
-  tags: [self-healing]
-  when: workstation_profile == 'desktop'
-
-- name: Include VS Code extensions
-  ansible.builtin.include_tasks: vscode-extensions.yml
-  tags: [vscode, extensions]
-  when: workstation_profile == 'desktop'
-
-- name: Include collaboration tools (Mattermost, Firefox extensions)
-  ansible.builtin.include_tasks: collaboration.yml
-  tags: [collaboration]
-  when: workstation_profile == 'desktop'
-
-- name: Include WeeChat TUI chat client
-  ansible.builtin.include_tasks: weechat.yml
-  tags: [weechat, chat]
-  when:
-    - workstation_profile != 'thin-client'
-    - weechat_enabled | default(false)
+    - name: Verify managed software after update
+      ansible.builtin.include_tasks: update-health.yml
+  rescue:
+    - name: Restore managed software after a failed update transaction
+      ansible.builtin.include_tasks: update-rollback.yml
+  always:
+    - name: Write local workstation update manifest
+      ansible.builtin.include_tasks: update-manifest.yml
 
 - name: Include system tuning (swap, earlyoom, sysctl)
   ansible.builtin.include_tasks: system-tuning.yml

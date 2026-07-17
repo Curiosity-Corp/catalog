@@ -1,0 +1,36 @@
+---
+# =============================================================================
+# System Package Updates
+# =============================================================================
+# APT's unattended-upgrades defaults to security origins on many Ubuntu
+# images. That is not enough to keep catalog-installed desktop and developer
+# applications current, so the daily ansible-pull also performs a safe upgrade
+# of every installed APT package from the configured repositories.
+#
+# `safe` never removes packages. Kernel/service changes may still require a
+# reboot; the role deliberately does not reboot a user's workstation.
+# =============================================================================
+
+- name: Upgrade installed APT packages
+  ansible.builtin.apt:
+    upgrade: safe
+    update_cache: true
+    cache_valid_time: 3600
+    autoremove: false
+  when: apt_upgrade_enabled | default(true)
+
+- name: Check whether Snap is installed
+  ansible.builtin.stat:
+    path: /usr/bin/snap
+  register: _snap_installed
+  when: apt_upgrade_enabled | default(true)
+
+- name: Refresh installed Snap packages
+  ansible.builtin.command: snap refresh
+  register: _snap_refresh
+  changed_when: >-
+    'All snaps up to date' not in (_snap_refresh.stdout | default(''))
+  failed_when: false
+  when:
+    - apt_upgrade_enabled | default(true)
+    - _snap_installed.stat.exists

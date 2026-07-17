@@ -9,102 +9,133 @@
   ansible.builtin.include_tasks: internal-cas.yml
 
 # --- Trivy ---
-- name: Check installed trivy version
-  ansible.builtin.shell: trivy --version 2>&1 || echo MISSING
-  register: trivy_current
-  changed_when: false
-  failed_when: false
+- name: Download latest Trivy
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.trivy.assets
+        | selectattr('name', 'match', '^trivy_.*_Linux-64bit\\.tar\\.gz$')
+        | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/trivy-{{ (latest_github_releases.trivy.assets | selectattr('name', 'match', '^trivy_.*_Linux-64bit\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.trivy.assets
+          | selectattr('name', 'match', '^trivy_.*_Linux-64bit\\.tar\\.gz$')
+          | first).digest }}
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade trivy {{ trivy_version }}
-  when: "trivy_version not in trivy_current.stdout"
-  block:
-    - name: Install Trivy v{{ trivy_version }}  # noqa: command-instead-of-module
-      ansible.builtin.shell:
-        cmd: |
-          set -o pipefail
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin v{{ trivy_version }}
-        executable: /bin/bash
-      changed_when: true
+- name: Install latest Trivy
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/trivy-{{ (latest_github_releases.trivy.assets | selectattr('name', 'match', '^trivy_.*_Linux-64bit\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [trivy]
 
 # --- kubeseal (Sealed Secrets) ---
-- name: Check installed kubeseal version
-  ansible.builtin.shell: kubeseal --version 2>&1 || echo MISSING
-  register: kubeseal_current
-  changed_when: false
-  failed_when: false
+- name: Download latest kubeseal
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.kubeseal.assets
+        | selectattr('name', 'match', '^kubeseal-.*-linux-amd64\\.tar\\.gz$')
+        | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubeseal-{{ (latest_github_releases.kubeseal.assets | selectattr('name', 'match', '^kubeseal-.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.kubeseal.assets
+          | selectattr('name', 'match', '^kubeseal-.*-linux-amd64\\.tar\\.gz$')
+          | first).digest }}
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade kubeseal {{ kubeseal_version }}
-  when: "kubeseal_version not in kubeseal_current.stdout"
-  block:
-    - name: Download kubeseal {{ kubeseal_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/bitnami-labs/sealed-secrets/releases/download/v{{ kubeseal_version }}/kubeseal-{{ kubeseal_version }}-linux-amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [kubeseal]
+- name: Install latest kubeseal
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/kubeseal-{{ (latest_github_releases.kubeseal.assets | selectattr('name', 'match', '^kubeseal-.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["*/kubeseal"]
+    extra_opts: [--strip-components=1]
 
 # =============================================================================
 # Post-Quantum age + SOPS
 # =============================================================================
-# age v1.3.1+ is required for PQ hybrid keys (ML-KEM-768 + X25519).
-# SOPS must be built from main to embed filippo.io/age v1.3.1.
-# The standard APT age and GitHub release SOPS do NOT support PQ keys.
+# These tools follow the current upstream releases. The latest age release is
+# used for PQ hybrid key support; there is no checked-in compatibility release
+# that can cause a workstation to be rolled back.
 # =============================================================================
 
-# --- age v1.3.1 (PQ support) ---
-- name: Check age version
-  ansible.builtin.command: age --version
-  register: age_version_check
-  changed_when: false
-  failed_when: false
+- name: Resolve latest security tool release assets
+  ansible.builtin.set_fact:
+    _latest_age_asset: >-
+      {{
+        latest_github_releases.age.assets
+        | selectattr('name', 'match', '^age-v.*-linux-amd64\.tar\.gz$')
+        | first
+      }}
+    _latest_sops_asset: >-
+      {{
+        latest_github_releases.sops.assets
+        | selectattr('name', 'match', '^sops-v.*\.linux\.amd64$')
+        | first
+      }}
+    _latest_cosign_asset: >-
+      {{ latest_github_releases.cosign.assets
+         | selectattr('name', 'equalto', 'cosign-linux-amd64') | first }}
+    _latest_step_asset: >-
+      {{ latest_github_releases.step.assets
+         | selectattr('name', 'equalto', 'step_linux_amd64.tar.gz') | first }}
 
-- name: Install age v1.3.1 (PQ hybrid key support)
-  when: age_version_check.rc != 0 or 'v1.3.1' not in (age_version_check.stdout | default(''))
-  block:
-    - name: Download age v1.3.1
-      ansible.builtin.unarchive:
-        src: https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-linux-amd64.tar.gz
-        dest: /tmp
-        remote_src: true
+- name: Require latest security tool assets
+  ansible.builtin.assert:
+    that:
+      - _latest_age_asset | default({}) | length > 0
+      - _latest_sops_asset | default({}) | length > 0
+      - _latest_cosign_asset | default({}) | length > 0
+      - _latest_step_asset | default({}) | length > 0
+      - _latest_age_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+      - _latest_sops_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+      - _latest_cosign_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+      - _latest_step_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "A current upstream security-tool asset could not be resolved"
 
-    - name: Install age and age-keygen
-      ansible.builtin.copy:
-        src: "/tmp/age/{{ item }}"
-        dest: "/usr/local/bin/{{ item }}"
-        mode: "0755"
-        remote_src: true
-      loop:
-        - age
-        - age-keygen
+# --- age (PQ support) ---
+- name: Install latest age and age-keygen
+  ansible.builtin.get_url:
+    url: "{{ _latest_age_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/age-{{ _latest_age_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ _latest_age_asset.digest }}"
+    mode: "0644"
+    force: false
 
-    - name: Clean up age temp files
-      ansible.builtin.file:
-        path: /tmp/age
-        state: absent
+- name: Extract latest age and age-keygen
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/age-{{ _latest_age_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["*/age", "*/age-keygen"]
+    extra_opts: [--strip-components=1]
 
-# --- SOPS v3 (version-checked, direct download, PQ support) ---
-# Downloads the GitHub release binary. Compares installed version and removes
-# any ~/go/bin/sops shadow to ensure the catalog-managed version is used.
-- name: Check installed sops version  # noqa: risky-shell-pipe
-  ansible.builtin.shell: sops --version 2>&1 | head -1 || echo MISSING
-  register: sops_current
-  changed_when: false
-  failed_when: false
+# --- SOPS ---
+- name: Install latest SOPS
+  ansible.builtin.get_url:
+    url: "{{ _latest_sops_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/sops-{{ _latest_sops_asset.digest | regex_replace('^sha256:', '') }}"
+    checksum: "{{ _latest_sops_asset.digest }}"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade sops {{ sops_version }}
-  when: "'sops ' ~ sops_version not in sops_current.stdout"
-  block:
-    - name: Download sops {{ sops_version }}
-      ansible.builtin.get_url:
-        url: "https://github.com/getsops/sops/releases/download/v{{ sops_version }}/sops-v{{ sops_version }}.linux.amd64"
-        dest: /usr/local/bin/sops
-        mode: "0755"
+- name: Atomically install latest SOPS
+  ansible.builtin.copy:
+    src: "{{ workstation_update_artifact_cache_dir }}/sops-{{ _latest_sops_asset.digest | regex_replace('^sha256:', '') }}"
+    dest: /usr/local/bin/sops
+    remote_src: true
+    mode: "0755"
 
-    - name: Remove ~/go/bin/sops shadow (outdated catalog-managed alternative)
-      ansible.builtin.file:
-        path: "{{ dev_user_home }}/go/bin/sops"
-        state: absent
+- name: Remove ~/go/bin/sops shadow (outdated alternative)
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/go/bin/sops"
+    state: absent
 
 # --- PQ age keypair generation (per-user, idempotent) ---
 # Uses ~/.keys/age.key (org convention). Skips if any age key already exists.
@@ -167,64 +198,37 @@
           — Send this to the infrastructure admin to be added as a SOPS recipient.
 
 # --- cosign ---
-- name: Check installed cosign version
-  ansible.builtin.shell: cosign version 2>&1 || echo MISSING
-  register: cosign_current
-  changed_when: false
-  failed_when: false
+- name: Install latest cosign
+  ansible.builtin.get_url:
+    url: "{{ _latest_cosign_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/cosign-{{ _latest_cosign_asset.digest | regex_replace('^sha256:', '') }}"
+    checksum: "{{ _latest_cosign_asset.digest }}"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade cosign {{ cosign_version }}
-  when: "cosign_version not in cosign_current.stdout"
-  block:
-    - name: Download cosign {{ cosign_version }}
-      ansible.builtin.get_url:
-        url: "https://github.com/sigstore/cosign/releases/download/v{{ cosign_version }}/cosign-linux-amd64"
-        dest: /usr/local/bin/cosign
-        mode: "0755"
+- name: Atomically install latest cosign
+  ansible.builtin.copy:
+    src: "{{ workstation_update_artifact_cache_dir }}/cosign-{{ _latest_cosign_asset.digest | regex_replace('^sha256:', '') }}"
+    dest: /usr/local/bin/cosign
+    remote_src: true
+    mode: "0755"
 
 # --- step-cli ---
-- name: Check installed step version
-  ansible.builtin.shell: step version 2>&1 || echo MISSING
-  register: step_current
-  changed_when: false
-  failed_when: false
+- name: Download latest step-cli
+  ansible.builtin.get_url:
+    url: "{{ _latest_step_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/step-{{ _latest_step_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ _latest_step_asset.digest }}"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade step {{ step_version }}
-  when: "step_version not in step_current.stdout"
-  block:
-    - name: Download step {{ step_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/smallstep/cli/releases/download/v{{ step_version }}/step_linux_{{ step_version }}_amd64.tar.gz"
-        dest: /tmp
-        remote_src: true
-
-    - name: Move step binary to /usr/local/bin
-      ansible.builtin.copy:
-        src: "/tmp/step_{{ step_version }}/bin/step"
-        dest: /usr/local/bin/step
-        mode: "0755"
-        remote_src: true
-
-    - name: Clean up step temp files
-      ansible.builtin.file:
-        path: "/tmp/step_{{ step_version }}"
-        state: absent
-
-# --- mkcert ---
-- name: Check installed mkcert version
-  ansible.builtin.shell: mkcert --version 2>&1 || echo MISSING
-  register: mkcert_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade mkcert {{ mkcert_version }}
-  when: "mkcert_version not in mkcert_current.stdout"
-  block:
-    - name: Download mkcert {{ mkcert_version }}
-      ansible.builtin.get_url:
-        url: "https://github.com/FiloSottile/mkcert/releases/download/v{{ mkcert_version }}/mkcert-v{{ mkcert_version }}-linux-amd64"
-        dest: /usr/local/bin/mkcert
-        mode: "0755"
+- name: Install latest step-cli
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/step-{{ _latest_step_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["*/bin/step"]
+    extra_opts: [--strip-components=2]
 
 # =============================================================================
 # Free/Open-Source Security Hardening Stack

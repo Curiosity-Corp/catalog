@@ -1,157 +1,215 @@
 ---
 # =============================================================================
-# DevOps Utilities
-# =============================================================================
-# Container, API, and file management tools
+# DevOps utilities (upstream latest releases)
 # =============================================================================
 
 # --- rclone ---
-- name: Check installed rclone version
-  ansible.builtin.shell: rclone version 2>&1 || echo MISSING
-  register: rclone_current
+- name: Resolve latest rclone version
+  ansible.builtin.uri:
+    url: https://downloads.rclone.org/version.txt
+    return_content: true
+  register: _rclone_version_response
   changed_when: false
-  failed_when: false
 
-- name: Install/upgrade rclone {{ rclone_version }}
-  when: "rclone_version not in rclone_current.stdout"
-  block:
-    - name: Download rclone {{ rclone_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/rclone/rclone/releases/download/v{{ rclone_version }}/rclone-v{{ rclone_version }}-linux-amd64.zip"
-        dest: /tmp
-        remote_src: true
+- name: Set latest rclone version
+  ansible.builtin.set_fact:
+    _rclone_latest_version: "{{ _rclone_version_response.content | trim | regex_replace('^rclone ', '') }}"
 
-    - name: Install rclone binary
-      ansible.builtin.copy:
-        src: "/tmp/rclone-v{{ rclone_version }}-linux-amd64/rclone"
-        dest: /usr/local/bin/rclone
-        mode: "0755"
-        remote_src: true
+- name: Download latest rclone
+  ansible.builtin.get_url:
+    url: "https://downloads.rclone.org/{{ _rclone_latest_version }}/rclone-{{ _rclone_latest_version }}-linux-amd64.zip"
+    dest: "{{ workstation_update_artifact_cache_dir }}/rclone-{{ _rclone_latest_version }}.archive"
+    checksum: "sha256:https://downloads.rclone.org/{{ _rclone_latest_version }}/SHA256SUMS"
+    mode: "0644"
+    force: false
 
-    - name: Clean up rclone temp files
-      ansible.builtin.file:
-        path: "/tmp/rclone-v{{ rclone_version }}-linux-amd64"
-        state: absent
+- name: Clear previous rclone extraction directory
+  ansible.builtin.file:
+    path: /var/tmp/curiosity-rclone
+    state: absent
+
+- name: Recreate rclone extraction directory
+  ansible.builtin.file:
+    path: /var/tmp/curiosity-rclone
+    state: directory
+    mode: "0755"
+
+- name: Extract latest rclone
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/rclone-{{ _rclone_latest_version }}.archive"
+    dest: /var/tmp/curiosity-rclone
+    remote_src: true
+
+- name: Find latest rclone binary
+  ansible.builtin.find:
+    paths: /var/tmp/curiosity-rclone
+    patterns: [rclone]
+    recurse: true
+    file_type: file
+  register: _rclone_binary
+
+- name: Install latest rclone
+  ansible.builtin.copy:
+    src: "{{ _rclone_binary.files[0].path }}"
+    dest: /usr/local/bin/rclone
+    mode: "0755"
+    remote_src: true
+  when: _rclone_binary.matched | int > 0
 
 # --- grpcurl ---
-- name: Check installed grpcurl version
-  ansible.builtin.shell: grpcurl --version 2>&1 || echo MISSING
-  register: grpcurl_current
-  changed_when: false
-  failed_when: false
+# grpcurl's release assets predate GitHub's per-asset digest metadata. Build
+# the current module from Go's checksum database instead of accepting an
+# unverifiable release binary. languages.yml runs first in the transaction.
+- name: Ensure the user's Go binary directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/go/bin"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
 
-- name: Install/upgrade grpcurl {{ grpcurl_version }}
-  when: "grpcurl_version not in grpcurl_current.stdout"
-  block:
-    - name: Download grpcurl {{ grpcurl_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/fullstorydev/grpcurl/releases/download/v{{ grpcurl_version }}/grpcurl_{{ grpcurl_version }}_linux_x86_64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [grpcurl]
+- name: Update grpcurl from the latest Go module
+  ansible.builtin.command: /usr/local/go/bin/go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    GOBIN: "{{ dev_user_home }}/go/bin"
+    PATH: "{{ dev_user_home }}/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+  changed_when: true
 
-# --- crane (container registry tool) ---
-- name: Check installed crane version
-  ansible.builtin.shell: crane version 2>&1 || echo MISSING
-  register: crane_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade crane {{ crane_version }}
-  when: "crane_version not in crane_current.stdout"
-  block:
-    - name: Download crane {{ crane_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/google/go-containerregistry/releases/download/v{{ crane_version }}/go-containerregistry_Linux_x86_64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [crane]
+- name: Atomically install grpcurl built from the verified Go module
+  ansible.builtin.copy:
+    src: "{{ dev_user_home }}/go/bin/grpcurl"
+    dest: /usr/local/bin/grpcurl
+    remote_src: true
+    mode: "0755"
 
 # --- OpenTofu ---
-- name: Check installed tofu version
-  ansible.builtin.shell: tofu --version 2>&1 || echo MISSING
-  register: tofu_current
-  changed_when: false
-  failed_when: false
+- name: Download latest OpenTofu
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.tofu.assets
+        | selectattr('name', 'match', '^tofu_.*_linux_amd64\\.zip$')
+        | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/tofu-{{ (latest_github_releases.tofu.assets | selectattr('name', 'match', '^tofu_.*_linux_amd64\\.zip$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.tofu.assets
+          | selectattr('name', 'match', '^tofu_.*_linux_amd64\\.zip$')
+          | first).digest }}
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade tofu {{ tofu_version }}
-  when: "tofu_version not in tofu_current.stdout"
-  block:
-    - name: Download tofu {{ tofu_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/opentofu/opentofu/releases/download/v{{ tofu_version }}/tofu_{{ tofu_version }}_linux_amd64.zip"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [tofu]
+- name: Install latest OpenTofu
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/tofu-{{ (latest_github_releases.tofu.assets | selectattr('name', 'match', '^tofu_.*_linux_amd64\\.zip$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [tofu]
 
-# --- Terraform ---
-- name: Check installed terraform version
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      terraform --version 2>&1 | head -1 | sed 's/Terraform v//' || echo MISSING
-    executable: /bin/bash
-  register: terraform_current
-  changed_when: false
-  failed_when: false
+# --- crane (container registry tool) ---
+- name: Download latest crane bundle
+  ansible.builtin.get_url:
+    url: "{{ (latest_github_releases.crane.assets | selectattr('name', 'equalto', 'go-containerregistry_Linux_x86_64.tar.gz') | first).browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/crane-{{ (latest_github_releases.crane.assets | selectattr('name', 'equalto', 'go-containerregistry_Linux_x86_64.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ (latest_github_releases.crane.assets | selectattr('name', 'equalto', 'go-containerregistry_Linux_x86_64.tar.gz') | first).digest }}"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade terraform {{ terraform_version }}
-  when: "terraform_version not in terraform_current.stdout"
-  block:
-    - name: Download terraform {{ terraform_version }}
-      ansible.builtin.unarchive:
-        src: "https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_linux_amd64.zip"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [terraform]
-
-# --- Vault ---
-- name: Check installed vault version
-  ansible.builtin.shell: vault version 2>&1 || echo MISSING
-  register: vault_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade vault {{ vault_version }}
-  when: "vault_version not in vault_current.stdout"
-  block:
-    - name: Download vault {{ vault_version }}
-      ansible.builtin.unarchive:
-        src: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_amd64.zip"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [vault]
-
-# --- Packer ---
-- name: Check installed packer version
-  ansible.builtin.shell: packer version 2>&1 || echo MISSING
-  register: packer_current
-  changed_when: false
-  failed_when: false
-
-- name: Install/upgrade packer {{ packer_version }}
-  when: "packer_version not in packer_current.stdout"
-  block:
-    - name: Download packer {{ packer_version }}
-      ansible.builtin.unarchive:
-        src: "https://releases.hashicorp.com/packer/{{ packer_version }}/packer_{{ packer_version }}_linux_amd64.zip"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [packer]
+- name: Install latest crane
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/crane-{{ (latest_github_releases.crane.assets | selectattr('name', 'equalto', 'go-containerregistry_Linux_x86_64.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [crane]
 
 # --- act (GitHub Actions local runner) ---
-- name: Check installed act version
-  ansible.builtin.shell: act --version 2>&1 || echo MISSING
-  register: act_current
-  changed_when: false
-  failed_when: false
+- name: Download latest act
+  ansible.builtin.get_url:
+    url: "{{ (latest_github_releases.act.assets | selectattr('name', 'equalto', 'act_Linux_x86_64.tar.gz') | first).browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/act-{{ (latest_github_releases.act.assets | selectattr('name', 'equalto', 'act_Linux_x86_64.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ (latest_github_releases.act.assets | selectattr('name', 'equalto', 'act_Linux_x86_64.tar.gz') | first).digest }}"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade act {{ act_version }}
-  when: "act_version not in act_current.stdout"
-  block:
-    - name: Download act {{ act_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/nektos/act/releases/download/v{{ act_version }}/act_Linux_x86_64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [act]
+- name: Install latest act
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/act-{{ (latest_github_releases.act.assets | selectattr('name', 'equalto', 'act_Linux_x86_64.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [act]
+
+# --- HashiCorp tools ---
+- name: Query latest Terraform release
+  ansible.builtin.uri:
+    url: https://checkpoint-api.hashicorp.com/v1/check/terraform
+    return_content: true
+  register: _terraform_checkpoint
+  changed_when: false
+
+- name: Query latest Vault release
+  ansible.builtin.uri:
+    url: https://checkpoint-api.hashicorp.com/v1/check/vault
+    return_content: true
+  register: _vault_checkpoint
+  changed_when: false
+
+- name: Query latest Packer release
+  ansible.builtin.uri:
+    url: https://checkpoint-api.hashicorp.com/v1/check/packer
+    return_content: true
+  register: _packer_checkpoint
+  changed_when: false
+
+- name: Set latest HashiCorp release versions
+  ansible.builtin.set_fact:
+    terraform_latest_version: "{{ _terraform_checkpoint.json.current_version }}"
+    vault_latest_version: "{{ _vault_checkpoint.json.current_version }}"
+    packer_latest_version: "{{ _packer_checkpoint.json.current_version }}"
+
+- name: Download latest Terraform
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/terraform/{{ terraform_latest_version }}/terraform_{{ terraform_latest_version }}_linux_amd64.zip"
+    dest: "{{ workstation_update_artifact_cache_dir }}/terraform-{{ terraform_latest_version }}.archive"
+    checksum: "sha256:https://releases.hashicorp.com/terraform/{{ terraform_latest_version }}/terraform_{{ terraform_latest_version }}_SHA256SUMS"
+    mode: "0644"
+    force: false
+
+- name: Install latest Terraform
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/terraform-{{ terraform_latest_version }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [terraform]
+
+- name: Download latest Vault
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/vault/{{ vault_latest_version }}/vault_{{ vault_latest_version }}_linux_amd64.zip"
+    dest: "{{ workstation_update_artifact_cache_dir }}/vault-{{ vault_latest_version }}.archive"
+    checksum: "sha256:https://releases.hashicorp.com/vault/{{ vault_latest_version }}/vault_{{ vault_latest_version }}_SHA256SUMS"
+    mode: "0644"
+    force: false
+
+- name: Install latest Vault
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/vault-{{ vault_latest_version }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [vault]
+
+- name: Download latest Packer
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/packer/{{ packer_latest_version }}/packer_{{ packer_latest_version }}_linux_amd64.zip"
+    dest: "{{ workstation_update_artifact_cache_dir }}/packer-{{ packer_latest_version }}.archive"
+    checksum: "sha256:https://releases.hashicorp.com/packer/{{ packer_latest_version }}/packer_{{ packer_latest_version }}_SHA256SUMS"
+    mode: "0644"
+    force: false
+
+- name: Install latest Packer
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/packer-{{ packer_latest_version }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [packer]

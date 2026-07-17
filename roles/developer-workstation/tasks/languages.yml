@@ -2,31 +2,46 @@
 # =============================================================================
 # Language Runtimes (non-APT)
 # =============================================================================
-# Go: latest from go.dev          | Deno: GitHub release binary
-# Rust: via rustup for dev_user   | Bun: GitHub release binary
-# nvm: Node version manager       | Composer: PHP package manager
+# Go: latest from go.dev          | Deno: latest GitHub release
+# Rust: via rustup for dev_user   | Bun: latest GitHub release
+# nvm: Node version manager       | Composer: self-updating package manager
 # pyenv: Python version manager   |
 # =============================================================================
 
 # --- Go ---
-- name: Check if Go is installed
-  ansible.builtin.stat:
-    path: /usr/local/go/bin/go
-  register: go_installed
+- name: Get installed Go version
+  ansible.builtin.command: /usr/local/go/bin/go version
+  register: go_current
+  changed_when: false
+  failed_when: false
 
 - name: Get latest Go version
   ansible.builtin.uri:
     url: https://go.dev/VERSION?m=text
     return_content: true
   register: go_version
-  when: not go_installed.stat.exists
 
-- name: Install Go
+- name: Set Go update state
+  ansible.builtin.set_fact:
+    go_latest_release: "{{ go_version.content.split('\n')[0] }}"
+    go_needs_update: >-
+      {{ go_current.rc != 0 or go_version.content.split('\n')[0] not in go_current.stdout }}
+
+- name: Download latest Go release
+  ansible.builtin.get_url:
+    url: "https://go.dev/dl/{{ go_latest_release }}.linux-amd64.tar.gz"
+    dest: "{{ workstation_update_artifact_cache_dir }}/{{ go_latest_release }}.linux-amd64.tar.gz"
+    checksum: "sha256:https://go.dev/dl/{{ go_latest_release }}.linux-amd64.tar.gz.sha256"
+    mode: "0644"
+    force: false
+  when: go_needs_update
+
+- name: Install latest Go
   ansible.builtin.unarchive:
-    src: "https://go.dev/dl/{{ go_version.content.split('\n')[0] }}.linux-amd64.tar.gz"
+    src: "{{ workstation_update_artifact_cache_dir }}/{{ go_latest_release }}.linux-amd64.tar.gz"
     dest: /usr/local
     remote_src: true
-  when: not go_installed.stat.exists
+  when: go_needs_update
 
 - name: Set Go PATH
   ansible.builtin.copy:
@@ -35,39 +50,53 @@
     mode: '0644'
 
 # --- Rust ---
-- name: Check if Rust is installed
-  ansible.builtin.stat:
-    path: "{{ dev_user_home }}/.rustup"
-  register: rust_installed
+- name: Install current rustup package from the signed APT channel  # noqa package-latest
+  ansible.builtin.apt:
+    name: rustup
+    state: latest
 
-- name: Install Rust via rustup  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y
-    executable: /bin/bash
+- name: Ensure the user has the stable Rust toolchain
+  ansible.builtin.command: /usr/bin/rustup toolchain install stable
   become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
-  when: not rust_installed.stat.exists
-  changed_when: true
+  register: _rust_toolchain_install
+  changed_when: >-
+    'already installed' not in (_rust_toolchain_install.stdout | default('') | lower)
+
+- name: Update Rust stable toolchain
+  ansible.builtin.command: rustup update stable
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    PATH: "{{ dev_user_home }}/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _rust_update
+  changed_when: >-
+    'up to date' not in (_rust_update.stdout | default('') | lower)
+  failed_when: false
+
+- name: Update rustup itself
+  ansible.builtin.command: rustup self update
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    PATH: "{{ dev_user_home }}/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _rustup_update
+  changed_when: >-
+    'up to date' not in (_rustup_update.stdout | default('') | lower)
+  failed_when: false
 
 # --- nvm (Node Version Manager) ---
-- name: Check if nvm is installed
-  ansible.builtin.stat:
-    path: "{{ dev_user_home }}/.nvm/nvm.sh"
-  register: nvm_installed
-
-- name: Install nvm  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh \
-        | PROFILE=/dev/null bash
-    executable: /bin/bash
-    creates: "{{ dev_user_home }}/.nvm/nvm.sh"
+- name: Install or update nvm from its Git repository
+  ansible.builtin.git:
+    repo: https://github.com/nvm-sh/nvm.git
+    dest: "{{ dev_user_home }}/.nvm"
+    depth: 1
+    version: master
+    force: false
   become: true
   become_user: "{{ dev_user }}"
   environment:
@@ -87,78 +116,140 @@
     version: master
   become: true
   become_user: "{{ dev_user }}"
-  when: not pyenv_installed.stat.exists
 
 # --- Deno ---
-- name: Check if Deno is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/deno
-  register: deno_installed
+- name: Get installed Deno version
+  ansible.builtin.command: deno --version
+  register: deno_current
+  changed_when: false
+  failed_when: false
 
-- name: Get Deno latest version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/denoland/deno/releases/latest
-    return_content: true
-  register: deno_release
-  when: not deno_installed.stat.exists
+- name: Set Deno latest release state
+  ansible.builtin.set_fact:
+    deno_latest_release: "{{ latest_github_releases.deno.tag_name }}"
+    deno_latest_asset: >-
+      {{ latest_github_releases.deno.assets
+         | selectattr('name', 'equalto', 'deno-x86_64-unknown-linux-gnu.zip') | first }}
+    deno_needs_update: >-
+      {{ deno_current.rc != 0 or
+         (latest_github_releases.deno.tag_name | regex_replace('^v', '')) not in deno_current.stdout }}
 
-- name: Install Deno
+- name: Download latest Deno
+  ansible.builtin.get_url:
+    url: "{{ deno_latest_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/deno-{{ deno_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ deno_latest_asset.digest }}"
+    mode: "0644"
+    force: false
+  when: deno_needs_update
+
+- name: Install latest Deno
   ansible.builtin.unarchive:
-    src: "https://github.com/denoland/deno/releases/download/{{ deno_release.json.tag_name }}/deno-x86_64-unknown-linux-gnu.zip"
+    src: "{{ workstation_update_artifact_cache_dir }}/deno-{{ deno_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [deno]
-  when: not deno_installed.stat.exists
+  when: deno_needs_update
 
 # --- Bun ---
-- name: Check if Bun is installed
-  ansible.builtin.stat:
-    path: /usr/local/bin/bun
-  register: bun_installed
+- name: Get installed Bun version
+  ansible.builtin.command: bun --version
+  register: bun_current
+  changed_when: false
+  failed_when: false
 
-- name: Download Bun
+- name: Set Bun latest release state
+  ansible.builtin.set_fact:
+    bun_latest_version: "{{ latest_github_releases.bun.tag_name | regex_replace('^bun-v', '') }}"
+    bun_latest_asset: >-
+      {{ latest_github_releases.bun.assets
+         | selectattr('name', 'equalto', 'bun-linux-x64.zip') | first }}
+    bun_needs_update: >-
+      {{ bun_current.rc != 0 or
+         (latest_github_releases.bun.tag_name | regex_replace('^bun-v', '')) not in bun_current.stdout }}
+
+- name: Download latest Bun
+  ansible.builtin.get_url:
+    url: "{{ bun_latest_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/bun-{{ bun_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ bun_latest_asset.digest }}"
+    mode: "0644"
+    force: false
+  when: bun_needs_update
+
+- name: Extract latest Bun
   ansible.builtin.unarchive:
-    src: https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip
+    src: "{{ workstation_update_artifact_cache_dir }}/bun-{{ bun_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
     dest: /tmp
     remote_src: true
-  when: not bun_installed.stat.exists
+  when: bun_needs_update
 
-- name: Install Bun binary
+- name: Install latest Bun binary
   ansible.builtin.copy:
     src: /tmp/bun-linux-x64/bun
     dest: /usr/local/bin/bun
     mode: "0755"
     remote_src: true
-  when: not bun_installed.stat.exists
+  when: bun_needs_update
 
 - name: Clean up Bun temp files
   ansible.builtin.file:
     path: /tmp/bun-linux-x64
     state: absent
+  when: bun_needs_update
 
 # --- PHP Composer ---
-- name: Install Composer (PHP package manager)  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -sS https://getcomposer.org/installer \
-        | php -- --install-dir=/usr/local/bin --filename=composer
-    executable: /bin/bash
-    creates: /usr/local/bin/composer
+- name: Check Composer version
+  ansible.builtin.command: /usr/local/bin/composer --version
+  register: composer_current
+  changed_when: false
+  failed_when: false
+
+- name: Resolve Composer installer signature
+  ansible.builtin.uri:
+    url: https://composer.github.io/installer.sig
+    return_content: true
+  register: _composer_installer_signature
+  changed_when: false
+  when: composer_current.rc != 0
+
+- name: Download verified Composer installer
+  ansible.builtin.get_url:
+    url: https://getcomposer.org/installer
+    dest: "{{ workstation_update_artifact_cache_dir }}/composer-installer.php"
+    checksum: "sha384:{{ _composer_installer_signature.content | trim }}"
+    mode: "0644"
+    force: false
+  when: composer_current.rc != 0
+
+- name: Install Composer (PHP package manager)
+  ansible.builtin.command:
+    argv:
+      - php
+      - "{{ workstation_update_artifact_cache_dir }}/composer-installer.php"
+      - --install-dir=/usr/local/bin
+      - --filename=composer
+  when: composer_current.rc != 0
+  changed_when: true
+
+- name: Update Composer to latest stable
+  ansible.builtin.command:
+    cmd: /usr/local/bin/composer self-update --stable --no-interaction --no-progress
+  register: _composer_update
+  changed_when: >-
+    'already using the latest version' not in
+    (_composer_update.stdout | default('') | lower)
+  when: composer_current.rc == 0
+  failed_when: false
 
 # --- SDKMAN (JVM version manager) ---
-- name: Check if SDKMAN is installed
-  ansible.builtin.stat:
-    path: "{{ dev_user_home }}/.sdkman/bin/sdkman-init.sh"
-  register: sdkman_installed
-
-- name: Install SDKMAN  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -s "https://get.sdkman.io?rcupdate=false" | bash
-    executable: /bin/bash
-    creates: "{{ dev_user_home }}/.sdkman/bin/sdkman-init.sh"
+- name: Install or update SDKMAN from its Git repository
+  ansible.builtin.git:
+    repo: https://github.com/sdkman/sdkman-cli.git
+    dest: "{{ dev_user_home }}/.sdkman"
+    depth: 1
+    version: master
+    force: false
   become: true
   become_user: "{{ dev_user }}"
   environment:

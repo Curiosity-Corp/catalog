@@ -1,0 +1,254 @@
+---
+# =============================================================================
+# Workstation update foundation
+# =============================================================================
+# This is the local control plane used until fleet.focuscell.org is ready. It
+# creates durable state, snapshots managed binaries before an update, validates
+# the application contract, and gives every pull a stable run identifier.
+# =============================================================================
+
+- name: Validate workstation update ring
+  ansible.builtin.assert:
+    that:
+      - workstation_update_ring in ['canary', 'early', 'general']
+      - workstation_update_ring_min_age_seconds[workstation_update_ring] is defined
+      - workstation_update_ring_randomized_delay_seconds[workstation_update_ring] is defined
+    fail_msg: >-
+      workstation_update_ring must be canary, early, or general and must have
+      an age and timer policy.
+
+- name: Validate catalog integrity policy
+  ansible.builtin.assert:
+    that:
+      - catalog_integrity_mode in ['off', 'warn', 'enforce']
+      - >-
+        catalog_integrity_mode != 'enforce' or
+        (catalog_signing_key_fingerprint | default('') | trim | length == 40)
+    fail_msg: >-
+      catalog_integrity_mode must be off, warn, or enforce. Enforce also
+      requires the 40-character trusted catalog_signing_key_fingerprint.
+
+- name: Validate every latest-release source has an application contract
+  ansible.builtin.assert:
+    that:
+      - latest_github_repositories.keys() | difference(latest_release_contracts.keys()) | length == 0
+      - latest_release_contracts.keys() | difference(latest_github_repositories.keys()) | length == 0
+    fail_msg: >-
+      Every API-backed upstream release must have exactly one application
+      contract describing its installer, verification method, and healthcheck.
+
+- name: Build the universal workstation application contract
+  ansible.builtin.set_fact:
+    workstation_all_application_contracts: >-
+      {{ latest_release_contracts | combine(workstation_application_contracts | default({})) }}
+
+- name: Validate every workstation application contract
+  ansible.builtin.assert:
+    that:
+      - item.value.installer is defined
+      - item.value.verification is defined
+      - item.value.healthcheck is defined
+      - item.value.healthcheck | length > 0
+    fail_msg: "Application contract {{ item.key }} is incomplete"
+  loop: "{{ workstation_all_application_contracts | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Ensure workstation update state directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ workstation_update_state_dir }}"
+    - "{{ workstation_update_state_dir }}/snapshots"
+    - "{{ workstation_update_state_dir }}/observations"
+    - "{{ workstation_update_artifact_cache_dir }}"
+
+- name: Set workstation update run facts
+  ansible.builtin.set_fact:
+    workstation_update_run_id: >-
+      {{ ansible_date_time.epoch }}-{{ inventory_hostname | hash('sha256') | truncate(12, true, '') }}
+    workstation_update_started_at: "{{ ansible_date_time.iso8601 }}"
+
+- name: Set workstation update snapshot path
+  ansible.builtin.set_fact:
+    workstation_update_snapshot_dir: >-
+      {{ workstation_update_state_dir }}/snapshots/{{ workstation_update_run_id }}
+
+- name: Create this pull's update snapshot directory
+  ansible.builtin.file:
+    path: "{{ workstation_update_snapshot_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check for a recent failed-update quarantine
+  ansible.builtin.stat:
+    path: "{{ workstation_update_state_dir }}/quarantine.json"
+  register: _workstation_update_quarantine
+
+- name: Set quarantine state
+  ansible.builtin.set_fact:
+    workstation_update_quarantine_active: >-
+      {{ _workstation_update_quarantine.stat.exists and
+         ((ansible_date_time.epoch | int) - (_workstation_update_quarantine.stat.mtime | int)) <
+         (workstation_update_quarantine_seconds | int) }}
+    workstation_update_install_allowed: >-
+      {{ not (_workstation_update_quarantine.stat.exists and
+              ((ansible_date_time.epoch | int) - (_workstation_update_quarantine.stat.mtime | int)) <
+              (workstation_update_quarantine_seconds | int)) }}
+
+- name: Resolve the catalog commit being executed
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ ansible_pull_dir }}"
+      - rev-parse
+      - --verify
+      - HEAD
+  register: _workstation_catalog_commit
+  changed_when: false
+  failed_when: false
+
+- name: Set catalog provenance facts
+  ansible.builtin.set_fact:
+    workstation_catalog_commit: >-
+      {{ _workstation_catalog_commit.stdout | default('') | trim | default('unresolved', true) }}
+    workstation_catalog_commit_verified: false
+
+- name: Verify the catalog commit signature when integrity enforcement is enabled
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ ansible_pull_dir }}"
+      - verify-commit
+      - --raw
+      - HEAD
+  register: _workstation_catalog_signature
+  changed_when: false
+  failed_when:
+    - >-
+      catalog_integrity_mode == 'enforce' and
+      (_workstation_catalog_signature.rc != 0 or
+       (catalog_signing_key_fingerprint | default('') | trim | upper) not in
+       (((_workstation_catalog_signature.stdout | default('')) ~ '\n' ~
+         (_workstation_catalog_signature.stderr | default(''))) | upper))
+  when:
+    - workstation_catalog_commit != 'unresolved'
+    - catalog_integrity_mode in ['warn', 'enforce']
+
+- name: Record catalog signature verification result
+  ansible.builtin.set_fact:
+    workstation_catalog_commit_verified: >-
+      {{ (_workstation_catalog_signature.rc | default(1)) == 0 and
+         ((catalog_signing_key_fingerprint | default('') | trim | length == 0) or
+          (catalog_signing_key_fingerprint | trim | upper) in
+          (((_workstation_catalog_signature.stdout | default('')) ~ '\n' ~
+            (_workstation_catalog_signature.stderr | default(''))) | upper)) }}
+  when: _workstation_catalog_signature is defined
+
+- name: Record catalog signer fingerprint
+  ansible.builtin.set_fact:
+    workstation_catalog_signer_fingerprint: >-
+      {{ ((_workstation_catalog_signature.stdout | default('')) ~ '\n' ~
+          (_workstation_catalog_signature.stderr | default('')))
+         | regex_findall('VALIDSIG ([0-9A-Fa-f]{40})') | first | default('') }}
+  when: _workstation_catalog_signature is defined
+
+- name: Warn when catalog integrity is not yet enforceable
+  ansible.builtin.debug:
+    msg: >-
+      Catalog commit {{ workstation_catalog_commit }} is not cryptographically
+      verified. Set catalog_integrity_mode=enforce after the trusted signing key
+      is provisioned on workstations.
+  when:
+    - catalog_integrity_mode == 'warn'
+    - not workstation_catalog_commit_verified
+
+- name: Check managed paths before the update transaction
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+    checksum_algorithm: sha256
+  loop: "{{ workstation_update_managed_paths }}"
+  loop_control:
+    label: "{{ item }}"
+  register: _workstation_managed_paths_before
+
+- name: Build the pre-update binary inventory
+  ansible.builtin.set_fact:
+    workstation_update_before_inventory: >-
+      {{ workstation_update_before_inventory | default([]) + [
+        {
+          'path': item.item,
+          'exists': item.stat.exists | default(false),
+          'checksum': item.stat.checksum | default(''),
+          'mode': item.stat.mode | default('0755'),
+          'owner': item.stat.pw_name | default('root'),
+          'group': item.stat.gr_name | default('root')
+        }
+      ] }}
+  loop: "{{ _workstation_managed_paths_before.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Snapshot existing managed binaries for rollback
+  ansible.builtin.copy:
+    src: "{{ item.item }}"
+    dest: "{{ workstation_update_snapshot_dir }}/{{ item.item | basename }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ _workstation_managed_paths_before.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - item.stat.exists | default(false)
+    - item.stat.isreg | default(false)
+
+- name: Save the pre-update inventory
+  ansible.builtin.copy:
+    content: "{{ workstation_update_before_inventory | to_nice_json }}\n"
+    dest: "{{ workstation_update_snapshot_dir }}/before.json"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Remove expired local update snapshots
+  ansible.builtin.find:
+    paths: "{{ workstation_update_state_dir }}/snapshots"
+    file_type: directory
+    recurse: false
+    age: "{{ workstation_update_snapshot_retention }}d"
+  register: _expired_workstation_update_snapshots
+
+- name: Delete expired local update snapshots
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _expired_workstation_update_snapshots.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Find expired cached update artifacts
+  ansible.builtin.find:
+    paths: "{{ workstation_update_artifact_cache_dir }}"
+    file_type: file
+    recurse: false
+    age: "{{ workstation_update_cache_retention_days }}d"
+  register: _expired_workstation_update_artifacts
+
+- name: Delete expired cached update artifacts
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _expired_workstation_update_artifacts.files }}"
+  loop_control:
+    label: "{{ item.path }}"

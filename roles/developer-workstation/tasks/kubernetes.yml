@@ -1,232 +1,338 @@
 ---
 # =============================================================================
-# Kubernetes & GitOps Tools
-# =============================================================================
-# Binary downloads from GitHub releases and install scripts
+# Kubernetes & GitOps tools (upstream latest releases)
 # =============================================================================
 
 # --- kubectl ---
-- name: Check installed kubectl version
-  ansible.builtin.shell: kubectl version --client 2>&1 || echo MISSING
-  register: kubectl_current
+- name: Resolve latest kubectl release
+  ansible.builtin.uri:
+    url: https://dl.k8s.io/release/stable.txt
+    return_content: true
+  register: _kubectl_latest
   changed_when: false
-  failed_when: false
 
-- name: Install/upgrade kubectl {{ kubectl_version }}
-  when: "kubectl_version not in kubectl_current.stdout"
-  block:
-    - name: Download kubectl {{ kubectl_version }}
-      ansible.builtin.get_url:
-        url: "https://dl.k8s.io/release/v{{ kubectl_version }}/bin/linux/amd64/kubectl"
-        dest: /usr/local/bin/kubectl
-        mode: "0755"
+- name: Install latest kubectl
+  ansible.builtin.get_url:
+    url: "https://dl.k8s.io/release/{{ _kubectl_latest.content | trim }}/bin/linux/amd64/kubectl"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubectl-{{ _kubectl_latest.content | trim }}"
+    checksum: "sha256:https://dl.k8s.io/release/{{ _kubectl_latest.content | trim }}/bin/linux/amd64/kubectl.sha256"
+    mode: "0755"
+    force: false
+
+- name: Atomically install latest kubectl
+  ansible.builtin.copy:
+    src: "{{ workstation_update_artifact_cache_dir }}/kubectl-{{ _kubectl_latest.content | trim }}"
+    dest: /usr/local/bin/kubectl
+    remote_src: true
+    mode: "0755"
 
 # --- Helm ---
-- name: Check installed helm version
-  ansible.builtin.shell: helm version 2>&1 || echo MISSING
-  register: helm_current
-  changed_when: false
-  failed_when: false
+- name: Download latest Helm
+  ansible.builtin.get_url:
+    url: "https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz"
+    dest: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
+    checksum: "sha256:https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz.sha256sum"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade helm {{ helm_version }}
-  when: "helm_version not in helm_current.stdout"
-  block:
-    - name: Install Helm  # noqa: command-instead-of-module
-      ansible.builtin.shell:
-        cmd: |
-          set -o pipefail
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 \
-            | bash -s -- --version "v{{ helm_version }}"
-        executable: /bin/bash
-      changed_when: true
+- name: Install latest Helm
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["*/helm"]
+    extra_opts: [--strip-components=1]
 
 # --- Kustomize ---
-- name: Check installed kustomize version
-  ansible.builtin.shell: kustomize version 2>&1 || echo MISSING
-  register: kustomize_current
-  changed_when: false
-  failed_when: false
+- name: Download latest Kustomize
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.kustomize.assets
+        | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$')
+        | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.kustomize.assets
+          | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$')
+          | first).digest }}
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade kustomize {{ kustomize_version }}
-  when: "kustomize_version not in kustomize_current.stdout"
-  block:
-    - name: Install Kustomize v{{ kustomize_version }}  # noqa: command-instead-of-module
-      ansible.builtin.shell:
-        cmd: |
-          set -o pipefail
-          curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s {{ kustomize_version }}
-          mv kustomize /usr/local/bin/kustomize
-        executable: /bin/bash
-      changed_when: true
+- name: Install latest Kustomize
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [kustomize]
 
 # --- talosctl ---
-- name: Check installed talosctl version
-  ansible.builtin.shell: talosctl version --client 2>&1 || echo MISSING
-  register: talosctl_current
-  changed_when: false
-  failed_when: false
+- name: Install latest talosctl
+  ansible.builtin.get_url:
+    url: "{{ (latest_github_releases.talos.assets | selectattr('name', 'equalto', 'talosctl-linux-amd64') | first).browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/talosctl-{{ (latest_github_releases.talos.assets | selectattr('name', 'equalto', 'talosctl-linux-amd64') | first).digest | regex_replace('^sha256:', '') }}"
+    checksum: "{{ (latest_github_releases.talos.assets | selectattr('name', 'equalto', 'talosctl-linux-amd64') | first).digest }}"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade talosctl {{ talosctl_version }}
-  when: "talosctl_version not in talosctl_current.stdout"
-  block:
-    - name: Download talosctl {{ talosctl_version }}
-      ansible.builtin.get_url:
-        url: "https://github.com/siderolabs/talos/releases/download/v{{ talosctl_version }}/talosctl-linux-amd64"
-        dest: /usr/local/bin/talosctl
-        mode: "0755"
+- name: Atomically install latest talosctl
+  ansible.builtin.copy:
+    src: "{{ workstation_update_artifact_cache_dir }}/talosctl-{{ (latest_github_releases.talos.assets | selectattr('name', 'equalto', 'talosctl-linux-amd64') | first).digest | regex_replace('^sha256:', '') }}"
+    dest: /usr/local/bin/talosctl
+    remote_src: true
+    mode: "0755"
 
 # --- k9s ---
-- name: Check installed k9s version
-  ansible.builtin.shell: k9s version 2>&1 || echo MISSING
-  register: k9s_current
-  changed_when: false
-  failed_when: false
+- name: Download latest k9s
+  ansible.builtin.get_url:
+    url: "{{ (latest_github_releases.k9s.assets | selectattr('name', 'equalto', 'k9s_Linux_amd64.tar.gz') | first).browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/k9s-{{ (latest_github_releases.k9s.assets | selectattr('name', 'equalto', 'k9s_Linux_amd64.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ (latest_github_releases.k9s.assets | selectattr('name', 'equalto', 'k9s_Linux_amd64.tar.gz') | first).digest }}"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade k9s {{ k9s_version }}
-  when: "k9s_version not in k9s_current.stdout"
-  block:
-    - name: Download k9s {{ k9s_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/derailed/k9s/releases/download/v{{ k9s_version }}/k9s_Linux_amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [k9s]
+- name: Install latest k9s
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/k9s-{{ (latest_github_releases.k9s.assets | selectattr('name', 'equalto', 'k9s_Linux_amd64.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [k9s]
 
 # --- kubectx + kubens ---
-- name: Check installed kubectx version
-  ansible.builtin.shell: kubectx --version 2>&1 || echo MISSING
-  register: kubectx_current
-  changed_when: false
-  failed_when: false
+- name: Download latest kubectx
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.kubectx.assets
+        | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$')
+        | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.kubectx.assets
+          | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$')
+          | first).digest }}
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade kubectx + kubens {{ kubectx_version }}
-  when: "kubectx_version not in kubectx_current.stdout"
-  block:
-    - name: Download kubectx {{ kubectx_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/ahmetb/kubectx/releases/download/v{{ kubectx_version }}/kubectx_v{{ kubectx_version }}_linux_x86_64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [kubectx]
+- name: Install latest kubectx
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [kubectx]
 
-    - name: Download kubens {{ kubectx_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/ahmetb/kubectx/releases/download/v{{ kubectx_version }}/kubens_v{{ kubectx_version }}_linux_x86_64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [kubens]
+- name: Download latest kubens
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.kubectx.assets
+        | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$')
+        | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.kubectx.assets
+          | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$')
+          | first).digest }}
+    mode: "0644"
+    force: false
+
+- name: Install latest kubens
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [kubens]
 
 # --- stern ---
-- name: Check installed stern version
-  ansible.builtin.shell: stern --version 2>&1 || echo MISSING
-  register: stern_current
-  changed_when: false
-  failed_when: false
+- name: Download latest stern
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.stern.assets
+        | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$')
+        | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.stern.assets
+          | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$')
+          | first).digest }}
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade stern {{ stern_version }}
-  when: "stern_version not in stern_current.stdout"
-  block:
-    - name: Download stern {{ stern_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/stern/stern/releases/download/v{{ stern_version }}/stern_{{ stern_version }}_linux_amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [stern]
+- name: Install latest stern
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [stern]
 
 # --- ArgoCD CLI ---
-- name: Check installed argocd version
-  ansible.builtin.shell: argocd version --client 2>&1 || echo MISSING
-  register: argocd_current
-  changed_when: false
-  failed_when: false
+- name: Install latest ArgoCD CLI
+  ansible.builtin.get_url:
+    url: "{{ (latest_github_releases.argocd.assets | selectattr('name', 'equalto', 'argocd-linux-amd64') | first).browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/argocd-{{ (latest_github_releases.argocd.assets | selectattr('name', 'equalto', 'argocd-linux-amd64') | first).digest | regex_replace('^sha256:', '') }}"
+    checksum: "{{ (latest_github_releases.argocd.assets | selectattr('name', 'equalto', 'argocd-linux-amd64') | first).digest }}"
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade argocd {{ argocd_version }}
-  when: "argocd_version not in argocd_current.stdout"
-  block:
-    - name: Download argocd {{ argocd_version }}
-      ansible.builtin.get_url:
-        url: "https://github.com/argoproj/argo-cd/releases/download/v{{ argocd_version }}/argocd-linux-amd64"
-        dest: /usr/local/bin/argocd
-        mode: "0755"
+- name: Atomically install latest ArgoCD CLI
+  ansible.builtin.copy:
+    src: "{{ workstation_update_artifact_cache_dir }}/argocd-{{ (latest_github_releases.argocd.assets | selectattr('name', 'equalto', 'argocd-linux-amd64') | first).digest | regex_replace('^sha256:', '') }}"
+    dest: /usr/local/bin/argocd
+    remote_src: true
+    mode: "0755"
 
 # --- Flux CLI ---
-- name: Check installed flux version
-  ansible.builtin.shell: flux version --client 2>&1 || echo MISSING
-  register: flux_current
-  changed_when: false
-  failed_when: false
+- name: Resolve latest Flux CLI asset
+  ansible.builtin.set_fact:
+    _flux_latest_asset: >-
+      {{ latest_github_releases.flux.assets
+         | selectattr('name', 'match', '^flux_.*_linux_amd64\\.tar\\.gz$') | first }}
 
-- name: Install/upgrade flux {{ flux_version }}
-  when: "flux_version not in flux_current.stdout"
-  block:
-    - name: Download flux install script v{{ flux_version }}  # noqa: command-instead-of-module
-      ansible.builtin.shell:
-        cmd: |
-          set -o pipefail
-          curl -fsSL https://fluxcd.io/install.sh | VERSION="{{ flux_version }}" bash
-        executable: /bin/bash
-      changed_when: true
+- name: Require a verified Flux CLI asset
+  ansible.builtin.assert:
+    that:
+      - _flux_latest_asset | default({}) | length > 0
+      - _flux_latest_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+
+- name: Download latest Flux CLI
+  ansible.builtin.get_url:
+    url: "{{ _flux_latest_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/flux-{{ _flux_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ _flux_latest_asset.digest }}"
+    mode: "0644"
+    force: false
+
+- name: Install latest Flux CLI
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/flux-{{ _flux_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [flux]
 
 # --- Velero CLI ---
-- name: Check installed velero version
-  ansible.builtin.shell: velero version --client-only 2>&1 || echo MISSING
-  register: velero_current
-  changed_when: false
-  failed_when: false
+- name: Download latest Velero
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        (latest_github_releases.velero.assets
+        | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$')
+        | first).browser_download_url
+      }}
+    dest: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: >-
+      {{ (latest_github_releases.velero.assets
+          | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$')
+          | first).digest }}
+    mode: "0644"
+    force: false
 
-- name: Install/upgrade velero {{ velero_version }}
-  when: "velero_version not in velero_current.stdout"
-  block:
-    - name: Download Velero {{ velero_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/vmware-tanzu/velero/releases/download/v{{ velero_version }}/velero-v{{ velero_version }}-linux-amd64.tar.gz"
-        dest: /tmp
-        remote_src: true
-
-    - name: Move Velero binary to /usr/local/bin
-      ansible.builtin.copy:
-        src: "/tmp/velero-v{{ velero_version }}-linux-amd64/velero"
-        dest: /usr/local/bin/velero
-        mode: "0755"
-        remote_src: true
-
-    - name: Clean up Velero temp files
-      ansible.builtin.file:
-        path: "/tmp/velero-v{{ velero_version }}-linux-amd64"
-        state: absent
+- name: Install latest Velero
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: ["*/velero"]
+    extra_opts: [--strip-components=1]
 
 # --- Krew (kubectl plugin manager) ---
-- name: Install Krew
-  ansible.builtin.shell:
-    cmd: |
-      set -euo pipefail
-      cd "$(mktemp -d)"
-      OS="$(uname | tr '[:upper:]' '[:lower:]')"
-      ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')"
-      KREW="krew-${OS}_${ARCH}"
-      curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz"
-      tar zxvf "${KREW}.tar.gz"
-      ./"${KREW}" install krew
-    executable: /bin/bash
-    creates: "{{ dev_user_home }}/.krew/bin/kubectl-krew"
+- name: Resolve latest verified Krew asset
+  ansible.builtin.set_fact:
+    _krew_latest_asset: >-
+      {{ latest_github_releases.krew.assets
+         | selectattr('name', 'equalto', 'krew-linux_amd64.tar.gz') | first }}
+
+- name: Require a verified Krew asset
+  ansible.builtin.assert:
+    that:
+      - _krew_latest_asset | default({}) | length > 0
+      - _krew_latest_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+
+- name: Download latest Krew release into the verified cache
+  ansible.builtin.get_url:
+    url: "{{ _krew_latest_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ _krew_latest_asset.digest }}"
+    mode: "0644"
+    force: false
+
+- name: Create Krew staging directory
+  ansible.builtin.file:
+    path: "/tmp/curiosity-krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0750"
+  become: true
+
+- name: Extract verified Krew installer
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "/tmp/curiosity-krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}"
+    remote_src: true
+    include: [krew-linux_amd64]
+
+- name: Make the verified Krew installer executable
+  ansible.builtin.file:
+    path: "/tmp/curiosity-krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}/krew-linux_amd64"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Install Krew if absent
+  ansible.builtin.command:
+    argv:
+      - "/tmp/curiosity-krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}/krew-linux_amd64"
+      - install
+      - krew
   become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+  args:
+    creates: "{{ dev_user_home }}/.krew/bin/kubectl-krew"
 
-# --- kubeconform ---
-- name: Check installed kubeconform version
-  ansible.builtin.shell: kubeconform -v 2>&1 || echo MISSING
-  register: kubeconform_current
-  changed_when: false
+- name: Remove Krew staging directory
+  ansible.builtin.file:
+    path: "/tmp/curiosity-krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}"
+    state: absent
+
+- name: Update Krew plugin index
+  ansible.builtin.command: "{{ dev_user_home }}/.krew/bin/kubectl-krew update"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    PATH: "{{ dev_user_home }}/.krew/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  changed_when: true
   failed_when: false
 
-- name: Install/upgrade kubeconform {{ kubeconform_version }}
-  when: "kubeconform_version not in kubeconform_current.stdout"
-  block:
-    - name: Download kubeconform {{ kubeconform_version }}
-      ansible.builtin.unarchive:
-        src: "https://github.com/yannh/kubeconform/releases/download/v{{ kubeconform_version }}/kubeconform-linux-amd64.tar.gz"
-        dest: /usr/local/bin
-        remote_src: true
-        include: [kubeconform]
+- name: Update Krew itself
+  ansible.builtin.command: "{{ dev_user_home }}/.krew/bin/kubectl-krew upgrade"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    PATH: "{{ dev_user_home }}/.krew/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  changed_when: true
+  failed_when: false
+
+# --- kubeconform ---
+- name: Download latest kubeconform
+  ansible.builtin.get_url:
+    url: "{{ (latest_github_releases.kubeconform.assets | selectattr('name', 'equalto', 'kubeconform-linux-amd64.tar.gz') | first).browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubeconform-{{ (latest_github_releases.kubeconform.assets | selectattr('name', 'equalto', 'kubeconform-linux-amd64.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ (latest_github_releases.kubeconform.assets | selectattr('name', 'equalto', 'kubeconform-linux-amd64.tar.gz') | first).digest }}"
+    mode: "0644"
+    force: false
+
+- name: Install latest kubeconform
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/kubeconform-{{ (latest_github_releases.kubeconform.assets | selectattr('name', 'equalto', 'kubeconform-linux-amd64.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [kubeconform]

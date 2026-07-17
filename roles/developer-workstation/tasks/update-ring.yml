@@ -1,0 +1,73 @@
+---
+# =============================================================================
+# Update ring gate
+# =============================================================================
+# Canary follows upstream immediately. Early/general machines hold a newly
+# published release for a short observation period, without recording a
+# version pin anywhere in the catalog.
+# =============================================================================
+
+- name: Resolve upstream release publication times
+  ansible.builtin.command:
+    argv:
+      - date
+      - -u
+      - -d
+      - "{{ item.value.published_at }}"
+      - +%s
+  loop: "{{ latest_github_releases | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: _upstream_release_epochs
+  changed_when: false
+  failed_when: false
+
+- name: Find releases still inside the selected ring's observation window
+  ansible.builtin.set_fact:
+    workstation_update_ring_blockers: >-
+      {{ workstation_update_ring_blockers | default([]) + [item.item.key] }}
+  loop: "{{ _upstream_release_epochs.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - workstation_update_ring != 'canary'
+    - >-
+      item.rc | default(1) != 0 or
+      (item.stdout | default('') | trim | length == 0) or
+      ((ansible_date_time.epoch | int - item.stdout | int) <
+       (workstation_update_ring_min_age_seconds[workstation_update_ring] | int))
+
+- name: Set update ring decision
+  ansible.builtin.set_fact:
+    workstation_update_ring_blockers: "{{ workstation_update_ring_blockers | default([]) }}"
+    workstation_update_install_allowed: >-
+      {{ (workstation_update_ring == 'canary' or
+          (workstation_update_ring_blockers | default([]) | length == 0)) and
+         not (workstation_update_quarantine_active | default(false)) }}
+
+- name: Persist update ring decision
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'schema': 'curiosity.workstation.update-ring/v1',
+          'run_id': workstation_update_run_id,
+          'ring': workstation_update_ring,
+          'minimum_age_seconds': workstation_update_ring_min_age_seconds[workstation_update_ring],
+          'blockers': workstation_update_ring_blockers,
+          'quarantine_active': workstation_update_quarantine_active | default(false),
+          'install_allowed': workstation_update_install_allowed,
+          'evaluated_at': ansible_date_time.iso8601
+        } | to_nice_json
+      }}
+    dest: "{{ workstation_update_state_dir }}/observations/{{ workstation_update_run_id }}-ring.json"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Report a held update ring without failing configuration convergence
+  ansible.builtin.debug:
+    msg: >-
+      Workstation update ring '{{ workstation_update_ring }}' is holding the
+      newest upstream release(s) for observation: {{ workstation_update_ring_blockers | join(', ') }}
+  when: not workstation_update_install_allowed

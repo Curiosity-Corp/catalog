@@ -20,10 +20,16 @@
         extra_args=({{ ansible_pull_extra_vars }})
       fi
 
+      verify_args=()
+      if [[ "{{ ansible_pull_verify_commit | bool }}" == "True" ]]; then
+        verify_args+=(--verify-commit)
+      fi
+
       exec /usr/bin/ansible-pull \
         -U {{ ansible_pull_repo }} \
         -C {{ ansible_pull_branch }} \
         -d {{ ansible_pull_dir }} \
+        "${verify_args[@]}" \
         {{ ansible_pull_playbook }} \
         -e dev_user={{ dev_user }} \
         -e dev_user_home={{ dev_user_home }} \
@@ -40,6 +46,8 @@
       Description=Ansible Pull - Developer Workstation Updates
       After=network-online.target
       Wants=network-online.target
+      StartLimitIntervalSec=1h
+      StartLimitBurst=3
 
       [Service]
       Type=oneshot
@@ -63,7 +71,9 @@
       [Timer]
       OnBootSec=5min
       OnCalendar=*-*-* 02:00:00
-      RandomizedDelaySec=30min
+      RandomizedDelaySec={{ workstation_update_ring_randomized_delay_seconds[workstation_update_ring] }}
+      Persistent=true
+      AccuracySec=5min
 
       [Install]
       WantedBy=timers.target

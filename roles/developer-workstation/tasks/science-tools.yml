@@ -94,7 +94,7 @@
 - name: Upgrade all pip packages in science-venv (periodic)  # noqa: package-latest
   ansible.builtin.pip:
     name:
-      # Core data-science stack — upgrade all pinned deps
+      # Core data-science stack — upgrade all declared packages
       - numpy
       - scipy
       - pandas

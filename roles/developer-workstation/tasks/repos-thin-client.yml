@@ -61,6 +61,17 @@
     mode: "0644"
   register: _openziti_key_download
 
+- name: Verify OpenZiti repository key fingerprint
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --show-keys
+      - --with-colons
+      - /tmp/openziti-package-repos.gpg
+  register: _openziti_key_info
+  changed_when: false
+  failed_when: openziti_key_fingerprint not in (_openziti_key_info.stdout | default(''))
+
 - name: Check OpenZiti keyring presence
   ansible.builtin.stat:
     path: /usr/share/keyrings/openziti-archive-keyring.gpg
@@ -120,14 +131,45 @@
   failed_when: false
 
 # --- Node.js (optional, only for local Playwright on thin clients) ---
-- name: Install Node.js repository via NodeSource setup script  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://deb.nodesource.com/setup_{{ node_major_version }}.x \
-        | bash -
-    executable: /bin/bash
-    creates: /etc/apt/sources.list.d/nodesource.list
+- name: Download NodeSource repository key
+  ansible.builtin.get_url:
+    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+    dest: /tmp/nodesource-repo.gpg.key
+    mode: "0644"
+  register: _nodesource_key_download
+  when: thin_client_playwright_enabled | default(false)
+
+- name: Verify NodeSource repository key fingerprint
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --show-keys
+      - --with-colons
+      - /tmp/nodesource-repo.gpg.key
+  register: _nodesource_key_info
+  changed_when: false
+  failed_when: >-
+    nodesource_key_fingerprint not in (_nodesource_key_info.stdout | default(''))
+  when: thin_client_playwright_enabled | default(false)
+
+- name: Install NodeSource repository keyring
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --dearmor
+      - --yes
+      - -o
+      - /etc/apt/keyrings/nodesource.gpg
+      - /tmp/nodesource-repo.gpg.key
+  changed_when: _nodesource_key_download.changed
+  notify: Update apt cache
+  when: thin_client_playwright_enabled | default(false)
+
+- name: Add NodeSource current repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_current.x nodistro main"
+    filename: nodesource
+    state: present
   notify: Update apt cache
   when: thin_client_playwright_enabled | default(false)
 

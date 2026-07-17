@@ -11,47 +11,57 @@
 # Default credentials: sunshine / sunshine
 # =============================================================================
 
-- name: Check if Sunshine is installed
-  ansible.builtin.command: which sunshine
-  register: _sunshine_installed
-  changed_when: false
-  failed_when: false
+- name: Select latest Sunshine Debian package for this distribution
+  ansible.builtin.set_fact:
+    _sunshine_latest_asset_name: >-
+      {{
+        'sunshine-ubuntu-24.04-amd64.deb'
+        if ansible_distribution == 'Ubuntu'
+        else 'sunshine-debian-trixie-amd64.deb'
+      }}
 
-- name: Get installed Sunshine version
-  ansible.builtin.command: sunshine --version
-  register: _sunshine_version
-  changed_when: false
-  failed_when: false
-  when: _sunshine_installed.rc == 0
+- name: Resolve latest Sunshine Debian package asset
+  ansible.builtin.set_fact:
+    _sunshine_latest_deb_asset: >-
+      {{
+        latest_github_releases.sunshine.assets
+        | selectattr('name', 'equalto', _sunshine_latest_asset_name)
+        | first
+      }}
 
-- name: Download Sunshine .deb
+- name: Require a current Sunshine package for this distribution
+  ansible.builtin.assert:
+    that:
+      - _sunshine_latest_deb_asset | default({}) | length > 0
+      - _sunshine_latest_deb_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: >-
+      The latest Sunshine release did not publish a supported package for
+      {{ ansible_distribution }} ({{ ansible_distribution_release }}).
+
+- name: Download latest Sunshine .deb
   ansible.builtin.get_url:
-    url: "{{ sunshine_deb_url }}"
-    dest: /tmp/sunshine.deb
+    url: "{{ _sunshine_latest_deb_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/sunshine-{{ _sunshine_latest_deb_asset.digest | regex_replace('^sha256:', '') }}.deb"
+    checksum: "{{ _sunshine_latest_deb_asset.digest }}"
     mode: "0644"
-  when: >
-    _sunshine_installed.rc != 0 or
-    (sunshine_version not in (_sunshine_version.stdout | default('')))
+    force: false
 
-- name: Install Sunshine .deb (with dependencies)
+- name: Install latest Sunshine .deb (with dependencies)
   ansible.builtin.apt:
-    deb: /tmp/sunshine.deb
+    deb: "{{ workstation_update_artifact_cache_dir }}/sunshine-{{ _sunshine_latest_deb_asset.digest | regex_replace('^sha256:', '') }}.deb"
     state: present
-  when: >
-    _sunshine_installed.rc != 0 or
-    (sunshine_version not in (_sunshine_version.stdout | default('')))
 
-- name: Clean up Sunshine .deb
-  ansible.builtin.file:
-    path: /tmp/sunshine.deb
-    state: absent
+- name: Check installed Sunshine binary
+  ansible.builtin.stat:
+    path: /usr/bin/sunshine
+  register: _sunshine_installed
 
 - name: Resolve Sunshine binary real path
   ansible.builtin.command: readlink -f "{{ _sunshine_installed.stdout | default('/usr/bin/sunshine') }}"
   register: _sunshine_bin_realpath
   changed_when: false
   failed_when: false
-  when: _sunshine_installed.rc == 0
+  when: _sunshine_installed.stat.exists
 
 - name: Set cap_sys_admin on Sunshine binary (KMS capture)
   community.general.capabilities:
