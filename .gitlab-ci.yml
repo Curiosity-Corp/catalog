@@ -38,7 +38,7 @@ yaml:
   extends: .python_setup
   stage: validate
   script:
-    - yamllint -f parsable .
+    - yamllint -f parsable .github .gitlab docs examples playbooks roles .gitlab-ci.yml galaxy.yml requirements.yml renovate.json
 
 syntax:
   extends: .python_setup
