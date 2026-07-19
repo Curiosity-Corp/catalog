@@ -19,8 +19,10 @@ variables:
 
 .python_setup:
   before_script:
-    - apt-get update
-    - apt-get install --yes --no-install-recommends git openssh-client
+    # The shared Kubernetes runner is intentionally non-root. Keep jobs
+    # portable by installing tools into a disposable workspace virtualenv.
+    - python -m venv .ci-venv
+    - export PATH="$CI_PROJECT_DIR/.ci-venv/bin:$PATH"
     - python -m pip install --upgrade pip
     - python -m pip install ansible-core ansible-lint yamllint pyyaml pytest
     - ansible-galaxy collection install -r requirements.yml

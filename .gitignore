@@ -13,6 +13,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .venv/
+.ci-venv/
 *.tar.gz
 collection.cdx.json
 
