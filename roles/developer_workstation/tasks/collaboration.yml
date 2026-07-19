@@ -1,0 +1,192 @@
+---
+# =============================================================================
+# Collaboration Tools
+# =============================================================================
+# Mattermost Desktop, Firefox extensions, and browser policies
+# =============================================================================
+
+# =============================================================================
+# Mattermost Desktop
+# =============================================================================
+# Installs from GitHub release tarball under /opt and keeps
+# /opt/mattermost-desktop pointed at the latest managed version.
+# No .deb available since v6.x.
+# =============================================================================
+
+- name: Resolve Mattermost Desktop latest verified asset
+  ansible.builtin.set_fact:
+    mattermost_desktop_version: "{{ latest_github_releases.mattermost_desktop.tag_name | regex_replace('^v', '') }}"
+    mattermost_desktop_asset: >-
+      {{ latest_github_releases.mattermost_desktop.assets
+         | selectattr('name', 'match', '^mattermost-desktop-.*-linux-x64\\.tar\\.gz$') | first }}
+    mattermost_desktop_dir: "/opt/mattermost-desktop-{{ latest_github_releases.mattermost_desktop.tag_name | regex_replace('^v', '') }}-linux-x64"
+
+- name: Require a verified Mattermost Desktop asset
+  ansible.builtin.assert:
+    that:
+      - mattermost_desktop_asset | default({}) | length > 0
+      - mattermost_desktop_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+
+- name: Check Mattermost Desktop path state
+  ansible.builtin.stat:
+    path: /opt/mattermost-desktop
+    follow: false
+  register: mattermost_desktop_path
+
+- name: Download Mattermost Desktop desired version
+  ansible.builtin.get_url:
+    url: "{{ mattermost_desktop_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/mattermost-desktop-{{ mattermost_desktop_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    checksum: "{{ mattermost_desktop_asset.digest }}"
+    mode: "0644"
+    force: false
+
+- name: Extract Mattermost Desktop desired version
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_artifact_cache_dir }}/mattermost-desktop-{{ mattermost_desktop_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    dest: /opt
+    remote_src: true
+    creates: "{{ mattermost_desktop_dir }}"
+
+- name: Remove legacy Mattermost Desktop directory layout
+  ansible.builtin.file:
+    path: /opt/mattermost-desktop
+    state: absent
+  when:
+    - mattermost_desktop_path.stat.exists
+    - not (mattermost_desktop_path.stat.islnk | default(false))
+
+- name: Symlink Mattermost Desktop current version
+  ansible.builtin.file:
+    src: "{{ mattermost_desktop_dir }}"
+    dest: /opt/mattermost-desktop
+    state: link
+    force: true
+
+- name: Symlink Mattermost Desktop to PATH
+  ansible.builtin.file:
+    src: /opt/mattermost-desktop/mattermost-desktop
+    dest: /usr/local/bin/mattermost-desktop
+    state: link
+    force: true
+
+- name: Create Mattermost Desktop .desktop entry
+  ansible.builtin.copy:
+    content: |
+      [Desktop Entry]
+      Name=Mattermost
+      Comment=Mattermost Desktop Application
+      Exec=env NODE_EXTRA_CA_CERTS={{ custom_ca_bundle_path }} /opt/mattermost-desktop/mattermost-desktop %U
+      Icon=/opt/mattermost-desktop/app_icon.png
+      Terminal=false
+      Type=Application
+      Categories=Network;InstantMessaging;
+      StartupWMClass=Mattermost
+    dest: /usr/share/applications/mattermost-desktop.desktop
+    mode: "0644"
+
+# =============================================================================
+# Firefox Enterprise Policies — Bitwarden Extension + CA Trust
+# =============================================================================
+# Force-installs the Bitwarden password manager extension for all Firefox users.
+# Enables ImportEnterpriseRoots so Firefox trusts the system CA store.
+# =============================================================================
+
+- name: Ensure Firefox policy directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/firefox/policies
+    - /usr/lib/firefox/distribution
+
+- name: Deploy Firefox enterprise policies
+  ansible.builtin.copy:
+    content: |
+      {
+        "policies": {
+          "ExtensionSettings": {
+            "{446900e4-71c2-419f-a6a7-df9c091e268b}": {
+              "installation_mode": "force_installed",
+              "install_url": "https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi"
+            }
+          },
+          "Certificates": {
+            "ImportEnterpriseRoots": true
+          }
+        }
+      }
+    dest: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - /etc/firefox/policies/policies.json
+    - /usr/lib/firefox/distribution/policies.json
+
+# =============================================================================
+# Snap Firefox — custom CA trust
+# =============================================================================
+# Snap Firefox is sandboxed and may not read the host CA store. Add configured
+# custom CAs directly to each snap Firefox NSS profile.
+# =============================================================================
+
+- name: Find snap Firefox NSS databases
+  ansible.builtin.find:
+    paths: "{{ dev_user_home }}/snap/firefox/common/.mozilla/firefox"
+    patterns: "cert9.db"
+    recurse: true
+  register: _snap_firefox_nssdb
+
+- name: Add configured custom CAs to snap Firefox profiles
+  ansible.builtin.command:
+    cmd: >-
+      certutil -d sql:{{ item.0.path | dirname }}
+      -A -t "CT,C,C" -n "{{ ca_item.name }}"
+      -i /usr/local/share/ca-certificates/{{ ca_item.name }}.crt
+  become: true
+  become_user: "{{ dev_user }}"
+  loop: "{{ _snap_firefox_nssdb.files | product(custom_ca_certificates | default([])) | list }}"
+  loop_control:
+    label: "{{ item.0.path | dirname | basename }} <- {{ item.1.name }}"
+  register: _snap_ff_ca
+  changed_when: _snap_ff_ca.rc == 0
+  failed_when: false
+  vars:
+    ca_item: "{{ item.1 }}"
+  when: custom_ca_certificates | default([]) | length > 0
+
+# =============================================================================
+# Snap Mattermost Desktop — NODE_EXTRA_CA_CERTS override
+# =============================================================================
+# If Mattermost was installed via snap instead of tarball, create a user-local
+# .desktop override that points at the system/custom CA bundle.
+# =============================================================================
+
+- name: Check if Mattermost snap is installed
+  ansible.builtin.stat:
+    path: /snap/bin/mattermost-desktop
+  register: _mattermost_snap
+
+- name: Create snap Mattermost .desktop override with CA trust
+  ansible.builtin.copy:
+    content: |
+      [Desktop Entry]
+      X-SnapInstanceName=mattermost-desktop
+      Name=Mattermost
+      Exec=env NODE_EXTRA_CA_CERTS={{ custom_ca_bundle_path }} /snap/bin/mattermost-desktop %U
+      Terminal=false
+      Type=Application
+      Icon=/snap/mattermost-desktop/current/meta/gui/icon.png
+      StartupWMClass=Mattermost
+      Comment=Mattermost
+      MimeType=x-scheme-handler/mattermost;
+      Categories=Network;InstantMessaging;
+    dest: "{{ dev_user_home }}/.local/share/applications/mattermost-desktop_mattermost-desktop.desktop"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  when: _mattermost_snap.stat.exists

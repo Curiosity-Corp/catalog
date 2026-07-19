@@ -1,0 +1,13 @@
+---
+# Documentation example. Replace the account and hardware values for the
+# target machine; keep private service variables outside the repository.
+dev_user: researcher
+dev_user_home: /home/researcher
+workstation_profile: desktop
+hardware_profile: generic
+
+# Opt into only the integrations the lab has reviewed.
+coder_cli_enabled: false
+keycloak_sso_enabled: false
+ziti_enabled: false
+sunshine_enabled: false

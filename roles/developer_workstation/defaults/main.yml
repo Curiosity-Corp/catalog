@@ -1,0 +1,564 @@
+---
+dev_user: curiosity
+dev_user_home: /home/curiosity
+# Optional machine-local override file. Keep per-person/user values here on the
+# target host instead of committing host-specific maps to this repo.
+developer_workstation_local_vars_file: /etc/ansible/local-vars.yml
+# Role profile:
+#   desktop   = full workstation (physical/VM desktop host)
+#   workspace = container-safe Coder workspace profile
+#   thin-client = access appliance for Coder + Ziti + browser
+workstation_profile: desktop
+
+# Default editor command written to shell rc files.
+# Workspace/thin-client profiles should override this to terminal-friendly editors.
+preferred_editor: "code --wait"
+
+# Tool group toggles. Integrations that require an organization's service or
+# identity provider are opt-in so the public role is safe on a new machine.
+coder_cli_enabled: false
+cloud_clis_enabled: false
+thin_client_playwright_enabled: false
+
+# Optional external thin-client TUI. Set missionctl_install_url to a direct
+# binary URL and checksum before enabling it.
+missionctl_enabled: false
+missionctl_install_url: ""
+missionctl_install_sha256: ""
+missionctl_install_path: /usr/local/bin/missionctl
+
+# Coder CLI tracks the deployment's own server version at install time
+# (see tasks/coder-cli.yml) rather than a static pin — the client must match
+# the server exactly for `coder ssh` and other RPC-driven commands to work.
+coder_deployment_url: ""
+coder_cli_install_script_url: "{{ coder_deployment_url ~ '/install.sh' if coder_deployment_url else '' }}"
+coder_cli_buildinfo_url: "{{ coder_deployment_url ~ '/api/v2/buildinfo' if coder_deployment_url else '' }}"
+
+# Upstream release metadata used by the binary installers. These are repository
+# identities, not release pins: the tasks query each upstream's latest release
+# during every ansible-pull and install the matching current Linux asset.
+github_api_token: ""
+latest_github_repositories:
+  lazygit: jesseduffield/lazygit
+  delta: dandavison/delta
+  zoxide: ajeetdsouza/zoxide
+  dust: bootandy/dust
+  duf: muesli/duf
+  glow: charmbracelet/glow
+  just: casey/just
+  watchexec: watchexec/watchexec
+  hyperfine: sharkdp/hyperfine
+  gum: charmbracelet/gum
+  golangci_lint: golangci/golangci-lint
+  trivy: aquasecurity/trivy
+  tofu: opentofu/opentofu
+  helm: helm/helm
+  kustomize: kubernetes-sigs/kustomize
+  kubectx: ahmetb/kubectx
+  krew: kubernetes-sigs/krew
+  stern: stern/stern
+  velero: vmware-tanzu/velero
+  kubeseal: bitnami-labs/sealed-secrets
+  sops: getsops/sops
+  age: FiloSottile/age
+  sunshine: LizardByte/Sunshine
+  deno: denoland/deno
+  bun: oven-sh/bun
+  starship: starship/starship
+  talhelper: budimanjojo/talhelper
+  yq: mikefarah/yq
+  chezmoi: twpayne/chezmoi
+  filebrowser: filebrowser/filebrowser
+  talos: siderolabs/talos
+  k9s: derailed/k9s
+  argocd: argoproj/argo-cd
+  kubeconform: yannh/kubeconform
+  crane: google/go-containerregistry
+  act: nektos/act
+  cosign: sigstore/cosign
+  step: smallstep/cli
+  flux: fluxcd/flux2
+  mattermost_desktop: mattermost/desktop
+  nerd_fonts: ryanoasis/nerd-fonts
+
+# Every API-backed release source also has an explicit application contract.
+# The contract is inventory/provenance data, not a release pin: it says how an
+# application is obtained and how its installed result can be checked.
+latest_release_contracts:
+  lazygit: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/lazygit, --version]}
+  delta: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/delta, --version]}
+  zoxide: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/zoxide, --version]}
+  dust: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/dust, --version]}
+  duf: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/duf, --version]}
+  glow: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/glow, --version]}
+  just: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/just, --version]}
+  watchexec: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/watchexec, --version]}
+  hyperfine: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/hyperfine, --version]}
+  gum: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/gum, --version]}
+  golangci_lint: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/golangci-lint, --version]}
+  trivy: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/trivy, --version]}
+  tofu: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/tofu, version]}
+  helm: {installer: helm-release, verification: helm-sha256, healthcheck: [/usr/local/bin/helm, version]}
+  kustomize: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kustomize, version]}
+  kubectx: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kubectx, --version]}
+  stern: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/stern, --version]}
+  velero: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/velero, version, --client-only]}
+  kubeseal: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kubeseal, --version]}
+  sops: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/sops, --version]}
+  age: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/age, --version]}
+  sunshine: {installer: github-deb, verification: github-asset-digest, healthcheck: [/usr/bin/sunshine, --version]}
+  deno: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/deno, --version]}
+  bun: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/bun, --version]}
+  starship: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/starship, --version]}
+  talhelper: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/talhelper, --version]}
+  yq: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/yq, --version]}
+  chezmoi: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/chezmoi, --version]}
+  filebrowser: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/filebrowser, version]}
+  talos: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/talosctl, version, --client]}
+  k9s: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/k9s, version]}
+  argocd: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/argocd, version, --client]}
+  krew: {installer: github-archive, verification: github-asset-digest, scope: user, healthcheck: [.krew/bin/kubectl-krew, help]}
+  kubeconform: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kubeconform, -v]}
+  crane: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/crane, version]}
+  act: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/act, --version]}
+  cosign: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/cosign, version]}
+  step: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/step, version]}
+  flux: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/flux, --version]}
+  mattermost_desktop: {installer: github-archive, verification: github-asset-digest, healthcheck: [/opt/mattermost-desktop/mattermost-desktop, --version]}
+  nerd_fonts: {installer: github-archive, verification: github-asset-digest, healthcheck: [fc-cache, -V]}
+
+# Applications whose native update channel is not a GitHub release API. They
+# still participate in the same health, provenance, and rollback contract.
+workstation_application_contracts:
+  coder: {installer: deployment-buildinfo, verification: deployment-version, healthcheck: [/usr/local/bin/coder, version, --output, json]}
+  go: {installer: go-release, verification: go-sha256, healthcheck: [/usr/local/go/bin/go, version]}
+  kubectl: {installer: kubectl-release, verification: kubectl-sha256, healthcheck: [/usr/local/bin/kubectl, version, --client=true]}
+  composer: {installer: composer-installer, verification: composer-sha384, healthcheck: [/usr/local/bin/composer, --version]}
+  grpcurl: {installer: go-module, verification: go-module-sumdb, healthcheck: [/usr/local/bin/grpcurl, -version]}
+  mkcert: {installer: apt, verification: apt-signature, healthcheck: [/usr/bin/mkcert, -version]}
+  aws: {installer: aws-cli-pgp, verification: aws-cli-signing-key, healthcheck: [/usr/local/bin/aws, --version]}
+  glab: {installer: gitlab-release, verification: gitlab-checksum, healthcheck: [/usr/local/bin/glab, version]}
+  rclone: {installer: rclone-release, verification: rclone-sha256, healthcheck: [/usr/local/bin/rclone, version]}
+  terraform: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/terraform, version]}
+  vault: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/vault, version]}
+  packer: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/packer, version]}
+  m365-cli: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/m365", --version]}
+  codex: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/codex", --version]}
+  uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
+
+# =============================================================================
+# Workstation update control plane (local until an optional fleet service exists)
+# =============================================================================
+# The default ring is canary because this is an R&D lab. Host/group vars can
+# move a machine to early/general without introducing a release pin.
+workstation_update_ring: canary
+workstation_update_ring_min_age_seconds:
+  canary: 0
+  early: 21600
+  general: 86400
+workstation_update_ring_randomized_delay_seconds:
+  canary: 900
+  early: 21600
+  general: 86400
+workstation_update_state_dir: /var/lib/curiosity/workstation-updates
+workstation_update_artifact_cache_dir: /var/cache/curiosity/artifacts
+workstation_update_manifest_path: /var/lib/curiosity/workstation-updates/last-run.json
+workstation_update_sbom_path: /var/lib/curiosity/workstation-updates/sbom.cdx.json
+workstation_update_snapshot_retention: 3
+workstation_update_cache_retention_days: 30
+workstation_update_quarantine_seconds: 3600
+workstation_update_healthcheck_enabled: true
+workstation_update_sbom_enabled: true
+workstation_update_managed_paths:
+  - /usr/local/bin/lazygit
+  - /usr/local/bin/delta
+  - /usr/local/bin/zoxide
+  - /usr/local/bin/dust
+  - /usr/local/bin/duf
+  - /usr/local/bin/glow
+  - /usr/local/bin/just
+  - /usr/local/bin/watchexec
+  - /usr/local/bin/hyperfine
+  - /usr/local/bin/gum
+  - /usr/local/bin/golangci-lint
+  - /usr/local/bin/trivy
+  - /usr/local/bin/grpcurl
+  - /usr/local/bin/tofu
+  - /usr/local/bin/helm
+  - /usr/local/bin/kustomize
+  - /usr/local/bin/kubectl
+  - /usr/local/bin/kubectx
+  - /usr/local/bin/kubens
+  - "{{ dev_user_home }}/.krew/bin/kubectl-krew"
+  - /usr/local/bin/stern
+  - /usr/local/bin/velero
+  - /usr/local/bin/kubeseal
+  - /usr/local/bin/sops
+  - /usr/local/bin/age
+  - /usr/local/bin/age-keygen
+  - /usr/local/bin/deno
+  - /usr/local/bin/bun
+  - /usr/local/bin/starship
+  - /usr/local/bin/talhelper
+  - /usr/local/bin/yq
+  - /usr/local/bin/chezmoi
+  - /usr/local/bin/filebrowser
+  - /usr/local/bin/talosctl
+  - /usr/local/bin/k9s
+  - /usr/local/bin/argocd
+  - /usr/local/bin/kubeconform
+  - /usr/local/bin/crane
+  - /usr/local/bin/act
+  - /usr/local/bin/cosign
+  - /usr/local/bin/step
+  - /usr/local/bin/flux
+  - /usr/local/bin/mattermost-desktop
+  - /usr/local/go/bin/go
+  - /usr/local/bin/coder
+  - /usr/local/bin/aws
+  - /usr/local/bin/glab
+  - /usr/local/bin/rclone
+  - /usr/local/bin/composer
+  - "{{ dev_user_home }}/.local/bin/uv"
+  - /usr/bin/sunshine
+  - /usr/local/bin/terraform
+  - /usr/local/bin/vault
+  - /usr/local/bin/packer
+  - "{{ npm_global_prefix }}/bin/npm"
+  - "{{ npm_global_prefix }}/bin/m365"
+  - "{{ npm_global_prefix }}/bin/codex"
+  - "{{ npm_global_prefix }}/bin/pnpm"
+  - "{{ npm_global_prefix }}/bin/yarn"
+  - "{{ npm_global_prefix }}/bin/tsc"
+  - "{{ npm_global_prefix }}/bin/ts-node"
+  - "{{ npm_global_prefix }}/bin/tsx"
+  - "{{ npm_global_prefix }}/bin/turbo"
+  - "{{ npm_global_prefix }}/bin/eslint"
+  - "{{ npm_global_prefix }}/bin/prettier"
+  - "{{ npm_global_prefix }}/bin/mmdc"
+  - "{{ npm_global_prefix }}/bin/playwright"
+  - "{{ npm_global_prefix }}/bin/claude"
+  - "{{ npm_global_prefix }}/bin/gemini"
+  - "{{ npm_global_prefix }}/bin/qwen"
+  - "{{ npm_global_prefix }}/bin/codewhale"
+workstation_update_non_removable_paths:
+  # These are package-owned files. Removing a newly-created binary on
+  # rollback would leave dpkg's ownership database inconsistent.
+  - /usr/bin/sunshine
+
+# Fail-closed is available as soon as the catalog signing key is provisioned.
+# Current public history is not uniformly signed, so warn is the safe bootstrap
+# default; set `catalog_integrity_mode: enforce` on signed installations.
+catalog_integrity_mode: warn
+catalog_signing_key_fingerprint: ""
+
+# npm globals are user-facing applications. They always follow the registry's
+# latest dist-tag; there is deliberately no compatibility-pin mode.
+npm_global_prefix: "{{ dev_user_home }}/.npm-global"
+npm_global_executable: "/usr/bin/npm"
+npm_global_packages:
+  - npm
+  - pnpm
+  - yarn
+  - typescript
+  - ts-node
+  - tsx
+  - turbo
+  - eslint
+  - prettier
+  - "@mermaid-js/mermaid-cli"
+  - "@pnp/cli-microsoft365"
+  - codewhale
+
+# AI coding assistants are also user-scoped and refreshed nightly. Keep the
+# package list in defaults so every workstation profile gets the same policy.
+ai_assistant_packages:
+  - "@anthropic-ai/claude-code"
+  - "@google/gemini-cli"
+  - "@openai/codex"
+  - "@qwen-code/qwen-code"
+
+# Optional provider configuration. The role never embeds a lab's secret-store
+# name or API key lookup. Set the command in protected host/group variables if
+# a local provider should be configured.
+qwen_provider_enabled: false
+qwen_provider_secret_command: ""
+qwen_provider_base_url: "https://integrate.api.nvidia.com/v1"
+qwen_provider_model: "qwen/qwen3.5-397b-a17b"
+
+# Package-manager updates are enabled by default for every profile. This is a
+# safe APT upgrade (no removals); reboot-sensitive changes remain pending until
+# the user reboots.
+apt_upgrade_enabled: true
+# NodeSource repository trust anchor. This authenticates the repository key,
+# not an application release, so it does not constrain bleeding-edge versions.
+nodesource_key_fingerprint: "6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+openziti_key_fingerprint: "34CBCF18427D8814B5BDBB0DDE3623EF08C996E5"
+# Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
+# (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)
+apt_fallback_release: "noble"
+# Chezmoi dotfiles (per-user, zero-PII bootstrap)
+# Set `user_dotfiles_repo` to the user's fork URL to enable; empty = skip.
+# Keep private repositories and personal identity values in host/group vars,
+# Ansible Vault, or another secret store; never commit them here.
+#
+# Values for chezmoi_user_name / chezmoi_user_email MUST be set in
+# host_vars or group_vars per engineer — NEVER committed to this repo.
+user_dotfiles_repo: ""
+chezmoi_user_name: ""
+chezmoi_user_email: ""
+chezmoi_editor: ""
+
+# ansible-pull settings
+ansible_pull_repo: "https://github.com/Curiosity-Corp/catalog.git"
+ansible_pull_branch: "main"
+ansible_pull_playbook: "playbooks/site.yml"
+ansible_pull_dir: "/opt/curiosity-catalog"
+ansible_pull_extra_vars: ""
+ansible_pull_verify_commit: "{{ catalog_integrity_mode == 'enforce' }}"
+authd_archive_distribution: "{{ ansible_distribution_release }}"
+authd_archive_key_fingerprint: "155D766F2E771AED"
+authd_archive_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x{{ authd_archive_key_fingerprint }}"
+authd_archive_key_asc_path: "/etc/apt/keyrings/ubuntu-enterprise-desktop-authd.asc"
+authd_archive_keyring_path: "/etc/apt/keyrings/ubuntu-enterprise-desktop-authd.gpg"
+authd_archive_repo_url: "https://ppa.launchpadcontent.net/ubuntu-enterprise-desktop/authd/ubuntu"
+
+# Log rotation hardening
+logrotate_maxsize: "100M"
+logrotate_rotate_count: 7
+logrotate_ziti_maxsize: "50M"
+rsyslog_ratelimit_interval: 5
+rsyslog_ratelimit_burst: 1000
+
+# WeeChat TUI chat client (wee-slack + wee-most plugins)
+weechat_enabled: false
+weechat_teams_enabled: false
+weechat_teams_client_id: ""
+
+# System tuning (swap, swappiness, earlyoom OOM protection)
+system_tuning_enabled: true
+swap_size_gb: 16
+vm_swappiness: 10
+
+# Entra ID SSO — SUNSET, replaced by Keycloak SSO
+entra_id_enabled: false
+
+# Keycloak SSO (authd + authd-oidc broker). Configure these in host/group
+# variables for a research lab's own identity provider.
+keycloak_sso_enabled: false
+keycloak_host: ""
+keycloak_realm: ""
+keycloak_desktop_client_id: ""
+keycloak_allowed_users: "ALL"
+
+# OpenZiti ZTNA (ziti-edge-tunnel + OIDC session hooks)
+ziti_enabled: false
+ziti_install_script_url: "https://get.openziti.io/tun/scripts/install-ubuntu.bash"
+ziti_service_name: "ziti-edge-tunnel.service"
+ziti_manage_service: true
+ziti_oidc_provider: ""
+
+# Ziti-only hostnames pinned in /etc/hosts.
+#
+# Each name is resolved against Ziti's internal DNS at 100.64.0.2 and pinned
+# to its assigned intercept IP. Names are supplied by the operator because
+# private service topology is different for every lab.
+#
+# Override or extend in group_vars / host_vars / -e to add machine-local
+# pins (e.g. lab-only services). To disable entirely on a host, set this
+# to an empty list.
+ziti_etc_hosts_pins: []
+ziti_intercept_domains: []
+
+# Optional certificates for private lab services. `src` is read from the
+# Ansible controller, which is also the target when using ansible-pull.
+# Example (keep the source outside this repository):
+# custom_ca_certificates:
+#   - name: lab-registry
+#     src: /etc/ansible/private/lab-registry.crt
+#     nss_name: Lab registry
+custom_ca_certificates: []
+custom_ca_bundle_path: /etc/ssl/certs/ca-certificates.crt
+
+# Generic GitLab/Coder workspace settings. Point these at a lab's own service
+# in host/group vars instead of baking an organization into the role.
+workspace_gitlab_host: gitlab.com
+workspace_gitlab_external_auth_provider: gitlab
+
+# Display configuration (GDM auto-login, x11vnc, dconf no-lock)
+# Enable on iGPU passthrough VMs that need physical display + VNC
+display_config_enabled: false
+
+# Minimal desktop (Openbox + LightDM + Firefox)
+# Lightweight GUI for machines that only need a browser and terminal.
+# Mutually exclusive with display_config_enabled (GDM/GNOME).
+minimal_desktop_enabled: false
+minimal_desktop_autologin: true
+minimal_desktop_firefox_tweaks: true
+
+# Sunshine remote streaming (Moonlight-compatible, KMS capture + VAAPI encode)
+# Disabled until the operator explicitly chooses to expose a streaming
+# service. Never use a shared/default password; provide credentials from Vault
+# or configure Sunshine interactively.
+sunshine_enabled: false
+sunshine_default_user: ""
+sunshine_default_pass: ""
+
+# VS Code extensions (pre-installed baseline matching installed runtimes/tools)
+# Override in extra-vars to customize per-machine
+vscode_extensions:
+  # Language support (matches installed runtimes)
+  - ms-python.python
+  - ms-python.vscode-pylance
+  - golang.go
+  - rust-lang.rust-analyzer
+  - denoland.vscode-deno
+  - ms-dotnettools.csharp
+  - bmewburn.vscode-intelephense-client
+  - redhat.java
+  # Formatting and linting
+  - esbenp.prettier-vscode
+  - dbaeumer.vscode-eslint
+  # Git
+  - eamodio.gitlens
+  # Infrastructure (matches installed CLIs)
+  - hashicorp.terraform
+  - ms-kubernetes-tools.vscode-kubernetes-tools
+  - redhat.vscode-yaml
+  - redhat.ansible
+  # Editor productivity
+  - editorconfig.editorconfig
+  - yzhang.markdown-all-in-one
+  - ms-vscode-remote.remote-ssh
+
+# Kiosk session (byod-kiosk profile)
+# Target URL for the full-screen kiosk browser session.
+kiosk_target_url: "https://example.org"
+# Idle timeout before screen lock, in minutes.
+kiosk_idle_lock_minutes: 15
+
+# UFW firewall (SSH open, VNC restricted to ziti0)
+firewall_enabled: false
+
+# Profile cleanup (Shared PC mode equivalent)
+profile_cleanup_enabled: false
+profile_cleanup_days: 60
+
+# =============================================================================
+# Free/Open-Source Maintenance & Security Hardening Stack
+# =============================================================================
+# See maintenance.yml, self-healing.yml, and the "Secure"/"Optimized" sections
+# of security.yml / system-tuning.yml.
+
+# Ubuntu Pro token — empty by default, so ESM/Livepatch attach is skipped
+# entirely. Canonical's free tier covers ESM + Livepatch for up to 5 machines
+# for individuals; set this in host_vars/group_vars, NEVER commit a real token.
+ubuntu_pro_token: ""
+
+# fwupd refreshes metadata weekly regardless; auto-*applying* firmware
+# unattended can brick hardware, so this stays opt-in.
+fwupd_auto_apply: false
+
+# Incoming-webhook URL (Mattermost/Slack/Teams/generic) for the hourly
+# systemctl --failed sweep. Empty by default — the sweep always logs to
+# syslog regardless; this just adds a push alert on top. Set in
+# host_vars/group_vars, never commit a real URL.
+failed_sweep_webhook_url: ""
+
+# =============================================================================
+# Hardware Profiles
+# =============================================================================
+# Select via: -e hardware_profile=z590
+# Each profile defines packages and config specific to that hardware class.
+# =============================================================================
+hardware_profile: generic
+
+hardware_profiles:
+  generic:
+    description: "Generic developer workstation (no hardware-specific drivers)"
+    packages: []
+    services: []
+    pia_vpn: false
+
+  arm-thin-client:
+    description: "ARM thin client"
+    packages: []
+    services: []
+    pia_vpn: false
+
+  x86-byod-laptop:
+    description: "x86_64 BYOD kiosk laptop (Lenovo T460 and similar)"
+    packages:
+      # ThinkPad power management and fan control
+      - acpi
+      - acpid
+      - tlp
+      - tlp-rdw
+      # Intel graphics firmware and video acceleration
+      - intel-media-va-driver
+      - i965-va-driver
+      # Suspend/resume reliability
+      - pm-utils
+    services:
+      - acpid
+      - tlp
+    pia_vpn: false
+
+  z590:
+    description: "ASUS TUF Gaming Z590 — iGPU passthrough VM host"
+    packages:
+      # Logitech device management (Unifying/Bolt/Lightspeed receivers)
+      - solaar
+      # Bluetooth stack
+      - bluez
+      - bluez-tools
+      # Intel iGPU video acceleration
+      - intel-media-va-driver
+      - intel-gpu-tools
+      # Firmware blobs (Intel BT/WiFi, GPU, etc.)
+      - linux-firmware
+      # Elgato Stream Deck HID access
+      - libhidapi-libusb0
+      # Focusrite Scarlett 2i2 mixer/routing control (equivalent to Focusrite Control)
+      - alsa-scarlett-gui
+      # Canon camera tethered shooting and file transfer
+      - gphoto2
+      # Network diagnostics for Realtek USB 2.5G LAN driver verification
+      - ethtool
+    services:
+      - bluetooth
+    # pipx packages (installed as user)
+    pipx_packages:
+      - streamdeck-linux-gui
+    # udev rules for hardware access
+    udev_rules:
+      - name: 70-streamdeck
+        content: |
+          # Elgato Stream Deck — allow non-root access
+          SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess"
+      - name: 50-usb-realtek-net
+        content: |
+          # Force r8152 driver for Realtek RTL8156 2.5GbE USB adapters
+          # Prevents cdc_ncm from binding (causes ~750Mbps cap and high latency)
+          ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0b05", ATTR{idProduct}=="1976", RUN+="/sbin/modprobe r8152"
+    # Private Internet Access VPN
+    pia_vpn: true
+
+  t460:
+    description: "Lenovo ThinkPad T460/T560 — Intel HD 520 (Skylake GT2) + Validity VFS5011 fingerprint"
+    packages:
+      # Intel iGPU video acceleration (Skylake GT2 / HD Graphics 520)
+      - intel-media-va-driver
+      - intel-gpu-tools
+      # Logitech Unifying receiver management (wireless mouse)
+      - solaar
+      # Firmware blobs (Intel WiFi, GPU microcode, ThinkPad ACPI)
+      - linux-firmware
+      # Fingerprint scanner (Validity VFS5011 138a:0017)
+      - fprintd
+      - libpam-fprintd
+      - libfprint-2-tod1
+    services: []
+    pipx_packages: []
+    udev_rules: []
+    pia_vpn: false

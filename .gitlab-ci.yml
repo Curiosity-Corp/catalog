@@ -1,33 +1,106 @@
 ---
 include:
-  - project: 'DroidOpsInc/launch-sequence'
-    ref: main
-    file: '/pipelines/validate-only.yml'
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+
+image: python:3.13-slim
+
+stages:
+  - validate
+  - test
+  - security
+  - package
 
 variables:
-  # alpine/k8s ships python3, pip, curl, jq, yq, kubectl, helm.
-  # Do NOT set PREFLIGHT_IMAGE to python:slim — pip drops bins to
-  # /tmp/.local/bin (not on PATH) and it runs as root (issue #19).
-  PREFLIGHT_COMMANDS: >-
-    python3 -m venv /tmp/venv &&
-    /tmp/venv/bin/pip install --quiet ansible-core ansible-lint pyyaml &&
-    /tmp/venv/bin/ansible-galaxy collection install -r requirements.yml
-    >/dev/null &&
-    ANSIBLE_ROLES_PATH=roles /tmp/venv/bin/ansible-playbook
-    --syntax-check playbooks/site.yml &&
-    ANSIBLE_ROLES_PATH=roles /tmp/venv/bin/ansible-lint
-    playbooks/site.yml roles
-  TEST_COMMANDS: >-
-    /tmp/venv/bin/python -c "import json, pathlib;
-    json.loads(pathlib.Path('renovate.json').read_text());
-    print('renovate.json ok')" &&
-    /tmp/venv/bin/python tests/test_update_policy.py
+  ANSIBLE_FORCE_COLOR: "1"
+  ANSIBLE_NOCOLOR: "0"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_CACHE_DIR: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
 
-# SAST is temporarily non-blocking: harbor.focuscell.org/infra/semgrep does
-# not yet exist and the dockerhub-proxy has no semgrep image either.  The
-# K8s admission policy also requires sha256-pinned Harbor references, which
-# semgrep:latest cannot satisfy until the image is seeded in Harbor proper.
-# Remove allow_failure once harbor.focuscell.org/infra/semgrep is seeded
-# and pinned.
-sast:
-  allow_failure: true
+.python_setup:
+  before_script:
+    - apt-get update
+    - apt-get install --yes --no-install-recommends git openssh-client
+    - python -m pip install --upgrade pip
+    - python -m pip install ansible-core ansible-lint yamllint pyyaml pytest
+    - ansible-galaxy collection install -r requirements.yml
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+yaml:
+  extends: .python_setup
+  stage: validate
+  script:
+    - yamllint -f parsable .
+
+syntax:
+  extends: .python_setup
+  stage: validate
+  script:
+    - ANSIBLE_ROLES_PATH=roles ansible-playbook --syntax-check -i localhost, playbooks/site.yml
+
+lint:
+  extends: .python_setup
+  stage: validate
+  script:
+    - ANSIBLE_ROLES_PATH=roles ansible-lint playbooks/site.yml roles
+
+policy:
+  extends: .python_setup
+  stage: test
+  script:
+    - python tests/test_update_policy.py
+    - python -m pytest -q tests/test_public_contract.py
+
+collection:
+  extends: .python_setup
+  stage: package
+  script:
+    - ansible-galaxy collection build --force
+    - test -n "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
+  artifacts:
+    name: "curiosity-workstation-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - "*.tar.gz"
+    expire_in: 30 days
+
+sbom:
+  extends: .python_setup
+  stage: package
+  needs:
+    - job: collection
+      artifacts: true
+  script:
+    - python scripts/build_collection_sbom.py "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" collection.cdx.json
+  artifacts:
+    paths:
+      - collection.cdx.json
+      - "*.tar.gz"
+    expire_in: 30 days
+
+provenance:
+  extends: .python_setup
+  stage: package
+  needs:
+    - job: collection
+      artifacts: true
+    - job: sbom
+      artifacts: true
+  script:
+    - sha256sum *.tar.gz collection.cdx.json | tee collection.sha256
+  artifacts:
+    paths:
+      - collection.sha256
+      - collection.cdx.json
+      - "*.tar.gz"
+    expire_in: 30 days
+
+secret_hygiene:
+  extends: .python_setup
+  stage: security
+  script:
+    - python -m pytest -q tests/test_public_contract.py -k private_material

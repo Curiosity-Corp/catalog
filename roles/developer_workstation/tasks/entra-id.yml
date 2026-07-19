@@ -1,0 +1,53 @@
+---
+# =============================================================================
+# Entra ID SSO via authd + authd-msentraid broker
+# =============================================================================
+# Enables Microsoft Entra ID login on Ubuntu workstations.
+# Users sign in at GDM with their organization-managed identity using device
+# code flow (scan QR code on phone).
+# =============================================================================
+
+- name: Add authd PPA
+  ansible.builtin.apt_repository:
+    repo: "ppa:ubuntu-enterprise-desktop/authd"
+    state: present
+    update_cache: true
+  register: _authd_ppa
+
+- name: Install authd
+  ansible.builtin.apt:
+    name: authd
+    state: present
+    update_cache: "{{ _authd_ppa.changed }}"
+
+- name: Install authd-msentraid snap
+  community.general.snap:
+    name: authd-msentraid
+    state: present
+
+- name: Configure authd-msentraid broker
+  ansible.builtin.copy:
+    dest: /var/snap/authd-msentraid/current/broker.conf
+    content: |
+      [oidc]
+      issuer = https://login.microsoftonline.com/{{ entra_id_tenant_id }}/v2.0
+      client_id = {{ entra_id_client_id }}
+
+      [users]
+      home_base_dir = /home
+      allowed_users = {{ entra_id_allowed_users }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart authd-msentraid
+
+- name: Ensure authd service is enabled and running
+  ansible.builtin.systemd:
+    name: authd
+    enabled: true
+    state: started
+
+- name: Restart authd-msentraid
+  ansible.builtin.command: snap restart authd-msentraid
+  listen: Restart authd-msentraid
+  changed_when: true

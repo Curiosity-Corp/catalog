@@ -4,4 +4,4 @@
   connection: local
   become: true
   roles:
-    - developer-workstation
+    - developer_workstation

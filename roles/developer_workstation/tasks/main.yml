@@ -1,0 +1,322 @@
+---
+# =============================================================================
+# Local Host Overrides
+# =============================================================================
+# Optional host-local file for non-PII repo defaults:
+#   /etc/ansible/local-vars.yml
+#
+# Example:
+#   dev_user: researcher
+#   hardware_profile: t460
+#   user_dotfiles_repo: https://git.example.edu/researcher/dotfiles.git
+#
+# Extra vars still win over this file, so Coder workspace sync can keep passing
+# dev_user=coder/dev_user_home=/home/coder explicitly.
+# =============================================================================
+- name: Check for local workstation vars file
+  ansible.builtin.stat:
+    path: "{{ developer_workstation_local_vars_file }}"
+  register: _local_workstation_vars
+
+- name: Load local workstation vars
+  ansible.builtin.include_vars:
+    file: "{{ developer_workstation_local_vars_file }}"
+  when: _local_workstation_vars.stat.exists
+
+- name: Derive dev_user_home when only dev_user was locally overridden
+  ansible.builtin.set_fact:
+    dev_user_home: "/home/{{ dev_user }}"
+  when:
+    - dev_user | default('') | length > 0
+    - dev_user != 'curiosity'
+    - dev_user_home == '/home/curiosity'
+
+# =============================================================================
+# Pre-flight Validation
+# =============================================================================
+- name: Verify running as root
+  ansible.builtin.assert:
+    that:
+      - ansible_user_id == 'root'
+    fail_msg: "This role must run as root (use --become or run with sudo)"
+
+- name: Verify target user exists
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ dev_user }}"
+
+- name: Verify dev_user home directory exists
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}"
+  register: _dev_user_home_stat
+
+- name: Fail if dev_user home directory missing
+  ansible.builtin.assert:
+    that:
+      - _dev_user_home_stat.stat.exists
+      - _dev_user_home_stat.stat.isdir
+    fail_msg: >-
+      Home directory {{ dev_user_home }} does not exist for user {{ dev_user }}
+
+- name: Verify workstation profile is valid
+  ansible.builtin.assert:
+    that:
+      - workstation_profile in ['desktop', 'workspace', 'thin-client', 'byod-kiosk']
+    fail_msg: >-
+      workstation_profile must be 'desktop', 'workspace', 'thin-client', or 'byod-kiosk'
+
+# =============================================================================
+# Home directory ownership repair
+# =============================================================================
+# On server ISO builds the firstboot script may create the home directory as
+# root before the user account exists, leaving /home/<dev_user> root-owned.
+# Any subsequent become_user task (e.g. git_config --global) will fail with
+# "Permission denied" trying to write into the home directory.
+# Repair ownership here, once, idempotently, before any user-scope tasks run.
+- name: Ensure dev_user owns their home directory
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    state: directory
+    mode: "0750"
+    recurse: false
+
+- name: Initialize workstation update control plane
+  ansible.builtin.include_tasks:
+    file: update-foundation.yml
+    apply:
+      tags: [updates, releases, provenance, rollback]
+  tags: [updates, releases, provenance, rollback]
+
+# =============================================================================
+# Task Includes
+# =============================================================================
+- name: Include log rotation hardening
+  ansible.builtin.include_tasks: logrotate.yml
+  tags: [logrotate, logging]
+
+- name: Include APT repository setup (desktop)
+  ansible.builtin.include_tasks: repos.yml
+  tags: [repos]
+  when: workstation_profile == 'desktop'
+
+- name: Include APT repository setup (workspace)
+  ansible.builtin.include_tasks: repos-workspace.yml
+  tags: [repos]
+  when: workstation_profile == 'workspace'
+
+- name: Include APT repository setup (thin client)
+  ansible.builtin.include_tasks: repos-thin-client.yml
+  tags: [repos]
+  when: workstation_profile == 'thin-client'
+
+- name: Include APT repository setup (byod-kiosk)
+  ansible.builtin.include_tasks: repos-thin-client.yml
+  tags: [repos]
+  when: workstation_profile == 'byod-kiosk'
+
+- name: Include APT package installation (desktop)
+  ansible.builtin.include_tasks: packages.yml
+  tags: [packages]
+  when: workstation_profile == 'desktop'
+
+- name: Include APT package installation (workspace)
+  ansible.builtin.include_tasks: packages-workspace.yml
+  tags: [packages]
+  when: workstation_profile == 'workspace'
+
+- name: Include APT package installation (thin client)
+  ansible.builtin.include_tasks: packages-thin-client.yml
+  tags: [packages]
+  when: workstation_profile == 'thin-client'
+
+- name: Include APT package installation (byod-kiosk)
+  ansible.builtin.include_tasks: packages-thin-client.yml
+  tags: [packages]
+  when: workstation_profile == 'byod-kiosk'
+
+- name: Resolve upstream releases and evaluate the update ring
+  tags: [updates, releases, rings]
+  block:
+    - name: Include upstream latest-release discovery
+      ansible.builtin.include_tasks:
+        file: latest-releases.yml
+        apply:
+          tags: [updates, releases]
+      tags: [updates, releases]
+      when: workstation_profile in ['desktop', 'workspace']
+
+    - name: Evaluate workstation update ring
+      ansible.builtin.include_tasks:
+        file: update-ring.yml
+        apply:
+          tags: [updates, releases, rings]
+      tags: [updates, releases, rings]
+      when: workstation_profile in ['desktop', 'workspace']
+  rescue:
+    - name: Record upstream resolution failure
+      ansible.builtin.set_fact:
+        workstation_update_status: failed
+        workstation_update_failure:
+          task: "{{ ansible_failed_task.name | default('upstream release resolution') }}"
+          message: "{{ ansible_failed_result.msg | default('upstream release resolution failed') }}"
+          recorded_at: "{{ ansible_date_time.iso8601 }}"
+
+    - name: Write local manifest for upstream resolution failure
+      ansible.builtin.include_tasks: update-manifest.yml
+
+    - name: Fail the pull after recording upstream resolution failure
+      ansible.builtin.fail:
+        msg: "Upstream release resolution failed; no stale fallback was installed"
+
+- name: Include internal CA trust
+  ansible.builtin.include_tasks: internal-cas.yml
+  tags: [security, certificates]
+  when: workstation_profile in ['thin-client', 'byod-kiosk']
+
+- name: Run workstation software update transaction
+  tags: [updates, packages, releases, provenance, rollback]
+  block:
+    - name: Apply managed software updates
+      ansible.builtin.include_tasks: managed-updates.yml
+
+    - name: Verify managed software after update
+      ansible.builtin.include_tasks: update-health.yml
+  rescue:
+    - name: Restore managed software after a failed update transaction
+      ansible.builtin.include_tasks: update-rollback.yml
+  always:
+    - name: Write local workstation update manifest
+      ansible.builtin.include_tasks: update-manifest.yml
+
+- name: Include system tuning (swap, earlyoom, sysctl)
+  ansible.builtin.include_tasks: system-tuning.yml
+  tags: [tuning, system]
+  when:
+    - workstation_profile == 'desktop'
+    - system_tuning_enabled | default(false)
+
+- name: Include Git configuration
+  ansible.builtin.include_tasks: git-config.yml
+  tags: [git]
+
+- name: Include Coder workspace helpers (credential helper, profile.d, bash_profile)
+  ansible.builtin.include_tasks: coder-workspace-helpers.yml
+  tags: [coder, workspace, git]
+  when: workstation_profile == 'workspace'
+
+- name: Include user environment (system-level setup)
+  ansible.builtin.include_tasks: user-env.yml
+  tags: [user]
+
+- name: Include shell RC fallback
+  ansible.builtin.include_tasks: user-shell-fallback.yml
+  tags: [user, shell]
+  when:
+    - workstation_profile != 'thin-client'
+    - user_dotfiles_repo | default('') | length == 0
+
+- name: Include chezmoi dotfiles bootstrap
+  ansible.builtin.include_tasks: dotfiles.yml
+  tags: [dotfiles, user]
+  when: user_dotfiles_repo | default('') | length > 0
+
+- name: Include display configuration (GDM, VNC, GNOME)
+  ansible.builtin.include_tasks: display-config.yml
+  tags: [display]
+  when:
+    - workstation_profile == 'desktop'
+    - display_config_enabled | default(false)
+    - not (minimal_desktop_enabled | default(false))
+
+- name: Include minimal desktop (Openbox, LightDM, Firefox)
+  ansible.builtin.include_tasks: minimal-desktop.yml
+  tags: [minimal-desktop]
+  when:
+    - >-
+      workstation_profile == 'thin-client' or
+      workstation_profile == 'byod-kiosk' or
+      (
+        workstation_profile == 'desktop' and
+        (minimal_desktop_enabled | default(false))
+      )
+
+- name: Include keyboard layout enforcement (US physical keyboards)
+  ansible.builtin.include_tasks: keyboard.yml
+  tags: [keyboard, system]
+  when: workstation_profile in ['thin-client', 'byod-kiosk']
+
+- name: Include kiosk session lockdown (Chromium kiosk, no shell, idle lock)
+  ansible.builtin.include_tasks: kiosk-session.yml
+  tags: [kiosk, lockdown]
+  when: workstation_profile == 'byod-kiosk'
+
+- name: Include Sunshine remote streaming
+  ansible.builtin.include_tasks: streaming.yml
+  tags: [streaming, sunshine]
+  when:
+    - workstation_profile == 'desktop'
+    - sunshine_enabled | default(false)
+
+- name: Include firewall (UFW)
+  ansible.builtin.include_tasks: firewall.yml
+  tags: [firewall]
+  when:
+    - >-
+      workstation_profile in ['thin-client', 'byod-kiosk'] or
+      (
+        workstation_profile == 'desktop' and
+        (firewall_enabled | default(false))
+      )
+
+- name: Include Keycloak SSO (authd + authd-oidc)
+  ansible.builtin.include_tasks: keycloak-sso.yml
+  tags: [keycloak, sso]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - keycloak_sso_enabled | default(false)
+    - ansible_distribution == 'Ubuntu'
+
+- name: Include Ziti edge tunnel + OIDC session hooks
+  ansible.builtin.include_tasks:
+    file: ziti.yml
+    apply:
+      tags: [ziti, networking]
+  tags: [ziti, networking]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ziti_enabled | default(false)
+
+- name: Include Ziti split-DNS configuration (dual-stack resolver)
+  ansible.builtin.include_tasks:
+    file: ziti-split-dns.yml
+    apply:
+      tags: [ziti, networking, dns]
+  tags: [ziti, networking, dns]
+  when:
+    - workstation_profile in ['thin-client', 'byod-kiosk']
+    - ziti_enabled | default(false)
+    - ziti_intercept_domains | default([]) | length > 0
+
+- name: Include profile cleanup timer
+  ansible.builtin.include_tasks: profile-cleanup.yml
+  tags: [profile-cleanup]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - profile_cleanup_enabled | default(false)
+
+- name: Include hardware-specific drivers
+  ansible.builtin.include_tasks: hardware-drivers.yml
+  tags: [hardware]
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+
+- name: Include fonts
+  ansible.builtin.include_tasks: fonts.yml
+  tags: [fonts]
+  when: workstation_profile == 'desktop'
+
+- name: Include ansible-pull timer
+  ansible.builtin.include_tasks: ansible-pull-timer.yml
+  tags: [ansible-pull]
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']

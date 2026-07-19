@@ -1,0 +1,3 @@
+* text=auto eol=lf
+*.crt linguist-generated=true
+*.j2 linguist-language=Jinja

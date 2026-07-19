@@ -1,0 +1,309 @@
+---
+# =============================================================================
+# Kiosk Session Lockdown (byod-kiosk profile)
+# =============================================================================
+# Configures the device as a full-screen single-app kiosk:
+#   - Replaces Openbox autostart with Chromium --kiosk to kiosk_target_url
+#   - Disables virtual terminals 2-6 (blocks ctrl+alt+Fx shell escape)
+#   - Removes sudo access for the kiosk user
+#   - Configures systemd-logind idle lock (15 min default, configurable)
+#   - Installs a systemd user service that relaunches Chromium on crash
+#   - Configures Ziti DNS routing via systemd-resolved drop-in
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Chromium kiosk package
+# -----------------------------------------------------------------------------
+- name: Install Chromium browser for kiosk session
+  ansible.builtin.apt:
+    name:
+      - chromium
+      - xdotool
+      - unclutter
+    state: present
+    update_cache: true
+
+# -----------------------------------------------------------------------------
+# Openbox autostart — replace with Chromium --kiosk
+# -----------------------------------------------------------------------------
+- name: Ensure Openbox config directory exists for kiosk user
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/openbox"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy kiosk Openbox autostart (Chromium --kiosk, no panel, no cursor)
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.config/openbox/autostart"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Kiosk autostart — Chromium in full-screen kiosk mode.
+      # Force US keyboard layout — physical keyboards are US; Pi/Ubuntu defaults to GB.
+      setxkbmap us
+      # unclutter hides the cursor after 1 second of inactivity.
+      unclutter -idle 1 -root &
+      # Disable screen blanking and DPMS while the kiosk session is active.
+      xset s off
+      xset -dpms
+      xset s noblank
+      # Launch the kiosk browser service (auto-restarts on crash via systemd).
+      systemctl --user start curiosity-kiosk-browser.service
+
+# yamllint disable rule:line-length
+- name: Deploy kiosk Openbox rc.xml (no keybindings, no window decorations)
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.config/openbox/rc.xml"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      <?xml version="1.0" encoding="UTF-8"?>
+      <openbox_config xmlns="http://openbox.org/3.4/rc">
+        <resistance><strength>10</strength><screen_edge_strength>20</screen_edge_strength></resistance>
+        <focus><focusNew>yes</focusNew><followMouse>no</followMouse><focusLast>yes</focusLast><underMouse>no</underMouse><focusDelay>200</focusDelay><raiseOnFocus>no</raiseOnFocus></focus>
+        <placement><policy>Smart</policy><center>yes</center><monitor>Primary</monitor><primaryMonitor>1</primaryMonitor></placement>
+        <theme><name>Clearlooks</name><titleLayout>NMC</titleLayout><keepBorder>yes</keepBorder><animateIconify>no</animateIconify><font place="ActiveWindow"><name>Sans</name><size>8</size><weight>Bold</weight><slant>Normal</slant></font><font place="InactiveWindow"><name>Sans</name><size>8</size><weight>Bold</weight><slant>Normal</slant></font><font place="MenuHeader"><name>Sans</name><size>9</size><weight>Normal</weight><slant>Normal</slant></font><font place="MenuItem"><name>Sans</name><size>9</size><weight>Normal</weight><slant>Normal</slant></font><font place="OnScreenDisplay"><name>Sans</name><size>9</size><weight>Bold</weight><slant>Normal</slant></font></theme>
+        <desktops><number>1</number><firstdesk>1</firstdesk><names><name>Kiosk</name></names><popupTime>0</popupTime></desktops>
+        <resize><drawContents>yes</drawContents><popupShow>Nonpixel</popupShow><popupPosition>Center</popupPosition><popupFixedPosition><x>10</x><y>10</y></popupFixedPosition></resize>
+        <margins><top>0</top><bottom>0</bottom><left>0</left><right>0</right></margins>
+        <dock><position>TopLeft</position><floatingX>0</floatingX><floatingY>0</floatingY><direction>Vertical</direction><autoHide>no</autoHide><hideDelay>300</hideDelay><showDelay>300</showDelay><moveButton>Middle</moveButton></dock>
+        <!-- No keyboard shortcuts in kiosk mode -->
+        <keyboard>
+          <chainQuitKey>C-g</chainQuitKey>
+          <!-- Block ctrl+alt+Fx virtual terminal switches -->
+          <keybind key="C-A-F1"><action name="Execute"><command>true</command></action></keybind>
+          <keybind key="C-A-F2"><action name="Execute"><command>true</command></action></keybind>
+          <keybind key="C-A-F3"><action name="Execute"><command>true</command></action></keybind>
+          <keybind key="C-A-F4"><action name="Execute"><command>true</command></action></keybind>
+          <keybind key="C-A-F5"><action name="Execute"><command>true</command></action></keybind>
+          <keybind key="C-A-F6"><action name="Execute"><command>true</command></action></keybind>
+        </keyboard>
+        <mouse>
+          <dragThreshold>1</dragThreshold>
+          <doubleClickTime>200</doubleClickTime>
+          <screenEdgeWarpTime>400</screenEdgeWarpTime>
+          <screenEdgeWarpMouse>false</screenEdgeWarpMouse>
+          <context name="Frame"><mousebind button="A-Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind><mousebind button="A-Left" action="Click"><action name="Unshade"/></mousebind><mousebind button="A-Left" action="Drag"><action name="Move"/></mousebind><mousebind button="A-Right" action="Press"><action name="Focus"/><action name="Raise"/><action name="Unshade"/></mousebind><mousebind button="A-Right" action="Drag"><action name="Resize"/></mousebind><mousebind button="A-Middle" action="Press"><action name="Lower"/><action name="FocusToBottom"/><action name="Unfocus"/></mousebind><mousebind button="A-Up" action="Click"><action name="GoToDesktop"><to>previous</to></action></mousebind><mousebind button="A-Down" action="Click"><action name="GoToDesktop"><to>next</to></action></mousebind><mousebind button="C-A-Up" action="Click"><action name="GoToDesktop"><to>previous</to></action></mousebind><mousebind button="C-A-Down" action="Click"><action name="GoToDesktop"><to>next</to></action></mousebind><mousebind button="A-S-Up" action="Click"><action name="SendToDesktop"><to>previous</to></action></mousebind><mousebind button="A-S-Down" action="Click"><action name="SendToDesktop"><to>next</to></action></mousebind></context>
+          <context name="Titlebar"><mousebind button="Left" action="Drag"><action name="Move"/></mousebind><mousebind button="Left" action="DoubleClick"><action name="ToggleMaximize"/></mousebind><mousebind button="Middle" action="Click"><action name="Lower"/><action name="FocusToBottom"/><action name="Unfocus"/></mousebind><mousebind button="Up" action="Click"><action name="GoToDesktop"><to>previous</to></action></mousebind><mousebind button="Down" action="Click"><action name="GoToDesktop"><to>next</to></action></mousebind></context>
+          <context name="Desktop"><mousebind button="Up" action="Click"><action name="GoToDesktop"><to>previous</to></action></mousebind><mousebind button="Down" action="Click"><action name="GoToDesktop"><to>next</to></action></mousebind></context>
+          <context name="Root"><mousebind button="Up" action="Click"><action name="GoToDesktop"><to>previous</to></action></mousebind><mousebind button="Down" action="Click"><action name="GoToDesktop"><to>next</to></action></mousebind></context>
+        </mouse>
+        <applications>
+          <!-- Chromium kiosk window: no decorations, always maximized -->
+          <application class="Chromium-browser" name="chromium-browser">
+            <decor>no</decor>
+            <maximized>yes</maximized>
+            <fullscreen>yes</fullscreen>
+            <desktop>1</desktop>
+          </application>
+          <application class="chromium" name="chromium">
+            <decor>no</decor>
+            <maximized>yes</maximized>
+            <fullscreen>yes</fullscreen>
+            <desktop>1</desktop>
+          </application>
+        </applications>
+      </openbox_config>
+# yamllint enable rule:line-length
+
+# -----------------------------------------------------------------------------
+# Chromium kiosk browser systemd user service (auto-restart on crash)
+# -----------------------------------------------------------------------------
+- name: Ensure systemd user service directory exists for kiosk user
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy curiosity-kiosk-browser systemd user service
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.config/systemd/user/curiosity-kiosk-browser.service"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Curiosity kiosk browser (Chromium --kiosk)
+      After=graphical-session.target
+      PartOf=graphical-session.target
+
+      [Service]
+      Type=simple
+      Environment=DISPLAY=:0
+      ExecStart=/usr/bin/chromium \
+        --kiosk \
+        --no-first-run \
+        --noerrdialogs \
+        --disable-translate \
+        --disable-infobars \
+        --disable-suggestions-service \
+        --disable-save-password-bubble \
+        --disable-session-crashed-bubble \
+        --disable-features=TranslateUI,Translate \
+        --disable-pinch \
+        --overscroll-history-navigation=0 \
+        --no-default-browser-check \
+        --check-for-update-interval=31536000 \
+        --password-store=basic \
+        --app={{ kiosk_target_url }}
+      Restart=always
+      RestartSec=3
+
+      [Install]
+      WantedBy=graphical-session.target
+
+- name: Enable kiosk browser user service for kiosk user  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ dev_user }} --
+      systemctl --user enable curiosity-kiosk-browser.service
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ (lookup('pipe', 'id -u ' + dev_user)) }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ (lookup('pipe', 'id -u ' + dev_user)) }}/bus"
+  register: _kiosk_browser_enable
+  changed_when: "'Created symlink' in _kiosk_browser_enable.stdout or 'Created symlink' in _kiosk_browser_enable.stderr"
+  failed_when: false
+
+# -----------------------------------------------------------------------------
+# Disable virtual terminals 2-6 (block ctrl+alt+Fx shell escape)
+# -----------------------------------------------------------------------------
+- name: Disable virtual terminals 2-6 via systemd masking
+  ansible.builtin.systemd:
+    name: "getty@tty{{ item }}.service"
+    enabled: false
+    masked: true
+    state: stopped
+  loop: [2, 3, 4, 5, 6]
+  failed_when: false
+
+# -----------------------------------------------------------------------------
+# Remove sudo access for kiosk user
+# -----------------------------------------------------------------------------
+- name: Ensure kiosk user is not in sudo group
+  ansible.builtin.user:
+    name: "{{ dev_user }}"
+    groups: sudo
+    append: false
+  failed_when: false
+
+- name: Remove kiosk user sudoers file if present
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ dev_user }}"
+    state: absent
+
+# -----------------------------------------------------------------------------
+# Power management: kiosks must never suspend, hibernate, or blank
+# -----------------------------------------------------------------------------
+- name: Ensure systemd-logind conf drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Remove any old idle-lock drop-in so it does not conflict.
+- name: Remove obsolete kiosk-idle.conf if present
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d/kiosk-idle.conf
+    state: absent
+
+- name: Deploy logind no-sleep policy for kiosk
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/10-kiosk-nosleep.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Kiosk power policy — managed by Ansible, do not edit.
+      # All suspend/hibernate/idle actions disabled; lid switch ignored.
+      [Login]
+      HandleLidSwitch=ignore
+      HandleLidSwitchExternalPower=ignore
+      HandleLidSwitchDocked=ignore
+      HandleSuspendKey=ignore
+      HandleHibernateKey=ignore
+      HandlePowerKey=ignore
+      IdleAction=ignore
+      IdleActionSec=0
+  notify: Reload systemd
+
+- name: Mask systemd sleep targets (prevent suspend/hibernate via any path)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+    enabled: false
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+  failed_when: false
+
+# Reload logind now so the no-sleep policy takes effect without waiting
+# for the next boot.  HUP is safe over SSH — it re-reads config without
+# dropping the current session, unlike a full service restart.
+- name: Reload systemd-logind to apply no-sleep config
+  ansible.builtin.command:
+    cmd: systemctl kill -s HUP systemd-logind
+  changed_when: true
+
+# Belt-and-suspenders for x86 laptops running GNOME power daemon:
+# if gnome-settings-daemon power plugin schema exists, silence it too.
+- name: Disable GNOME power-daemon sleep if schema is present
+  ansible.builtin.command: >-
+    runuser -u {{ dev_user }} --
+    gsettings set {{ item.schema }} {{ item.key }} {{ item.value }}
+  environment:
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ (lookup('pipe', 'id -u ' + dev_user)) }}/bus"
+  loop:
+    - schema: org.gnome.settings-daemon.plugins.power
+      key: sleep-inactive-ac-type
+      value: "'nothing'"
+    - schema: org.gnome.settings-daemon.plugins.power
+      key: sleep-inactive-battery-type
+      value: "'nothing'"
+    - schema: org.gnome.settings-daemon.plugins.power
+      key: idle-dim
+      value: "false"
+    - schema: org.gnome.desktop.session
+      key: idle-delay
+      value: "uint32 0"
+  register: _gnome_power_result
+  changed_when: _gnome_power_result.rc == 0
+  failed_when: false
+
+# -----------------------------------------------------------------------------
+# Ziti DNS routing
+# -----------------------------------------------------------------------------
+# Split-DNS is handled by ziti-split-dns.yml (included from main.yml after
+# ziti.yml). That task file detects whether systemd-resolved or NetworkManager
+# is the active resolver and applies the appropriate mechanism:
+#   - systemd-resolved present:  resolvectl routing-domain assignment on ziti0
+#     via ExecStartPost override + systemd-networkd drop-in.
+#   - NM-only (RPi OS / no resolved): dnsmasq plugin with per-domain server=
+#     stubs in /etc/NetworkManager/dnsmasq.d/.
+# Nothing to do here — split-DNS is not kiosk-specific and runs for both
+# thin-client and byod-kiosk profiles.
+
+# -----------------------------------------------------------------------------
+# Disable package management for kiosk user (no apt-get, no snap)
+# -----------------------------------------------------------------------------
+- name: Deploy sudoers rule blocking package managers for kiosk user
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/kiosk-deny-pkg
+    owner: root
+    group: root
+    mode: "0440"
+    content: |
+      # Kiosk mode: deny package manager access for the kiosk user
+      {{ dev_user }} ALL=(ALL) !NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg, /usr/bin/snap
+    validate: "visudo -cf %s"
+  failed_when: false

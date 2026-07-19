@@ -1,0 +1,187 @@
+---
+# =============================================================================
+# WeeChat TUI Chat Client
+# =============================================================================
+# Installs WeeChat with plugins for Slack, Mattermost, and Microsoft Teams.
+# Plugins are built/deployed and placed in the user's weechat data dir
+# with autoload enabled.
+#
+# After install, the user must configure credentials interactively:
+#   Slack:      /slack workspace add <name>
+#               (set api_token and api_cookies via browser session extraction)
+#   Mattermost: /mattermost server add <name>
+#               /set wee_most.server.<name>.url "https://..."
+#               /set wee_most.server.<name>.password "${sec.data.mm_token}"
+#               /mattermost connect <name>
+#   Teams:      /teams tenant add <name>
+#               /teams auth <name>
+#               (follow device code flow in browser, then auto-connects)
+# =============================================================================
+
+# --- APT packages ---
+- name: Install WeeChat and plugin dependencies
+  ansible.builtin.apt:
+    name:
+      - weechat
+      - weechat-plugins
+      - weechat-python
+      - weechat-perl
+      - python3-websocket
+    state: present
+
+# --- Plugin directories ---
+- name: Ensure WeeChat plugin directories exist
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.local/share/weechat/python/autoload"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+# =============================================================================
+# wee-slack (Slack TUI client)
+# =============================================================================
+# The v2.x+ source is multi-file and needs build.sh to compile into slack.py.
+# =============================================================================
+
+- name: Check if wee-slack is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.local/share/weechat/python/slack.py"
+  register: _weeslack_installed
+
+- name: Clone or update wee-slack source  # noqa: latest[git]
+  ansible.builtin.git:
+    repo: https://github.com/wee-slack/wee-slack.git
+    dest: /tmp/wee-slack
+    depth: 1
+    force: true
+  register: _weeslack_source
+
+- name: Build wee-slack (compile multi-file source into single slack.py)  # noqa: command-instead-of-shell
+  ansible.builtin.shell:
+    cmd: bash build.sh
+    chdir: /tmp/wee-slack
+    creates: /tmp/wee-slack/build/slack.py
+  when:
+    - _weeslack_source.changed or not _weeslack_installed.stat.exists
+
+- name: Install wee-slack plugin
+  ansible.builtin.copy:
+    src: /tmp/wee-slack/build/slack.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/slack.py"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    remote_src: true
+  when:
+    - _weeslack_source.changed or not _weeslack_installed.stat.exists
+
+- name: Enable wee-slack autoload
+  ansible.builtin.file:
+    src: ../slack.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/autoload/slack.py"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+
+- name: Clean up wee-slack build directory
+  ansible.builtin.file:
+    path: /tmp/wee-slack
+    state: absent
+
+# =============================================================================
+# wee-most (Mattermost TUI client — patched fork)
+# =============================================================================
+# Patched from upstream (sr.ht/~tardypad/wee-most) with:
+#   - Python 3.12+ raw string regex fixes
+#   - Personal access token auth (skip login for OIDC-only servers)
+# Deployed from role files/ instead of cloning upstream.
+# =============================================================================
+
+- name: Install wee-most plugin
+  ansible.builtin.copy:
+    src: wee_most.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/wee_most.py"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+- name: Enable wee-most autoload
+  ansible.builtin.file:
+    src: ../wee_most.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/autoload/wee_most.py"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+
+# =============================================================================
+# wee-teams (Microsoft Teams TUI client via Graph API)
+# =============================================================================
+# Optional plugin using an operator-registered Entra public client (delegated
+# permissions). Multi-tenant: add tenants with /teams tenant add <name>, auth
+# with device code flow. Messages are sent as the authenticated user, not a bot.
+# =============================================================================
+
+- name: Install wee-teams plugin
+  ansible.builtin.copy:
+    src: teams.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/teams.py"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  when: weechat_teams_enabled | default(false)
+
+- name: Require a Teams public client ID when wee-teams is enabled
+  ansible.builtin.assert:
+    that:
+      - weechat_teams_client_id | default('') | length > 0
+    fail_msg: >-
+      Set weechat_teams_client_id in host/group vars before enabling
+      weechat_teams_enabled.
+  when: weechat_teams_enabled | default(false)
+
+- name: Configure the operator's Teams public client ID
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.local/share/weechat/python/teams.py"
+    regexp: '^CLIENT_ID = '
+    line: 'CLIENT_ID = "{{ weechat_teams_client_id }}"'
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  when: weechat_teams_enabled | default(false)
+
+- name: Enable wee-teams autoload
+  ansible.builtin.file:
+    src: ../teams.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/autoload/teams.py"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+  when: weechat_teams_enabled | default(false)
+
+# =============================================================================
+# go.py (fuzzy buffer switcher)
+# =============================================================================
+# Use /go <partial-name> to jump to any buffer. Tab/Shift-Tab to navigate.
+# =============================================================================
+
+- name: Check if go.py is installed
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.local/share/weechat/python/go.py"
+  register: _gopy_installed
+
+- name: Download go.py buffer switcher
+  ansible.builtin.get_url:
+    url: https://weechat.org/files/scripts/go.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/go.py"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+- name: Enable go.py autoload
+  ansible.builtin.file:
+    src: ../go.py
+    dest: "{{ dev_user_home }}/.local/share/weechat/python/autoload/go.py"
+    state: link
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"

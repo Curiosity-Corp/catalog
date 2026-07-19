@@ -1,0 +1,34 @@
+---
+namespace: curiosity
+name: workstation
+version: 0.1.0
+readme: README.md
+authors:
+  - Curiosity Research Corporation
+description: >-
+  Safe, idempotent Ansible automation for maintaining Linux workstations and
+  research VMs so students and researchers can spend more time on their work.
+license:
+  - Apache-2.0
+tags:
+  - linux
+  - workstation
+  - desktop
+  - research
+  - science
+  - security
+  - updates
+  - virtualization
+repository: https://github.com/Curiosity-Corp/catalog
+issues: https://github.com/Curiosity-Corp/catalog/issues
+homepage: https://github.com/Curiosity-Corp/catalog
+documentation: https://github.com/Curiosity-Corp/catalog#readme
+dependencies:
+  community.general: ">=9.0.0"
+build_ignore:
+  - .git
+  - .gitlab
+  - .github
+  - tests
+  - "*.tar.gz"
+  - .venv

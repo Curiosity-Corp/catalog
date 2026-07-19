@@ -1,0 +1,75 @@
+---
+# =============================================================================
+# Coder Workspace Helpers
+# =============================================================================
+# Workspace-profile-only system helpers that make a fresh Coder workspace
+# usable without any per-user PAT or rsync-from-laptop dance.
+#
+#  1. /usr/local/bin/git-credential-coder-gitlab
+#     Git credential helper that mints a Bearer token from
+#     `coder external-auth access-token gitlab` per request, so `git push/pull`
+#     against the configured GitLab host works on a clean workspace with zero
+#     PAT distribution.
+#
+#  2. /etc/profile.d/coder-gitlab.sh
+#     Login-shell defaults: sets GITLAB_HOST and unsets the env-injected
+#     GITLAB_TOKEN (which glab v1.92 mishandles as a PRIVATE-TOKEN header).
+#
+#  3. /etc/gitconfig credential block
+#     Wires the helper for the configured GitLab host system-wide so it works
+#     out-of-the-box for every user on the workspace.
+#
+#  4. /etc/skel/.bash_profile (+ backfill for the current dev_user)
+#     Ensures login shells (Coder web terminal, ssh login, code-server)
+#     source ~/.bashrc — without this, login-shell-only contexts miss every
+#     user-level alias / function / chezmoi-managed env.
+#
+# Skipped on the desktop profile.
+# =============================================================================
+
+- name: Install git-credential-coder-gitlab helper
+  ansible.builtin.template:
+    src: git-credential-coder-gitlab.j2
+    dest: /usr/local/bin/git-credential-coder-gitlab
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install /etc/profile.d/coder-gitlab.sh
+  ansible.builtin.template:
+    src: coder-gitlab-profile.sh.j2
+    dest: /etc/profile.d/coder-gitlab.sh
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Wire git credential helper for the configured GitLab host in /etc/gitconfig
+  community.general.git_config:
+    scope: system
+    name: "credential.https://{{ workspace_gitlab_host }}.helper"
+    value: "!/usr/local/bin/git-credential-coder-gitlab"
+
+- name: Ensure /etc/skel/.bash_profile sources ~/.bashrc for new users
+  ansible.builtin.copy:
+    dest: /etc/skel/.bash_profile
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Source ~/.bashrc on login so login shells (Coder web terminal, ssh
+      # login, code-server) inherit the same env, aliases, and prompt as
+      # interactive shells. Managed by Curiosity-Corp/catalog.
+      [ -f ~/.bashrc ] && . ~/.bashrc
+
+- name: Backfill ~/.bash_profile for the current dev_user (skel only applies to new users)
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.bash_profile"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      # Source ~/.bashrc on login so login shells (Coder web terminal, ssh
+      # login, code-server) inherit the same env, aliases, and prompt as
+      # interactive shells. Managed by Curiosity-Corp/catalog.
+      [ -f ~/.bashrc ] && . ~/.bashrc
+    force: false   # don't clobber an existing user-customized .bash_profile

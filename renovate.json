@@ -1,21 +1,12 @@
 {
-  "extends": ["local>DroidOpsInc/dot-github:renovate-default"],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/^\\.gitlab-ci\\.yml$/"
-      ],
-      "matchStrings": [
-        "(?:PREFLIGHT_IMAGE|SAST_IMAGE):\\s+\"(?<depName>[^\":]+(?:/[^\":]+)+):(?<currentValue>[^\"]+)\""
-      ]
-    }
-  ],
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "dependencyDashboard": true,
+  "labels": ["dependencies"],
   "packageRules": [
     {
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["harbor.focuscell.org/dockerhub-proxy/python"],
-      "groupName": "ci tooling images"
+      "matchUpdateTypes": ["digest", "pinDigest"],
+      "groupName": "container image digests"
     }
   ]
 }

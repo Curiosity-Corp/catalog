@@ -1,0 +1,106 @@
+---
+# =============================================================================
+# Minimal Desktop — Firefox Performance Profile
+# =============================================================================
+# Deploys a user.js with hardware acceleration, reduced animations,
+# telemetry disabled, and compact dark UI. Uses native .deb Firefox
+# (not snap) for OpenZiti tun interface compatibility.
+# =============================================================================
+
+- name: Ensure Firefox profile directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.mozilla/firefox/default"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy Firefox profiles.ini
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.mozilla/firefox/profiles.ini"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      [General]
+      StartWithLastProfile=1
+
+      [Profile0]
+      Name=default
+      IsRelative=1
+      Path=default
+      Default=1
+    force: false
+
+- name: Deploy Firefox user.js (performance + dark theme + no telemetry)
+  ansible.builtin.copy:
+    src: minimal-desktop/firefox-user.js
+    dest: "{{ dev_user_home }}/.mozilla/firefox/default/user.js"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+# --- Enable system certificate trust ---
+# Native .deb Firefox can use system certs via enterprise_roots, avoiding
+# the need to manually import CAs into the NSS cert store.
+
+- name: Ensure Firefox uses system certificate store
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.mozilla/firefox/default/user.js"
+    regexp: 'security\.enterprise_roots\.enabled'
+    line: 'user_pref("security.enterprise_roots.enabled", true);'
+    create: true
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+# --- Explicitly import internal CAs into every Firefox profile's NSS DB ---
+# security.enterprise_roots / Certificates.ImportEnterpriseRoots on Linux does
+# NOT read /usr/local/share/ca-certificates (the OpenSSL bundle used by curl /
+# update-ca-certificates). Without p11-kit-trust glue bridging that bundle to
+# NSS, Firefox may reject a private laboratory CA as UNKNOWN_ISSUER even when
+# the system trust store accepts it.
+#
+# Import every cert from /usr/local/share/ca-certificates into every Firefox
+# profile's cert9.db. Targets all profile directories (post snap->.deb
+# migration some hosts have randomized profile names like jr262pcj.default
+# rather than "default").
+
+- name: Enumerate Firefox profile directories with an NSS cert DB
+  ansible.builtin.find:
+    paths: "{{ dev_user_home }}/.mozilla/firefox"
+    file_type: directory
+    recurse: false
+  register: _firefox_profile_dirs
+
+- name: Resolve Firefox profile dirs that contain cert9.db
+  ansible.builtin.set_fact:
+    _firefox_nss_profiles: >-
+      {{ _firefox_profile_dirs.files
+         | map(attribute='path')
+         | select('match', '.*/\\.mozilla/firefox/[^/]+$')
+         | reject('match', '.*/(Crash Reports|Pending Pings|Profile Groups)$')
+         | list }}
+
+- name: Find internal CA certs to import into Firefox
+  ansible.builtin.find:
+    paths: /usr/local/share/ca-certificates
+    patterns: "*.crt"
+  register: _internal_certs
+
+- name: Import internal CAs into each Firefox profile NSS cert store
+  ansible.builtin.command: >-
+    certutil -A
+    -n "{{ item.1.path | basename | regex_replace('\\.crt$', '') }}"
+    -t "CT,C,C"
+    -i "{{ item.1.path }}"
+    -d "sql:{{ item.0 }}"
+  loop: "{{ _firefox_nss_profiles | product(_internal_certs.files) | list }}"
+  loop_control:
+    label: "{{ item.0 | basename }} <- {{ item.1.path | basename }}"
+  when: _firefox_nss_profiles | length > 0
+  register: _certutil_result
+  changed_when: _certutil_result.rc == 0
+  failed_when: false
+  become: true
+  become_user: "{{ dev_user }}"

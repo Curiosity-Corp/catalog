@@ -1,0 +1,8 @@
+---
+- name: Maintain research workstations
+  hosts: research_workstations
+  become: true
+  vars_files:
+    - research-workstation.yml
+  roles:
+    - role: developer_workstation

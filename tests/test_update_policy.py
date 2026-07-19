@@ -8,7 +8,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ROLE = ROOT / "roles/developer-workstation"
+ROLE = ROOT / "roles/developer_workstation"
 DEFAULTS = ROLE / "defaults/main.yml"
 RENOVATE = ROOT / "renovate.json"
 
@@ -105,12 +105,12 @@ def main() -> None:
         for rule in renovate.get("packageRules", [])
     ):
         raise SystemExit("The obsolete workstation pinned-release Renovate rule remains")
-    if not any(
-        "\\.gitlab-ci\\.yml" in pattern
-        for manager in renovate.get("customManagers", [])
-        for pattern in manager.get("managerFilePatterns", [])
-    ):
-        raise SystemExit("Renovate must continue monitoring the GitLab CI image")
+    if renovate.get("$schema") != "https://docs.renovatebot.com/renovate-schema.json":
+        raise SystemExit("Renovate must use the public schema")
+    if "config:recommended" not in renovate.get("extends", []):
+        raise SystemExit("Renovate must use the public recommended preset")
+    if any("developerdojo" in json.dumps(renovate) for _ in [0]):
+        raise SystemExit("Renovate must not contain organization-private hosts")
 
     # npm globals must be installed in the user's actual prefix and refreshed
     # from the registry's latest dist-tags.

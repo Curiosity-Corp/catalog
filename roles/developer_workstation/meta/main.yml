@@ -1,0 +1,25 @@
+---
+galaxy_info:
+  author: Curiosity Research Corporation
+  description: >-
+    Maintains Linux workstations and research VMs with safe updates, health
+    checks, rollback, security hardening, and optional research tooling.
+  company: Curiosity Research Corporation
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Debian
+      versions:
+        - all
+    - name: Ubuntu
+      versions:
+        - all
+  galaxy_tags:
+    - linux
+    - workstation
+    - desktop
+    - research
+    - science
+    - security
+    - updates
+dependencies: []

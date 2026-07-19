@@ -1,0 +1,100 @@
+---
+# =============================================================================
+# AI Coding Assistants
+# =============================================================================
+# CLI tools for AI-assisted development, plus provider configuration.
+# The package update is user-scoped and explicitly uses npm's latest state so
+# existing installs are refreshed on every nightly ansible-pull.
+# =============================================================================
+
+- name: Update user-scoped AI coding assistants to latest
+  community.general.npm:
+    name: "{{ item }}"
+    global: true
+    state: latest
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  loop: "{{ ai_assistant_packages }}"
+  register: _ai_npm_result
+  failed_when: _ai_npm_result is failed
+
+# =============================================================================
+# Optional Qwen Code provider configuration
+# =============================================================================
+# The secret command is supplied by the operator in protected variables. This
+# keeps the public role independent of any particular cloud or secret store.
+# =============================================================================
+
+- name: Fetch optional Qwen provider API key
+  ansible.builtin.shell: >
+    {{ qwen_provider_secret_command }}
+  register: _nvidia_api_key
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - qwen_provider_enabled | default(false)
+    - qwen_provider_secret_command | default('') | length > 0
+
+- name: Warn if NVIDIA API key could not be fetched
+  ansible.builtin.debug:
+    msg: >
+      WARNING: Could not fetch the configured Qwen provider API key.
+      Qwen Code will be installed but not configured with NVIDIA provider.
+      Authenticate with 'az login' and re-run to configure.
+  when:
+    - qwen_provider_enabled | default(false)
+    - _nvidia_api_key.rc | default(1) != 0
+
+- name: Create Qwen Code config directory
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.qwen"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0700"
+  when:
+    - qwen_provider_enabled | default(false)
+    - _nvidia_api_key.rc | default(1) == 0
+
+- name: Write Qwen Code settings (NVIDIA NIM provider)
+  ansible.builtin.copy:
+    content: |
+      {
+        "modelProviders": {
+          "openai": [
+            {
+              "id": "{{ qwen_provider_model }}",
+              "name": "Configured Qwen provider",
+              "baseUrl": "{{ qwen_provider_base_url }}",
+              "envKey": "NVIDIA_API_KEY",
+              "description": "Qwen3.5-397B-A17B MoE via NVIDIA NIM"
+            }
+          ]
+        }
+      }
+    dest: "{{ dev_user_home }}/.qwen/settings.json"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0600"
+  when:
+    - qwen_provider_enabled | default(false)
+    - _nvidia_api_key.rc | default(1) == 0
+
+- name: Write NVIDIA API key to Qwen Code env file
+  ansible.builtin.copy:
+    content: |
+      NVIDIA_API_KEY={{ _nvidia_api_key.stdout }}
+    dest: "{{ dev_user_home }}/.qwen/.env"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0600"
+  when:
+    - qwen_provider_enabled | default(false)
+    - _nvidia_api_key.rc | default(1) == 0
+  no_log: true

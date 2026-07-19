@@ -1,0 +1,68 @@
+---
+# Optional custom CA trust
+#
+# The public role does not ship organization certificates. Operators may pass
+# a list of controller-local certificate files through custom_ca_certificates
+# in host/group variables or Ansible Vault.
+
+- name: Install configured custom CA certificates
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/share/ca-certificates/{{ item.name }}.crt"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ custom_ca_certificates | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _custom_ca_certificates
+
+- name: Update system CA trust store
+  ansible.builtin.command: update-ca-certificates
+  changed_when: true
+  when:
+    - custom_ca_certificates | default([]) | length > 0
+    - _custom_ca_certificates.changed | default(false)
+
+# NSS-backed applications may not consume the OpenSSL bundle. Import the
+# configured certificates into the user's database when an nss_name is given.
+- name: Ensure user NSS database directory exists for custom CAs
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.pki/nssdb"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0700"
+  when:
+    - custom_ca_certificates | default([]) | selectattr('nss_name', 'defined') | list | length > 0
+
+- name: Check configured custom CAs in the user NSS database
+  ansible.builtin.command:
+    cmd: >-
+      certutil -d sql:{{ dev_user_home }}/.pki/nssdb
+      -L -n "{{ item.nss_name }}"
+  loop: "{{ custom_ca_certificates | default([]) }}"
+  loop_control:
+    label: "{{ item.nss_name | default(item.name) }}"
+  register: _custom_ca_nss_state
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ dev_user }}"
+  when: item.nss_name is defined
+
+- name: Add configured custom CAs to the user NSS database
+  ansible.builtin.command:
+    cmd: >-
+      certutil -d sql:{{ dev_user_home }}/.pki/nssdb
+      -A -t "CT,C,C" -n "{{ item.item.nss_name }}"
+      -i /usr/local/share/ca-certificates/{{ item.item.name }}.crt
+  loop: "{{ _custom_ca_nss_state.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  changed_when: true
+  become: true
+  become_user: "{{ dev_user }}"
+  when:
+    - item.item.nss_name is defined
+    - item.rc != 0

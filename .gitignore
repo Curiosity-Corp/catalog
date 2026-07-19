@@ -1,0 +1,22 @@
+# Local Ansible state and secrets
+.ansible/
+.ansible_async/
+*.retry
+*.vault.yml
+*.vault.yaml
+local-vars.yml
+private/
+
+# Python and collection build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+*.tar.gz
+collection.cdx.json
+
+# Editors and OS files
+.DS_Store
+.idea/
+.vscode/

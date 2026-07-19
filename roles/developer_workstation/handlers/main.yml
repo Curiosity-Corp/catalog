@@ -1,0 +1,63 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Update font cache
+  ansible.builtin.command: fc-cache -f
+  changed_when: true
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart Sunshine user service
+  ansible.builtin.shell: |
+    set -e
+    uid=$(id -u "{{ dev_user }}")
+    runuser -u "{{ dev_user }}" -- env \
+      XDG_RUNTIME_DIR="/run/user/$uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+      systemctl --user daemon-reload
+    runuser -u "{{ dev_user }}" -- env \
+      XDG_RUNTIME_DIR="/run/user/$uid" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+      systemctl --user restart sunshine.service
+  changed_when: true
+  failed_when: false
+
+- name: Restart earlyoom
+  ansible.builtin.systemd:
+    name: earlyoom
+    state: restarted
+
+- name: Restart rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: restarted
+  failed_when: false
+
+- name: Restart logrotate timer
+  ansible.builtin.systemd:
+    name: logrotate.timer
+    state: restarted
+
+- name: Restart ziti-edge-tunnel
+  ansible.builtin.systemd:
+    name: "{{ ziti_service_name }}"
+    state: restarted
+
+- name: Restart NetworkManager
+  ansible.builtin.systemd:
+    name: NetworkManager
+    state: restarted
+
+- name: Restart systemd-journald
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted
+
+- name: Restart fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    state: restarted
