@@ -2,6 +2,8 @@
 
 PYTHON ?= python3
 ANSIBLE_ROLES_PATH ?= roles
+SOURCE_DATE_EPOCH ?= 0
+export SOURCE_DATE_EPOCH
 
 validate: yaml syntax lint test collection sbom
 
@@ -20,6 +22,7 @@ test:
 
 collection:
 	ansible-galaxy collection build --force
+	$(PYTHON) scripts/normalize_collection_artifact.py "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
 
 sbom: collection
 	python3 scripts/build_collection_sbom.py "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" collection.cdx.json

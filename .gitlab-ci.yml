@@ -16,6 +16,7 @@ variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PIP_NO_CACHE_DIR: "1"
   PYTHONDONTWRITEBYTECODE: "1"
+  SOURCE_DATE_EPOCH: "0"
 
 .python_setup:
   before_script:
@@ -63,6 +64,7 @@ collection:
   stage: package
   script:
     - ansible-galaxy collection build --force
+    - python scripts/normalize_collection_artifact.py "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
     - test -n "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
   artifacts:
     name: "curiosity-workstation-${CI_COMMIT_SHORT_SHA}"
