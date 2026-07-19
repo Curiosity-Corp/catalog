@@ -29,6 +29,7 @@ build_ignore:
   - .git
   - .gitlab
   - .github
+  - docs/evidence
   - tests
   - "*.tar.gz"
   - .venv
