@@ -29,7 +29,21 @@ build_ignore:
   - .git
   - .gitlab
   - .github
+  - .gitignore
+  - .gitattributes
+  - .editorconfig
+  - .ansible-lint
+  - .gitlab-ci.yml
+  - .ansible
+  - .ansible_async
+  - .pytest_cache
+  - __pycache__
+  - .mypy_cache
+  - .ci-venv
   - docs/evidence
   - tests
+  - scripts
+  - Makefile
   - "*.tar.gz"
+  - collection.cdx.json
   - .venv
