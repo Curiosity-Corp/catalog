@@ -19,6 +19,10 @@ All notable changes to this project are documented here. The format follows
   removed from the tracked baseline.
 - Coder, cloud CLIs, Keycloak, Ziti, Sunshine, chat, and profile cleanup are
   opt-in.
+- Microsoft 365 CLI (`@pnp/cli-microsoft365`) moved out of the general
+  `npm_global_packages` baseline into its own `m365_cli_packages` list and
+  `tasks/m365-cli.yml`, gated behind a new `m365` Ansible tag, so consumers
+  can select it independently of the rest of the Node.js toolchain.
 
 ## [0.1.0] - planned
 

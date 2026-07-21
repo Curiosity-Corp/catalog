@@ -118,6 +118,7 @@ def main() -> None:
         "tasks/node-packages.yml",
         "tasks/ai-assistants.yml",
         "tasks/testing.yml",
+        "tasks/m365-cli.yml",
     ):
         text = (ROLE / relative).read_text()
         if 'become_user: "{{ dev_user }}"' not in text:
@@ -127,9 +128,18 @@ def main() -> None:
         if "state: latest" not in text:
             raise SystemExit(f"{relative} does not request latest packages")
 
-    required_npm = {"npm", "@pnp/cli-microsoft365"}
-    if not required_npm.issubset(set(defaults.get("npm_global_packages", []))):
-        raise SystemExit("npm and m365-cli must be in the user-scoped latest package set")
+    if "npm" not in set(defaults.get("npm_global_packages", [])):
+        raise SystemExit("npm must be in the user-scoped latest package set")
+    # m365-cli is deliberately NOT in npm_global_packages: it lives in its own
+    # m365_cli_packages list (installed by tasks/m365-cli.yml, tag: m365) so a
+    # consumer can select it independently of the rest of the Node toolchain.
+    if "@pnp/cli-microsoft365" in set(defaults.get("npm_global_packages", [])):
+        raise SystemExit(
+            "m365-cli must not be folded into npm_global_packages; "
+            "it belongs in m365_cli_packages (tag: m365) instead"
+        )
+    if "@pnp/cli-microsoft365" not in set(defaults.get("m365_cli_packages", [])):
+        raise SystemExit("m365-cli must be in the user-scoped latest m365_cli_packages set")
     if "@openai/codex" not in defaults.get("ai_assistant_packages", []):
         raise SystemExit("Codex must be in the user-scoped latest AI package set")
 

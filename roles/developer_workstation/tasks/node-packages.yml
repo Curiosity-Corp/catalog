@@ -46,6 +46,6 @@
     PATH: "/usr/local/bin:/usr/bin:/bin"
   loop: >-
     {{ (npm_global_packages | reject('equalto', 'npm') | list)
-       + ai_assistant_packages + ['playwright'] }}
+       + ai_assistant_packages + m365_cli_packages + ['playwright'] }}
   register: _npm_root_cleanup_result
   failed_when: _npm_root_cleanup_result is failed

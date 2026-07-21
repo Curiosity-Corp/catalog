@@ -95,6 +95,13 @@
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
+- name: Include Microsoft 365 CLI
+  ansible.builtin.include_tasks: m365-cli.yml
+  tags: [m365]
+  when:
+    - workstation_profile in ['desktop', 'workspace']
+    - workstation_update_install_allowed | default(true)
+
 - name: Include missionctl
   ansible.builtin.include_tasks: missionctl.yml
   tags: [missionctl]
