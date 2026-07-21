@@ -115,6 +115,12 @@
   changed_when: false
 
 - name: Set newest MongoDB APT channel
+  # `| last` on an empty match list returns a lazy Undefined ("No last item,
+  # sequence was empty.") that blows up when set_fact finalizes this string —
+  # before the "Require a MongoDB APT channel" assert below ever gets a
+  # chance to run. `| default('', true)` collapses that Undefined to an empty
+  # string so the assert (which already handles the empty case) is reachable
+  # instead of hard-failing the whole play on every S3 listing hiccup.
   ansible.builtin.set_fact:
     latest_mongodb_channel: >-
       {{
@@ -123,6 +129,7 @@
         | map('float')
         | sort
         | last
+        | default('', true)
       }}
 
 - name: Set MongoDB signing-key version for the newest channel
