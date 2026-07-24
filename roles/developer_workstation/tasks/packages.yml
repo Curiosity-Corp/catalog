@@ -138,6 +138,7 @@
       # --- SSH ---
       - openssh-client
       - sshfs
+      - mosh
       # --- VPN / ZTNA ---
       - openvpn
       - wireguard-tools

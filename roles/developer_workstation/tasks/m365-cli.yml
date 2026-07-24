@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# Microsoft 365 CLI
+# =============================================================================
+# @pnp/cli-microsoft365 ("m365") — command-line access to Microsoft Graph and
+# Microsoft 365 services (SharePoint, Teams, Outlook, etc).
+#
+# Kept in its own package list (m365_cli_packages, defaults/main.yml) and its
+# own tagged task file — separate from the general npm_global_packages
+# baseline in node-packages.yml — specifically so a consumer can select the
+# `m365` Ansible tag independently of the rest of the Node.js toolchain. A
+# capability-gated consumer can compose its own tag list to include "m365"
+# only for principals granted that capability; a consumer with no such
+# gating can simply add "m365" to its tag selection unconditionally.
+# =============================================================================
+
+- name: Update user-scoped Microsoft 365 CLI to latest
+  community.general.npm:
+    name: "{{ item }}"
+    global: true
+    state: latest
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  loop: "{{ m365_cli_packages }}"
+  register: _m365_cli_npm_result
+  failed_when: _m365_cli_npm_result is failed
