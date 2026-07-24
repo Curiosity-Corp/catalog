@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# claude-workspace: auto-attach to (or create) a persistent tmux session
-# with N windows running the Claude Code CLI. Designed to be run
+# hyper-workspace: auto-attach to (or create) a persistent tmux session
+# with N windows running the command of your choice. Designed to be run
 # automatically when you land on a Coder workspace over mosh.
 #
 # Usage:
-#   claude-workspace              attach if a session exists, else prompt for count
-#   claude-workspace up N         idempotent attach-or-create, no prompt (used by mosh)
-#   claude-workspace new [N]      kill any existing session, start fresh with N windows
-#   claude-workspace resize N     grow/shrink the running session to N windows
-#   claude-workspace status       show whether a session is running and how big
+#   hyper-workspace               attach if a session exists, else prompt for count
+#   hyper-workspace up N          idempotent attach-or-create, no prompt (used by mosh)
+#   hyper-workspace new [N]       kill any existing session, start fresh with N windows
+#   hyper-workspace resize N      grow/shrink the running session to N windows
+#   hyper-workspace status        show whether a session is running and how big
 
 set -euo pipefail
 
-SESSION="claude"
+SESSION="hyper"
 ALLOWED_COUNTS=(1 2 4 6 8)
-# Command each window runs. Override with:  export CLAUDE_WORKSPACE_CMD="claude --foo"
-CMD="${CLAUDE_WORKSPACE_CMD:-claude}"
+# Command each window runs. Override with:  export HYPER_WORKSPACE_CMD="your-command"
+CMD="${HYPER_WORKSPACE_CMD:-bash}"
 
 is_allowed() {
     local n="$1" c
@@ -26,7 +26,7 @@ is_allowed() {
 }
 
 prompt_count() {
-    echo "How many Claude Code windows? (${ALLOWED_COUNTS[*]})" >&2
+    echo "How many workspace windows? (${ALLOWED_COUNTS[*]})" >&2
     local n
     select n in "${ALLOWED_COUNTS[@]}"; do
         [[ -n "${n:-}" ]] && { echo "$n"; return; }
@@ -39,26 +39,26 @@ window_count() {
 
 create_session() {
     local n="$1" i
-    tmux new-session -d -s "$SESSION" -n "cc-1" "$CMD"
+    tmux new-session -d -s "$SESSION" -n "hw-1" "$CMD"
     for i in $(seq 2 "$n"); do
-        tmux new-window -t "$SESSION" -n "cc-$i" "$CMD"
+        tmux new-window -t "$SESSION" -n "hw-$i" "$CMD"
     done
-    tmux select-window -t "${SESSION}:cc-1"
+    tmux select-window -t "${SESSION}:hw-1"
 }
 
 grow_session() {
     local from="$1" to="$2" i
     for i in $(seq "$((from + 1))" "$to"); do
-        tmux new-window -t "$SESSION" -n "cc-$i" "$CMD"
+        tmux new-window -t "$SESSION" -n "hw-$i" "$CMD"
     done
 }
 
 shrink_session() {
     local from="$1" to="$2" i ans
-    read -rp "This will kill $((from - to)) running Claude Code window(s) (cc-$((to + 1))..cc-$from). Continue? [y/N] " ans
+    read -rp "This will kill $((from - to)) running window(s) (hw-$((to + 1))..hw-$from). Continue? [y/N] " ans
     [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; return 1; }
     for i in $(seq "$from" -1 "$((to + 1))"); do
-        tmux kill-window -t "${SESSION}:cc-$i" 2>/dev/null || true
+        tmux kill-window -t "${SESSION}:hw-$i" 2>/dev/null || true
     done
 }
 
@@ -68,8 +68,8 @@ case "$cmd" in
     up)
         # Idempotent: attach if it's already running, create it if not.
         # No prompts — meant to be called as a mosh remote command, e.g.:
-        #   mosh --ssh="coder ssh" myworkspace -- claude-workspace up 4
-        n="${2:?Usage: claude-workspace up <n>}"
+        #   mosh --ssh="coder ssh" myworkspace -- hyper-workspace up 4
+        n="${2:?Usage: hyper-workspace up <n>}"
         is_allowed "$n" || { echo "Count must be one of: ${ALLOWED_COUNTS[*]}"; exit 1; }
         if tmux has-session -t "$SESSION" 2>/dev/null; then
             exec tmux attach -t "$SESSION"
@@ -97,9 +97,9 @@ case "$cmd" in
         exec tmux attach -t "$SESSION"
         ;;
     resize)
-        n="${2:?Usage: claude-workspace resize <n>}"
+        n="${2:?Usage: hyper-workspace resize <n>}"
         is_allowed "$n" || { echo "Count must be one of: ${ALLOWED_COUNTS[*]}"; exit 1; }
-        tmux has-session -t "$SESSION" 2>/dev/null || { echo "No session running. Use: claude-workspace new $n"; exit 1; }
+        tmux has-session -t "$SESSION" 2>/dev/null || { echo "No session running. Use: hyper-workspace new $n"; exit 1; }
         current="$(window_count)"
         if (( n > current )); then
             grow_session "$current" "$n"
@@ -117,7 +117,7 @@ case "$cmd" in
         fi
         ;;
     *)
-        echo "Usage: claude-workspace [attach|up N|new [N]|resize N|status]"
+        echo "Usage: hyper-workspace [attach|up N|new [N]|resize N|status]"
         exit 1
         ;;
 esac

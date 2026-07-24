@@ -1,22 +1,22 @@
 ---
-- name: Deploy claude-workspace helper script
+- name: Deploy hyper-workspace helper script
   ansible.builtin.copy:
-    src: claude-workspace
-    dest: /usr/local/bin/claude-workspace
+    src: hyper-workspace
+    dest: /usr/local/bin/hyper-workspace
     mode: "0755"
     owner: root
     group: root
 
-- name: Add tmux configuration for Claude Code workspace
+- name: Add tmux configuration for hyper-workspace
   ansible.builtin.blockinfile:
     path: "{{ dev_user_home }}/.tmux.conf"
     create: true
     mode: "0644"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
-    marker: "# {mark} ANSIBLE MANAGED: claude-workspace tmux config"
+    marker: "# {mark} ANSIBLE MANAGED: hyper-workspace tmux config"
     block: |
-      # -- claude-workspace requirements --
+      # -- hyper-workspace requirements --
       set -g history-limit 100000
       set -g base-index 1
       set -g renumber-windows on
