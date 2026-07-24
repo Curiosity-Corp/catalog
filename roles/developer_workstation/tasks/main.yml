@@ -206,6 +206,11 @@
   tags: [coder, workspace, git]
   when: workstation_profile == 'workspace'
 
+- name: Include Claude Code workspace helpers (claude-workspace, tmux config)
+  ansible.builtin.include_tasks: claude-workspace.yml
+  tags: [coder, workspace, claude, mosh]
+  when: workstation_profile == 'workspace'
+
 - name: Include user environment (system-level setup)
   ansible.builtin.include_tasks: user-env.yml
   tags: [user]

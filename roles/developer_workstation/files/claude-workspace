@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# claude-workspace: auto-attach to (or create) a persistent tmux session
+# with N windows running the Claude Code CLI. Designed to be run
+# automatically when you land on a Coder workspace over mosh.
+#
+# Usage:
+#   claude-workspace              attach if a session exists, else prompt for count
+#   claude-workspace up N         idempotent attach-or-create, no prompt (used by mosh)
+#   claude-workspace new [N]      kill any existing session, start fresh with N windows
+#   claude-workspace resize N     grow/shrink the running session to N windows
+#   claude-workspace status       show whether a session is running and how big
+
+set -euo pipefail
+
+SESSION="claude"
+ALLOWED_COUNTS=(1 2 4 6 8)
+# Command each window runs. Override with:  export CLAUDE_WORKSPACE_CMD="claude --foo"
+CMD="${CLAUDE_WORKSPACE_CMD:-claude}"
+
+is_allowed() {
+    local n="$1" c
+    for c in "${ALLOWED_COUNTS[@]}"; do
+        [[ "$c" == "$n" ]] && return 0
+    done
+    return 1
+}
+
+prompt_count() {
+    echo "How many Claude Code windows? (${ALLOWED_COUNTS[*]})" >&2
+    local n
+    select n in "${ALLOWED_COUNTS[@]}"; do
+        [[ -n "${n:-}" ]] && { echo "$n"; return; }
+    done
+}
+
+window_count() {
+    tmux list-windows -t "$SESSION" 2>/dev/null | wc -l | tr -d ' '
+}
+
+create_session() {
+    local n="$1" i
+    tmux new-session -d -s "$SESSION" -n "cc-1" "$CMD"
+    for i in $(seq 2 "$n"); do
+        tmux new-window -t "$SESSION" -n "cc-$i" "$CMD"
+    done
+    tmux select-window -t "${SESSION}:cc-1"
+}
+
+grow_session() {
+    local from="$1" to="$2" i
+    for i in $(seq "$((from + 1))" "$to"); do
+        tmux new-window -t "$SESSION" -n "cc-$i" "$CMD"
+    done
+}
+
+shrink_session() {
+    local from="$1" to="$2" i ans
+    read -rp "This will kill $((from - to)) running Claude Code window(s) (cc-$((to + 1))..cc-$from). Continue? [y/N] " ans
+    [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; return 1; }
+    for i in $(seq "$from" -1 "$((to + 1))"); do
+        tmux kill-window -t "${SESSION}:cc-$i" 2>/dev/null || true
+    done
+}
+
+cmd="${1:-attach}"
+
+case "$cmd" in
+    up)
+        # Idempotent: attach if it's already running, create it if not.
+        # No prompts — meant to be called as a mosh remote command, e.g.:
+        #   mosh --ssh="coder ssh" myworkspace -- claude-workspace up 4
+        n="${2:?Usage: claude-workspace up <n>}"
+        is_allowed "$n" || { echo "Count must be one of: ${ALLOWED_COUNTS[*]}"; exit 1; }
+        if tmux has-session -t "$SESSION" 2>/dev/null; then
+            exec tmux attach -t "$SESSION"
+        fi
+        create_session "$n"
+        exec tmux attach -t "$SESSION"
+        ;;
+    attach|"")
+        if tmux has-session -t "$SESSION" 2>/dev/null; then
+            exec tmux attach -t "$SESSION"
+        fi
+        n="$(prompt_count)"
+        create_session "$n"
+        exec tmux attach -t "$SESSION"
+        ;;
+    new)
+        n="${2:-$(prompt_count)}"
+        is_allowed "$n" || { echo "Count must be one of: ${ALLOWED_COUNTS[*]}"; exit 1; }
+        if tmux has-session -t "$SESSION" 2>/dev/null; then
+            read -rp "Session '$SESSION' already exists. Kill it and start fresh? [y/N] " ans
+            [[ "${ans:-}" =~ ^[Yy]$ ]] || exit 1
+            tmux kill-session -t "$SESSION"
+        fi
+        create_session "$n"
+        exec tmux attach -t "$SESSION"
+        ;;
+    resize)
+        n="${2:?Usage: claude-workspace resize <n>}"
+        is_allowed "$n" || { echo "Count must be one of: ${ALLOWED_COUNTS[*]}"; exit 1; }
+        tmux has-session -t "$SESSION" 2>/dev/null || { echo "No session running. Use: claude-workspace new $n"; exit 1; }
+        current="$(window_count)"
+        if (( n > current )); then
+            grow_session "$current" "$n"
+        elif (( n < current )); then
+            shrink_session "$current" "$n"
+        else
+            echo "Already at $n windows."
+        fi
+        ;;
+    status)
+        if tmux has-session -t "$SESSION" 2>/dev/null; then
+            echo "Session '$SESSION' running with $(window_count) window(s)."
+        else
+            echo "No session running."
+        fi
+        ;;
+    *)
+        echo "Usage: claude-workspace [attach|up N|new [N]|resize N|status]"
+        exit 1
+        ;;
+esac
