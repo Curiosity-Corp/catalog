@@ -134,6 +134,7 @@
       # --- SSH ---
       - openssh-client
       - sshfs
+      - mosh
       # --- Misc utilities ---
       - entr
       - pv
