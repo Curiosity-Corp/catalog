@@ -41,3 +41,8 @@
       # Window navigation — Alt+Left/Right
       bind -n M-Left previous-window
       bind -n M-Right next-window
+
+- name: Remove old claude-workspace script (renamed to hyper-workspace)
+  ansible.builtin.file:
+    path: /usr/local/bin/claude-workspace
+    state: absent
