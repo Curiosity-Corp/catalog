@@ -3,8 +3,32 @@
 # Python Tools
 # =============================================================================
 # Uses pipx for isolated Python tool installs and uv as fast pip replacement.
-# Python and pipx are installed via APT (packages.yml).
+# Python and the baseline pipx package are installed via APT (packages.yml),
+# but the APT pipx version can lag the minimum supported by
+# community.general.pipx. Keep the command itself in a small dedicated venv so
+# the catalog does not modify the distribution-managed Python environment.
 # =============================================================================
+
+- name: Create the catalog pipx control virtual environment
+  ansible.builtin.command:
+    cmd: python3 -m venv /opt/curiosity-pipx
+    creates: /opt/curiosity-pipx/bin/activate
+  become: true
+
+- name: Install a current pipx in the catalog control virtual environment
+  ansible.builtin.pip:
+    name: "pipx>=1.7.0"
+    state: latest
+    virtualenv: /opt/curiosity-pipx
+  become: true
+
+- name: Expose the catalog-managed pipx launcher
+  ansible.builtin.file:
+    src: /opt/curiosity-pipx/bin/pipx
+    dest: /usr/local/bin/pipx
+    state: link
+    force: true
+  become: true
 
 - name: Ensure the user pipx binary directory exists
   ansible.builtin.file:
@@ -23,6 +47,7 @@
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+    PATH: "/usr/local/bin:{{ dev_user_home }}/.local/bin:/usr/bin:/bin"
 
 - name: Install Python tools via pipx
   community.general.pipx:
@@ -32,6 +57,7 @@
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+    PATH: "/usr/local/bin:{{ dev_user_home }}/.local/bin:/usr/bin:/bin"
   loop:
     - ruff
     - poetry
