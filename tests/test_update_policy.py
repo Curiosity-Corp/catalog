@@ -237,6 +237,13 @@ def main() -> None:
             "CycloneDX",
             "catalog_commit",
         ),
+        "tasks/update-transaction.yml": (
+            "managed-updates.yml",
+            "update-health.yml",
+            "update-rollback.yml",
+            "update-manifest.yml",
+            "tags: [always]",
+        ),
         "tasks/managed-updates.yml": ("Software update transaction",),
     }
     for relative, fragments in control_fragments.items():

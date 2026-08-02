@@ -203,19 +203,12 @@
   when: workstation_profile in ['thin-client', 'byod-kiosk']
 
 - name: Run workstation software update transaction
+  ansible.builtin.include_tasks: update-transaction.yml
+  # Select the transaction wrapper from the requested component tag, but do
+  # not apply those tags to every task inside it. The wrapper file gives the
+  # managed component includes their own tags while health/rollback/manifest
+  # remain unconditional once a transaction has been selected.
   tags: "{{ workstation_update_transaction_tags }}"
-  block:
-    - name: Apply managed software updates
-      ansible.builtin.include_tasks: managed-updates.yml
-
-    - name: Verify managed software after update
-      ansible.builtin.include_tasks: update-health.yml
-  rescue:
-    - name: Restore managed software after a failed update transaction
-      ansible.builtin.include_tasks: update-rollback.yml
-  always:
-    - name: Write local workstation update manifest
-      ansible.builtin.include_tasks: update-manifest.yml
 
 - name: Include system tuning (swap, earlyoom, sysctl)
   ansible.builtin.include_tasks: system-tuning.yml
