@@ -323,6 +323,8 @@ def main() -> None:
         raise SystemExit("AWS CLI's moving latest URL must not be permanently cached")
     if "Inspect AWS CLI launchers without following symlinks" not in cloud_text or "Remove legacy copied AWS CLI launchers" not in cloud_text:
         raise SystemExit("AWS CLI installation must repair legacy copied launchers before updating")
+    if "BEGIN PGP PUBLIC KEY BLOCK" not in cloud_text or "FB5DB77FD5C118B80511ADA8A6310ACC4672475C" not in cloud_text:
+        raise SystemExit("AWS CLI installation must carry its pinned signing key and fingerprint")
 
     # Do not regress to mutable remote installer pipes in the update paths.
     script_paths = (
