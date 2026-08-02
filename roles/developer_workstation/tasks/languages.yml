@@ -128,12 +128,32 @@
     HOME: "{{ dev_user_home }}"
 
 # --- pyenv ---
-- name: Check if pyenv is installed
+- name: Inspect the existing pyenv directory
   ansible.builtin.stat:
-    path: "{{ dev_user_home }}/.pyenv/bin/pyenv"
-  register: pyenv_installed
+    path: "{{ dev_user_home }}/.pyenv"
+  register: _pyenv_root
 
-- name: Install pyenv
+- name: Check whether pyenv is already a Git checkout
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.pyenv/.git"
+  register: _pyenv_git_dir
+
+- name: List entries in a partial pyenv directory
+  ansible.builtin.find:
+    paths: "{{ dev_user_home }}/.pyenv"
+    recurse: false
+    file_type: any
+  register: _pyenv_entries
+  when: _pyenv_root.stat.isdir | default(false)
+
+- name: Set pyenv bootstrap mode
+  ansible.builtin.set_fact:
+    _pyenv_partial_directory: >-
+      {{ _pyenv_root.stat.isdir | default(false)
+         and not (_pyenv_git_dir.stat.exists | default(false))
+         and (_pyenv_entries.matched | default(0) | int) > 0 }}
+
+- name: Install pyenv into an empty or missing directory
   ansible.builtin.git:
     repo: https://github.com/pyenv/pyenv.git
     dest: "{{ dev_user_home }}/.pyenv"
@@ -141,6 +161,60 @@
     version: master
   become: true
   become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when:
+    - not (_pyenv_git_dir.stat.exists | default(false))
+    - not _pyenv_partial_directory
+
+- name: Remove stale pyenv staging checkout
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.pyenv.catalog-staging"
+    state: absent
+  become: true
+  when: _pyenv_partial_directory
+
+- name: Clone pyenv for merging into a partial directory
+  ansible.builtin.git:
+    repo: https://github.com/pyenv/pyenv.git
+    dest: "{{ dev_user_home }}/.pyenv.catalog-staging"
+    depth: 1
+    version: master
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when: _pyenv_partial_directory
+
+- name: Merge pyenv into the existing user directory
+  ansible.builtin.copy:
+    src: "{{ dev_user_home }}/.pyenv.catalog-staging/"
+    dest: "{{ dev_user_home }}/.pyenv/"
+    remote_src: true
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+  become: true
+  when: _pyenv_partial_directory
+
+- name: Remove pyenv staging checkout
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.pyenv.catalog-staging"
+    state: absent
+  become: true
+  when: _pyenv_partial_directory
+
+- name: Update an existing pyenv Git checkout
+  ansible.builtin.git:
+    repo: https://github.com/pyenv/pyenv.git
+    dest: "{{ dev_user_home }}/.pyenv"
+    depth: 1
+    version: master
+    force: false
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when: _pyenv_git_dir.stat.exists | default(false)
 
 # --- Deno ---
 - name: Get installed Deno version

@@ -207,6 +207,8 @@ def main() -> None:
         "tasks/languages.yml": (
             "https://go.dev/dl/?mode=json",
             "sha256:{{ _go_latest_asset.sha256 }}",
+            "Merge pyenv into the existing user directory",
+            ".pyenv.catalog-staging",
         ),
         "tasks/ansible-pull-timer.yml": (
             "OnCalendar=*-*-* 02:00:00",
