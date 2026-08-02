@@ -263,7 +263,7 @@
         | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.tar.gz"
     checksum: >-
       {{ (latest_github_releases.velero.assets
           | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$')
@@ -273,7 +273,7 @@
 
 - name: Install latest Velero
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.tar.gz"
     dest: /usr/local/bin
     remote_src: true
     include: ["*/velero"]
