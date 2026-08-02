@@ -202,6 +202,11 @@
   tags: [security, certificates]
   when: workstation_profile in ['thin-client', 'byod-kiosk']
 
+- name: Include workspace launcher repairs
+  ansible.builtin.include_tasks: workspace-launchers.yml
+  tags: [workspace]
+  when: workstation_profile == 'workspace'
+
 - name: Run workstation software update transaction
   ansible.builtin.include_tasks: update-transaction.yml
   # Select the transaction wrapper from the requested component tag, but do

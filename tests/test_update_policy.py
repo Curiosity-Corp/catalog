@@ -214,6 +214,18 @@ def main() -> None:
         if ".npm-global/bin" not in (ROLE / relative).read_text():
             raise SystemExit(f"{relative} does not put the managed npm prefix on PATH")
 
+    workspace_launcher_text = (ROLE / "tasks/workspace-launchers.yml").read_text()
+    for fragment in (
+        "Repair catalog-managed npm launchers",
+        "Repair the AWS CLI launchers",
+        "outside the quarantined software transaction",
+    ):
+        if fragment not in workspace_launcher_text:
+            raise SystemExit(
+                "workspace-launchers.yml is missing quarantine-safe repair coverage: "
+                + fragment
+            )
+
     # Package-manager and timer coverage is the fleet-wide part of the policy;
     # these checks prevent future app additions from silently becoming stale.
     required_fragments = {
