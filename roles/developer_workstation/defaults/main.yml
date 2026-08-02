@@ -315,6 +315,15 @@ ai_assistant_packages:
   - "@openai/codex"
   - "@qwen-code/qwen-code"
 
+# npm considers an already-installed package current even when an interrupted
+# image build left its global command shim absent. Keep the command contract
+# explicit so the Ansible run repairs the user-facing launchers idempotently.
+ai_assistant_command_links:
+  - {package: "@anthropic-ai/claude-code", command: claude, relative_path: bin/claude.exe}
+  - {package: "@google/gemini-cli", command: gemini, relative_path: bundle/gemini.js}
+  - {package: "@openai/codex", command: codex, relative_path: bin/codex.js}
+  - {package: "@qwen-code/qwen-code", command: qwen, relative_path: cli-entry.js}
+
 # Microsoft 365 CLI is kept in its own user-scoped package list (installed by
 # tasks/m365-cli.yml, tag: m365) rather than folded into npm_global_packages,
 # so a capability-gated consumer can opt it in on the `m365` Ansible tag

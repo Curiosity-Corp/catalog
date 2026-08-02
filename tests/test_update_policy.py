@@ -148,6 +148,16 @@ def main() -> None:
         raise SystemExit("m365-cli must be in the user-scoped latest m365_cli_packages set")
     if "@openai/codex" not in defaults.get("ai_assistant_packages", []):
         raise SystemExit("Codex must be in the user-scoped latest AI package set")
+    ai_command_links = defaults.get("ai_assistant_command_links", [])
+    linked_packages = {entry.get("package") for entry in ai_command_links}
+    if linked_packages != set(defaults.get("ai_assistant_packages", [])):
+        raise SystemExit("Every AI package must have an explicit user command launcher")
+    codex_link = next(
+        (entry for entry in ai_command_links if entry.get("command") == "codex"),
+        None,
+    )
+    if not codex_link or codex_link.get("relative_path") != "bin/codex.js":
+        raise SystemExit("The Codex launcher must target the package's bin/codex.js")
 
     # Dynamic include tags are a dependency boundary: a focused component
     # pull must still enter the update foundation and transaction wrappers so

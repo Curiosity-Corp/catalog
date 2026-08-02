@@ -23,6 +23,18 @@
   register: _ai_npm_result
   failed_when: _ai_npm_result is failed
 
+- name: Repair user-scoped AI command launchers
+  ansible.builtin.file:
+    src: "{{ npm_global_prefix }}/lib/node_modules/{{ item.package }}/{{ item.relative_path }}"
+    dest: "{{ npm_global_prefix }}/bin/{{ item.command }}"
+    state: link
+    force: true
+  become: true
+  become_user: "{{ dev_user }}"
+  loop: "{{ ai_assistant_command_links }}"
+  loop_control:
+    label: "{{ item.command }}"
+
 # =============================================================================
 # Optional Qwen Code provider configuration
 # =============================================================================
