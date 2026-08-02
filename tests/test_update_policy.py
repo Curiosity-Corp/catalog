@@ -204,6 +204,10 @@ def main() -> None:
         "tasks/python-tools.yml": ("state: latest", "name: uv"),
         "tasks/science-tools.yml": ("state: latest",),
         "tasks/hardware-drivers.yml": ("state: latest",),
+        "tasks/languages.yml": (
+            "https://go.dev/dl/?mode=json",
+            "sha256:{{ _go_latest_asset.sha256 }}",
+        ),
         "tasks/ansible-pull-timer.yml": (
             "OnCalendar=*-*-* 02:00:00",
             "--verify-commit",
@@ -215,6 +219,8 @@ def main() -> None:
         for fragment in fragments:
             if fragment not in text:
                 raise SystemExit(f"{relative} is missing update coverage: {fragment}")
+    if ".tar.gz.sha256" in (ROLE / "tasks/languages.yml").read_text():
+        raise SystemExit("Go updates must use the structured release metadata checksum")
 
     # Workspace bootstrap applies the package tags directly. The update
     # foundation and release discovery must therefore be reachable through

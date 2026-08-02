@@ -21,24 +21,49 @@
     return_content: true
   register: go_version
 
+- name: Get latest Go release metadata
+  ansible.builtin.uri:
+    url: https://go.dev/dl/?mode=json
+    return_content: true
+  register: _go_release_metadata
+  changed_when: false
+
 - name: Set Go update state
   ansible.builtin.set_fact:
     go_latest_release: "{{ go_version.content.split('\n')[0] }}"
     go_needs_update: >-
       {{ go_current.rc != 0 or go_version.content.split('\n')[0] not in go_current.stdout }}
 
+- name: Resolve the latest Go Linux amd64 archive
+  ansible.builtin.set_fact:
+    _go_latest_asset: >-
+      {{ (_go_release_metadata.json
+          | selectattr('version', 'equalto', go_latest_release)
+          | map(attribute='files')
+          | first
+          | selectattr('filename', 'equalto', go_latest_release ~ '.linux-amd64.tar.gz')
+          | first) }}
+
+- name: Require a verified latest Go archive
+  ansible.builtin.assert:
+    that:
+      - _go_latest_asset | default({}) | length > 0
+      - _go_latest_asset.sha256 | default('') is match('^[0-9a-f]{64}$')
+    fail_msg: "No verified Linux amd64 Go archive was found for {{ go_latest_release }}"
+  when: go_needs_update
+
 - name: Download latest Go release
   ansible.builtin.get_url:
-    url: "https://go.dev/dl/{{ go_latest_release }}.linux-amd64.tar.gz"
-    dest: "{{ workstation_update_artifact_cache_dir }}/{{ go_latest_release }}.linux-amd64.tar.gz"
-    checksum: "sha256:https://go.dev/dl/{{ go_latest_release }}.linux-amd64.tar.gz.sha256"
+    url: "https://go.dev/dl/{{ _go_latest_asset.filename }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/{{ _go_latest_asset.filename }}"
+    checksum: "sha256:{{ _go_latest_asset.sha256 }}"
     mode: "0644"
     force: false
   when: go_needs_update
 
 - name: Install latest Go
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/{{ go_latest_release }}.linux-amd64.tar.gz"
+    src: "{{ workstation_update_artifact_cache_dir }}/{{ _go_latest_asset.filename }}"
     dest: /usr/local
     remote_src: true
   when: go_needs_update
