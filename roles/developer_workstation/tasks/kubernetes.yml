@@ -38,9 +38,8 @@
   ansible.builtin.set_fact:
     _helm_sha256: >-
       {{ (_helm_checksum_response.content
-          | regex_findall('(?im)^[0-9a-f]{64}')
-          | first
-          | default('', true)) | lower }}
+          | regex_search('[0-9a-fA-F]{64}'))
+          | default('', true) | lower }}
 
 - name: Require a valid latest Helm artifact checksum
   ansible.builtin.assert:
