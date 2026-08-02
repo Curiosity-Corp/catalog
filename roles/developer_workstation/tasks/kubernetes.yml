@@ -276,7 +276,7 @@
     src: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.tar.gz"
     dest: /usr/local/bin
     remote_src: true
-    include: ["*/velero"]
+    include: ["velero-{{ latest_github_releases.velero.tag_name }}-linux-amd64/velero"]
     extra_opts: [--strip-components=1]
 
 # --- Krew (kubectl plugin manager) ---
