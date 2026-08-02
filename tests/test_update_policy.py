@@ -334,6 +334,7 @@ def main() -> None:
         "checksum_algorithm: sha256",
         "Remove an invalid cached Helm artifact",
         'include: ["linux-amd64/helm"]',
+        "krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.tar.gz",
     ):
         if fragment not in kubernetes_text:
             raise SystemExit(
