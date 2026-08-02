@@ -201,7 +201,11 @@ def main() -> None:
     # these checks prevent future app additions from silently becoming stale.
     required_fragments = {
         "tasks/system-updates.yml": ("upgrade: safe", "snap refresh"),
-        "tasks/python-tools.yml": ("state: latest", "name: uv"),
+        "tasks/python-tools.yml": (
+            "state: latest",
+            "name: uv",
+            "Ensure the user pipx binary directory exists",
+        ),
         "tasks/science-tools.yml": ("state: latest",),
         "tasks/hardware-drivers.yml": ("state: latest",),
         "tasks/languages.yml": (

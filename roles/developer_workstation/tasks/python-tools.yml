@@ -6,13 +6,14 @@
 # Python and pipx are installed via APT (packages.yml).
 # =============================================================================
 
-- name: Ensure pipx is configured
-  ansible.builtin.command: pipx ensurepath
+- name: Ensure the user pipx binary directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0750"
   become: true
-  become_user: "{{ dev_user }}"
-  environment:
-    HOME: "{{ dev_user_home }}"
-  changed_when: false
 
 - name: Install or update uv from PyPI in the user's pipx scope
   community.general.pipx:
