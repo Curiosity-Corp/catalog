@@ -354,11 +354,76 @@
   environment:
     HOME: "{{ dev_user_home }}"
 
+- name: Ensure SDKMAN runtime directories exist
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.sdkman/{{ item }}"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0750"
+  loop:
+    - bin
+    - candidates
+    - etc
+    - ext
+    - tmp
+    - var
+  become: true
+
+- name: Resolve the SDKMAN candidate list
+  ansible.builtin.uri:
+    url: https://api.sdkman.io/2/candidates/all
+    return_content: true
+  register: _sdkman_candidates
+  changed_when: false
+
+- name: Set the SDKMAN platform identifier
+  ansible.builtin.set_fact:
+    _sdkman_platform: >-
+      {% if ansible_facts.system == 'Linux' and ansible_facts.architecture == 'x86_64' %}linuxx64
+      {% elif ansible_facts.system == 'Linux' and ansible_facts.architecture == 'aarch64' %}linuxarm64
+      {% elif ansible_facts.system == 'Darwin' and ansible_facts.architecture == 'x86_64' %}darwinx64
+      {% elif ansible_facts.system == 'Darwin' and ansible_facts.architecture == 'arm64' %}darwinarm64
+      {% else %}exotic{% endif %}
+
+- name: Seed SDKMAN candidate metadata
+  ansible.builtin.copy:
+    content: "{{ _sdkman_candidates.content | trim }}\n"
+    dest: "{{ dev_user_home }}/.sdkman/var/candidates"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0640"
+  become: true
+
+- name: Seed SDKMAN platform metadata
+  ansible.builtin.copy:
+    content: "{{ _sdkman_platform | trim }}\n"
+    dest: "{{ dev_user_home }}/.sdkman/var/platform"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0640"
+  become: true
+
+- name: Install the SDKMAN shell launcher
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      export SDKMAN_DIR="${SDKMAN_DIR:-$HOME/.sdkman}"
+      export SDKMAN_CANDIDATES_API="${SDKMAN_CANDIDATES_API:-https://api.sdkman.io/2}"
+      export SDKMAN_BROKER_API="${SDKMAN_BROKER_API:-https://api.sdkman.io/2}"
+      source "$SDKMAN_DIR/src/main/bash/sdkman-init.sh"
+    dest: "{{ dev_user_home }}/.sdkman/bin/sdkman-init.sh"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+  become: true
+
 - name: Configure SDKMAN curl timeouts to fail fast when unreachable
   ansible.builtin.lineinfile:
     path: "{{ dev_user_home }}/.sdkman/etc/config"
     regexp: "{{ item.regexp }}"
     line: "{{ item.line }}"
+    create: true
   loop:
     - { regexp: '^sdkman_curl_connect_timeout=', line: 'sdkman_curl_connect_timeout=2' }
     - { regexp: '^sdkman_curl_max_time=', line: 'sdkman_curl_max_time=3' }

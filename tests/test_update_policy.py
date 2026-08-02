@@ -209,6 +209,8 @@ def main() -> None:
             "sha256:{{ _go_latest_asset.sha256 }}",
             "Merge pyenv into the existing user directory",
             ".pyenv.catalog-staging",
+            "https://api.sdkman.io/2/candidates/all",
+            "Install the SDKMAN shell launcher",
         ),
         "tasks/ansible-pull-timer.yml": (
             "OnCalendar=*-*-* 02:00:00",
