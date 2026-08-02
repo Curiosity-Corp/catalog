@@ -293,6 +293,8 @@ def main() -> None:
     cloud_text = (ROLE / "tasks/cloud-clis.yml").read_text()
     if "awscli-exe-linux-x86_64.zip" not in cloud_text or "    force: true" not in cloud_text:
         raise SystemExit("AWS CLI's moving latest URL must not be permanently cached")
+    if "Inspect AWS CLI launchers without following symlinks" not in cloud_text or "Remove legacy copied AWS CLI launchers" not in cloud_text:
+        raise SystemExit("AWS CLI installation must repair legacy copied launchers before updating")
 
     # Do not regress to mutable remote installer pipes in the update paths.
     script_paths = (

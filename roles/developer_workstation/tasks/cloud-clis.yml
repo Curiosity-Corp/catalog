@@ -123,6 +123,24 @@
     remote_src: true
   when: _aws_cli_archive.changed or not _aws_cli_installer.stat.exists
 
+- name: Inspect AWS CLI launchers without following symlinks
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - /usr/local/bin/aws
+    - /usr/local/bin/aws_completer
+  register: _aws_cli_launchers
+
+- name: Remove legacy copied AWS CLI launchers
+  ansible.builtin.file:
+    path: "{{ item.item }}"
+    state: absent
+  loop: "{{ _aws_cli_launchers.results }}"
+  when:
+    - item.stat.exists | default(false)
+    - not (item.stat.islnk | default(false))
+
 - name: Check if AWS CLI is installed
   ansible.builtin.stat:
     path: /usr/local/bin/aws
