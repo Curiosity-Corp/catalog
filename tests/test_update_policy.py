@@ -77,8 +77,14 @@ def main() -> None:
         or "Require latest metadata" not in latest_task
         or "asset_checksums" not in latest_task
         or "checksum" not in latest_task
+        or "gh" not in latest_task
+        or "GITHUB_TOKEN" not in latest_task
+        or "GH_TOKEN" not in latest_task
     ):
-        raise SystemExit("latest-releases.yml must query and require current upstream metadata")
+        raise SystemExit(
+            "latest-releases.yml must use available GitHub auth and require "
+            "current upstream metadata"
+        )
 
     referenced = {
         match.group(1)

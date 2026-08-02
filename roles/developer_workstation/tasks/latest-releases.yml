@@ -7,6 +7,39 @@
 # Linux asset from the current release.
 # =============================================================================
 
+- name: Resolve an available GitHub API token without exposing it in task output
+  ansible.builtin.set_fact:
+    _github_api_token: >-
+      {{ github_api_token | default('', true) | trim
+         or lookup('ansible.builtin.env', 'GITHUB_TOKEN') | trim
+         or lookup('ansible.builtin.env', 'GH_TOKEN') | trim }}
+  no_log: true
+
+- name: Resolve GitHub CLI token for release discovery
+  ansible.builtin.command:
+    argv:
+      - gh
+      - auth
+      - token
+      - --hostname
+      - github.com
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  register: _github_cli_token
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _github_api_token | length == 0
+
+- name: Prefer the authenticated GitHub CLI token when available
+  ansible.builtin.set_fact:
+    _github_api_token: >-
+      {{ _github_api_token | default('', true) | trim
+         or (_github_cli_token.stdout | default('') | trim) }}
+  no_log: true
+
 - name: Query latest GitHub releases for binary applications
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ item.value }}/releases/latest"
@@ -18,8 +51,8 @@
           'User-Agent': 'curiosity-catalog-workstation-updater'
         }
         | combine(
-            ({'Authorization': 'Bearer ' ~ github_api_token}
-             if (github_api_token | default('') | length > 0) else {})
+            ({'Authorization': 'Bearer ' ~ _github_api_token}
+             if (_github_api_token | default('') | length > 0) else {})
           )
       }}
     return_content: true
