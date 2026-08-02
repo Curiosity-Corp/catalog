@@ -205,7 +205,7 @@ def main() -> None:
             "state: latest",
             "name: uv",
             'name: "pipx>=1.7.0"',
-            "Create the catalog pipx control virtual environment",
+            "Install a current pipx into Ansible's Python environment",
             "Ensure the user pipx binary directory exists",
         ),
         "tasks/science-tools.yml": ("state: latest",),

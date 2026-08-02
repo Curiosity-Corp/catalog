@@ -5,26 +5,21 @@
 # Uses pipx for isolated Python tool installs and uv as fast pip replacement.
 # Python and the baseline pipx package are installed via APT (packages.yml),
 # but the APT pipx version can lag the minimum supported by
-# community.general.pipx. Keep the command itself in a small dedicated venv so
-# the catalog does not modify the distribution-managed Python environment.
+# community.general.pipx. Install the supported version into Ansible's own
+# Python environment so the collection module can import it, and expose that
+# same launcher for interactive use.
 # =============================================================================
 
-- name: Create the catalog pipx control virtual environment
-  ansible.builtin.command:
-    cmd: python3 -m venv /opt/curiosity-pipx
-    creates: /opt/curiosity-pipx/bin/activate
-  become: true
-
-- name: Install a current pipx in the catalog control virtual environment
+- name: Install a current pipx into Ansible's Python environment
   ansible.builtin.pip:
     name: "pipx>=1.7.0"
     state: latest
-    virtualenv: /opt/curiosity-pipx
+    executable: "{{ ansible_playbook_python | dirname }}/pip"
   become: true
 
 - name: Expose the catalog-managed pipx launcher
   ansible.builtin.file:
-    src: /opt/curiosity-pipx/bin/pipx
+    src: "{{ ansible_playbook_python | dirname }}/pipx"
     dest: /usr/local/bin/pipx
     state: link
     force: true
