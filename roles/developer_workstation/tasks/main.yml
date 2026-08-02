@@ -164,7 +164,10 @@
       tags: [packages, ai]
 
 - name: Include workspace launcher repairs
-  ansible.builtin.include_tasks: workspace-launchers.yml
+  ansible.builtin.include_tasks:
+    file: workspace-launchers.yml
+    apply:
+      tags: [workspace]
   tags: [workspace]
   when: workstation_profile == 'workspace'
 

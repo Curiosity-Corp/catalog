@@ -212,6 +212,10 @@ def main() -> None:
         raise SystemExit(
             "Workspace launcher repairs must run before upstream discovery can fail"
         )
+    if "file: workspace-launchers.yml\n    apply:\n      tags: [workspace]" not in main_tasks_text:
+        raise SystemExit(
+            "Workspace launcher repairs must apply their workspace tag to child tasks"
+        )
 
     for relative in (
         "tasks/user-env.yml",
