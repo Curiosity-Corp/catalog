@@ -97,6 +97,20 @@ def main() -> None:
             + ", ".join(missing_references)
         )
 
+    # These expressions are Jinja single-quoted regexes. A doubled backslash
+    # reaches Python's regex engine as a literal backslash and silently makes
+    # valid release assets disappear from the selector.
+    overescaped_asset_patterns = [
+        line.strip()
+        for line in all_tasks.splitlines()
+        if "selectattr('name', 'match'" in line and "\\\\." in line
+    ]
+    if overescaped_asset_patterns:
+        raise SystemExit(
+            "Release asset selectors contain doubled regex escapes: "
+            + "; ".join(overescaped_asset_patterns[:3])
+        )
+
     # Renovate may still monitor CI image tags, but it must not own workstation
     # application versions because there are no application versions to pin.
     release_managers = [

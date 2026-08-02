@@ -15,7 +15,7 @@
   ansible.builtin.set_fact:
     _chezmoi_deb_asset: >-
       {{ latest_github_releases.chezmoi.assets
-         | selectattr('name', 'match', '^chezmoi_.*_linux_amd64\\.deb$') | first }}
+         | selectattr('name', 'match', '^chezmoi_.*_linux_amd64[.]deb$') | first }}
   when: user_dotfiles_repo | default('') | length > 0
 
 - name: Require a verified chezmoi .deb asset

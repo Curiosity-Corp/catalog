@@ -89,20 +89,20 @@
     url: >-
       {{
         (latest_github_releases.kustomize.assets
-        | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^kustomize_v.*_linux_amd64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.kustomize.assets
-          | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^kustomize_v.*_linux_amd64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest Kustomize
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [kustomize]
@@ -145,20 +145,20 @@
     url: >-
       {{
         (latest_github_releases.kubectx.assets
-        | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.kubectx.assets
-          | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest kubectx
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [kubectx]
@@ -168,20 +168,20 @@
     url: >-
       {{
         (latest_github_releases.kubectx.assets
-        | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^kubens_v.*_linux_x86_64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.kubectx.assets
-          | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^kubens_v.*_linux_x86_64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest kubens
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [kubens]
@@ -192,20 +192,20 @@
     url: >-
       {{
         (latest_github_releases.stern.assets
-        | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^stern_.*_linux_amd64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.stern.assets
-          | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^stern_.*_linux_amd64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest stern
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [stern]
@@ -231,7 +231,7 @@
   ansible.builtin.set_fact:
     _flux_latest_asset: >-
       {{ latest_github_releases.flux.assets
-         | selectattr('name', 'match', '^flux_.*_linux_amd64\\.tar\\.gz$') | first }}
+         | selectattr('name', 'match', '^flux_.*_linux_amd64[.]tar[.]gz$') | first }}
 
 - name: Require a verified Flux CLI asset
   ansible.builtin.assert:
@@ -260,20 +260,20 @@
     url: >-
       {{
         (latest_github_releases.velero.assets
-        | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.velero.assets
-          | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest Velero
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: ["*/velero"]
