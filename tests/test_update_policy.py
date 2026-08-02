@@ -204,9 +204,11 @@ def main() -> None:
         "tasks/python-tools.yml": (
             "state: latest",
             "name: uv",
-            'name: "pipx>=1.7.0"',
-            "Ensure pip is available in Ansible's Python environment",
+            '      - "pipx>=1.7.0"',
+            "Check whether pip is importable in Ansible's Python environment",
+            "Bootstrap pip in Ansible's Python environment when absent",
             "Install a current pipx into Ansible's Python environment",
+            '      - -m\n      - pip\n      - install',
             "Ensure the user pipx binary directory exists",
         ),
         "tasks/science-tools.yml": ("state: latest",),

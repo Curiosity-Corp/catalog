@@ -191,6 +191,7 @@
     src: "{{ dev_user_home }}/.pyenv.catalog-staging/"
     dest: "{{ dev_user_home }}/.pyenv/"
     remote_src: true
+    mode: preserve
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
   become: true
@@ -424,6 +425,7 @@
     regexp: "{{ item.regexp }}"
     line: "{{ item.line }}"
     create: true
+    mode: "0644"
   loop:
     - { regexp: '^sdkman_curl_connect_timeout=', line: 'sdkman_curl_connect_timeout=2' }
     - { regexp: '^sdkman_curl_max_time=', line: 'sdkman_curl_max_time=3' }

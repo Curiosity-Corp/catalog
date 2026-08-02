@@ -10,17 +10,42 @@
 # same launcher for interactive use.
 # =============================================================================
 
-- name: Ensure pip is available in Ansible's Python environment
+- name: Check whether pip is importable in Ansible's Python environment
   ansible.builtin.command:
-    cmd: "{{ ansible_playbook_python }} -m ensurepip --upgrade"
-    creates: "{{ ansible_playbook_python | dirname }}/pip"
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -m
+      - pip
+      - --version
+  register: _ansible_python_pip
+  changed_when: false
+  failed_when: false
+
+- name: Bootstrap pip in Ansible's Python environment when absent
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -m
+      - ensurepip
+      - --upgrade
+      - --default-pip
+  when: _ansible_python_pip.rc != 0
+  changed_when: true
   become: true
 
 - name: Install a current pipx into Ansible's Python environment
-  ansible.builtin.pip:
-    name: "pipx>=1.7.0"
-    state: latest
-    executable: "{{ ansible_playbook_python | dirname }}/pip"
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -m
+      - pip
+      - install
+      - --upgrade
+      - "pipx>=1.7.0"
+  register: _pipx_bootstrap
+  changed_when: >-
+    (_pipx_bootstrap.stdout | default('') is search('Successfully installed|Successfully uninstalled'))
+    or (_pipx_bootstrap.stdout | default('') is search('Installing collected packages'))
   become: true
 
 - name: Expose the catalog-managed pipx launcher
