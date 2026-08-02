@@ -150,6 +150,23 @@ def main() -> None:
 
     if "npm" not in set(defaults.get("npm_global_packages", [])):
         raise SystemExit("npm must be in the user-scoped latest package set")
+    required_npm_links = {
+        (entry.get("package"), entry.get("command"), entry.get("relative_path"))
+        for entry in defaults.get("npm_global_command_links", [])
+    }
+    for required_link in (
+        ("npm", "npm", "bin/npm-cli.js"),
+        ("pnpm", "pnpm", "bin/pnpm.mjs"),
+    ):
+        if required_link not in required_npm_links:
+            raise SystemExit(
+                "The user package-manager launcher contract is missing "
+                + repr(required_link)
+            )
+    if "Repair user-scoped package-manager launchers" not in (
+        ROLE / "tasks/node-packages.yml"
+    ).read_text():
+        raise SystemExit("User package-manager launchers must be repaired after npm updates")
     # m365-cli is deliberately NOT in npm_global_packages: it lives in its own
     # m365_cli_packages list (installed by tasks/m365-cli.yml, tag: m365) so a
     # consumer can select it independently of the rest of the Node toolchain.

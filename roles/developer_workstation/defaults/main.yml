@@ -307,6 +307,19 @@ npm_global_packages:
   - "@mermaid-js/mermaid-cli"
   - codewhale
 
+# Some npm releases copy package-manager launchers into a custom global prefix
+# instead of linking them. Those copies resolve their package-relative imports
+# from the prefix's bin directory and fail at runtime. Recreate the canonical
+# links after every package refresh so user commands resolve from their actual
+# package roots.
+npm_global_command_links:
+  - {package: npm, command: npm, relative_path: bin/npm-cli.js}
+  - {package: npm, command: npx, relative_path: bin/npx-cli.js}
+  - {package: pnpm, command: pnpm, relative_path: bin/pnpm.mjs}
+  - {package: pnpm, command: pnpx, relative_path: bin/pnpx.mjs}
+  - {package: pnpm, command: pn, relative_path: bin/pnpm.mjs}
+  - {package: pnpm, command: pnx, relative_path: bin/pnpx.mjs}
+
 # AI coding assistants are also user-scoped and refreshed nightly. Keep the
 # package list in defaults so every workstation profile gets the same policy.
 ai_assistant_packages:

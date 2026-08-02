@@ -34,6 +34,18 @@
   register: _npm_latest_result
   failed_when: _npm_latest_result is failed
 
+- name: Repair user-scoped package-manager launchers
+  ansible.builtin.file:
+    src: "{{ npm_global_prefix }}/lib/node_modules/{{ item.package }}/{{ item.relative_path }}"
+    dest: "{{ npm_global_prefix }}/bin/{{ item.command }}"
+    state: link
+    force: true
+  become: true
+  become_user: "{{ dev_user }}"
+  loop: "{{ npm_global_command_links }}"
+  loop_control:
+    label: "{{ item.command }}"
+
 - name: Remove obsolete root-scoped copies of catalog-managed npm apps
   community.general.npm:
     name: "{{ item }}"
