@@ -206,6 +206,12 @@ def main() -> None:
             "main.yml must apply transaction tags to the foundation, update, "
             "and health/rollback wrapper"
         )
+    if main_tasks_text.index("Include workspace launcher repairs") > main_tasks_text.index(
+        "Resolve upstream releases and evaluate the update ring"
+    ):
+        raise SystemExit(
+            "Workspace launcher repairs must run before upstream discovery can fail"
+        )
 
     for relative in (
         "tasks/user-env.yml",
