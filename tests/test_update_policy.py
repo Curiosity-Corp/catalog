@@ -252,6 +252,12 @@ def main() -> None:
             if fragment not in text:
                 raise SystemExit(f"{relative} is missing control-plane feature: {fragment}")
 
+    if "file: ai-assistants.yml" not in main_tasks_text or "tags: [packages, ai]" not in main_tasks_text:
+        raise SystemExit("main.yml must propagate the ai tag into ai-assistants.yml")
+    health_text = (ROLE / "tasks/update-health.yml").read_text()
+    if health_text.count("map(attribute='item.item.name')") < 2:
+        raise SystemExit("update-health.yml must address nested Ansible loop results correctly")
+
     # Direct-release installers must verify their selected artifact and use the
     # local digest-addressed cache. Package managers have their own signatures.
     direct_release_tasks = (
