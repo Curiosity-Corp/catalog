@@ -245,5 +245,5 @@
     src: "{{ workstation_update_artifact_cache_dir }}/glab-{{ _glab_release_version }}.archive"
     dest: /usr/local/bin
     remote_src: true
-    include: [glab]
+    include: [bin/glab]
     extra_opts: [--strip-components=1]

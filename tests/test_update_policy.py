@@ -333,6 +333,8 @@ def main() -> None:
         raise SystemExit("GitLab CLI selection must match the current Linux amd64 archive")
     if cloud_text.count("replace('%2E', '.')") < 2:
         raise SystemExit("GitLab CLI URLs must normalize encoded dots before checksum verification")
+    if "include: [bin/glab]" not in cloud_text:
+        raise SystemExit("GitLab CLI extraction must select the binary's current archive member")
 
     # Do not regress to mutable remote installer pipes in the update paths.
     script_paths = (
