@@ -314,7 +314,9 @@
     src: "{{ workstation_update_artifact_cache_dir }}/krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.tar.gz"
     dest: "/tmp/curiosity-krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}"
     remote_src: true
-    include: [krew-linux_amd64]
+    # The upstream tar member is explicitly prefixed with ./; exact matching
+    # keeps Ansible's tar handler from treating a wildcard as a literal name.
+    include: [./krew-linux_amd64]
 
 - name: Make the verified Krew installer executable
   ansible.builtin.file:
