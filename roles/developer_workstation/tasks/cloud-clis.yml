@@ -215,6 +215,7 @@
         | selectattr('name', 'match', '^glab_.*_linux_amd64[.]tar[.]gz$')
         | map(attribute='url')
         | first
+        | replace('%2E', '.')
       }}
     _glab_checksums_url: >-
       {{
@@ -222,6 +223,7 @@
         | selectattr('name', 'equalto', 'checksums.txt')
         | map(attribute='url')
         | first
+        | replace('%2E', '.')
       }}
     _glab_release_version: "{{ _glab_release.json.tag_name | regex_replace('^v', '') }}"
 

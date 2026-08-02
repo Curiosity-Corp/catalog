@@ -331,6 +331,8 @@ def main() -> None:
         raise SystemExit("AWS CLI installation must preserve update mode when repairing a launcher")
     if "^glab_.*_linux_amd64[.]tar[.]gz$" not in cloud_text:
         raise SystemExit("GitLab CLI selection must match the current Linux amd64 archive")
+    if cloud_text.count("replace('%2E', '.')") < 2:
+        raise SystemExit("GitLab CLI URLs must normalize encoded dots before checksum verification")
 
     # Do not regress to mutable remote installer pipes in the update paths.
     script_paths = (
