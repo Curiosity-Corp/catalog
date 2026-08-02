@@ -78,7 +78,10 @@
     src: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
     dest: /usr/local/bin
     remote_src: true
-    include: ["*/helm"]
+    # Helm's Linux archive has a stable top-level member. An exact member
+    # avoids Ansible's tar handler treating `*/helm` as a literal filename
+    # when it does not enable tar wildcard matching.
+    include: ["linux-amd64/helm"]
     extra_opts: [--strip-components=1]
 
 # --- Kustomize ---

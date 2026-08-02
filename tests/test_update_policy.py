@@ -262,6 +262,7 @@ def main() -> None:
         "Resolve latest Helm artifact checksum",
         "checksum_algorithm: sha256",
         "Remove an invalid cached Helm artifact",
+        'include: ["linux-amd64/helm"]',
     ):
         if fragment not in kubernetes_text:
             raise SystemExit(
