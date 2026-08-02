@@ -133,7 +133,7 @@
   changed_when: false
   failed_when: >-
     _aws_cli_signature.rc != 0 or
-    'VALIDSIG FB5DB77FD5C118B80511ADA8A6310ACC4672475C' not in
+    'VALIDSIGFB5DB77FD5C118B80511ADA8A6310ACC4672475C' not in
     ((_aws_cli_signature.stdout | default('')) | regex_replace('[\n\r ]', ''))
 
 - name: Check extracted AWS CLI installer
