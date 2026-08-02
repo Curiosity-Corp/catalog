@@ -254,6 +254,34 @@ def main() -> None:
 
     if "file: ai-assistants.yml" not in main_tasks_text or "tags: [packages, ai]" not in main_tasks_text:
         raise SystemExit("main.yml must propagate the ai tag into ai-assistants.yml")
+    managed_updates_text = (ROLE / "tasks/managed-updates.yml").read_text()
+    component_tag_applies = {
+        "system-updates.yml": "[updates, packages]",
+        "coder-cli.yml": "[coder]",
+        "cloud-clis.yml": "[cloud]",
+        "kubernetes.yml": "[kubernetes]",
+        "languages.yml": "[languages]",
+        "devops.yml": "[devops]",
+        "python-tools.yml": "[python]",
+        "science-tools.yml": "[science, data-science]",
+        "cli-tools.yml": "[cli]",
+        "testing.yml": "[testing]",
+        "m365-cli.yml": "[m365]",
+        "missionctl.yml": "[missionctl]",
+        "security.yml": "[security]",
+        "maintenance.yml": "[maintenance]",
+        "self-healing.yml": "[self-healing]",
+        "vscode-extensions.yml": "[vscode, extensions]",
+        "collaboration.yml": "[collaboration]",
+        "weechat.yml": "[weechat, chat]",
+        "hardware-drivers.yml": "[hardware]",
+        "fonts.yml": "[fonts]",
+        "streaming.yml": "[streaming, sunshine]",
+    }
+    for filename, tags in component_tag_applies.items():
+        fragment = f"file: {filename}\n    apply:\n      tags: {tags}"
+        if fragment not in managed_updates_text:
+            raise SystemExit(f"managed-updates.yml must apply component tags to {filename}")
     health_text = (ROLE / "tasks/update-health.yml").read_text()
     if health_text.count("map(attribute='item.item.name')") < 2:
         raise SystemExit("update-health.yml must address nested Ansible loop results correctly")
