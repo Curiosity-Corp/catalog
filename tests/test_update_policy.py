@@ -205,6 +205,7 @@ def main() -> None:
             "state: latest",
             "name: uv",
             'name: "pipx>=1.7.0"',
+            "Ensure pip is available in Ansible's Python environment",
             "Install a current pipx into Ansible's Python environment",
             "Ensure the user pipx binary directory exists",
         ),

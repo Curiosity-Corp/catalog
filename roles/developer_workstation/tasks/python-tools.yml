@@ -10,6 +10,12 @@
 # same launcher for interactive use.
 # =============================================================================
 
+- name: Ensure pip is available in Ansible's Python environment
+  ansible.builtin.command:
+    cmd: "{{ ansible_playbook_python }} -m ensurepip --upgrade"
+    creates: "{{ ansible_playbook_python | dirname }}/pip"
+  become: true
+
 - name: Install a current pipx into Ansible's Python environment
   ansible.builtin.pip:
     name: "pipx>=1.7.0"
