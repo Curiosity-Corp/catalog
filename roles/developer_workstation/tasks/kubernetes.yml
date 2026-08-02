@@ -27,11 +27,49 @@
     mode: "0755"
 
 # --- Helm ---
+- name: Resolve latest Helm artifact checksum
+  ansible.builtin.uri:
+    url: "https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz.sha256sum"
+    return_content: true
+  register: _helm_checksum_response
+  changed_when: false
+
+- name: Normalize latest Helm artifact checksum
+  ansible.builtin.set_fact:
+    _helm_sha256: >-
+      {{ (_helm_checksum_response.content
+          | regex_findall('(?im)^[0-9a-f]{64}')
+          | first
+          | default('', true)) | lower }}
+
+- name: Require a valid latest Helm artifact checksum
+  ansible.builtin.assert:
+    that:
+      - _helm_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      Helm returned no usable SHA-256 checksum for
+      {{ latest_github_releases.helm.tag_name }}; refusing to install an
+      unverifiable archive.
+
+- name: Check cached Helm artifact integrity
+  ansible.builtin.stat:
+    path: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
+    checksum_algorithm: sha256
+  register: _helm_cached_artifact
+
+- name: Remove an invalid cached Helm artifact
+  ansible.builtin.file:
+    path: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
+    state: absent
+  when:
+    - _helm_cached_artifact.stat.exists | default(false)
+    - _helm_cached_artifact.stat.checksum | default('') != _helm_sha256
+
 - name: Download latest Helm
   ansible.builtin.get_url:
     url: "https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz"
     dest: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
-    checksum: "sha256:https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz.sha256sum"
+    checksum: "sha256:{{ _helm_sha256 }}"
     mode: "0644"
     force: false
 

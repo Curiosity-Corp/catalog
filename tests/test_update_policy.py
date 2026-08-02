@@ -257,6 +257,18 @@ def main() -> None:
         if "checksum:" not in text or "workstation_update_artifact_cache_dir" not in text:
             raise SystemExit(f"{relative} is missing verified cached artifact handling")
 
+    kubernetes_text = (ROLE / "tasks/kubernetes.yml").read_text()
+    for fragment in (
+        "Resolve latest Helm artifact checksum",
+        "checksum_algorithm: sha256",
+        "Remove an invalid cached Helm artifact",
+    ):
+        if fragment not in kubernetes_text:
+            raise SystemExit(
+                "tasks/kubernetes.yml must validate the cached Helm artifact: "
+                + fragment
+            )
+
     # Moving vendor URLs must be revalidated even when their URL never changes.
     cloud_text = (ROLE / "tasks/cloud-clis.yml").read_text()
     if "awscli-exe-linux-x86_64.zip" not in cloud_text or "    force: true" not in cloud_text:
