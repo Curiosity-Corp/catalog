@@ -327,6 +327,8 @@ def main() -> None:
         raise SystemExit("AWS CLI installation must carry its pinned signing key and fingerprint")
     if "VALIDSIGFB5DB77FD5C118B80511ADA8A6310ACC4672475C" not in cloud_text:
         raise SystemExit("AWS CLI signature validation must normalize GPG status output correctly")
+    if "Check if the AWS CLI install tree is present" not in cloud_text or "aws_cli_install_tree.stat.exists" not in cloud_text:
+        raise SystemExit("AWS CLI installation must preserve update mode when repairing a launcher")
 
     # Do not regress to mutable remote installer pipes in the update paths.
     script_paths = (

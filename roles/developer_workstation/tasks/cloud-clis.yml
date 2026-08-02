@@ -179,10 +179,15 @@
     path: /usr/local/bin/aws
   register: aws_cli_installed
 
+- name: Check if the AWS CLI install tree is present
+  ansible.builtin.stat:
+    path: /usr/local/aws-cli/v2/current
+  register: aws_cli_install_tree
+
 - name: Install or update AWS CLI v2
   ansible.builtin.command:
     cmd: >-
-      /tmp/aws/install{{ ' --update' if aws_cli_installed.stat.exists else '' }}
+      /tmp/aws/install{{ ' --update' if aws_cli_installed.stat.exists or aws_cli_install_tree.stat.exists else '' }}
   register: _aws_cli_install
   changed_when: >-
     'latest version' not in (_aws_cli_install.stdout | default('') | lower)
