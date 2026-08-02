@@ -212,7 +212,7 @@
     _glab_latest_url: >-
       {{
         _glab_release.json.assets.links
-        | selectattr('name', 'match', '^glab_.*_linux_amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^glab_.*_linux_amd64[.]tar[.]gz$')
         | map(attribute='url')
         | first
       }}
