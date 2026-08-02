@@ -143,6 +143,23 @@ def main() -> None:
     if "@openai/codex" not in defaults.get("ai_assistant_packages", []):
         raise SystemExit("Codex must be in the user-scoped latest AI package set")
 
+    # Dynamic include tags are a dependency boundary: a focused component
+    # pull must still enter the update foundation and transaction wrappers so
+    # rollback/manifest facts exist before the component task runs.
+    update_tags = set(defaults.get("workstation_update_transaction_tags", []))
+    required_update_tags = {"packages", "node", "ai", "updates", "rollback"}
+    if not required_update_tags.issubset(update_tags):
+        raise SystemExit(
+            "workstation_update_transaction_tags is missing: "
+            + ", ".join(sorted(required_update_tags - update_tags))
+        )
+    main_tasks_text = (ROLE / "tasks/main.yml").read_text()
+    if main_tasks_text.count("{{ workstation_update_transaction_tags }}") < 3:
+        raise SystemExit(
+            "main.yml must apply transaction tags to the foundation, update, "
+            "and health/rollback wrapper"
+        )
+
     for relative in (
         "tasks/user-env.yml",
         "tasks/user-shell-fallback.yml",

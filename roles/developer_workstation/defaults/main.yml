@@ -146,6 +146,44 @@ workstation_application_contracts:
   codex: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/codex", --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
 
+# Dynamic includes are entered only when their include task carries the
+# selected tag. These tags cover the managed update transaction and its
+# component includes so focused pulls (for example `--tags ai`) still run the
+# foundation, rollback, health, and manifest tasks around the selected app.
+workstation_update_transaction_tags:
+  - updates
+  - releases
+  - rings
+  - provenance
+  - rollback
+  - packages
+  - coder
+  - cloud
+  - kubernetes
+  - languages
+  - devops
+  - node
+  - python
+  - science
+  - data-science
+  - cli
+  - testing
+  - ai
+  - m365
+  - missionctl
+  - security
+  - maintenance
+  - self-healing
+  - vscode
+  - extensions
+  - collaboration
+  - weechat
+  - chat
+  - hardware
+  - fonts
+  - streaming
+  - sunshine
+
 # =============================================================================
 # Workstation update control plane (local until an optional fleet service exists)
 # =============================================================================
