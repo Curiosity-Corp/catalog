@@ -228,6 +228,7 @@ def main() -> None:
     for fragment in (
         "Repair catalog-managed npm launchers",
         "Repair the AWS CLI launchers",
+        "Guard the optional Rust environment",
         "outside the quarantined software transaction",
     ):
         if fragment not in workspace_launcher_text:
@@ -235,6 +236,10 @@ def main() -> None:
                 "workspace-launchers.yml is missing quarantine-safe repair coverage: "
                 + fragment
             )
+    if "Guard the optional Rust environment after chezmoi applies workspace dotfiles" not in (
+        ROLE / "tasks/dotfiles.yml"
+    ).read_text():
+        raise SystemExit("dotfiles.yml must preserve the workspace login-profile guard")
 
     # Package-manager and timer coverage is the fleet-wide part of the policy;
     # these checks prevent future app additions from silently becoming stale.

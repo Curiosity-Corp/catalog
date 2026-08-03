@@ -9,6 +9,17 @@
 # custom npm prefix instead of linked from their package roots.
 # =============================================================================
 
+- name: Guard the optional Rust environment in the workspace login profile
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.profile"
+    regexp: '^\s*\.\s+"\$HOME/\.cargo/env"\s*$'
+    line: '[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"'
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  become: true
+  become_user: "{{ dev_user }}"
+
 - name: Check catalog-managed npm launcher targets
   ansible.builtin.stat:
     path: "{{ npm_global_prefix }}/lib/node_modules/{{ item.package }}/{{ item.relative_path }}"
