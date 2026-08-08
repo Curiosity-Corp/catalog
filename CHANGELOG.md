@@ -20,6 +20,8 @@ All notable changes to this project are documented here. The format follows
 - Workspace package-tag runs now initialize release discovery and the update
   control plane before installers execute, so a failed prerequisite cannot
   leave user-scoped CLIs such as Codex stale.
+- User-scoped npm and AI refreshes run before binary installers and are kept out
+  of binary rollback, so unrelated installer failures cannot undo them.
 - Coder, cloud CLIs, Keycloak, Ziti, Sunshine, chat, and profile cleanup are
   opt-in.
 - Microsoft 365 CLI (`@pnp/cli-microsoft365`) moved out of the general

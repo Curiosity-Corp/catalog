@@ -177,12 +177,20 @@ def main() -> None:
     for fragment in (
         "tags: [updates, releases, provenance, rollback, packages]",
         "tags: [updates, releases, rings, packages]",
+        "Refresh user-scoped npm packages before upstream release discovery",
+        "tags: [updates, packages, node, ai]",
     ):
         if fragment not in main_tasks:
             raise SystemExit(
                 "tasks/main.yml must make update prerequisites reachable via packages: "
                 + fragment
             )
+
+    rollback_exclusions = defaults.get("workstation_update_rollback_excluded_paths", [])
+    if '"{{ npm_global_prefix }}/bin/codex"' not in defaults_text:
+        raise SystemExit("Codex must be excluded from binary rollback after npm refresh")
+    if "{{ npm_global_prefix }}/bin/codex" not in rollback_exclusions:
+        raise SystemExit("Codex rollback exclusion must use the managed npm prefix")
 
     # The eight workstation-local controls remain structural parts of the role
     # even before a central fleet service exists.

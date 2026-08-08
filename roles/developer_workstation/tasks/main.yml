@@ -139,6 +139,29 @@
   tags: [packages]
   when: workstation_profile == 'byod-kiosk'
 
+- name: Refresh user-scoped npm packages before upstream release discovery
+  tags: [updates, packages, node, ai]
+  when:
+    - workstation_profile in ['desktop', 'workspace']
+    - workstation_update_install_allowed | default(true)
+  block:
+    # These packages use the registry's latest dist-tags and do not depend on
+    # GitHub release metadata. Run them first so an unrelated binary installer
+    # cannot leave the user's Codex command stale.
+    - name: Include user-scoped Node.js package refresh
+      ansible.builtin.include_tasks:
+        file: node-packages.yml
+        apply:
+          tags: [packages, node]
+      tags: [packages, node]
+
+    - name: Include user-scoped AI assistant refresh
+      ansible.builtin.include_tasks:
+        file: ai-assistants.yml
+        apply:
+          tags: [packages, ai]
+      tags: [packages, ai]
+
 - name: Resolve upstream releases and evaluate the update ring
   tags: [updates, releases, rings, packages]
   block:

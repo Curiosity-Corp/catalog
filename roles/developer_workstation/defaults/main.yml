@@ -284,6 +284,28 @@ ai_assistant_packages:
 m365_cli_packages:
   - "@pnp/cli-microsoft365"
 
+# User-scoped npm applications are refreshed before binary installers. If a
+# later binary installer fails, rollback must not restore an older npm CLI over
+# the successful registry refresh.
+workstation_update_rollback_excluded_paths:
+  - "{{ npm_global_prefix }}/bin/npm"
+  - "{{ npm_global_prefix }}/bin/m365"
+  - "{{ npm_global_prefix }}/bin/codex"
+  - "{{ npm_global_prefix }}/bin/pnpm"
+  - "{{ npm_global_prefix }}/bin/yarn"
+  - "{{ npm_global_prefix }}/bin/tsc"
+  - "{{ npm_global_prefix }}/bin/ts-node"
+  - "{{ npm_global_prefix }}/bin/tsx"
+  - "{{ npm_global_prefix }}/bin/turbo"
+  - "{{ npm_global_prefix }}/bin/eslint"
+  - "{{ npm_global_prefix }}/bin/prettier"
+  - "{{ npm_global_prefix }}/bin/mmdc"
+  - "{{ npm_global_prefix }}/bin/playwright"
+  - "{{ npm_global_prefix }}/bin/claude"
+  - "{{ npm_global_prefix }}/bin/gemini"
+  - "{{ npm_global_prefix }}/bin/qwen"
+  - "{{ npm_global_prefix }}/bin/codewhale"
+
 # Optional provider configuration. The role never embeds a lab's secret-store
 # name or API key lookup. Set the command in protected host/group variables if
 # a local provider should be configured.

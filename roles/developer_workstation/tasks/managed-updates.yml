@@ -51,13 +51,6 @@
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
-- name: Include Node.js packages
-  ansible.builtin.include_tasks: node-packages.yml
-  tags: [node]
-  when:
-    - workstation_profile in ['desktop', 'workspace']
-    - workstation_update_install_allowed | default(true)
-
 - name: Include Python tools
   ansible.builtin.include_tasks: python-tools.yml
   tags: [python]
@@ -86,13 +79,6 @@
     - >-
       workstation_profile in ['desktop', 'workspace'] or
       (thin_client_playwright_enabled | default(false))
-    - workstation_update_install_allowed | default(true)
-
-- name: Include AI coding assistants
-  ansible.builtin.include_tasks: ai-assistants.yml
-  tags: [ai]
-  when:
-    - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
 - name: Include Microsoft 365 CLI

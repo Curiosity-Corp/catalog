@@ -24,6 +24,7 @@
     label: "{{ item.path }}"
   when:
     - item.exists | default(false)
+    - item.path not in (workstation_update_rollback_excluded_paths | default([]))
 
 - name: Remove binaries created by the failed transaction
   ansible.builtin.file:
@@ -35,6 +36,7 @@
   when:
     - not (item.exists | default(false))
     - item.path not in (workstation_update_non_removable_paths | default([]))
+    - item.path not in (workstation_update_rollback_excluded_paths | default([]))
 
 - name: Persist a short-lived update quarantine marker
   ansible.builtin.copy:
