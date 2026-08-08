@@ -169,6 +169,21 @@ def main() -> None:
             if fragment not in text:
                 raise SystemExit(f"{relative} is missing update coverage: {fragment}")
 
+    # Workspace bootstrap applies the package tags directly. The update
+    # foundation and release discovery must therefore be reachable through
+    # that same tag, otherwise the first unrelated installer can abort before
+    # user-scoped packages (including Codex) are refreshed.
+    main_tasks = (ROLE / "tasks/main.yml").read_text()
+    for fragment in (
+        "tags: [updates, releases, provenance, rollback, packages]",
+        "tags: [updates, releases, rings, packages]",
+    ):
+        if fragment not in main_tasks:
+            raise SystemExit(
+                "tasks/main.yml must make update prerequisites reachable via packages: "
+                + fragment
+            )
+
     # The eight workstation-local controls remain structural parts of the role
     # even before a central fleet service exists.
     control_fragments = {

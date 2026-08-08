@@ -86,8 +86,11 @@
   ansible.builtin.include_tasks:
     file: update-foundation.yml
     apply:
-      tags: [updates, releases, provenance, rollback]
-  tags: [updates, releases, provenance, rollback]
+      # The workspace bootstrap selects the package/update tags directly. Keep
+      # the prerequisite tasks in that path so managed package updates never
+      # run without their cache, snapshot, and provenance directories.
+      tags: [updates, releases, provenance, rollback, packages]
+  tags: [updates, releases, provenance, rollback, packages]
 
 # =============================================================================
 # Task Includes
@@ -137,22 +140,22 @@
   when: workstation_profile == 'byod-kiosk'
 
 - name: Resolve upstream releases and evaluate the update ring
-  tags: [updates, releases, rings]
+  tags: [updates, releases, rings, packages]
   block:
     - name: Include upstream latest-release discovery
       ansible.builtin.include_tasks:
         file: latest-releases.yml
         apply:
-          tags: [updates, releases]
-      tags: [updates, releases]
+          tags: [updates, releases, packages]
+      tags: [updates, releases, packages]
       when: workstation_profile in ['desktop', 'workspace']
 
     - name: Evaluate workstation update ring
       ansible.builtin.include_tasks:
         file: update-ring.yml
         apply:
-          tags: [updates, releases, rings]
-      tags: [updates, releases, rings]
+          tags: [updates, releases, rings, packages]
+      tags: [updates, releases, rings, packages]
       when: workstation_profile in ['desktop', 'workspace']
   rescue:
     - name: Record upstream resolution failure

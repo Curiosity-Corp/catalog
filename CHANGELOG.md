@@ -17,6 +17,9 @@ All notable changes to this project are documented here. The format follows
 
 - Organization-specific hostnames, CA bundles, and deployment assumptions were
   removed from the tracked baseline.
+- Workspace package-tag runs now initialize release discovery and the update
+  control plane before installers execute, so a failed prerequisite cannot
+  leave user-scoped CLIs such as Codex stale.
 - Coder, cloud CLIs, Keycloak, Ziti, Sunshine, chat, and profile cleanup are
   opt-in.
 - Microsoft 365 CLI (`@pnp/cli-microsoft365`) moved out of the general
