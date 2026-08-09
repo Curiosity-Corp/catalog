@@ -127,15 +127,7 @@
   # string so the assert (which already handles the empty case) is reachable
   # instead of hard-failing the whole play on every S3 listing hiccup.
   ansible.builtin.set_fact:
-    latest_mongodb_channel: >-
-      {{
-        _mongodb_repo_index.content
-        | regex_findall('<Prefix>apt/ubuntu/dists/' ~ apt_fallback_release ~ '/mongodb-org/([0-9]+\\.[0-9]+)/</Prefix>')
-        | map('float')
-        | sort
-        | last
-        | default('', true)
-      }}
+    latest_mongodb_channel: "{{ _mongodb_repo_index.content | regex_findall('<Prefix>apt/ubuntu/dists/' ~ apt_fallback_release ~ '/mongodb-org/([0-9]+\\.[0-9]+)/</Prefix>') | map('float') | sort | last | default('', true) }}"
 
 - name: Set MongoDB signing-key version for the newest channel
   ansible.builtin.set_fact:
