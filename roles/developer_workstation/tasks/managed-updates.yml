@@ -20,6 +20,7 @@
   tags: [coder]
   when:
     - coder_cli_enabled | default(false)
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include cloud CLI installation
@@ -28,6 +29,7 @@
   when:
     - workstation_profile in ['desktop', 'workspace']
     - cloud_clis_enabled | default(true)
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include Kubernetes tools
@@ -35,6 +37,7 @@
   tags: [kubernetes]
   when:
     - workstation_profile in ['desktop', 'workspace']
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include language runtimes
@@ -42,6 +45,7 @@
   tags: [languages]
   when:
     - workstation_profile in ['desktop', 'workspace']
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include DevOps utilities
@@ -49,6 +53,7 @@
   tags: [devops]
   when:
     - workstation_profile in ['desktop', 'workspace']
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include Python tools
@@ -56,6 +61,7 @@
   tags: [python]
   when:
     - workstation_profile in ['desktop', 'workspace']
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include scientific Python and data-science tools
@@ -63,6 +69,7 @@
   tags: [science, data-science]
   when:
     - workstation_profile in ['desktop', 'workspace']
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include modern CLI tools
@@ -79,6 +86,7 @@
     - >-
       workstation_profile in ['desktop', 'workspace'] or
       (thin_client_playwright_enabled | default(false))
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include Microsoft 365 CLI
@@ -86,6 +94,7 @@
   tags: [m365]
   when:
     - workstation_profile in ['desktop', 'workspace']
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include missionctl
@@ -94,6 +103,7 @@
   when:
     - workstation_profile == 'thin-client'
     - missionctl_enabled | default(false)
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include security tools
@@ -101,6 +111,7 @@
   tags: [security]
   when:
     - workstation_profile == 'desktop'
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include free/open-source maintenance stack
@@ -108,6 +119,7 @@
   tags: [maintenance]
   when:
     - workstation_profile == 'desktop'
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include self-healing tasks
@@ -115,6 +127,7 @@
   tags: [self-healing]
   when:
     - workstation_profile == 'desktop'
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include VS Code extensions
@@ -122,6 +135,7 @@
   tags: [vscode, extensions]
   when:
     - workstation_profile == 'desktop'
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include collaboration tools
@@ -129,6 +143,7 @@
   tags: [collaboration]
   when:
     - workstation_profile == 'desktop'
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include WeeChat TUI chat client
@@ -137,6 +152,7 @@
   when:
     - workstation_profile != 'thin-client'
     - weechat_enabled | default(false)
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include hardware-specific drivers and userspace tools
@@ -144,6 +160,7 @@
   tags: [hardware]
   when:
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include fonts
@@ -159,4 +176,5 @@
   when:
     - workstation_profile == 'desktop'
     - sunshine_enabled | default(false)
+    - workstation_release_discovery_available | default(true)
     - workstation_update_install_allowed | default(true)

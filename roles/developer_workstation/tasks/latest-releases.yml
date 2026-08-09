@@ -99,6 +99,10 @@
       GitHub returned no SHA-256 asset digests. The workstation refuses to
       install release artifacts without a verifiable digest.
 
+- name: Mark upstream release discovery available
+  ansible.builtin.set_fact:
+    workstation_release_discovery_available: true
+
 - name: Persist the verified upstream release manifest locally
   ansible.builtin.copy:
     content: >-

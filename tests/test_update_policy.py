@@ -98,6 +98,23 @@ def main() -> None:
             "Helm's cached artifact must retain its .tar.gz suffix for reliable extraction"
         )
 
+    latest_tasks = (ROLE / "tasks/latest-releases.yml").read_text()
+    main_tasks = (ROLE / "tasks/main.yml").read_text()
+    managed_updates = (ROLE / "tasks/managed-updates.yml").read_text()
+    pull_timer = (ROLE / "tasks/ansible-pull-timer.yml").read_text()
+    for fragment in (
+        "workstation_release_discovery_available: true",
+        "workstation_release_discovery_available: false",
+        "Safe package and configuration",
+    ):
+        if fragment not in latest_tasks + main_tasks:
+            raise SystemExit(f"release refresh resilience is missing: {fragment}")
+    if "workstation_release_discovery_available | default(true)" not in managed_updates:
+        raise SystemExit("release installers must be gated when upstream discovery is held")
+    for fragment in ("gh auth token", "mktemp /run/curiosity-github-vars", "chmod 0600"):
+        if fragment not in pull_timer:
+            raise SystemExit(f"ansible-pull credential handoff is missing: {fragment}")
+
     referenced = {
         match.group(1)
         for match in re.finditer(r"latest_github_releases\.([a-z0-9_]+)", all_tasks)

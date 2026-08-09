@@ -25,6 +25,21 @@
         verify_args+=(--verify-commit)
       fi
 
+      # Reuse the dev user's existing gh credential when present. Keep it in
+      # an ephemeral mode-0600 vars file so it is not exposed in process
+      # arguments or persisted in the catalog checkout.
+      github_vars_file=""
+      if command -v gh >/dev/null 2>&1; then
+        github_token="$(sudo -u "{{ dev_user }}" env HOME="{{ dev_user_home }}" GH_CONFIG_DIR="{{ dev_user_home }}/.config/gh" gh auth token --hostname github.com 2>/dev/null || true)"
+        if [[ -n "${github_token}" ]]; then
+          github_vars_file="$(mktemp /run/curiosity-github-vars.XXXXXX)"
+          chmod 0600 "${github_vars_file}"
+          printf 'github_api_token: %s\n' "${github_token}" >"${github_vars_file}"
+          extra_args+=("-e" "@${github_vars_file}")
+          trap 'rm -f "${github_vars_file}"' EXIT
+        fi
+      fi
+
       exec /usr/bin/ansible-pull \
         -U {{ ansible_pull_repo }} \
         -C {{ ansible_pull_branch }} \
