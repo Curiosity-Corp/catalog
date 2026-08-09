@@ -131,8 +131,7 @@
 
 - name: Set MongoDB signing-key version for the newest channel
   ansible.builtin.set_fact:
-    latest_mongodb_key_version: >-
-      {{ latest_mongodb_channel | regex_replace('^([0-9]+)\\..*$', '\\1.0') }}
+    latest_mongodb_key_version: "{{ latest_mongodb_channel.split('.')[0] }}.0"
 
 - name: Require a MongoDB APT channel
   ansible.builtin.assert:
@@ -143,7 +142,7 @@
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      curl -fsSL https://www.mongodb.org/static/pgp/server-{{ latest_mongodb_key_version }}.asc \
+      curl -fsSL https://pgp.mongodb.com/server-{{ latest_mongodb_key_version }}.asc \
         | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-archive-keyring.gpg
     executable: /bin/bash
   changed_when: false
