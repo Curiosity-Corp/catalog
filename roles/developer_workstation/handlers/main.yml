@@ -42,10 +42,28 @@
     name: logrotate.timer
     state: restarted
 
-- name: Restart ziti-edge-tunnel
-  ansible.builtin.systemd:
-    name: "{{ ziti_service_name }}"
-    state: restarted
+- name: Restart the active Ziti tunnel unit
+  ansible.builtin.shell: |
+    set -euo pipefail
+    restart_unit=""
+    for unit in "{{ ziti_service_name }}" ziti-mrh-tunnel.service; do
+      load_state=$(systemctl show "$unit" -p LoadState --value 2>/dev/null || true)
+      case "$load_state" in
+        masked)
+          continue
+          ;;
+        loaded|generated|transient)
+          restart_unit="$unit"
+          break
+          ;;
+      esac
+    done
+    if [ -n "$restart_unit" ]; then
+      systemctl restart "$restart_unit"
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: true
 
 - name: Restart NetworkManager
   ansible.builtin.systemd:

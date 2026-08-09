@@ -52,6 +52,27 @@
     state: latest
     update_cache: true
 
+# The platform reliability role may deliberately mask the apt-provided JWT
+# unit and declare a separate certificate-based tunnel. Discover that contract
+# before writing split-DNS drop-ins or notifying a restart handler so this role
+# converges the live unit instead of fighting the platform layer.
+- name: Discover configured and operator-declared Ziti service units  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: "systemctl show {{ item }} -p LoadState --value"
+  loop:
+    - "{{ ziti_service_name }}"
+    - ziti-mrh-tunnel.service
+  register: _ziti_service_load_states
+  changed_when: false
+  failed_when: false
+
+- name: Select the declared active Ziti service when the legacy unit is masked
+  ansible.builtin.set_fact:
+    ziti_service_name: ziti-mrh-tunnel.service
+  when:
+    - (_ziti_service_load_states.results[0].stdout | default('')) == 'masked'
+    - (_ziti_service_load_states.results[1].stdout | default('')) in ['loaded', 'generated', 'transient']
+
 # -----------------------------------------------------------------------------
 # OIDC Login Script
 # -----------------------------------------------------------------------------

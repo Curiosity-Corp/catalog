@@ -131,7 +131,7 @@
   when: _ziti_dns_has_resolved
   notify:
     - Reload systemd
-    - Restart ziti-edge-tunnel
+    - Restart the active Ziti tunnel unit
 
 # Remove NM-dnsmasq override if present (left over from a previous run on a
 # device that later upgraded to Ubuntu/systemd-resolved).
@@ -271,7 +271,7 @@
   when: _ziti_dns_nm_only
   notify:
     - Reload systemd
-    - Restart ziti-edge-tunnel
+    - Restart the active Ziti tunnel unit
 
 # Remove resolved override if present (left over from a previous run on a
 # device that started without systemd-resolved).
