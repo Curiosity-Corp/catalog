@@ -30,14 +30,16 @@
 - name: Download latest Helm
   ansible.builtin.get_url:
     url: "https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz"
-    dest: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
+    # Keep the compression suffix so ansible.builtin.unarchive selects the
+    # correct handler even when the artifact cache survives a failed pull.
+    dest: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.tar.gz"
     checksum: "sha256:https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz.sha256sum"
     mode: "0644"
     force: false
 
 - name: Install latest Helm
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.tar.gz"
     dest: /usr/local/bin
     remote_src: true
     include: ["*/helm"]

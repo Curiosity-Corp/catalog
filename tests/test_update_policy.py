@@ -89,6 +89,15 @@ def main() -> None:
             "the old per-asset set_fact loop is too slow for ansible-pull"
         )
 
+    kubernetes_tasks = (ROLE / "tasks/kubernetes.yml").read_text()
+    if (
+        "helm-{{ latest_github_releases.helm.tag_name }}.tar.gz" not in kubernetes_tasks
+        or "helm-{{ latest_github_releases.helm.tag_name }}.archive" in kubernetes_tasks
+    ):
+        raise SystemExit(
+            "Helm's cached artifact must retain its .tar.gz suffix for reliable extraction"
+        )
+
     referenced = {
         match.group(1)
         for match in re.finditer(r"latest_github_releases\.([a-z0-9_]+)", all_tasks)
