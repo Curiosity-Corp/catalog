@@ -183,7 +183,9 @@
   rescue:
     - name: Record upstream resolution failure
       ansible.builtin.set_fact:
-        workstation_update_status: failed
+        workstation_update_status: held
+        workstation_release_discovery_available: false
+        workstation_update_install_allowed: false
         workstation_update_failure:
           task: "{{ ansible_failed_task.name | default('upstream release resolution') }}"
           message: "{{ ansible_failed_result.msg | default('upstream release resolution failed') }}"
@@ -192,9 +194,12 @@
     - name: Write local manifest for upstream resolution failure
       ansible.builtin.include_tasks: update-manifest.yml
 
-    - name: Fail the pull after recording upstream resolution failure
-      ansible.builtin.fail:
-        msg: "Upstream release resolution failed; no stale fallback was installed"
+    - name: Report held release refresh without failing configuration convergence
+      ansible.builtin.debug:
+        msg: >-
+          Upstream release refresh was held for this pull; no stale release
+          fallback will be installed. Safe package and configuration
+          convergence will continue, and the next pull will retry discovery.
 
 - name: Include internal CA trust
   ansible.builtin.include_tasks: internal-cas.yml
