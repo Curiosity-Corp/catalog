@@ -353,6 +353,9 @@
   when: workstation_profile == 'desktop'
 
 - name: Include ansible-pull timer
-  ansible.builtin.include_tasks: ansible-pull-timer.yml
+  ansible.builtin.include_tasks:
+    file: ansible-pull-timer.yml
+    apply:
+      tags: [ansible-pull]
   tags: [ansible-pull]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']

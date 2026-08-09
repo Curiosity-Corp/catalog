@@ -114,6 +114,8 @@ def main() -> None:
     for fragment in ("gh auth token", "mktemp /run/curiosity-github-vars", "chmod 0600"):
         if fragment not in pull_timer:
             raise SystemExit(f"ansible-pull credential handoff is missing: {fragment}")
+    if "apply:\n      tags: [ansible-pull]" not in main_tasks:
+        raise SystemExit("ansible-pull timer tasks must inherit the ansible-pull tag")
 
     referenced = {
         match.group(1)
