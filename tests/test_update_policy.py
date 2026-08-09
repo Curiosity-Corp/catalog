@@ -119,6 +119,13 @@ def main() -> None:
     if "apply:\n      tags: [ansible-pull]" not in main_tasks:
         raise SystemExit("ansible-pull timer tasks must inherit the ansible-pull tag")
 
+    health_tasks = (ROLE / "tasks/update-health.yml").read_text()
+    if health_tasks.count("map(attribute='item.item.name')") != 2:
+        raise SystemExit(
+            "healthcheck failure inventory must read the contract name through "
+            "the registered loop result"
+        )
+
     referenced = {
         match.group(1)
         for match in re.finditer(r"latest_github_releases\.([a-z0-9_]+)", all_tasks)
