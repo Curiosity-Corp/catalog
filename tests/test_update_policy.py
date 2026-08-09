@@ -79,6 +79,15 @@ def main() -> None:
         or "checksum" not in latest_task
     ):
         raise SystemExit("latest-releases.yml must query and require current upstream metadata")
+    if (
+        "latest_github_verified_assets" not in latest_task
+        or "| zip(" not in latest_task
+        or "with_subelements:" in latest_task
+    ):
+        raise SystemExit(
+            "latest-releases.yml must build its digest index in one pass; "
+            "the old per-asset set_fact loop is too slow for ansible-pull"
+        )
 
     referenced = {
         match.group(1)
