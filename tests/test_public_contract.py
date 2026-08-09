@@ -111,5 +111,5 @@ def test_mongodb_channel_discovery_covers_desktop_and_workspace_profiles() -> No
         assert expected_lookup in text
         assert "status_code: 200" in text
         assert "retries: 3" in text
-        assert 'latest_mongodb_key_version: "{{ latest_mongodb_channel.split' in text
+        assert "latest_mongodb_key_version: \"{{ latest_mongodb_channel | string | regex_replace" in text
         assert "https://pgp.mongodb.com/server-{{ latest_mongodb_key_version }}.asc" in text

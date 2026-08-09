@@ -108,7 +108,7 @@
 
 - name: Set MongoDB signing-key version for the newest channel
   ansible.builtin.set_fact:
-    latest_mongodb_key_version: "{{ latest_mongodb_channel.split('.')[0] }}.0"
+    latest_mongodb_key_version: "{{ latest_mongodb_channel | string | regex_replace('^([0-9]+).*$', '\\1.0') }}"
 
 - name: Require a MongoDB APT channel
   ansible.builtin.assert:
