@@ -73,19 +73,23 @@
   loop_control:
     label: "{{ item.key }}"
 
-- name: Index verified GitHub asset digests
+- name: Collect verified GitHub asset metadata
+  ansible.builtin.set_fact:
+    latest_github_verified_assets: >-
+      {{ latest_github_releases | dict2items
+         | map(attribute='value.assets') | flatten
+         | selectattr('browser_download_url', 'defined')
+         | selectattr('digest', 'defined')
+         | selectattr('digest', 'match', '^sha256:[0-9a-f]{64}$')
+         | list }}
+
+- name: Index verified GitHub asset digests in one pass
   ansible.builtin.set_fact:
     latest_github_asset_checksums: >-
-      {{ latest_github_asset_checksums | default({}) | combine({
-        item.1.browser_download_url: item.1.digest
-      }) }}
-  with_subelements:
-    - "{{ latest_github_releases | dict2items }}"
-    - value.assets
-  when:
-    - item.1.browser_download_url is defined
-    - item.1.digest is defined
-    - item.1.digest is match('^sha256:[0-9a-f]{64}$')
+      {{ dict(
+           latest_github_verified_assets | map(attribute='browser_download_url') | list
+           | zip(latest_github_verified_assets | map(attribute='digest') | list)
+         ) }}
 
 - name: Require GitHub asset digests for verification
   ansible.builtin.assert:
