@@ -126,6 +126,21 @@ def main() -> None:
             "the registered loop result"
         )
 
+    handlers = (ROLE / "handlers/main.yml").read_text()
+    if "Restart the active Ziti tunnel unit" not in handlers:
+        raise SystemExit("Ziti changes must notify the active tunnel handler")
+    if "LoadState" not in handlers or "ziti-mrh-tunnel.service" not in handlers:
+        raise SystemExit(
+            "Ziti restart handling must skip masked legacy units and support the "
+            "declared cert-based tunnel"
+        )
+    ziti_tasks = (ROLE / "tasks/ziti.yml").read_text()
+    if "Select the declared active Ziti service when the legacy unit is masked" not in ziti_tasks:
+        raise SystemExit("Ziti tasks must discover the operator-declared active unit")
+    for relative in ("tasks/ziti-split-dns.yml", "tasks/logrotate.yml"):
+        if "Restart ziti-edge-tunnel" in (ROLE / relative).read_text():
+            raise SystemExit(f"{relative} still notifies the masked legacy Ziti unit")
+
     referenced = {
         match.group(1)
         for match in re.finditer(r"latest_github_releases\.([a-z0-9_]+)", all_tasks)
