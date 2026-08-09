@@ -165,9 +165,9 @@
   notify: Update apt cache
   when: thin_client_playwright_enabled | default(false)
 
-- name: Add NodeSource current repository
+- name: Add NodeSource maintained Node.js repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_current.x nodistro main"
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{{ nodesource_node_major }}.x nodistro main"
     filename: nodesource
     state: present
   notify: Update apt cache

@@ -321,6 +321,10 @@ apt_upgrade_enabled: true
 # NodeSource repository trust anchor. This authenticates the repository key,
 # not an application release, so it does not constrain bleeding-edge versions.
 nodesource_key_fingerprint: "6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+# NodeSource's supported repository channels are major-version based; the
+# former node_current.x alias was retired upstream. Keep this as a channel,
+# not an application patch pin, so apt still receives the latest Node.js 24.
+nodesource_node_major: "24"
 openziti_key_fingerprint: "34CBCF18427D8814B5BDBB0DDE3623EF08C996E5"
 # Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
 # (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)

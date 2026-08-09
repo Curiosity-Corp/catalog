@@ -113,3 +113,12 @@ def test_mongodb_channel_discovery_covers_desktop_and_workspace_profiles() -> No
         assert "retries: 3" in text
         assert "latest_mongodb_key_version: \"{{ latest_mongodb_channel | string | regex_replace" in text
         assert "https://pgp.mongodb.com/server-{{ latest_mongodb_key_version }}.asc" in text
+
+
+def test_nodesource_channel_is_valid_for_all_workstation_profiles() -> None:
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["nodesource_node_major"] == "24"
+    for filename in ("repos.yml", "repos-workspace.yml", "repos-thin-client.yml"):
+        text = (ROLE / "tasks" / filename).read_text()
+        assert "https://deb.nodesource.com/node_{{ nodesource_node_major }}.x" in text
+        assert "node_current.x" not in text
