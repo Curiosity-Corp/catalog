@@ -1,6 +1,7 @@
 """Public OSS contract checks that do not require a managed host."""
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -84,3 +85,29 @@ def test_renovate_is_public_and_valid_json() -> None:
     config = json.loads((ROOT / "renovate.json").read_text())
     assert config["$schema"].startswith("https://docs.renovatebot.com/")
     assert "config:recommended" in config["extends"]
+
+
+def test_mongodb_channel_discovery_covers_desktop_and_workspace_profiles() -> None:
+    """Keep the dynamic MongoDB repository lookup valid for both profiles."""
+
+    listing = """
+    <Prefix>apt/ubuntu/dists/noble/mongodb-org/</Prefix>
+    <Prefix>apt/ubuntu/dists/noble/mongodb-org/8.0/</Prefix>
+    <Prefix>apt/ubuntu/dists/noble/mongodb-org/8.2/</Prefix>
+    <Prefix>apt/ubuntu/dists/noble/mongodb-org/development/</Prefix>
+    """
+    channels = re.findall(
+        r"<Prefix>apt/ubuntu/dists/noble/mongodb-org/([0-9]+\.[0-9]+)/</Prefix>",
+        listing,
+    )
+    assert sorted(channels) == ["8.0", "8.2"]
+
+    expected_lookup = (
+        "regex_findall('<Prefix>apt/ubuntu/dists/' ~ apt_fallback_release"
+        " ~ '/mongodb-org/([0-9]+\\\\.[0-9]+)/</Prefix>')"
+    )
+    for filename in ("repos.yml", "repos-workspace.yml"):
+        text = (ROLE / "tasks" / filename).read_text()
+        assert expected_lookup in text
+        assert "status_code: 200" in text
+        assert "retries: 3" in text

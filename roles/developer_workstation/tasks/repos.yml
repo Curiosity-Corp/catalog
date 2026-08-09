@@ -111,8 +111,13 @@
     url: >-
       https://s3.amazonaws.com/repo.mongodb.org?list-type=2&prefix=apt/ubuntu/dists/{{ apt_fallback_release }}/mongodb-org/&delimiter=/
     return_content: true
+    timeout: 30
+    status_code: 200
   register: _mongodb_repo_index
   changed_when: false
+  retries: 3
+  delay: 5
+  until: _mongodb_repo_index.status | default(0) == 200
 
 - name: Set newest MongoDB APT channel
   # `| last` on an empty match list returns a lazy Undefined ("No last item,
@@ -125,7 +130,7 @@
     latest_mongodb_channel: >-
       {{
         _mongodb_repo_index.content
-        | regex_findall('<Prefix>apt/ubuntu/dists/[^<]+/mongodb-org/([0-9]+\\.[0-9]+)/</Prefix>')
+        | regex_findall('<Prefix>apt/ubuntu/dists/' ~ apt_fallback_release ~ '/mongodb-org/([0-9]+\\.[0-9]+)/</Prefix>')
         | map('float')
         | sort
         | last
