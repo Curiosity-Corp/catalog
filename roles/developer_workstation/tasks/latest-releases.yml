@@ -28,6 +28,7 @@
   loop_control:
     label: "{{ item.key }} ({{ item.value }})"
   register: _latest_release_queries
+  no_log: "{{ github_api_token | default('') | length > 0 }}"
   retries: 3
   delay: 2
   until: (_latest_release_queries.status | default(0)) == 200
