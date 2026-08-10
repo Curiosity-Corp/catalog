@@ -160,6 +160,14 @@ def main() -> None:
     if "Restore managed symlinks from the pre-update inventory" not in rollback_tasks:
         raise SystemExit("update rollback must restore managed symlinks")
 
+    hardware_tasks = (ROLE / "tasks/hardware-drivers.yml").read_text()
+    pia_select = "- name: Select latest PIA Linux installer for the target architecture"
+    pia_block = hardware_tasks.split(pia_select, 1)[1].split(
+        "- name: Choose latest PIA Linux installer for the target architecture", 1
+    )[0]
+    if "when: hardware_profiles[hardware_profile].pia_vpn | default(false)" not in pia_block:
+        raise SystemExit("optional PIA parsing must be skipped when the profile disables PIA")
+
     referenced = {
         match.group(1)
         for match in re.finditer(r"latest_github_releases\.([a-z0-9_]+)", all_tasks)
