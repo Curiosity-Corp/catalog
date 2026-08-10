@@ -147,6 +147,14 @@
   tags: [packages]
   when: workstation_profile == 'byod-kiosk'
 
+- name: Enforce mandatory user Node.js bootstrap invariants
+  tags: [packages, node]
+  when: workstation_profile in ['desktop', 'workspace']
+  ansible.builtin.include_tasks:
+    file: node-bootstrap-repair.yml
+    apply:
+      tags: [packages, node]
+
 - name: Refresh user-scoped npm packages before upstream release discovery
   tags: [updates, packages, node, ai]
   when:

@@ -1,0 +1,56 @@
+---
+# Mandatory Node.js bootstrap invariants. These repairs must run even when
+# the update ring is holding optional latest-release installations.
+
+- name: Ensure user npm global prefix exists
+  ansible.builtin.file:
+    path: "{{ npm_global_prefix }}"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Remove unsupported user-scoped npm self-install
+  community.general.npm:
+    name: npm
+    global: true
+    state: absent
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+- name: Remove stale user-prefix npm launchers and package tree
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ npm_global_prefix }}/bin/npm"
+    - "{{ npm_global_prefix }}/bin/npx"
+    - "{{ npm_global_prefix }}/lib/node_modules/npm"
+
+- name: Resolve npm through the workspace user PATH
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - import os, shutil; print(shutil.which("npm") or "")
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _workspace_npm_path
+  changed_when: false
+
+- name: Assert workspace PATH resolves the system npm executable
+  ansible.builtin.assert:
+    that:
+      - _workspace_npm_path.stdout | trim == npm_global_executable
+    fail_msg: >-
+      Workspace npm invariant failed: PATH resolves to
+      {{ _workspace_npm_path.stdout | trim }}, expected {{ npm_global_executable }}.
