@@ -31,6 +31,15 @@
     NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
     PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
+- name: Remove stale user-prefix npm launchers and package tree
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ npm_global_prefix }}/bin/npm"
+    - "{{ npm_global_prefix }}/bin/npx"
+    - "{{ npm_global_prefix }}/lib/node_modules/npm"
+
 - name: Update user-scoped npm global packages to latest
   community.general.npm:
     name: "{{ item }}"
