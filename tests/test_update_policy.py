@@ -141,6 +141,18 @@ def main() -> None:
         if "Restart ziti-edge-tunnel" in (ROLE / relative).read_text():
             raise SystemExit(f"{relative} still notifies the masked legacy Ziti unit")
 
+    aws_repair = (ROLE / "tasks/aws-cli-repair.yml").read_text()
+    if "state: link" not in aws_repair or "/usr/local/aws-cli/v2/current/bin/aws" not in aws_repair:
+        raise SystemExit("AWS CLI launcher repair must preserve the managed symlink")
+    if "aws-cli-repair.yml" not in main_tasks:
+        raise SystemExit("AWS CLI launcher repair must run before update snapshots")
+    foundation_tasks = (ROLE / "tasks/update-foundation.yml").read_text()
+    rollback_tasks = (ROLE / "tasks/update-rollback.yml").read_text()
+    if "follow: false" not in foundation_tasks or "'link_target'" not in foundation_tasks:
+        raise SystemExit("update snapshots must preserve symlink metadata")
+    if "Restore managed symlinks from the pre-update inventory" not in rollback_tasks:
+        raise SystemExit("update rollback must restore managed symlinks")
+
     referenced = {
         match.group(1)
         for match in re.finditer(r"latest_github_releases\.([a-z0-9_]+)", all_tasks)

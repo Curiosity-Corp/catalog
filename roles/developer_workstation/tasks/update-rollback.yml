@@ -24,6 +24,22 @@
     label: "{{ item.path }}"
   when:
     - item.exists | default(false)
+    - not (item.is_link | default(false))
+    - item.path not in (workstation_update_rollback_excluded_paths | default([]))
+
+- name: Restore managed symlinks from the pre-update inventory
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    src: "{{ item.link_target }}"
+    state: link
+    force: true
+  loop: "{{ workstation_update_before_inventory | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when:
+    - item.exists | default(false)
+    - item.is_link | default(false)
+    - item.link_target | default('') | length > 0
     - item.path not in (workstation_update_rollback_excluded_paths | default([]))
 
 - name: Remove binaries created by the failed transaction

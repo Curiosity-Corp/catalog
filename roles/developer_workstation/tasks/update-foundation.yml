@@ -175,7 +175,7 @@
 - name: Check managed paths before the update transaction
   ansible.builtin.stat:
     path: "{{ item }}"
-    follow: true
+    follow: false
     checksum_algorithm: sha256
   loop: "{{ workstation_update_managed_paths }}"
   loop_control:
@@ -190,6 +190,8 @@
           'path': item.item,
           'exists': item.stat.exists | default(false),
           'checksum': item.stat.checksum | default(''),
+          'is_link': item.stat.islnk | default(false),
+          'link_target': item.stat.lnk_source | default(''),
           'mode': item.stat.mode | default('0755'),
           'owner': item.stat.pw_name | default('root'),
           'group': item.stat.gr_name | default('root')

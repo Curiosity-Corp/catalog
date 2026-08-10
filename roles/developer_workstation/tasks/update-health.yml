@@ -148,7 +148,7 @@
 - name: Capture post-update managed binary inventory
   ansible.builtin.stat:
     path: "{{ item }}"
-    follow: true
+    follow: false
     checksum_algorithm: sha256
   loop: "{{ workstation_update_managed_paths }}"
   loop_control:
@@ -162,7 +162,9 @@
         {
           'path': item.item,
           'exists': item.stat.exists | default(false),
-          'checksum': item.stat.checksum | default('')
+          'checksum': item.stat.checksum | default(''),
+          'is_link': item.stat.islnk | default(false),
+          'link_target': item.stat.lnk_source | default('')
         }
       ] }}
   loop: "{{ _workstation_managed_paths_after.results }}"

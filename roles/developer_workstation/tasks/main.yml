@@ -82,6 +82,14 @@
     mode: "0750"
     recurse: false
 
+- name: Repair catalog-managed AWS CLI launcher before update snapshots
+  ansible.builtin.include_tasks:
+    file: aws-cli-repair.yml
+    apply:
+      tags: [cloud, packages]
+  tags: [cloud, packages]
+  when: workstation_profile in ['desktop', 'workspace']
+
 - name: Initialize workstation update control plane
   ansible.builtin.include_tasks:
     file: update-foundation.yml

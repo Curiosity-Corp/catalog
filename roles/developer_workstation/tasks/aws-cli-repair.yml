@@ -1,0 +1,18 @@
+---
+# The AWS v2 installer owns a directory tree under /usr/local/aws-cli. The
+# launcher in /usr/local/bin must remain a symlink into that tree so the
+# bundled Python shared library is resolved with the executable.
+
+- name: Check for the managed AWS CLI launcher
+  ansible.builtin.stat:
+    path: /usr/local/aws-cli/v2/current/bin/aws
+    follow: false
+  register: _aws_cli_managed_launcher
+
+- name: Ensure the AWS CLI launcher points at the managed installation
+  ansible.builtin.file:
+    path: /usr/local/bin/aws
+    src: /usr/local/aws-cli/v2/current/bin/aws
+    state: link
+    force: true
+  when: _aws_cli_managed_launcher.stat.exists | default(false)
