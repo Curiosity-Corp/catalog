@@ -18,6 +18,19 @@
     group: "{{ dev_user }}"
     mode: "0755"
 
+- name: Remove unsupported user-scoped npm self-install
+  community.general.npm:
+    name: npm
+    global: true
+    state: absent
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
 - name: Update user-scoped npm global packages to latest
   community.general.npm:
     name: "{{ item }}"
