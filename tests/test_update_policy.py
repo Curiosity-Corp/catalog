@@ -142,8 +142,15 @@ def main() -> None:
             raise SystemExit(f"{relative} still notifies the masked legacy Ziti unit")
 
     aws_repair = (ROLE / "tasks/aws-cli-repair.yml").read_text()
-    if "state: link" not in aws_repair or "/usr/local/aws-cli/v2/current/bin/aws" not in aws_repair:
-        raise SystemExit("AWS CLI launcher repair must preserve the managed symlink")
+    for fragment in (
+        "state: link",
+        "/usr/local/aws-cli/v2/current/bin/aws",
+        "/opt/mattermost-desktop/mattermost-desktop",
+    ):
+        if fragment not in aws_repair:
+            raise SystemExit(f"managed launcher repair is missing: {fragment}")
+    if "healthcheck: [/usr/bin/test, -x, /opt/mattermost-desktop/mattermost-desktop]" not in defaults_text:
+        raise SystemExit("Mattermost healthcheck must be headless-safe")
     if "aws-cli-repair.yml" not in main_tasks:
         raise SystemExit("AWS CLI launcher repair must run before update snapshots")
     foundation_tasks = (ROLE / "tasks/update-foundation.yml").read_text()

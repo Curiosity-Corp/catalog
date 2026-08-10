@@ -16,3 +16,17 @@
     state: link
     force: true
   when: _aws_cli_managed_launcher.stat.exists | default(false)
+
+- name: Check for the managed Mattermost Desktop binary
+  ansible.builtin.stat:
+    path: /opt/mattermost-desktop/mattermost-desktop
+    follow: true
+  register: _mattermost_managed_launcher
+
+- name: Ensure the Mattermost Desktop PATH launcher stays linked
+  ansible.builtin.file:
+    path: /usr/local/bin/mattermost-desktop
+    src: /opt/mattermost-desktop/mattermost-desktop
+    state: link
+    force: true
+  when: _mattermost_managed_launcher.stat.exists | default(false)
