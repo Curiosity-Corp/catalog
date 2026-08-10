@@ -264,7 +264,9 @@
 - name: Include chezmoi dotfiles bootstrap
   ansible.builtin.include_tasks: dotfiles.yml
   tags: [dotfiles, user]
-  when: user_dotfiles_repo | default('') | length > 0
+  when:
+    - user_dotfiles_repo | default('') | length > 0
+    - workstation_release_discovery_available | default(true)
 
 - name: Include display configuration (GDM, VNC, GNOME)
   ansible.builtin.include_tasks: display-config.yml
@@ -358,7 +360,9 @@
 - name: Include fonts
   ansible.builtin.include_tasks: fonts.yml
   tags: [fonts]
-  when: workstation_profile == 'desktop'
+  when:
+    - workstation_profile == 'desktop'
+    - workstation_release_discovery_available | default(true)
 
 - name: Include ansible-pull timer
   ansible.builtin.include_tasks:
