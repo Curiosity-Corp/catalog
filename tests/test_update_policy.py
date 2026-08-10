@@ -246,6 +246,8 @@ def main() -> None:
     node_tasks = (ROLE / "tasks/node-packages.yml").read_text()
     if "Remove unsupported user-scoped npm self-install" not in node_tasks:
         raise SystemExit("the broken user-prefix npm self-install must be removed declaratively")
+    if "Remove stale user-prefix npm launchers and package tree" not in node_tasks:
+        raise SystemExit("stale user-prefix npm launchers must be removed declaratively")
     health_tasks = (ROLE / "tasks/update-health.yml").read_text()
     if 'argv: ["{{ npm_global_executable }}", --version]' not in health_tasks:
         raise SystemExit("npm health must use the system-managed npm executable")
