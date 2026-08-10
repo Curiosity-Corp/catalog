@@ -124,7 +124,7 @@ latest_release_contracts:
   cosign: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/cosign, version]}
   step: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/step, version]}
   flux: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/flux, --version]}
-  mattermost_desktop: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/bin/test, -x, /opt/mattermost-desktop/mattermost-desktop]}
+  mattermost_desktop: {installer: github-archive, verification: github-asset-digest, profiles: [desktop], healthcheck: [/usr/bin/test, -x, /opt/mattermost-desktop/mattermost-desktop]}
   nerd_fonts: {installer: github-archive, verification: github-asset-digest, healthcheck: [fc-cache, -V]}
 
 # Applications whose native update channel is not a GitHub release API. They
@@ -257,7 +257,6 @@ catalog_signing_key_fingerprint: ""
 npm_global_prefix: "{{ dev_user_home }}/.npm-global"
 npm_global_executable: "/usr/bin/npm"
 npm_global_packages:
-  - npm
   - pnpm
   - yarn
   - typescript
@@ -288,7 +287,6 @@ m365_cli_packages:
 # later binary installer fails, rollback must not restore an older npm CLI over
 # the successful registry refresh.
 workstation_update_rollback_excluded_paths:
-  - "{{ npm_global_prefix }}/bin/npm"
   - "{{ npm_global_prefix }}/bin/m365"
   - "{{ npm_global_prefix }}/bin/codex"
   - "{{ npm_global_prefix }}/bin/pnpm"

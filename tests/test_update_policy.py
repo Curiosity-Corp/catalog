@@ -227,8 +227,10 @@ def main() -> None:
         if "state: latest" not in text:
             raise SystemExit(f"{relative} does not request latest packages")
 
-    if "npm" not in set(defaults.get("npm_global_packages", [])):
-        raise SystemExit("npm must be in the user-scoped latest package set")
+    if "npm" in set(defaults.get("npm_global_packages", [])):
+        raise SystemExit("npm must remain the system-managed npm executable")
+    if defaults.get("npm_global_executable") != "/usr/bin/npm":
+        raise SystemExit("npm_global_executable must use the system-managed npm executable")
     # m365-cli is deliberately NOT in npm_global_packages: it lives in its own
     # m365_cli_packages list (installed by tasks/m365-cli.yml, tag: m365) so a
     # consumer can select it independently of the rest of the Node toolchain.
@@ -241,6 +243,16 @@ def main() -> None:
         raise SystemExit("m365-cli must be in the user-scoped latest m365_cli_packages set")
     if "@openai/codex" not in defaults.get("ai_assistant_packages", []):
         raise SystemExit("Codex must be in the user-scoped latest AI package set")
+    node_tasks = (ROLE / "tasks/node-packages.yml").read_text()
+    if "Remove unsupported user-scoped npm self-install" not in node_tasks:
+        raise SystemExit("the broken user-prefix npm self-install must be removed declaratively")
+    health_tasks = (ROLE / "tasks/update-health.yml").read_text()
+    if 'argv: ["{{ npm_global_executable }}", --version]' not in health_tasks:
+        raise SystemExit("npm health must use the system-managed npm executable")
+    if "item.value.profiles | default" not in health_tasks:
+        raise SystemExit("profile-specific application healthchecks must be filtered")
+    if "profiles: [desktop]" not in defaults_text:
+        raise SystemExit("desktop-only application contracts must declare their profile")
 
     for relative in (
         "tasks/user-env.yml",
