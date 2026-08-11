@@ -279,14 +279,13 @@ def main() -> None:
     if ".tar.gz.sha256" in (ROLE / "tasks/languages.yml").read_text():
         raise SystemExit("Go updates must use the structured release metadata checksum")
 
-    # Workspace bootstrap applies the package tags directly. The update
-    # foundation and release discovery must therefore be reachable through
-    # that same tag, otherwise the first unrelated installer can abort before
+    # Workspace bootstrap applies package tags directly. The transaction tag
+    # set must keep the foundation and release-discovery includes reachable
+    # through that same tag, otherwise an unrelated installer can abort before
     # user-scoped packages (including Codex) are refreshed.
     main_tasks = (ROLE / "tasks/main.yml").read_text()
     for fragment in (
-        "tags: [updates, releases, provenance, rollback, packages]",
-        "tags: [updates, releases, rings, packages]",
+        'tags: "{{ workstation_update_transaction_tags }}"',
         "Refresh user-scoped npm packages before upstream release discovery",
         "tags: [updates, packages, node, ai]",
     ):
