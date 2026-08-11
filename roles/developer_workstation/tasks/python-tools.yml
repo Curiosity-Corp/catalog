@@ -3,16 +3,67 @@
 # Python Tools
 # =============================================================================
 # Uses pipx for isolated Python tool installs and uv as fast pip replacement.
-# Python and pipx are installed via APT (packages.yml).
+# Python and the baseline pipx package are installed via APT (packages.yml),
+# but the APT pipx version can lag the minimum supported by
+# community.general.pipx. Install the supported version into Ansible's own
+# Python environment so the collection module can import it, and expose that
+# same launcher for interactive use.
 # =============================================================================
 
-- name: Ensure pipx is configured
-  ansible.builtin.command: pipx ensurepath
-  become: true
-  become_user: "{{ dev_user }}"
-  environment:
-    HOME: "{{ dev_user_home }}"
+- name: Check whether pip is importable in Ansible's Python environment
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -m
+      - pip
+      - --version
+  register: _ansible_python_pip
   changed_when: false
+  failed_when: false
+
+- name: Bootstrap pip in Ansible's Python environment when absent
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -m
+      - ensurepip
+      - --upgrade
+      - --default-pip
+  when: _ansible_python_pip.rc != 0
+  changed_when: true
+  become: true
+
+- name: Install a current pipx into Ansible's Python environment
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -m
+      - pip
+      - install
+      - --upgrade
+      - "pipx>=1.7.0"
+  register: _pipx_bootstrap
+  changed_when: >-
+    (_pipx_bootstrap.stdout | default('') is search('Successfully installed|Successfully uninstalled'))
+    or (_pipx_bootstrap.stdout | default('') is search('Installing collected packages'))
+  become: true
+
+- name: Expose the catalog-managed pipx launcher
+  ansible.builtin.file:
+    src: "{{ ansible_playbook_python | dirname }}/pipx"
+    dest: /usr/local/bin/pipx
+    state: link
+    force: true
+  become: true
+
+- name: Ensure the user pipx binary directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.local/bin"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0750"
+  become: true
 
 - name: Install or update uv from PyPI in the user's pipx scope
   community.general.pipx:
@@ -22,6 +73,7 @@
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+    PATH: "/usr/local/bin:{{ dev_user_home }}/.local/bin:/usr/bin:/bin"
 
 - name: Install Python tools via pipx
   community.general.pipx:
@@ -31,6 +83,7 @@
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+    PATH: "/usr/local/bin:{{ dev_user_home }}/.local/bin:/usr/bin:/bin"
   loop:
     - ruff
     - poetry

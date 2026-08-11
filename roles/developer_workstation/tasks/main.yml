@@ -86,11 +86,12 @@
   ansible.builtin.include_tasks:
     file: update-foundation.yml
     apply:
-      # The workspace bootstrap selects the package/update tags directly. Keep
-      # the prerequisite tasks in that path so managed package updates never
-      # run without their cache, snapshot, and provenance directories.
-      tags: [updates, releases, provenance, rollback, packages]
-  tags: [updates, releases, provenance, rollback, packages]
+      tags: "{{ workstation_update_transaction_tags }}"
+  # The foundation facts and snapshot/cache directories are prerequisites for
+  # every managed software component below.  Keep their tags in sync with the
+  # transaction block so a focused pull such as `--tags ai` cannot enter the
+  # transaction without initializing its rollback and manifest state first.
+  tags: "{{ workstation_update_transaction_tags }}"
 
 # =============================================================================
 # Task Includes
@@ -162,23 +163,31 @@
           tags: [packages, ai]
       tags: [packages, ai]
 
+- name: Include workspace launcher repairs
+  ansible.builtin.include_tasks:
+    file: workspace-launchers.yml
+    apply:
+      tags: [workspace]
+  tags: [workspace]
+  when: workstation_profile == 'workspace'
+
 - name: Resolve upstream releases and evaluate the update ring
-  tags: [updates, releases, rings, packages]
+  tags: "{{ workstation_update_transaction_tags }}"
   block:
     - name: Include upstream latest-release discovery
       ansible.builtin.include_tasks:
         file: latest-releases.yml
         apply:
-          tags: [updates, releases, packages]
-      tags: [updates, releases, packages]
+          tags: "{{ workstation_update_transaction_tags }}"
+      tags: "{{ workstation_update_transaction_tags }}"
       when: workstation_profile in ['desktop', 'workspace']
 
     - name: Evaluate workstation update ring
       ansible.builtin.include_tasks:
         file: update-ring.yml
         apply:
-          tags: [updates, releases, rings, packages]
-      tags: [updates, releases, rings, packages]
+          tags: "{{ workstation_update_transaction_tags }}"
+      tags: "{{ workstation_update_transaction_tags }}"
       when: workstation_profile in ['desktop', 'workspace']
   rescue:
     - name: Record upstream resolution failure
@@ -202,19 +211,12 @@
   when: workstation_profile in ['thin-client', 'byod-kiosk']
 
 - name: Run workstation software update transaction
-  tags: [updates, packages, releases, provenance, rollback]
-  block:
-    - name: Apply managed software updates
-      ansible.builtin.include_tasks: managed-updates.yml
-
-    - name: Verify managed software after update
-      ansible.builtin.include_tasks: update-health.yml
-  rescue:
-    - name: Restore managed software after a failed update transaction
-      ansible.builtin.include_tasks: update-rollback.yml
-  always:
-    - name: Write local workstation update manifest
-      ansible.builtin.include_tasks: update-manifest.yml
+  ansible.builtin.include_tasks: update-transaction.yml
+  # Select the transaction wrapper from the requested component tag, but do
+  # not apply those tags to every task inside it. The wrapper file gives the
+  # managed component includes their own tags while health/rollback/manifest
+  # remain unconditional once a transaction has been selected.
+  tags: "{{ workstation_update_transaction_tags }}"
 
 - name: Include system tuning (swap, earlyoom, sysctl)
   ansible.builtin.include_tasks: system-tuning.yml

@@ -126,11 +126,11 @@
       {{
         (_workstation_system_healthchecks.results | default([])
           | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
-          | map(attribute='item.name') | list)
+          | map(attribute='item.item.name') | list)
         +
         (_workstation_user_healthchecks.results | default([])
           | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
-          | map(attribute='item.name') | list)
+          | map(attribute='item.item.name') | list)
         +
         (['dpkg'] if (_workstation_dpkg_audit.rc | default(0) != 0) else [])
       }}

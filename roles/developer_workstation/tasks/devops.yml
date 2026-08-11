@@ -91,20 +91,20 @@
     url: >-
       {{
         (latest_github_releases.tofu.assets
-        | selectattr('name', 'match', '^tofu_.*_linux_amd64\\.zip$')
+        | selectattr('name', 'match', '^tofu_.*_linux_amd64[.]zip$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/tofu-{{ (latest_github_releases.tofu.assets | selectattr('name', 'match', '^tofu_.*_linux_amd64\\.zip$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/tofu-{{ (latest_github_releases.tofu.assets | selectattr('name', 'match', '^tofu_.*_linux_amd64[.]zip$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.tofu.assets
-          | selectattr('name', 'match', '^tofu_.*_linux_amd64\\.zip$')
+          | selectattr('name', 'match', '^tofu_.*_linux_amd64[.]zip$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest OpenTofu
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/tofu-{{ (latest_github_releases.tofu.assets | selectattr('name', 'match', '^tofu_.*_linux_amd64\\.zip$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/tofu-{{ (latest_github_releases.tofu.assets | selectattr('name', 'match', '^tofu_.*_linux_amd64[.]zip$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [tofu]

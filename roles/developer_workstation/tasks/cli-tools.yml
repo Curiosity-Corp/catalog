@@ -13,7 +13,7 @@
         asset: >-
           {{
             latest_github_releases.lazygit.assets
-            | selectattr('name', 'match', '^lazygit_.*_linux_x86_64\\.tar\\.gz$')
+            | selectattr('name', 'match', '^lazygit_.*_linux_x86_64[.]tar[.]gz$')
             | first
           }}
         include: [lazygit]
@@ -22,7 +22,7 @@
         asset: >-
           {{
             latest_github_releases.delta.assets
-            | selectattr('name', 'match', '^delta-.*-x86_64-unknown-linux-gnu\\.tar\\.gz$')
+            | selectattr('name', 'match', '^delta-.*-x86_64-unknown-linux-gnu[.]tar[.]gz$')
             | first
           }}
         include: ["*/delta"]
@@ -31,7 +31,7 @@
         asset: >-
           {{
             latest_github_releases.zoxide.assets
-            | selectattr('name', 'match', '^zoxide-.*-x86_64-unknown-linux-musl\\.tar\\.gz$')
+            | selectattr('name', 'match', '^zoxide-.*-x86_64-unknown-linux-musl[.]tar[.]gz$')
             | first
           }}
         include: [zoxide]
@@ -40,7 +40,7 @@
         asset: >-
           {{
             latest_github_releases.dust.assets
-            | selectattr('name', 'match', '^dust-v.*-x86_64-unknown-linux-gnu\\.tar\\.gz$')
+            | selectattr('name', 'match', '^dust-v.*-x86_64-unknown-linux-gnu[.]tar[.]gz$')
             | first
           }}
         include: ["*/dust"]
@@ -49,7 +49,7 @@
         asset: >-
           {{
             latest_github_releases.duf.assets
-            | selectattr('name', 'match', '^duf_.*_linux_x86_64\\.tar\\.gz$')
+            | selectattr('name', 'match', '^duf_.*_linux_x86_64[.]tar[.]gz$')
             | first
           }}
         include: [duf]
@@ -58,7 +58,7 @@
         asset: >-
           {{
             latest_github_releases.glow.assets
-            | selectattr('name', 'match', '^glow_.*_Linux_x86_64\\.tar\\.gz$')
+            | selectattr('name', 'match', '^glow_.*_Linux_x86_64[.]tar[.]gz$')
             | first
           }}
         include: ["*/glow"]
@@ -67,7 +67,7 @@
         asset: >-
           {{
             latest_github_releases.just.assets
-            | selectattr('name', 'match', '^just-.*-x86_64-unknown-linux-musl\\.tar\\.gz$')
+            | selectattr('name', 'match', '^just-.*-x86_64-unknown-linux-musl[.]tar[.]gz$')
             | first
           }}
         include: [just]
@@ -76,7 +76,7 @@
         asset: >-
           {{
             latest_github_releases.watchexec.assets
-            | selectattr('name', 'match', '^watchexec-.*-x86_64-unknown-linux-gnu\\.tar\\.xz$')
+            | selectattr('name', 'match', '^watchexec-.*-x86_64-unknown-linux-gnu[.]tar[.]xz$')
             | first
           }}
         include: ["*/watchexec"]
@@ -85,7 +85,7 @@
         asset: >-
           {{
             latest_github_releases.hyperfine.assets
-            | selectattr('name', 'match', '^hyperfine-v.*-x86_64-unknown-linux-gnu\\.tar\\.gz$')
+            | selectattr('name', 'match', '^hyperfine-v.*-x86_64-unknown-linux-gnu[.]tar[.]gz$')
             | first
           }}
         include: ["*/hyperfine"]
@@ -94,7 +94,7 @@
         asset: >-
           {{
             latest_github_releases.gum.assets
-            | selectattr('name', 'match', '^gum_.*_Linux_x86_64\\.tar\\.gz$')
+            | selectattr('name', 'match', '^gum_.*_Linux_x86_64[.]tar[.]gz$')
             | first
           }}
         include: ["*/gum"]
@@ -200,7 +200,7 @@
     _latest_golangci_lint_asset: >-
       {{
         latest_github_releases.golangci_lint.assets
-        | selectattr('name', 'match', '^golangci-lint-.*-linux-amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^golangci-lint-.*-linux-amd64[.]tar[.]gz$')
         | first
       }}
 

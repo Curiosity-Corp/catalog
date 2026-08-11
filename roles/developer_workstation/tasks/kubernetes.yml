@@ -27,11 +27,48 @@
     mode: "0755"
 
 # --- Helm ---
+- name: Resolve latest Helm artifact checksum
+  ansible.builtin.uri:
+    url: "https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz.sha256sum"
+    return_content: true
+  register: _helm_checksum_response
+  changed_when: false
+
+- name: Normalize latest Helm artifact checksum
+  ansible.builtin.set_fact:
+    _helm_sha256: >-
+      {{ (_helm_checksum_response.content
+          | regex_search('[0-9a-fA-F]{64}'))
+          | default('', true) | lower }}
+
+- name: Require a valid latest Helm artifact checksum
+  ansible.builtin.assert:
+    that:
+      - _helm_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      Helm returned no usable SHA-256 checksum for
+      {{ latest_github_releases.helm.tag_name }}; refusing to install an
+      unverifiable archive.
+
+- name: Check cached Helm artifact integrity
+  ansible.builtin.stat:
+    path: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
+    checksum_algorithm: sha256
+  register: _helm_cached_artifact
+
+- name: Remove an invalid cached Helm artifact
+  ansible.builtin.file:
+    path: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
+    state: absent
+  when:
+    - _helm_cached_artifact.stat.exists | default(false)
+    - _helm_cached_artifact.stat.checksum | default('') != _helm_sha256
+
 - name: Download latest Helm
   ansible.builtin.get_url:
     url: "https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz"
     dest: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
-    checksum: "sha256:https://get.helm.sh/helm-{{ latest_github_releases.helm.tag_name }}-linux-amd64.tar.gz.sha256sum"
+    checksum: "sha256:{{ _helm_sha256 }}"
     mode: "0644"
     force: false
 
@@ -40,7 +77,10 @@
     src: "{{ workstation_update_artifact_cache_dir }}/helm-{{ latest_github_releases.helm.tag_name }}.archive"
     dest: /usr/local/bin
     remote_src: true
-    include: ["*/helm"]
+    # Helm's Linux archive has a stable top-level member. An exact member
+    # avoids Ansible's tar handler treating `*/helm` as a literal filename
+    # when it does not enable tar wildcard matching.
+    include: ["linux-amd64/helm"]
     extra_opts: [--strip-components=1]
 
 # --- Kustomize ---
@@ -49,20 +89,20 @@
     url: >-
       {{
         (latest_github_releases.kustomize.assets
-        | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^kustomize_v.*_linux_amd64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.kustomize.assets
-          | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^kustomize_v.*_linux_amd64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest Kustomize
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/kustomize-{{ (latest_github_releases.kustomize.assets | selectattr('name', 'match', '^kustomize_v.*_linux_amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [kustomize]
@@ -105,20 +145,20 @@
     url: >-
       {{
         (latest_github_releases.kubectx.assets
-        | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.kubectx.assets
-          | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest kubectx
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/kubectx-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubectx_v.*_linux_x86_64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [kubectx]
@@ -128,20 +168,20 @@
     url: >-
       {{
         (latest_github_releases.kubectx.assets
-        | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^kubens_v.*_linux_x86_64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.kubectx.assets
-          | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^kubens_v.*_linux_x86_64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest kubens
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/kubens-{{ (latest_github_releases.kubectx.assets | selectattr('name', 'match', '^kubens_v.*_linux_x86_64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [kubens]
@@ -152,20 +192,20 @@
     url: >-
       {{
         (latest_github_releases.stern.assets
-        | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^stern_.*_linux_amd64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.stern.assets
-          | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^stern_.*_linux_amd64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest stern
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/stern-{{ (latest_github_releases.stern.assets | selectattr('name', 'match', '^stern_.*_linux_amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [stern]
@@ -191,7 +231,7 @@
   ansible.builtin.set_fact:
     _flux_latest_asset: >-
       {{ latest_github_releases.flux.assets
-         | selectattr('name', 'match', '^flux_.*_linux_amd64\\.tar\\.gz$') | first }}
+         | selectattr('name', 'match', '^flux_.*_linux_amd64[.]tar[.]gz$') | first }}
 
 - name: Require a verified Flux CLI asset
   ansible.builtin.assert:
@@ -220,23 +260,23 @@
     url: >-
       {{
         (latest_github_releases.velero.assets
-        | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.tar.gz"
     checksum: >-
       {{ (latest_github_releases.velero.assets
-          | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest Velero
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/velero-{{ (latest_github_releases.velero.assets | selectattr('name', 'match', '^velero-v.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.tar.gz"
     dest: /usr/local/bin
     remote_src: true
-    include: ["*/velero"]
+    include: ["velero-{{ latest_github_releases.velero.tag_name }}-linux-amd64/velero"]
     extra_opts: [--strip-components=1]
 
 # --- Krew (kubectl plugin manager) ---
@@ -255,7 +295,7 @@
 - name: Download latest Krew release into the verified cache
   ansible.builtin.get_url:
     url: "{{ _krew_latest_asset.browser_download_url }}"
-    dest: "{{ workstation_update_artifact_cache_dir }}/krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.tar.gz"
     checksum: "{{ _krew_latest_asset.digest }}"
     mode: "0644"
     force: false
@@ -271,10 +311,12 @@
 
 - name: Extract verified Krew installer
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.tar.gz"
     dest: "/tmp/curiosity-krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}"
     remote_src: true
-    include: [krew-linux_amd64]
+    # The upstream tar member is explicitly prefixed with ./; exact matching
+    # keeps Ansible's tar handler from treating a wildcard as a literal name.
+    include: [./krew-linux_amd64]
 
 - name: Make the verified Krew installer executable
   ansible.builtin.file:

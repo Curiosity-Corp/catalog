@@ -146,6 +146,44 @@ workstation_application_contracts:
   codex: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/codex", --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
 
+# Dynamic includes are entered only when their include task carries the
+# selected tag. These tags cover the managed update transaction and its
+# component includes so focused pulls (for example `--tags ai`) still run the
+# foundation, rollback, health, and manifest tasks around the selected app.
+workstation_update_transaction_tags:
+  - updates
+  - releases
+  - rings
+  - provenance
+  - rollback
+  - packages
+  - coder
+  - cloud
+  - kubernetes
+  - languages
+  - devops
+  - node
+  - python
+  - science
+  - data-science
+  - cli
+  - testing
+  - ai
+  - m365
+  - missionctl
+  - security
+  - maintenance
+  - self-healing
+  - vscode
+  - extensions
+  - collaboration
+  - weechat
+  - chat
+  - hardware
+  - fonts
+  - streaming
+  - sunshine
+
 # =============================================================================
 # Workstation update control plane (local until an optional fleet service exists)
 # =============================================================================
@@ -269,6 +307,19 @@ npm_global_packages:
   - "@mermaid-js/mermaid-cli"
   - codewhale
 
+# Some npm releases copy package-manager launchers into a custom global prefix
+# instead of linking them. Those copies resolve their package-relative imports
+# from the prefix's bin directory and fail at runtime. Recreate the canonical
+# links after every package refresh so user commands resolve from their actual
+# package roots.
+npm_global_command_links:
+  - {package: npm, command: npm, relative_path: bin/npm-cli.js}
+  - {package: npm, command: npx, relative_path: bin/npx-cli.js}
+  - {package: pnpm, command: pnpm, relative_path: bin/pnpm.mjs}
+  - {package: pnpm, command: pnpx, relative_path: bin/pnpx.mjs}
+  - {package: pnpm, command: pn, relative_path: bin/pnpm.mjs}
+  - {package: pnpm, command: pnx, relative_path: bin/pnpx.mjs}
+
 # AI coding assistants are also user-scoped and refreshed nightly. Keep the
 # package list in defaults so every workstation profile gets the same policy.
 ai_assistant_packages:
@@ -276,6 +327,15 @@ ai_assistant_packages:
   - "@google/gemini-cli"
   - "@openai/codex"
   - "@qwen-code/qwen-code"
+
+# npm considers an already-installed package current even when an interrupted
+# image build left its global command shim absent. Keep the command contract
+# explicit so the Ansible run repairs the user-facing launchers idempotently.
+ai_assistant_command_links:
+  - {package: "@anthropic-ai/claude-code", command: claude, relative_path: bin/claude.exe}
+  - {package: "@google/gemini-cli", command: gemini, relative_path: bundle/gemini.js}
+  - {package: "@openai/codex", command: codex, relative_path: bin/codex.js}
+  - {package: "@qwen-code/qwen-code", command: qwen, relative_path: cli-entry.js}
 
 # Microsoft 365 CLI is kept in its own user-scoped package list (installed by
 # tasks/m365-cli.yml, tag: m365) rather than folded into npm_global_packages,

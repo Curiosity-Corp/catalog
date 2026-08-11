@@ -15,7 +15,7 @@
   ansible.builtin.set_fact:
     _chezmoi_deb_asset: >-
       {{ latest_github_releases.chezmoi.assets
-         | selectattr('name', 'match', '^chezmoi_.*_linux_amd64\\.deb$') | first }}
+         | selectattr('name', 'match', '^chezmoi_.*_linux_amd64[.]deb$') | first }}
   when: user_dotfiles_repo | default('') | length > 0
 
 - name: Require a verified chezmoi .deb asset
@@ -141,3 +141,17 @@
       }}
   when: user_dotfiles_repo | default('') | length > 0
   changed_when: true
+
+- name: Guard the optional Rust environment after chezmoi applies workspace dotfiles
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.profile"
+    regexp: '^\s*\.\s+"\$HOME/\.cargo/env"\s*$'
+    line: '[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"'
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  become: true
+  become_user: "{{ dev_user }}"
+  when:
+    - workstation_profile == 'workspace'
+    - user_dotfiles_repo | default('') | length > 0

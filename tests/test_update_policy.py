@@ -77,8 +77,14 @@ def main() -> None:
         or "Require latest metadata" not in latest_task
         or "asset_checksums" not in latest_task
         or "checksum" not in latest_task
+        or "gh" not in latest_task
+        or "GITHUB_TOKEN" not in latest_task
+        or "GH_TOKEN" not in latest_task
     ):
-        raise SystemExit("latest-releases.yml must query and require current upstream metadata")
+        raise SystemExit(
+            "latest-releases.yml must use available GitHub auth and require "
+            "current upstream metadata"
+        )
 
     referenced = {
         match.group(1)
@@ -89,6 +95,20 @@ def main() -> None:
         raise SystemExit(
             "Latest-release repositories with no installer consumer: "
             + ", ".join(missing_references)
+        )
+
+    # These expressions are Jinja single-quoted regexes. A doubled backslash
+    # reaches Python's regex engine as a literal backslash and silently makes
+    # valid release assets disappear from the selector.
+    overescaped_asset_patterns = [
+        line.strip()
+        for line in all_tasks.splitlines()
+        if "selectattr('name', 'match'" in line and "\\\\." in line
+    ]
+    if overescaped_asset_patterns:
+        raise SystemExit(
+            "Release asset selectors contain doubled regex escapes: "
+            + "; ".join(overescaped_asset_patterns[:3])
         )
 
     # Renovate may still monitor CI image tags, but it must not own workstation
@@ -130,6 +150,23 @@ def main() -> None:
 
     if "npm" not in set(defaults.get("npm_global_packages", [])):
         raise SystemExit("npm must be in the user-scoped latest package set")
+    required_npm_links = {
+        (entry.get("package"), entry.get("command"), entry.get("relative_path"))
+        for entry in defaults.get("npm_global_command_links", [])
+    }
+    for required_link in (
+        ("npm", "npm", "bin/npm-cli.js"),
+        ("pnpm", "pnpm", "bin/pnpm.mjs"),
+    ):
+        if required_link not in required_npm_links:
+            raise SystemExit(
+                "The user package-manager launcher contract is missing "
+                + repr(required_link)
+            )
+    if "Repair user-scoped package-manager launchers" not in (
+        ROLE / "tasks/node-packages.yml"
+    ).read_text():
+        raise SystemExit("User package-manager launchers must be repaired after npm updates")
     # m365-cli is deliberately NOT in npm_global_packages: it lives in its own
     # m365_cli_packages list (installed by tasks/m365-cli.yml, tag: m365) so a
     # consumer can select it independently of the rest of the Node toolchain.
@@ -142,6 +179,43 @@ def main() -> None:
         raise SystemExit("m365-cli must be in the user-scoped latest m365_cli_packages set")
     if "@openai/codex" not in defaults.get("ai_assistant_packages", []):
         raise SystemExit("Codex must be in the user-scoped latest AI package set")
+    ai_command_links = defaults.get("ai_assistant_command_links", [])
+    linked_packages = {entry.get("package") for entry in ai_command_links}
+    if linked_packages != set(defaults.get("ai_assistant_packages", [])):
+        raise SystemExit("Every AI package must have an explicit user command launcher")
+    codex_link = next(
+        (entry for entry in ai_command_links if entry.get("command") == "codex"),
+        None,
+    )
+    if not codex_link or codex_link.get("relative_path") != "bin/codex.js":
+        raise SystemExit("The Codex launcher must target the package's bin/codex.js")
+
+    # Dynamic include tags are a dependency boundary: a focused component
+    # pull must still enter the update foundation and transaction wrappers so
+    # rollback/manifest facts exist before the component task runs.
+    update_tags = set(defaults.get("workstation_update_transaction_tags", []))
+    required_update_tags = {"packages", "node", "ai", "updates", "rollback"}
+    if not required_update_tags.issubset(update_tags):
+        raise SystemExit(
+            "workstation_update_transaction_tags is missing: "
+            + ", ".join(sorted(required_update_tags - update_tags))
+        )
+    main_tasks_text = (ROLE / "tasks/main.yml").read_text()
+    if main_tasks_text.count("{{ workstation_update_transaction_tags }}") < 3:
+        raise SystemExit(
+            "main.yml must apply transaction tags to the foundation, update, "
+            "and health/rollback wrapper"
+        )
+    if main_tasks_text.index("Include workspace launcher repairs") > main_tasks_text.index(
+        "Resolve upstream releases and evaluate the update ring"
+    ):
+        raise SystemExit(
+            "Workspace launcher repairs must run before upstream discovery can fail"
+        )
+    if "file: workspace-launchers.yml\n    apply:\n      tags: [workspace]" not in main_tasks_text:
+        raise SystemExit(
+            "Workspace launcher repairs must apply their workspace tag to child tasks"
+        )
 
     for relative in (
         "tasks/user-env.yml",
@@ -150,13 +224,47 @@ def main() -> None:
         if ".npm-global/bin" not in (ROLE / relative).read_text():
             raise SystemExit(f"{relative} does not put the managed npm prefix on PATH")
 
+    workspace_launcher_text = (ROLE / "tasks/workspace-launchers.yml").read_text()
+    for fragment in (
+        "Repair catalog-managed npm launchers",
+        "Repair the AWS CLI launchers",
+        "Guard the optional Rust environment",
+        "outside the quarantined software transaction",
+    ):
+        if fragment not in workspace_launcher_text:
+            raise SystemExit(
+                "workspace-launchers.yml is missing quarantine-safe repair coverage: "
+                + fragment
+            )
+    if "Guard the optional Rust environment after chezmoi applies workspace dotfiles" not in (
+        ROLE / "tasks/dotfiles.yml"
+    ).read_text():
+        raise SystemExit("dotfiles.yml must preserve the workspace login-profile guard")
+
     # Package-manager and timer coverage is the fleet-wide part of the policy;
     # these checks prevent future app additions from silently becoming stale.
     required_fragments = {
         "tasks/system-updates.yml": ("upgrade: safe", "snap refresh"),
-        "tasks/python-tools.yml": ("state: latest", "name: uv"),
+        "tasks/python-tools.yml": (
+            "state: latest",
+            "name: uv",
+            '      - "pipx>=1.7.0"',
+            "Check whether pip is importable in Ansible's Python environment",
+            "Bootstrap pip in Ansible's Python environment when absent",
+            "Install a current pipx into Ansible's Python environment",
+            '      - -m\n      - pip\n      - install',
+            "Ensure the user pipx binary directory exists",
+        ),
         "tasks/science-tools.yml": ("state: latest",),
         "tasks/hardware-drivers.yml": ("state: latest",),
+        "tasks/languages.yml": (
+            "https://go.dev/dl/?mode=json",
+            "sha256:{{ _go_latest_asset.sha256 }}",
+            "Merge pyenv into the existing user directory",
+            ".pyenv.catalog-staging",
+            "https://api.sdkman.io/2/candidates/all",
+            "Install the SDKMAN shell launcher",
+        ),
         "tasks/ansible-pull-timer.yml": (
             "OnCalendar=*-*-* 02:00:00",
             "--verify-commit",
@@ -168,15 +276,16 @@ def main() -> None:
         for fragment in fragments:
             if fragment not in text:
                 raise SystemExit(f"{relative} is missing update coverage: {fragment}")
+    if ".tar.gz.sha256" in (ROLE / "tasks/languages.yml").read_text():
+        raise SystemExit("Go updates must use the structured release metadata checksum")
 
-    # Workspace bootstrap applies the package tags directly. The update
-    # foundation and release discovery must therefore be reachable through
-    # that same tag, otherwise the first unrelated installer can abort before
+    # Workspace bootstrap applies package tags directly. The transaction tag
+    # set must keep the foundation and release-discovery includes reachable
+    # through that same tag, otherwise an unrelated installer can abort before
     # user-scoped packages (including Codex) are refreshed.
     main_tasks = (ROLE / "tasks/main.yml").read_text()
     for fragment in (
-        "tags: [updates, releases, provenance, rollback, packages]",
-        "tags: [updates, releases, rings, packages]",
+        'tags: "{{ workstation_update_transaction_tags }}"',
         "Refresh user-scoped npm packages before upstream release discovery",
         "tags: [updates, packages, node, ai]",
     ):
@@ -214,6 +323,13 @@ def main() -> None:
             "CycloneDX",
             "catalog_commit",
         ),
+        "tasks/update-transaction.yml": (
+            "managed-updates.yml",
+            "update-health.yml",
+            "update-rollback.yml",
+            "update-manifest.yml",
+            "tags: [always]",
+        ),
         "tasks/managed-updates.yml": ("Software update transaction",),
     }
     for relative, fragments in control_fragments.items():
@@ -221,6 +337,40 @@ def main() -> None:
         for fragment in fragments:
             if fragment not in text:
                 raise SystemExit(f"{relative} is missing control-plane feature: {fragment}")
+
+    if "file: ai-assistants.yml" not in main_tasks_text or "tags: [packages, ai]" not in main_tasks_text:
+        raise SystemExit("main.yml must propagate the ai tag into ai-assistants.yml")
+    managed_updates_text = (ROLE / "tasks/managed-updates.yml").read_text()
+    component_tag_applies = {
+        "system-updates.yml": "[updates, packages]",
+        "coder-cli.yml": "[coder]",
+        "cloud-clis.yml": "[cloud]",
+        "kubernetes.yml": "[kubernetes]",
+        "languages.yml": "[languages]",
+        "devops.yml": "[devops]",
+        "python-tools.yml": "[python]",
+        "science-tools.yml": "[science, data-science]",
+        "cli-tools.yml": "[cli]",
+        "testing.yml": "[testing]",
+        "m365-cli.yml": "[m365]",
+        "missionctl.yml": "[missionctl]",
+        "security.yml": "[security]",
+        "maintenance.yml": "[maintenance]",
+        "self-healing.yml": "[self-healing]",
+        "vscode-extensions.yml": "[vscode, extensions]",
+        "collaboration.yml": "[collaboration]",
+        "weechat.yml": "[weechat, chat]",
+        "hardware-drivers.yml": "[hardware]",
+        "fonts.yml": "[fonts]",
+        "streaming.yml": "[streaming, sunshine]",
+    }
+    for filename, tags in component_tag_applies.items():
+        fragment = f"file: {filename}\n    apply:\n      tags: {tags}"
+        if fragment not in managed_updates_text:
+            raise SystemExit(f"managed-updates.yml must apply component tags to {filename}")
+    health_text = (ROLE / "tasks/update-health.yml").read_text()
+    if health_text.count("map(attribute='item.item.name')") < 2:
+        raise SystemExit("update-health.yml must address nested Ansible loop results correctly")
 
     # Direct-release installers must verify their selected artifact and use the
     # local digest-addressed cache. Package managers have their own signatures.
@@ -240,10 +390,39 @@ def main() -> None:
         if "checksum:" not in text or "workstation_update_artifact_cache_dir" not in text:
             raise SystemExit(f"{relative} is missing verified cached artifact handling")
 
+    kubernetes_text = (ROLE / "tasks/kubernetes.yml").read_text()
+    for fragment in (
+        "Resolve latest Helm artifact checksum",
+        "checksum_algorithm: sha256",
+        "Remove an invalid cached Helm artifact",
+        'include: ["linux-amd64/helm"]',
+        "krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.tar.gz",
+        "include: [./krew-linux_amd64]",
+    ):
+        if fragment not in kubernetes_text:
+            raise SystemExit(
+                "tasks/kubernetes.yml must validate the cached Helm artifact: "
+                + fragment
+            )
+
     # Moving vendor URLs must be revalidated even when their URL never changes.
     cloud_text = (ROLE / "tasks/cloud-clis.yml").read_text()
     if "awscli-exe-linux-x86_64.zip" not in cloud_text or "    force: true" not in cloud_text:
         raise SystemExit("AWS CLI's moving latest URL must not be permanently cached")
+    if "Inspect AWS CLI launchers without following symlinks" not in cloud_text or "Remove legacy copied AWS CLI launchers" not in cloud_text:
+        raise SystemExit("AWS CLI installation must repair legacy copied launchers before updating")
+    if "BEGIN PGP PUBLIC KEY BLOCK" not in cloud_text or "FB5DB77FD5C118B80511ADA8A6310ACC4672475C" not in cloud_text:
+        raise SystemExit("AWS CLI installation must carry its pinned signing key and fingerprint")
+    if "VALIDSIGFB5DB77FD5C118B80511ADA8A6310ACC4672475C" not in cloud_text:
+        raise SystemExit("AWS CLI signature validation must normalize GPG status output correctly")
+    if "Check if the AWS CLI install tree is present" not in cloud_text or "aws_cli_install_tree.stat.exists" not in cloud_text:
+        raise SystemExit("AWS CLI installation must preserve update mode when repairing a launcher")
+    if "^glab_.*_linux_amd64[.]tar[.]gz$" not in cloud_text:
+        raise SystemExit("GitLab CLI selection must match the current Linux amd64 archive")
+    if cloud_text.count("replace('%2E', '.')") < 2:
+        raise SystemExit("GitLab CLI URLs must normalize encoded dots before checksum verification")
+    if "include: [bin/glab]" not in cloud_text:
+        raise SystemExit("GitLab CLI extraction must select the binary's current archive member")
 
     # Do not regress to mutable remote installer pipes in the update paths.
     script_paths = (

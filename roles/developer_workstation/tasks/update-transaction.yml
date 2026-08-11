@@ -1,0 +1,38 @@
+---
+# =============================================================================
+# Software update transaction wrapper
+# =============================================================================
+# This file is dynamically included by main.yml. The include itself carries
+# component tags; the tasks below deliberately do not inherit those tags so a
+# focused pull such as `--tags ai` updates only the AI package include while
+# still running the health, rollback, and manifest controls for that pull.
+# =============================================================================
+
+- name: Execute workstation software update transaction with controls
+  block:
+    - name: Apply managed software updates
+      ansible.builtin.include_tasks: managed-updates.yml
+      tags: [always]
+
+    - name: Verify managed software after update
+      ansible.builtin.include_tasks:
+        file: update-health.yml
+        apply:
+          tags: [always]
+      tags: [always]
+
+  rescue:
+    - name: Restore managed software after a failed update transaction
+      ansible.builtin.include_tasks:
+        file: update-rollback.yml
+        apply:
+          tags: [always]
+      tags: [always]
+
+  always:
+    - name: Write local workstation update manifest
+      ansible.builtin.include_tasks:
+        file: update-manifest.yml
+        apply:
+          tags: [always]
+      tags: [always]

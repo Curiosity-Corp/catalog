@@ -9,21 +9,30 @@
 # =============================================================================
 
 - name: Include daily system package updates
-  ansible.builtin.include_tasks: system-updates.yml
+  ansible.builtin.include_tasks:
+    file: system-updates.yml
+    apply:
+      tags: [updates, packages]
   tags: [updates, packages]
   when:
     - apt_upgrade_enabled | default(true)
     - workstation_update_install_allowed | default(true)
 
 - name: Include Coder CLI installation
-  ansible.builtin.include_tasks: coder-cli.yml
+  ansible.builtin.include_tasks:
+    file: coder-cli.yml
+    apply:
+      tags: [coder]
   tags: [coder]
   when:
     - coder_cli_enabled | default(false)
     - workstation_update_install_allowed | default(true)
 
 - name: Include cloud CLI installation
-  ansible.builtin.include_tasks: cloud-clis.yml
+  ansible.builtin.include_tasks:
+    file: cloud-clis.yml
+    apply:
+      tags: [cloud]
   tags: [cloud]
   when:
     - workstation_profile in ['desktop', 'workspace']
@@ -31,49 +40,70 @@
     - workstation_update_install_allowed | default(true)
 
 - name: Include Kubernetes tools
-  ansible.builtin.include_tasks: kubernetes.yml
+  ansible.builtin.include_tasks:
+    file: kubernetes.yml
+    apply:
+      tags: [kubernetes]
   tags: [kubernetes]
   when:
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
 - name: Include language runtimes
-  ansible.builtin.include_tasks: languages.yml
+  ansible.builtin.include_tasks:
+    file: languages.yml
+    apply:
+      tags: [languages]
   tags: [languages]
   when:
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
 - name: Include DevOps utilities
-  ansible.builtin.include_tasks: devops.yml
+  ansible.builtin.include_tasks:
+    file: devops.yml
+    apply:
+      tags: [devops]
   tags: [devops]
   when:
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
 - name: Include Python tools
-  ansible.builtin.include_tasks: python-tools.yml
+  ansible.builtin.include_tasks:
+    file: python-tools.yml
+    apply:
+      tags: [python]
   tags: [python]
   when:
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
 - name: Include scientific Python and data-science tools
-  ansible.builtin.include_tasks: science-tools.yml
+  ansible.builtin.include_tasks:
+    file: science-tools.yml
+    apply:
+      tags: [science, data-science]
   tags: [science, data-science]
   when:
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
 - name: Include modern CLI tools
-  ansible.builtin.include_tasks: cli-tools.yml
+  ansible.builtin.include_tasks:
+    file: cli-tools.yml
+    apply:
+      tags: [cli]
   tags: [cli]
   when:
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
 - name: Include testing frameworks
-  ansible.builtin.include_tasks: testing.yml
+  ansible.builtin.include_tasks:
+    file: testing.yml
+    apply:
+      tags: [testing]
   tags: [testing]
   when:
     - >-
@@ -82,14 +112,20 @@
     - workstation_update_install_allowed | default(true)
 
 - name: Include Microsoft 365 CLI
-  ansible.builtin.include_tasks: m365-cli.yml
+  ansible.builtin.include_tasks:
+    file: m365-cli.yml
+    apply:
+      tags: [m365]
   tags: [m365]
   when:
     - workstation_profile in ['desktop', 'workspace']
     - workstation_update_install_allowed | default(true)
 
 - name: Include missionctl
-  ansible.builtin.include_tasks: missionctl.yml
+  ansible.builtin.include_tasks:
+    file: missionctl.yml
+    apply:
+      tags: [missionctl]
   tags: [missionctl]
   when:
     - workstation_profile == 'thin-client'
@@ -97,42 +133,60 @@
     - workstation_update_install_allowed | default(true)
 
 - name: Include security tools
-  ansible.builtin.include_tasks: security.yml
+  ansible.builtin.include_tasks:
+    file: security.yml
+    apply:
+      tags: [security]
   tags: [security]
   when:
     - workstation_profile == 'desktop'
     - workstation_update_install_allowed | default(true)
 
 - name: Include free/open-source maintenance stack
-  ansible.builtin.include_tasks: maintenance.yml
+  ansible.builtin.include_tasks:
+    file: maintenance.yml
+    apply:
+      tags: [maintenance]
   tags: [maintenance]
   when:
     - workstation_profile == 'desktop'
     - workstation_update_install_allowed | default(true)
 
 - name: Include self-healing tasks
-  ansible.builtin.include_tasks: self-healing.yml
+  ansible.builtin.include_tasks:
+    file: self-healing.yml
+    apply:
+      tags: [self-healing]
   tags: [self-healing]
   when:
     - workstation_profile == 'desktop'
     - workstation_update_install_allowed | default(true)
 
 - name: Include VS Code extensions
-  ansible.builtin.include_tasks: vscode-extensions.yml
+  ansible.builtin.include_tasks:
+    file: vscode-extensions.yml
+    apply:
+      tags: [vscode, extensions]
   tags: [vscode, extensions]
   when:
     - workstation_profile == 'desktop'
     - workstation_update_install_allowed | default(true)
 
 - name: Include collaboration tools
-  ansible.builtin.include_tasks: collaboration.yml
+  ansible.builtin.include_tasks:
+    file: collaboration.yml
+    apply:
+      tags: [collaboration]
   tags: [collaboration]
   when:
     - workstation_profile == 'desktop'
     - workstation_update_install_allowed | default(true)
 
 - name: Include WeeChat TUI chat client
-  ansible.builtin.include_tasks: weechat.yml
+  ansible.builtin.include_tasks:
+    file: weechat.yml
+    apply:
+      tags: [weechat, chat]
   tags: [weechat, chat]
   when:
     - workstation_profile != 'thin-client'
@@ -140,21 +194,30 @@
     - workstation_update_install_allowed | default(true)
 
 - name: Include hardware-specific drivers and userspace tools
-  ansible.builtin.include_tasks: hardware-drivers.yml
+  ansible.builtin.include_tasks:
+    file: hardware-drivers.yml
+    apply:
+      tags: [hardware]
   tags: [hardware]
   when:
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - workstation_update_install_allowed | default(true)
 
 - name: Include fonts
-  ansible.builtin.include_tasks: fonts.yml
+  ansible.builtin.include_tasks:
+    file: fonts.yml
+    apply:
+      tags: [fonts]
   tags: [fonts]
   when:
     - workstation_profile == 'desktop'
     - workstation_update_install_allowed | default(true)
 
 - name: Include Sunshine remote streaming
-  ansible.builtin.include_tasks: streaming.yml
+  ansible.builtin.include_tasks:
+    file: streaming.yml
+    apply:
+      tags: [streaming, sunshine]
   tags: [streaming, sunshine]
   when:
     - workstation_profile == 'desktop'

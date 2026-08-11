@@ -14,20 +14,20 @@
     url: >-
       {{
         (latest_github_releases.trivy.assets
-        | selectattr('name', 'match', '^trivy_.*_Linux-64bit\\.tar\\.gz$')
+        | selectattr('name', 'match', '^trivy_.*_Linux-64bit[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/trivy-{{ (latest_github_releases.trivy.assets | selectattr('name', 'match', '^trivy_.*_Linux-64bit\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/trivy-{{ (latest_github_releases.trivy.assets | selectattr('name', 'match', '^trivy_.*_Linux-64bit[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.trivy.assets
-          | selectattr('name', 'match', '^trivy_.*_Linux-64bit\\.tar\\.gz$')
+          | selectattr('name', 'match', '^trivy_.*_Linux-64bit[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest Trivy
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/trivy-{{ (latest_github_releases.trivy.assets | selectattr('name', 'match', '^trivy_.*_Linux-64bit\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/trivy-{{ (latest_github_releases.trivy.assets | selectattr('name', 'match', '^trivy_.*_Linux-64bit[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: [trivy]
@@ -38,20 +38,20 @@
     url: >-
       {{
         (latest_github_releases.kubeseal.assets
-        | selectattr('name', 'match', '^kubeseal-.*-linux-amd64\\.tar\\.gz$')
+        | selectattr('name', 'match', '^kubeseal-.*-linux-amd64[.]tar[.]gz$')
         | first).browser_download_url
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/kubeseal-{{ (latest_github_releases.kubeseal.assets | selectattr('name', 'match', '^kubeseal-.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    dest: "{{ workstation_update_artifact_cache_dir }}/kubeseal-{{ (latest_github_releases.kubeseal.assets | selectattr('name', 'match', '^kubeseal-.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     checksum: >-
       {{ (latest_github_releases.kubeseal.assets
-          | selectattr('name', 'match', '^kubeseal-.*-linux-amd64\\.tar\\.gz$')
+          | selectattr('name', 'match', '^kubeseal-.*-linux-amd64[.]tar[.]gz$')
           | first).digest }}
     mode: "0644"
     force: false
 
 - name: Install latest kubeseal
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/kubeseal-{{ (latest_github_releases.kubeseal.assets | selectattr('name', 'match', '^kubeseal-.*-linux-amd64\\.tar\\.gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
+    src: "{{ workstation_update_artifact_cache_dir }}/kubeseal-{{ (latest_github_releases.kubeseal.assets | selectattr('name', 'match', '^kubeseal-.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
     include: ["*/kubeseal"]

@@ -18,7 +18,7 @@
     mattermost_desktop_version: "{{ latest_github_releases.mattermost_desktop.tag_name | regex_replace('^v', '') }}"
     mattermost_desktop_asset: >-
       {{ latest_github_releases.mattermost_desktop.assets
-         | selectattr('name', 'match', '^mattermost-desktop-.*-linux-x64\\.tar\\.gz$') | first }}
+         | selectattr('name', 'match', '^mattermost-desktop-.*-linux-x64[.]tar[.]gz$') | first }}
     mattermost_desktop_dir: "/opt/mattermost-desktop-{{ latest_github_releases.mattermost_desktop.tag_name | regex_replace('^v', '') }}-linux-x64"
 
 - name: Require a verified Mattermost Desktop asset

@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# Workspace launcher repair
+# =============================================================================
+# A failed update transaction can quarantine package installation for a short
+# period. Repairing launchers is safe and does not require a package update, so
+# keep this convergence step outside the quarantined software transaction.
+# This covers interrupted image builds and package-manager shims copied into a
+# custom npm prefix instead of linked from their package roots.
+# =============================================================================
+
+- name: Guard the optional Rust environment in the workspace login profile
+  ansible.builtin.lineinfile:
+    path: "{{ dev_user_home }}/.profile"
+    regexp: '^\s*\.\s+"\$HOME/\.cargo/env"\s*$'
+    line: '[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"'
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  become: true
+  become_user: "{{ dev_user }}"
+
+- name: Check catalog-managed npm launcher targets
+  ansible.builtin.stat:
+    path: "{{ npm_global_prefix }}/lib/node_modules/{{ item.package }}/{{ item.relative_path }}"
+    follow: true
+  become: true
+  become_user: "{{ dev_user }}"
+  loop: "{{ npm_global_command_links + ai_assistant_command_links }}"
+  loop_control:
+    label: "{{ item.command }}"
+  register: _workspace_npm_launcher_targets
+
+- name: Repair catalog-managed npm launchers
+  ansible.builtin.file:
+    src: "{{ npm_global_prefix }}/lib/node_modules/{{ item.item.package }}/{{ item.item.relative_path }}"
+    dest: "{{ npm_global_prefix }}/bin/{{ item.item.command }}"
+    state: link
+    force: true
+  become: true
+  become_user: "{{ dev_user }}"
+  loop: "{{ _workspace_npm_launcher_targets.results }}"
+  loop_control:
+    label: "{{ item.item.command }}"
+  when: item.stat.exists | default(false)
+
+- name: Check the AWS CLI payload before repairing its launchers
+  ansible.builtin.stat:
+    path: /usr/local/aws-cli/v2/current/bin/aws
+    follow: true
+  register: _workspace_aws_launcher_target
+
+- name: Repair the AWS CLI launchers
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    force: true
+  loop:
+    - {src: /usr/local/aws-cli/v2/current/bin/aws, dest: /usr/local/bin/aws}
+    - {src: /usr/local/aws-cli/v2/current/bin/aws_completer, dest: /usr/local/bin/aws_completer}
+  when: _workspace_aws_launcher_target.stat.exists | default(false)
