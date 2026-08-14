@@ -71,6 +71,7 @@
         _pia_download_page.content
         | regex_findall('https://installers\\.privateinternetaccess\\.com/download/pia-linux-[^" ]+\\.run')
       }}
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
 
 - name: Choose latest PIA Linux installer for the target architecture
   ansible.builtin.set_fact:
