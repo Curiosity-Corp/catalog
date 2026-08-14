@@ -41,6 +41,11 @@
       - pip
       - install
       - --upgrade
+      # Ubuntu 26.04 marks the system interpreter as externally managed
+      # (PEP 668). This package is deliberately installed into the
+      # interpreter used by Ansible, so opt into that managed location
+      # explicitly rather than failing before the pipx tasks can run.
+      - --break-system-packages
       - "pipx>=1.7.0"
   register: _pipx_bootstrap
   changed_when: >-
