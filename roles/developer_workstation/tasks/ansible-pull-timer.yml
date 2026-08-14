@@ -25,9 +25,36 @@
         verify_args+=(--verify-commit)
       fi
 
-      force_args=()
-      if [[ "{{ ansible_pull_force_on_update_failure | bool }}" == "True" ]]; then
-        force_args+=(--force)
+      local_only=false
+      if [[ -d "{{ ansible_pull_dir }}/.git" ]]; then
+        # A reviewed local compatibility branch may be ahead of public main.
+        # Never let ansible-pull --force discard it, and do not merge public
+        # main into it implicitly.  Once public main contains the reviewed
+        # commit, the normal pull path resumes automatically.
+        if ! git -C "{{ ansible_pull_dir }}" diff --quiet ||
+           [[ -n "$(git -C "{{ ansible_pull_dir }}" status --porcelain)" ]]; then
+          local_only=true
+        elif ! git -C "{{ ansible_pull_dir }}" fetch --quiet origin "{{ ansible_pull_branch }}"; then
+          local_only=true
+        elif ! git -C "{{ ansible_pull_dir }}" merge-base --is-ancestor \
+             "$(git -C "{{ ansible_pull_dir }}" rev-parse HEAD)" \
+             "$(git -C "{{ ansible_pull_dir }}" rev-parse "origin/{{ ansible_pull_branch }}")"; then
+          local_only=true
+        fi
+      fi
+
+      if [[ "$local_only" == "true" ]]; then
+        echo "Reviewed local catalog checkout is active; running it without replacing or merging it."
+        cd "{{ ansible_pull_dir }}"
+        exec /usr/bin/ansible-playbook \
+          -i localhost, \
+          -c local \
+          {{ ansible_pull_playbook }} \
+          -e dev_user={{ dev_user }} \
+          -e dev_user_home={{ dev_user_home }} \
+          -e workstation_profile={{ workstation_profile }} \
+          -e hardware_profile={{ hardware_profile }} \
+          "${extra_args[@]}"
       fi
 
       exec /usr/bin/ansible-pull \
@@ -35,7 +62,6 @@
         -C {{ ansible_pull_branch }} \
         -d {{ ansible_pull_dir }} \
         "${verify_args[@]}" \
-        "${force_args[@]}" \
         {{ ansible_pull_playbook }} \
         -e dev_user={{ dev_user }} \
         -e dev_user_home={{ dev_user_home }} \
