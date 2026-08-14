@@ -162,3 +162,99 @@
         name: tlp
         enabled: true
         state: started
+
+- name: Configure laptop performance policy
+  ansible.builtin.copy:
+    dest: /etc/tlp.d/30-curiosity-laptop-performance.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — developer-workstation role.
+      # Keep the admin laptop at full performance on AC while retaining a
+      # performance-balanced policy on battery.
+      CPU_SCALING_GOVERNOR_ON_AC=performance
+      CPU_ENERGY_PERF_POLICY_ON_AC=performance
+      CPU_SCALING_GOVERNOR_ON_BAT=powersave
+      CPU_ENERGY_PERF_POLICY_ON_BAT=balance_performance
+  when:
+    - _is_laptop
+    - hardware_profiles[hardware_profile].performance_mode | default(false) | bool
+  notify: Apply TLP power policy
+
+# =============================================================================
+# Laptop no-sleep policy
+# =============================================================================
+# Admin laptops remain available for SSH/Ziti access when the lid is closed or
+# the desktop is idle.  Masking the targets also blocks explicit suspend and
+# hibernate requests from desktop helpers and login sessions.
+# =============================================================================
+
+- name: Deploy optional wired Netplan policy for the T460
+  ansible.builtin.copy:
+    src: 99-curiosity-laptop-wired-optional.yaml
+    dest: /etc/netplan/99-curiosity-laptop-wired-optional.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  register: _laptop_netplan_optional
+  when:
+    - hardware_profile == 'x86-byod-laptop'
+
+- name: Regenerate Netplan after laptop wired-link policy changes
+  ansible.builtin.command: netplan generate
+  changed_when: true
+  when: _laptop_netplan_optional.changed | default(false)
+
+- name: Reload systemd-networkd after laptop Netplan policy changes
+  ansible.builtin.command: networkctl reload
+  changed_when: true
+  when: _laptop_netplan_optional.changed | default(false)
+
+- name: Ensure laptop no-sleep logind drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - _is_laptop
+    - hardware_profiles[hardware_profile].disable_sleep | default(false) | bool
+
+- name: Deploy laptop no-sleep policy
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/20-curiosity-laptop-nosleep.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — developer-workstation role.
+      [Login]
+      HandleLidSwitch=ignore
+      HandleLidSwitchExternalPower=ignore
+      HandleLidSwitchDocked=ignore
+      HandleSuspendKey=ignore
+      HandleHibernateKey=ignore
+      HandlePowerKey=poweroff
+      IdleAction=ignore
+      IdleActionSec=0
+  when:
+    - _is_laptop
+    - hardware_profiles[hardware_profile].disable_sleep | default(false) | bool
+  notify: Reload systemd-logind
+
+- name: Mask laptop sleep and hibernate targets
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+    enabled: false
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+  when:
+    - _is_laptop
+    - hardware_profiles[hardware_profile].disable_sleep | default(false) | bool
+  failed_when: false

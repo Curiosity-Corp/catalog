@@ -579,7 +579,7 @@ hardware_profiles:
     pia_vpn: false
 
   x86-byod-laptop:
-    description: "x86_64 BYOD kiosk laptop (Lenovo T460 and similar)"
+    description: "x86_64 BYOD laptop (Lenovo T460 and similar)"
     packages:
       # ThinkPad power management and fan control
       - acpi
@@ -591,6 +591,11 @@ hardware_profiles:
       - i965-va-driver
       # Suspend/resume reliability
       - pm-utils
+    # Keep admin laptops available for remote work and never enter a sleep or
+    # hibernate state.  AC uses the performance CPU policy; battery remains
+    # performance-balanced so the machine stays usable away from the charger.
+    disable_sleep: true
+    performance_mode: true
     services:
       - acpid
       - tlp
