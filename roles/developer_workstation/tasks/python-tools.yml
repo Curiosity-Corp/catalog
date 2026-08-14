@@ -5,9 +5,9 @@
 # Uses pipx for isolated Python tool installs and uv as fast pip replacement.
 # Python and the baseline pipx package are installed via APT (packages.yml),
 # but the APT pipx version can lag the minimum supported by
-# community.general.pipx. Install the supported version into Ansible's own
-# Python environment so the collection module can import it, and expose that
-# same launcher for interactive use.
+# community.general.pipx. Use the distro package when it already meets the
+# minimum; only overlay pipx from PyPI when needed, and expose that launcher
+# for interactive use.
 # =============================================================================
 
 - name: Check whether pip is importable in Ansible's Python environment
@@ -33,7 +33,18 @@
   changed_when: true
   become: true
 
-- name: Install a current pipx into Ansible's Python environment
+- name: Check pipx in Ansible's Python environment
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -m
+      - pipx
+      - --version
+  register: _ansible_python_pipx
+  changed_when: false
+  failed_when: false
+
+- name: Install a current pipx into Ansible's Python environment when needed
   ansible.builtin.command:
     argv:
       - "{{ ansible_playbook_python }}"
@@ -46,12 +57,18 @@
       # interpreter used by Ansible, so opt into that managed location
       # explicitly rather than failing before the pipx tasks can run.
       - --break-system-packages
+      # Ubuntu's APT pipx package has no RECORD file. If an older distro
+      # package must be overlaid, do not ask pip to uninstall that package.
+      - --ignore-installed
       - "pipx>=1.7.0"
   register: _pipx_bootstrap
   changed_when: >-
     (_pipx_bootstrap.stdout | default('') is search('Successfully installed|Successfully uninstalled'))
     or (_pipx_bootstrap.stdout | default('') is search('Installing collected packages'))
   become: true
+  when:
+    - _ansible_python_pipx.rc != 0 or
+      (_ansible_python_pipx.stdout | trim is version('1.7.0', '<'))
 
 - name: Expose the catalog-managed pipx launcher
   ansible.builtin.file:
