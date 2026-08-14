@@ -25,11 +25,17 @@
         verify_args+=(--verify-commit)
       fi
 
+      force_args=()
+      if [[ "{{ ansible_pull_force_on_update_failure | bool }}" == "True" ]]; then
+        force_args+=(--force)
+      fi
+
       exec /usr/bin/ansible-pull \
         -U {{ ansible_pull_repo }} \
         -C {{ ansible_pull_branch }} \
         -d {{ ansible_pull_dir }} \
         "${verify_args[@]}" \
+        "${force_args[@]}" \
         {{ ansible_pull_playbook }} \
         -e dev_user={{ dev_user }} \
         -e dev_user_home={{ dev_user_home }} \
