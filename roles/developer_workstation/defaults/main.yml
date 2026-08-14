@@ -403,6 +403,10 @@ ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
 ansible_pull_extra_vars: ""
+# Some managed hosts carry a reviewed local compatibility commit while the
+# public catalog catches up. Those hosts may still run that known-good checkout
+# when ansible-pull cannot update it; leave this disabled by default.
+ansible_pull_force_on_update_failure: false
 ansible_pull_verify_commit: "{{ catalog_integrity_mode == 'enforce' }}"
 authd_archive_distribution: "{{ ansible_distribution_release }}"
 authd_archive_key_fingerprint: "155D766F2E771AED"
