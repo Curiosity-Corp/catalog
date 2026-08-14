@@ -11,6 +11,14 @@
   ansible.builtin.systemd:
     daemon_reload: true
 
+- name: Reload systemd-logind
+  ansible.builtin.command: systemctl kill -s HUP systemd-logind
+  changed_when: true
+
+- name: Apply TLP power policy
+  ansible.builtin.command: tlp start
+  changed_when: true
+
 - name: Restart Sunshine user service
   ansible.builtin.shell: |
     set -e
