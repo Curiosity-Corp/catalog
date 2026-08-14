@@ -124,7 +124,7 @@ latest_release_contracts:
   cosign: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/cosign, version]}
   step: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/step, version]}
   flux: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/flux, --version]}
-  mattermost_desktop: {installer: github-archive, verification: github-asset-digest, healthcheck: [/opt/mattermost-desktop/mattermost-desktop, --version]}
+  mattermost_desktop: {installer: github-archive, verification: github-asset-digest, scope: user, healthcheck: [/opt/mattermost-desktop/mattermost-desktop, --version]}
   nerd_fonts: {installer: github-archive, verification: github-asset-digest, healthcheck: [fc-cache, -V]}
 
 # Applications whose native update channel is not a GitHub release API. They
