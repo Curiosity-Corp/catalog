@@ -345,6 +345,7 @@
     block: |
       export SDKMAN_DIR="$HOME/.sdkman"
       [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+  when: workstation_profile | default('desktop') != 'workspace'
 
 - name: Add SDKMAN init to .zshrc
   ansible.builtin.blockinfile:
@@ -353,6 +354,7 @@
     block: |
       export SDKMAN_DIR="$HOME/.sdkman"
       [[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+  when: workstation_profile | default('desktop') != 'workspace'
 
 # --- Source aliases (AFTER tool inits) ---
 # Aliases must be sourced after nvm/pyenv/sdkman because alias cat='bat ...'
