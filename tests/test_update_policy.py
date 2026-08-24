@@ -242,6 +242,19 @@ def main() -> None:
         raise SystemExit(
             "cloud-clis.yml must repair AWS launchers after the versioned installer runs"
         )
+
+    languages_text = (ROLE / "tasks/languages.yml").read_text()
+    for fragment in (
+        "Snapshot the existing Go tree before replacement",
+        "Remove the existing Go tree before extraction",
+    ):
+        if fragment not in languages_text:
+            raise SystemExit("languages.yml is missing clean Go replacement coverage: " + fragment)
+
+    rollback_text = (ROLE / "tasks/update-rollback.yml").read_text()
+    if "Restore the pre-update Go tree" not in rollback_text:
+        raise SystemExit("update-rollback.yml must restore the Go tree after a failed replacement")
+
     if "Guard the optional Rust environment after chezmoi applies workspace dotfiles" not in (
         ROLE / "tasks/dotfiles.yml"
     ).read_text():

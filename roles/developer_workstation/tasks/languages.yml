@@ -34,6 +34,28 @@
     go_needs_update: >-
       {{ go_current.rc != 0 or go_version.content.split('\n')[0] not in go_current.stdout }}
 
+- name: Inspect the existing Go tree before replacement
+  ansible.builtin.stat:
+    path: /usr/local/go
+  register: _go_tree_before_update
+  when: go_needs_update
+
+- name: Snapshot the existing Go tree before replacement
+  ansible.builtin.command:
+    argv:
+      - tar
+      - -czf
+      - "{{ workstation_update_snapshot_dir }}/go-tree.tar.gz"
+      - -C
+      - /usr/local
+      - go
+  args:
+    creates: "{{ workstation_update_snapshot_dir }}/go-tree.tar.gz"
+  changed_when: true
+  when:
+    - go_needs_update
+    - _go_tree_before_update.stat.isdir | default(false)
+
 - name: Resolve the latest Go Linux amd64 archive
   ansible.builtin.set_fact:
     _go_latest_asset: >-
@@ -60,6 +82,14 @@
     mode: "0644"
     force: false
   when: go_needs_update
+
+- name: Remove the existing Go tree before extraction
+  ansible.builtin.file:
+    path: /usr/local/go
+    state: absent
+  when:
+    - go_needs_update
+    - _go_tree_before_update.stat.isdir | default(false)
 
 - name: Install latest Go
   ansible.builtin.unarchive:
