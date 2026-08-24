@@ -22,8 +22,11 @@ All notable changes to this project are documented here. The format follows
   leave user-scoped CLIs such as Codex stale.
 - User-scoped npm and AI refreshes run before binary installers and are kept out
   of binary rollback, so unrelated installer failures cannot undo them.
-- Coder, cloud CLIs, Keycloak, Ziti, Sunshine, chat, and profile cleanup are
-  opt-in.
+- Coder, Keycloak, Ziti, Sunshine, chat, and profile cleanup remain opt-in.
+  Cloud CLIs are now part of the desktop/workspace workstation baseline; their
+  credentials and sessions remain host-local.
+- Desktop/workspace parity now includes Mattermost `mmctl`, `sshpass`, PDF
+  extraction tools, and the managed Bun `bunx` alias.
 - Microsoft 365 CLI (`@pnp/cli-microsoft365`) moved out of the general
   `npm_global_packages` baseline into its own `m365_cli_packages` list and
   `tasks/m365-cli.yml`, gated behind a new `m365` Ansible tag, so consumers

@@ -15,9 +15,13 @@ workstation_profile: desktop
 preferred_editor: "code --wait"
 
 # Tool group toggles. Integrations that require an organization's service or
-# identity provider are opt-in so the public role is safe on a new machine.
+# identity provider remain opt-in; installable CLI baselines do not imply a
+# login or credential session.
 coder_cli_enabled: false
-cloud_clis_enabled: false
+# Full desktop/workspace profiles include the cloud control-plane CLIs used by
+# the managed workstation baseline (Azure, AWS, and GitLab). Credentials and
+# account sessions remain host-local.
+cloud_clis_enabled: true
 thin_client_playwright_enabled: false
 
 # Optional external thin-client TUI. Set missionctl_install_url to a direct
@@ -78,6 +82,7 @@ latest_github_repositories:
   cosign: sigstore/cosign
   step: smallstep/cli
   flux: fluxcd/flux2
+  mattermost: mattermost/mattermost
   mattermost_desktop: mattermost/desktop
   nerd_fonts: ryanoasis/nerd-fonts
 
@@ -124,7 +129,8 @@ latest_release_contracts:
   cosign: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/cosign, version]}
   step: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/step, version]}
   flux: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/flux, --version]}
-  mattermost_desktop: {installer: github-archive, verification: github-asset-digest, healthcheck: [/opt/mattermost-desktop/mattermost-desktop, --version]}
+  mattermost: {installer: mattermost-release, verification: mattermost-package-sha256, healthcheck: [/usr/local/bin/mmctl, version]}
+  mattermost_desktop: {installer: github-archive, verification: github-asset-digest, scope: user, healthcheck: [/opt/mattermost-desktop/mattermost-desktop, --version]}
   nerd_fonts: {installer: github-archive, verification: github-asset-digest, healthcheck: [fc-cache, -V]}
 
 # Applications whose native update channel is not a GitHub release API. They
@@ -221,6 +227,7 @@ workstation_update_managed_paths:
   - /usr/local/bin/golangci-lint
   - /usr/local/bin/trivy
   - /usr/local/bin/grpcurl
+  - /usr/local/bin/mmctl
   - /usr/local/bin/tofu
   - /usr/local/bin/helm
   - /usr/local/bin/kustomize
@@ -236,6 +243,7 @@ workstation_update_managed_paths:
   - /usr/local/bin/age-keygen
   - /usr/local/bin/deno
   - /usr/local/bin/bun
+  - /usr/local/bin/bunx
   - /usr/local/bin/starship
   - /usr/local/bin/talhelper
   - /usr/local/bin/yq
@@ -403,6 +411,10 @@ ansible_pull_branch: "main"
 ansible_pull_playbook: "playbooks/site.yml"
 ansible_pull_dir: "/opt/curiosity-catalog"
 ansible_pull_extra_vars: ""
+# Some managed hosts carry a reviewed local compatibility commit while the
+# public catalog catches up. Those hosts may still run that known-good checkout
+# when ansible-pull cannot update it; leave this disabled by default.
+ansible_pull_force_on_update_failure: false
 ansible_pull_verify_commit: "{{ catalog_integrity_mode == 'enforce' }}"
 authd_archive_distribution: "{{ ansible_distribution_release }}"
 authd_archive_key_fingerprint: "155D766F2E771AED"
@@ -575,7 +587,7 @@ hardware_profiles:
     pia_vpn: false
 
   x86-byod-laptop:
-    description: "x86_64 BYOD kiosk laptop (Lenovo T460 and similar)"
+    description: "x86_64 BYOD laptop (Lenovo T460 and similar)"
     packages:
       # ThinkPad power management and fan control
       - acpi
@@ -587,6 +599,11 @@ hardware_profiles:
       - i965-va-driver
       # Suspend/resume reliability
       - pm-utils
+    # Keep admin laptops available for remote work and never enter a sleep or
+    # hibernate state.  AC uses the performance CPU policy; battery remains
+    # performance-balanced so the machine stays usable away from the charger.
+    disable_sleep: true
+    performance_mode: true
     services:
       - acpid
       - tlp

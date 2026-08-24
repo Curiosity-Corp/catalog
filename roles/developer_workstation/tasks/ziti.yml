@@ -246,23 +246,26 @@
 # -----------------------------------------------------------------------------
 # The ziti-edge-tunnel package installs /opt/openziti/etc/identities as
 # 0700 root:ziti on some builds, which prevents the ziti service user from
-# listing or reading identity files. Ensure 0750 so the ziti group can access.
+# listing or reading identity files. The tunnel also persists config/backups
+# and renews certificates as user=ziti, so the service group needs directory
+# write access and group-write access to managed identity files.
 - name: Ensure ziti identities directory is group-accessible
   ansible.builtin.file:
     path: /opt/openziti/etc/identities
     state: directory
     owner: root
     group: ziti
-    mode: "0750"
+    mode: "0770"
 
 # Identity files created by the firstboot enroll_ziti() function are written
 # as root:root 0600. The ziti service runs as user=ziti and cannot renew certs
-# on files it cannot write. Fix ownership so the ziti service can manage them.
+# on files it cannot write. Fix ownership and group-write access so the ziti
+# service can manage them without making the identity world-readable.
 - name: Fix ownership of existing ziti identity files to root:ziti
   ansible.builtin.shell: |
     find /opt/openziti/etc/identities/ -maxdepth 1 -name '*.json' \
       -exec chown root:ziti {} \; \
-      -exec chmod 0640 {} \;
+      -exec chmod 0660 {} \;
   args:
     executable: /bin/bash
   changed_when: false

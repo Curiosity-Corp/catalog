@@ -125,7 +125,7 @@
     latest_mongodb_channel: >-
       {{
         _mongodb_repo_index.content
-        | regex_findall('<Prefix>apt/ubuntu/dists/[^<]+/mongodb-org/([0-9]+\\.[0-9]+)/</Prefix>')
+        | regex_findall('<Prefix>apt/ubuntu/dists/[^<]+/mongodb-org/([0-9]+\.[0-9]+)/</Prefix>')
         | map('float')
         | sort
         | last
@@ -134,20 +134,29 @@
 
 - name: Set MongoDB signing-key version for the newest channel
   ansible.builtin.set_fact:
-    latest_mongodb_key_version: >-
-      {{ latest_mongodb_channel | regex_replace('^([0-9]+)\\..*$', '\\1.0') }}
+    # MongoDB 9.x packages are currently signed by the 8.0 repository key;
+    # there is no server-9.0.asc endpoint. Keep the key selection explicit
+    # until MongoDB publishes a 9.x signing key.
+    latest_mongodb_key_version: "8.0"
 
 - name: Require a MongoDB APT channel
   ansible.builtin.assert:
     that: latest_mongodb_channel | default('') | string | length > 0
     fail_msg: "MongoDB did not publish a current APT channel"
 
-- name: Download MongoDB GPG key  # noqa: command-instead-of-module
+- name: Download and verify MongoDB GPG key  # noqa: command-instead-of-module
   ansible.builtin.shell:
     cmd: |
-      set -o pipefail
-      curl -fsSL https://www.mongodb.org/static/pgp/server-{{ latest_mongodb_key_version }}.asc \
-        | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-archive-keyring.gpg
+      set -Eeuo pipefail
+      key_tmp="$(mktemp)"
+      trap 'rm -f "$key_tmp"' EXIT
+      curl -fsSL \
+        'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF366D55B602E502D&output=armor' \
+        -o "$key_tmp"
+      actual_fingerprint="$(gpg --with-colons --import-options show-only --import "$key_tmp" \
+        | awk -F: '$1 == "fpr" { print $10; exit }')"
+      test "$actual_fingerprint" = "B3B42B6C39E5CDDEC0A27E3CF366D55B602E502D"
+      gpg --dearmor --yes -o /usr/share/keyrings/mongodb-archive-keyring.gpg "$key_tmp"
     executable: /bin/bash
   changed_when: false
 
@@ -253,9 +262,9 @@
   changed_when: _nodesource_key_download.changed
   notify: Update apt cache
 
-- name: Add NodeSource current repository
+- name: Add NodeSource Node.js 24 repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_current.x nodistro main"
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main"
     filename: nodesource
     state: present
   notify: Update apt cache

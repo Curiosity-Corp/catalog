@@ -54,8 +54,8 @@
     src: "{{ workstation_update_artifact_cache_dir }}/kubeseal-{{ (latest_github_releases.kubeseal.assets | selectattr('name', 'match', '^kubeseal-.*-linux-amd64[.]tar[.]gz$') | first).digest | regex_replace('^sha256:', '') }}.archive"
     dest: /usr/local/bin
     remote_src: true
-    include: ["*/kubeseal"]
-    extra_opts: [--strip-components=1]
+    include: [kubeseal]
+    extra_opts: []
 
 # =============================================================================
 # Post-Quantum age + SOPS
@@ -114,7 +114,7 @@
     dest: /usr/local/bin
     remote_src: true
     include: ["*/age", "*/age-keygen"]
-    extra_opts: [--strip-components=1]
+    extra_opts: [--wildcards, --strip-components=1]
 
 # --- SOPS ---
 - name: Install latest SOPS
@@ -228,7 +228,7 @@
     dest: /usr/local/bin
     remote_src: true
     include: ["*/bin/step"]
-    extra_opts: [--strip-components=2]
+    extra_opts: [--wildcards, --strip-components=2]
 
 # =============================================================================
 # Free/Open-Source Security Hardening Stack

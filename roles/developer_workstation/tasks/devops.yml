@@ -85,6 +85,99 @@
     remote_src: true
     mode: "0755"
 
+# --- mmctl (Mattermost administration/client CLI) ---
+# Install mmctl from the official Mattermost server distribution. The
+# standalone mmctl archive has no published digest; the server distribution
+# includes the same client at mattermost/bin/mmctl and publishes a SHA-256
+# sidecar, so the artifact is verified before anything is executed or copied
+# into PATH.
+- name: Resolve the current mmctl release and host architecture
+  ansible.builtin.set_fact:
+    _mmctl_release_version: "{{ latest_github_releases.mattermost.tag_name | regex_replace('^v', '') }}"
+    _mmctl_architecture: >-
+      {{ {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(ansible_architecture, '') }}
+
+- name: Require a supported mmctl release architecture
+  ansible.builtin.assert:
+    that: _mmctl_architecture | length > 0
+    fail_msg: "Mattermost mmctl has no managed Linux artifact for {{ ansible_architecture }}"
+
+- name: Read the official Mattermost package SHA-256 sidecar
+  ansible.builtin.uri:
+    url: "https://releases.mattermost.com/{{ _mmctl_release_version }}/mattermost-{{ _mmctl_release_version }}-linux-{{ _mmctl_architecture }}.tar.gz.sha256"
+    return_content: true
+  register: _mmctl_checksum_response
+  changed_when: false
+
+- name: Set the verified Mattermost package checksum
+  ansible.builtin.set_fact:
+    _mmctl_package_checksum: >-
+      {{ _mmctl_checksum_response.content
+         | regex_search('(?i)[0-9a-f]{64}')
+         | lower }}
+
+- name: Require a valid Mattermost package checksum
+  ansible.builtin.assert:
+    that:
+      - _mmctl_package_checksum is match('^[0-9a-f]{64}$')
+    fail_msg: "Mattermost did not publish a valid SHA-256 for {{ _mmctl_release_version }}"
+
+- name: Download the current official Mattermost server distribution
+  ansible.builtin.get_url:
+    url: "https://releases.mattermost.com/{{ _mmctl_release_version }}/mattermost-{{ _mmctl_release_version }}-linux-{{ _mmctl_architecture }}.tar.gz"
+    dest: "{{ workstation_update_artifact_cache_dir }}/mattermost-{{ _mmctl_release_version }}-linux-{{ _mmctl_architecture }}.tar.gz"
+    checksum: "sha256:{{ _mmctl_package_checksum }}"
+    mode: "0644"
+    force: false
+
+- name: Remove stale mmctl extraction directory
+  ansible.builtin.file:
+    path: "/var/tmp/curiosity-mmctl-{{ _mmctl_release_version }}-{{ _mmctl_architecture }}"
+    state: absent
+
+- name: Stage, verify, and install the checked Mattermost mmctl binary
+  block:
+    - name: Create the mmctl release extraction directory
+      ansible.builtin.file:
+        path: "/var/tmp/curiosity-mmctl-{{ _mmctl_release_version }}-{{ _mmctl_architecture }}"
+        state: directory
+        mode: "0755"
+
+    - name: Extract mmctl from the verified Mattermost distribution
+      ansible.builtin.unarchive:
+        src: "{{ workstation_update_artifact_cache_dir }}/mattermost-{{ _mmctl_release_version }}-linux-{{ _mmctl_architecture }}.tar.gz"
+        dest: "/var/tmp/curiosity-mmctl-{{ _mmctl_release_version }}-{{ _mmctl_architecture }}"
+        remote_src: true
+        include: [mattermost/bin/mmctl]
+        creates: "/var/tmp/curiosity-mmctl-{{ _mmctl_release_version }}-{{ _mmctl_architecture }}/mattermost/bin/mmctl"
+
+    - name: Verify mmctl reports the discovered Mattermost release
+      ansible.builtin.command:
+        argv:
+          - "/var/tmp/curiosity-mmctl-{{ _mmctl_release_version }}-{{ _mmctl_architecture }}/mattermost/bin/mmctl"
+          - version
+      become: true
+      become_user: "{{ dev_user }}"
+      environment:
+        HOME: "{{ dev_user_home }}"
+      register: _mmctl_version_check
+      changed_when: false
+      failed_when: >-
+        _mmctl_version_check.rc != 0 or
+        _mmctl_release_version not in (_mmctl_version_check.stdout | default(''))
+
+    - name: Install the version-checked mmctl release
+      ansible.builtin.copy:
+        src: "/var/tmp/curiosity-mmctl-{{ _mmctl_release_version }}-{{ _mmctl_architecture }}/mattermost/bin/mmctl"
+        dest: /usr/local/bin/mmctl
+        remote_src: true
+        mode: "0755"
+  always:
+    - name: Remove the mmctl extraction directory
+      ansible.builtin.file:
+        path: "/var/tmp/curiosity-mmctl-{{ _mmctl_release_version }}-{{ _mmctl_architecture }}"
+        state: absent
+
 # --- OpenTofu ---
 - name: Download latest OpenTofu
   ansible.builtin.get_url:

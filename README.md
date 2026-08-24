@@ -106,6 +106,7 @@ The most important variables are:
 | `dev_user` / `dev_user_home` | `curiosity` / `/home/curiosity` | Account that owns user-scoped tools |
 | `apt_upgrade_enabled` | `true` | Enable safe APT maintenance |
 | `coder_cli_enabled` | `false` | Opt into a configured Coder deployment |
+| `cloud_clis_enabled` | `true` | Install the desktop/workspace Azure, AWS, and GitLab CLI baseline |
 | `keycloak_sso_enabled` | `false` | Opt into Keycloak login integration |
 | `ziti_enabled` | `false` | Opt into OpenZiti and supply local domains/provider |
 | `sunshine_enabled` | `false` | Opt into remote desktop streaming |
