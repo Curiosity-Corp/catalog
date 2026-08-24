@@ -275,6 +275,7 @@ def main() -> None:
         "tasks/repos.yml": (
             "https://pgp.mongodb.com/server-8.0.asc",
             "4B0752C1BCA238C0B4EE14DC41DE058A4E7DCA05",
+            "mongodb-org/(8[.][0-9]+)/</Prefix>",
             "Find legacy MongoDB repository definitions",
             "Remove legacy MongoDB repository definitions before writing the current channel",
         ),
