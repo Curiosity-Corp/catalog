@@ -272,6 +272,12 @@ def main() -> None:
             "include: [mattermost/bin/mmctl]",
             "Remove the mmctl extraction directory",
         ),
+        "tasks/repos.yml": (
+            "https://pgp.mongodb.com/server-8.0.asc",
+            "4B0752C1BCA238C0B4EE14DC41DE058A4E7DCA05",
+            "Find legacy MongoDB repository definitions",
+            "Remove legacy MongoDB repository definitions before writing the current channel",
+        ),
         "tasks/ansible-pull-timer.yml": (
             "OnCalendar=*-*-* 02:00:00",
             "--verify-commit",

@@ -115,18 +115,15 @@
   changed_when: false
 
 - name: Set newest MongoDB APT channel
-  # `| last` on an empty match list returns a lazy Undefined ("No last item,
-  # sequence was empty.") that blows up when set_fact finalizes this string —
-  # before the "Require a MongoDB APT channel" assert below ever gets a
-  # chance to run. `| default('', true)` collapses that Undefined to an empty
-  # string so the assert (which already handles the empty case) is reachable
-  # instead of hard-failing the whole play on every S3 listing hiccup.
+  # Keep the channel as a dotted string (for example 9.0) instead of coercing
+  # it through Jinja's float filter. The repository publishes both stable and
+  # development prefixes, and the string selector keeps the version boundary
+  # explicit while still allowing the assert below to fail closed.
   ansible.builtin.set_fact:
     latest_mongodb_channel: >-
       {{
         _mongodb_repo_index.content
-        | regex_findall('<Prefix>apt/ubuntu/dists/[^<]+/mongodb-org/([0-9]+\.[0-9]+)/</Prefix>')
-        | map('float')
+        | regex_findall('mongodb-org/([0-9]+[.][0-9]+)/</Prefix>')
         | sort
         | last
         | default('', true)
@@ -135,9 +132,9 @@
 - name: Set MongoDB signing-key version for the newest channel
   ansible.builtin.set_fact:
     # MongoDB 9.x packages are currently signed by the 8.0 repository key;
-    # there is no server-9.0.asc endpoint. Keep the key selection explicit
-    # until MongoDB publishes a 9.x signing key.
-    latest_mongodb_key_version: "8.0"
+    # there is no server-9.0.asc endpoint. Keep the key selection explicit.
+    latest_mongodb_key_url: "https://pgp.mongodb.com/server-8.0.asc"
+    latest_mongodb_key_fingerprint: "4B0752C1BCA238C0B4EE14DC41DE058A4E7DCA05"
 
 - name: Require a MongoDB APT channel
   ansible.builtin.assert:
@@ -151,14 +148,32 @@
       key_tmp="$(mktemp)"
       trap 'rm -f "$key_tmp"' EXIT
       curl -fsSL \
-        'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF366D55B602E502D&output=armor' \
+        '{{ latest_mongodb_key_url }}' \
         -o "$key_tmp"
       actual_fingerprint="$(gpg --with-colons --import-options show-only --import "$key_tmp" \
         | awk -F: '$1 == "fpr" { print $10; exit }')"
-      test "$actual_fingerprint" = "B3B42B6C39E5CDDEC0A27E3CF366D55B602E502D"
+      test "$actual_fingerprint" = "{{ latest_mongodb_key_fingerprint }}"
       gpg --dearmor --yes -o /usr/share/keyrings/mongodb-archive-keyring.gpg "$key_tmp"
     executable: /bin/bash
   changed_when: false
+
+- name: Find legacy MongoDB repository definitions
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns:
+      - mongodb-org*.list
+      - mongodb-org*.sources
+    file_type: file
+  register: _mongodb_legacy_repo_files
+
+- name: Remove legacy MongoDB repository definitions before writing the current channel
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _mongodb_legacy_repo_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  notify: Update apt cache
 
 - name: Add MongoDB repository
   ansible.builtin.apt_repository:
