@@ -83,6 +83,75 @@
     - item.status | default(0) == 200
     - item.json.tag_name is defined
 
+- name: Identify release sources without a binary-bearing latest release
+  ansible.builtin.set_fact:
+    _release_sources_needing_fallback: >-
+      {{ _release_sources_needing_fallback | default([]) + [item.item] }}
+  loop: "{{ _latest_release_queries.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - item.status | default(0) != 200 or
+      (item.json.assets | default([]) | length) == 0
+
+- name: Query recent GitHub releases for sources without binary-bearing latest releases
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ item.value }}/releases?per_page=20"
+    headers: >-
+      {{
+        {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'curiosity-catalog-workstation-updater'
+        }
+        | combine(
+            ({'Authorization': 'Bearer ' ~ _github_api_token}
+             if (_github_api_token | default('') | length > 0) else {})
+          )
+      }}
+    return_content: true
+    status_code: [200]
+  loop: "{{ _release_sources_needing_fallback | default([]) }}"
+  loop_control:
+    label: "{{ item.key }} ({{ item.value }})"
+  register: _github_release_fallback_queries
+  retries: 3
+  delay: 2
+  until: (_github_release_fallback_queries.status | default(0)) == 200
+  failed_when: false
+  changed_when: false
+  # The fallback request has the same optional bearer header as the primary
+  # request, so keep its arguments and response out of task logging as well.
+  no_log: true
+
+- name: Index newest stable GitHub release with binary assets
+  ansible.builtin.set_fact:
+    latest_github_releases: >-
+      {{ latest_github_releases | default({}) |
+         combine({item.item.key: (
+           item.json
+           | selectattr('draft', 'equalto', false)
+           | selectattr('prerelease', 'equalto', false)
+           | selectattr('assets', 'defined')
+           | selectattr('assets')
+           | first
+         )}) }}
+  loop: "{{ _github_release_fallback_queries.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - item.status | default(0) == 200
+    - >-
+      (
+        item.json
+        | selectattr('draft', 'equalto', false)
+        | selectattr('prerelease', 'equalto', false)
+        | selectattr('assets', 'defined')
+        | selectattr('assets')
+        | list
+        | length
+      ) > 0
+
 - name: Require latest metadata for every binary release source
   ansible.builtin.assert:
     that:
