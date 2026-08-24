@@ -259,6 +259,7 @@ def main() -> None:
     for fragment in (
         "curiosity-aide-init.service",
         "ConditionPathExists=!/var/lib/aide/aide.db",
+        "Ensure the daily AIDE check drop-in directory exists",
         "no_block: true",
     ):
         if fragment not in security_text:
