@@ -66,6 +66,10 @@
   until: (_latest_release_queries.status | default(0)) == 200
   failed_when: false
   changed_when: false
+  # The request headers may contain a GitHub token.  Ansible's module
+  # invocation logging is enabled on some workstation images, so suppress
+  # both the request arguments and the registered response from task output.
+  no_log: true
 
 - name: Index latest GitHub release metadata
   ansible.builtin.set_fact:

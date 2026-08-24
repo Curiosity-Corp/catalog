@@ -90,6 +90,10 @@ def main() -> None:
             "latest-releases.yml must build the digest index without the memory-heavy "
             "with_subelements loop"
         )
+    if "register: _latest_release_queries" not in latest_task or "  no_log: true" not in latest_task:
+        raise SystemExit(
+            "latest-releases.yml must suppress GitHub request and response logging"
+        )
 
     referenced = {
         match.group(1)
