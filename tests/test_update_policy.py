@@ -255,6 +255,15 @@ def main() -> None:
     if "Restore the pre-update Go tree" not in rollback_text:
         raise SystemExit("update-rollback.yml must restore the Go tree after a failed replacement")
 
+    security_text = (ROLE / "tasks/security.yml").read_text()
+    for fragment in (
+        "curiosity-aide-init.service",
+        "ConditionPathExists=!/var/lib/aide/aide.db",
+        "no_block: true",
+    ):
+        if fragment not in security_text:
+            raise SystemExit("security.yml is missing asynchronous AIDE initialization coverage: " + fragment)
+
     if "Guard the optional Rust environment after chezmoi applies workspace dotfiles" not in (
         ROLE / "tasks/dotfiles.yml"
     ).read_text():

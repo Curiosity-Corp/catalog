@@ -318,22 +318,54 @@
     path: /var/lib/aide/aide.db
   register: _aide_db
 
-- name: Initialize AIDE database (first run only)
-  ansible.builtin.command: timeout 1800 aideinit -y -f
-  register: _aideinit
-  when: not _aide_db.stat.exists
-  changed_when: _aideinit.rc == 0
-  failed_when: _aideinit.rc not in [0, 124]
+- name: Deploy asynchronous AIDE database initializer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/curiosity-aide-init.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Initialize the AIDE integrity database
+      ConditionPathExists=!/var/lib/aide/aide.db
+      After=local-fs.target
+      Before=dailyaidecheck.service
 
-- name: Warn if AIDE database init timed out
-  ansible.builtin.debug:
-    msg: >-
-      aideinit did not finish within 30 minutes even with dev-directory
-      excludes applied — investigate further before relying on AIDE here
-      (check /var/log/aide/aideinit.log). Database was not created.
-  when:
-    - not _aide_db.stat.exists
-    - _aideinit.rc == 124
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/sbin/aideinit -y -f
+      Nice=19
+      IOSchedulingClass=idle
+      IOSchedulingPriority=7
+      TimeoutStartSec=infinity
+
+      [Install]
+      WantedBy=multi-user.target
+  when: not _aide_db.stat.exists
+
+- name: Guard the daily AIDE check until its database exists
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/dailyaidecheck.service.d/10-curiosity-database.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      ConditionPathExists=/var/lib/aide/aide.db
+  when: not _aide_db.stat.exists
+
+- name: Reload systemd after deploying AIDE initialization controls
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not _aide_db.stat.exists
+
+- name: Start asynchronous AIDE database initialization
+  ansible.builtin.systemd_service:
+    name: curiosity-aide-init.service
+    enabled: true
+    state: started
+    no_block: true
+  when: not _aide_db.stat.exists
 
 - name: Install auditd (audit daemon)
   ansible.builtin.apt:
