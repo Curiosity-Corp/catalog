@@ -343,6 +343,15 @@
       WantedBy=multi-user.target
   when: not _aide_db.stat.exists
 
+- name: Ensure the daily AIDE check drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/dailyaidecheck.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: not _aide_db.stat.exists
+
 - name: Guard the daily AIDE check until its database exists
   ansible.builtin.copy:
     dest: /etc/systemd/system/dailyaidecheck.service.d/10-curiosity-database.conf
