@@ -350,6 +350,39 @@
   failed_when: false
 
 # --- SDKMAN (JVM version manager) ---
+- name: Inspect the existing SDKMAN directory
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.sdkman"
+  register: _sdkman_root
+
+- name: Check for an existing SDKMAN Git checkout
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.sdkman/.git"
+  register: _sdkman_git_dir
+
+- name: Check whether the existing SDKMAN checkout is dirty
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ dev_user_home }}/.sdkman"
+      - status
+      - --porcelain
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  register: _sdkman_git_status
+  changed_when: false
+  failed_when: false
+  when: _sdkman_git_dir.stat.exists | default(false)
+
+- name: Set SDKMAN checkout state
+  ansible.builtin.set_fact:
+    _sdkman_git_checkout: "{{ _sdkman_git_dir.stat.exists | default(false) }}"
+    _sdkman_git_dirty: >-
+      {{ (_sdkman_git_status.stdout | default('') | trim | length) > 0 }}
+
 - name: Install or update SDKMAN from its Git repository
   ansible.builtin.git:
     repo: https://github.com/sdkman/sdkman-cli.git
@@ -361,6 +394,19 @@
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+  when:
+    - not (_sdkman_root.stat.isdir | default(false)) or
+      (_sdkman_git_checkout and not _sdkman_git_dirty)
+
+- name: Preserve an existing SDKMAN installation that is not a clean Git checkout
+  ansible.builtin.debug:
+    msg: >-
+      Preserving {{ dev_user_home }}/.sdkman because it is an existing
+      non-Git installation or contains local changes; launcher and metadata
+      repair will continue without replacing user state.
+  when:
+    - _sdkman_root.stat.isdir | default(false)
+    - not (_sdkman_git_checkout and not _sdkman_git_dirty)
 
 - name: Ensure SDKMAN runtime directories exist
   ansible.builtin.file:
