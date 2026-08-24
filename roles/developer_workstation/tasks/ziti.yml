@@ -61,7 +61,7 @@
     mode: "0755"
     owner: root
     group: root
-    content: !unsafe |
+    content: |
       #!/usr/bin/env bash
       # ziti-oidc-login.sh — authenticate all OIDC identities via ext-jwt-login
       set -euo pipefail

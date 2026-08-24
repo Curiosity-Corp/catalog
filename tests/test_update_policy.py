@@ -265,6 +265,15 @@ def main() -> None:
         if fragment not in security_text:
             raise SystemExit("security.yml is missing asynchronous AIDE initialization coverage: " + fragment)
 
+    ziti_text = (ROLE / "tasks/ziti.yml").read_text()
+    login_start = ziti_text.index("- name: Deploy OIDC login script")
+    login_end = ziti_text.index("- name: Deploy OIDC logout script", login_start)
+    login_task = ziti_text[login_start:login_end]
+    if "content: !unsafe |" in login_task:
+        raise SystemExit("ziti.yml must template ziti_oidc_provider in the OIDC login script")
+    if 'PROVIDER="{{ ziti_oidc_provider }}"' not in login_task:
+        raise SystemExit("ziti.yml OIDC login script must render ziti_oidc_provider")
+
     if "Guard the optional Rust environment after chezmoi applies workspace dotfiles" not in (
         ROLE / "tasks/dotfiles.yml"
     ).read_text():
