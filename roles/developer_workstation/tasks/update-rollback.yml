@@ -11,6 +11,24 @@
       message: "{{ ansible_failed_result.msg | default('update transaction failed') }}"
       recorded_at: "{{ ansible_date_time.iso8601 }}"
 
+- name: Check for the pre-update Go tree snapshot
+  ansible.builtin.stat:
+    path: "{{ workstation_update_snapshot_dir }}/go-tree.tar.gz"
+  register: _go_tree_snapshot
+
+- name: Remove the failed Go installation before restoration
+  ansible.builtin.file:
+    path: /usr/local/go
+    state: absent
+  when: _go_tree_snapshot.stat.exists | default(false)
+
+- name: Restore the pre-update Go tree
+  ansible.builtin.unarchive:
+    src: "{{ workstation_update_snapshot_dir }}/go-tree.tar.gz"
+    dest: /usr/local
+    remote_src: true
+  when: _go_tree_snapshot.stat.exists | default(false)
+
 - name: Restore managed binaries from the pre-update snapshot
   ansible.builtin.copy:
     src: "{{ workstation_update_snapshot_dir }}/{{ item.path | basename }}"
