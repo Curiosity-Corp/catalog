@@ -199,6 +199,16 @@
   loop:
     - /tmp/aws
 
+- name: Repair AWS CLI launchers after installation
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+    force: true
+  loop:
+    - {src: /usr/local/aws-cli/v2/current/bin/aws, dest: /usr/local/bin/aws}
+    - {src: /usr/local/aws-cli/v2/current/bin/aws_completer, dest: /usr/local/bin/aws_completer}
+
 # --- GitLab CLI (glab) ---
 - name: Query latest GitLab CLI release
   ansible.builtin.uri:
