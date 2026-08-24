@@ -85,6 +85,11 @@ def main() -> None:
             "latest-releases.yml must use available GitHub auth and require "
             "current upstream metadata"
         )
+    if "with_subelements:" in latest_task or "without duplicating release payloads" not in latest_task:
+        raise SystemExit(
+            "latest-releases.yml must build the digest index without the memory-heavy "
+            "with_subelements loop"
+        )
 
     referenced = {
         match.group(1)
