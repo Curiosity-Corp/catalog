@@ -236,6 +236,12 @@ def main() -> None:
                 "workspace-launchers.yml is missing quarantine-safe repair coverage: "
                 + fragment
             )
+
+    cloud_cli_text = (ROLE / "tasks/cloud-clis.yml").read_text()
+    if "Repair AWS CLI launchers after installation" not in cloud_cli_text:
+        raise SystemExit(
+            "cloud-clis.yml must repair AWS launchers after the versioned installer runs"
+        )
     if "Guard the optional Rust environment after chezmoi applies workspace dotfiles" not in (
         ROLE / "tasks/dotfiles.yml"
     ).read_text():
