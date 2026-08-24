@@ -94,6 +94,16 @@ def main() -> None:
         raise SystemExit(
             "latest-releases.yml must suppress GitHub request and response logging"
         )
+    if (
+        "_release_sources_needing_fallback" not in latest_task
+        or "_github_release_fallback_queries" not in latest_task
+        or "newest stable GitHub release with binary assets" not in latest_task
+        or "releases?per_page=20" not in latest_task
+    ):
+        raise SystemExit(
+            "latest-releases.yml must handle source-only latest releases without "
+            "falling back to stale binaries"
+        )
 
     referenced = {
         match.group(1)
