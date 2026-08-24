@@ -137,6 +137,9 @@
       - netcat-openbsd
       # --- SSH ---
       - openssh-client
+      # sshpass is used only for controlled bootstrap/legacy endpoints; prefer
+      # SSH keys for all durable access.
+      - sshpass
       - sshfs
       - mosh
       # --- VPN / ZTNA ---
@@ -184,6 +187,7 @@
       - graphviz
       - ffmpeg
       - imagemagick
+      - poppler-utils
       - texlive-base
       - texlive-latex-extra
       - protobuf-compiler

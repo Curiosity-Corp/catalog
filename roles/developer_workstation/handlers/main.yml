@@ -19,6 +19,21 @@
   ansible.builtin.command: tlp start
   changed_when: true
 
+- name: Regenerate Netplan after laptop wired-link policy changes
+  ansible.builtin.command:
+    argv:
+      - netplan
+      - generate
+  changed_when: true
+  notify: Reload systemd-networkd after laptop Netplan policy changes
+
+- name: Reload systemd-networkd after laptop Netplan policy changes
+  ansible.builtin.command:
+    argv:
+      - networkctl
+      - reload
+  changed_when: true
+
 - name: Restart Sunshine user service
   ansible.builtin.shell: |
     set -e

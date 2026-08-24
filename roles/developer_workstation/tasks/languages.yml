@@ -298,6 +298,13 @@
     state: absent
   when: bun_needs_update
 
+- name: Ensure Bun's bunx alias is available
+  ansible.builtin.file:
+    src: /usr/local/bin/bun
+    dest: /usr/local/bin/bunx
+    state: link
+    force: true
+
 # --- PHP Composer ---
 - name: Check Composer version
   ansible.builtin.command: /usr/local/bin/composer --version

@@ -264,6 +264,13 @@ def main() -> None:
             ".pyenv.catalog-staging",
             "https://api.sdkman.io/2/candidates/all",
             "Install the SDKMAN shell launcher",
+            "Ensure Bun's bunx alias is available",
+        ),
+        "tasks/devops.yml": (
+            "mattermost-{{ _mmctl_release_version }}-linux-{{ _mmctl_architecture }}.tar.gz.sha256",
+            'checksum: "sha256:{{ _mmctl_package_checksum }}"',
+            "include: [mattermost/bin/mmctl]",
+            "Remove the mmctl extraction directory",
         ),
         "tasks/ansible-pull-timer.yml": (
             "OnCalendar=*-*-* 02:00:00",

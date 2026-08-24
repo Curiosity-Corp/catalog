@@ -41,7 +41,7 @@ def test_collection_metadata_is_publishable() -> None:
 def test_defaults_are_safe_for_unrelated_machines() -> None:
     defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
     assert defaults["coder_cli_enabled"] is False
-    assert defaults["cloud_clis_enabled"] is False
+    assert defaults["cloud_clis_enabled"] is True
     assert defaults["keycloak_sso_enabled"] is False
     assert defaults["ziti_enabled"] is False
     assert defaults["sunshine_enabled"] is False

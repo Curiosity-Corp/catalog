@@ -1,3 +1,4 @@
+---
 # Managed by Ansible — the T460 uses Wi-Fi as its primary network path.
 # Do not hold network-online.target on an unplugged Ethernet cable.
 network:

@@ -198,18 +198,9 @@
     group: root
     mode: "0600"
   register: _laptop_netplan_optional
+  notify: Regenerate Netplan after laptop wired-link policy changes
   when:
     - hardware_profile == 'x86-byod-laptop'
-
-- name: Regenerate Netplan after laptop wired-link policy changes
-  ansible.builtin.command: netplan generate
-  changed_when: true
-  when: _laptop_netplan_optional.changed | default(false)
-
-- name: Reload systemd-networkd after laptop Netplan policy changes
-  ansible.builtin.command: networkctl reload
-  changed_when: true
-  when: _laptop_netplan_optional.changed | default(false)
 
 - name: Ensure laptop no-sleep logind drop-in directory exists
   ansible.builtin.file:
