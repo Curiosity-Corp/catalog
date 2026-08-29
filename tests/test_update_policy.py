@@ -196,18 +196,34 @@ def main() -> None:
         )
     if "@pnp/cli-microsoft365" not in set(defaults.get("m365_cli_packages", [])):
         raise SystemExit("m365-cli must be in the user-scoped latest m365_cli_packages set")
-    if "@openai/codex" not in defaults.get("ai_assistant_packages", []):
-        raise SystemExit("Codex must be in the user-scoped latest AI package set")
+    # Codex is intentionally NOT in the npm refresh: the registry package and
+    # the official standalone binary both provide a `codex` command, and PATH
+    # order decided which one ran. The standalone install is the only managed
+    # Codex; a second npm copy made the user's command fail on every pull
+    # where the npm refresh was missing or broken.
+    if "@openai/codex" in defaults.get("ai_assistant_packages", []):
+        raise SystemExit("Codex must not be refreshed through the npm package set")
     ai_command_links = defaults.get("ai_assistant_command_links", [])
     linked_packages = {entry.get("package") for entry in ai_command_links}
     if linked_packages != set(defaults.get("ai_assistant_packages", [])):
         raise SystemExit("Every AI package must have an explicit user command launcher")
-    codex_link = next(
-        (entry for entry in ai_command_links if entry.get("command") == "codex"),
-        None,
-    )
-    if not codex_link or codex_link.get("relative_path") != "bin/codex.js":
-        raise SystemExit("The Codex launcher must target the package's bin/codex.js")
+    if any(entry.get("command") == "codex" for entry in ai_command_links):
+        raise SystemExit("Codex must not have an npm command launcher")
+    codex_contract = additional_contracts.get("codex", {})
+    if codex_contract.get("installer") != "codex-standalone":
+        raise SystemExit("The Codex contract must use the standalone installer")
+    if codex_contract.get("healthcheck", [None])[0] != ".local/bin/codex":
+        raise SystemExit(
+            "The Codex healthcheck must target the user-scoped standalone launcher"
+        )
+    ai_assistants_text = (ROLE / "tasks/ai-assistants.yml").read_text()
+    for required_fragment in (
+        "Remove legacy npm-managed Codex",
+        "Install standalone Codex CLI",
+        "Remove broken system-level Codex symlink",
+    ):
+        if required_fragment not in ai_assistants_text:
+            raise SystemExit(f"ai-assistants.yml is missing '{required_fragment}'")
 
     # Dynamic include tags are a dependency boundary: a focused component
     # pull must still enter the update foundation and transaction wrappers so
@@ -370,10 +386,12 @@ def main() -> None:
             )
 
     rollback_exclusions = defaults.get("workstation_update_rollback_excluded_paths", [])
-    if '"{{ npm_global_prefix }}/bin/codex"' not in defaults_text:
-        raise SystemExit("Codex must be excluded from binary rollback after npm refresh")
-    if "{{ npm_global_prefix }}/bin/codex" not in rollback_exclusions:
-        raise SystemExit("Codex rollback exclusion must use the managed npm prefix")
+    if '"{{ dev_user_home }}/.local/bin/codex"' not in defaults_text:
+        raise SystemExit("The standalone Codex launcher must be a managed workstation path")
+    if "{{ dev_user_home }}/.local/bin/codex" not in rollback_exclusions:
+        raise SystemExit(
+            "The standalone Codex launcher must be excluded from binary rollback"
+        )
 
     # The eight workstation-local controls remain structural parts of the role
     # even before a central fleet service exists.

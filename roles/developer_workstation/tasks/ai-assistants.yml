@@ -36,6 +36,114 @@
     label: "{{ item.command }}"
 
 # =============================================================================
+# Standalone Codex CLI
+# =============================================================================
+# Codex is deliberately NOT part of the npm refresh above. The nightly
+# registry refresh used to place a second `codex` in ~/.npm-global/bin next to
+# the standalone binary, and whichever install PATH reached first was the one
+# that ran — so a failed or missing npm copy broke the user's `codex` command
+# on every pull. The official standalone installer owns the user-scoped
+# launcher, and a user-level codex-auto-update timer keeps the release
+# current between ansible-pull runs.
+# =============================================================================
+
+- name: Check standalone Codex launcher
+  ansible.builtin.command: "{{ codex_standalone_install_dir }}/codex --version"
+  register: _codex_standalone_check
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when: codex_standalone_enabled | default(true)
+
+- name: Remove legacy npm-managed Codex
+  community.general.npm:
+    name: "@openai/codex"
+    global: true
+    state: absent
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _codex_npm_removal
+  failed_when: false
+  when: codex_standalone_enabled | default(true)
+
+- name: Download official Codex standalone installer
+  ansible.builtin.get_url:
+    url: "{{ codex_standalone_installer_url }}"
+    dest: /tmp/install-codex.sh
+    mode: "0700"
+    force: true
+  become: true
+  become_user: "{{ dev_user }}"
+  when:
+    - codex_standalone_enabled | default(true)
+    - _codex_standalone_check.rc != 0
+
+- name: Install standalone Codex CLI
+  ansible.builtin.command:
+    cmd: /bin/bash /tmp/install-codex.sh
+  environment:
+    HOME: "{{ dev_user_home }}"
+    CODEX_RELEASE: "{{ codex_standalone_release }}"
+    CODEX_NON_INTERACTIVE: "true"
+    CODEX_INSTALL_DIR: "{{ codex_standalone_install_dir }}"
+    CODEX_HOME: "{{ codex_standalone_home_dir }}"
+  register: _codex_standalone_install
+  failed_when: _codex_standalone_install.rc != 0
+  changed_when: _codex_standalone_install.rc == 0
+  become: true
+  become_user: "{{ dev_user }}"
+  when:
+    - codex_standalone_enabled | default(true)
+    - _codex_standalone_check.rc != 0
+
+- name: Verify standalone Codex launcher
+  ansible.builtin.command: "{{ codex_standalone_install_dir }}/codex --version"
+  register: _codex_standalone_verify
+  changed_when: false
+  failed_when: _codex_standalone_verify.rc != 0
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when: codex_standalone_enabled | default(true)
+
+- name: Clean up Codex standalone installer
+  ansible.builtin.file:
+    path: /tmp/install-codex.sh
+    state: absent
+  when:
+    - codex_standalone_enabled | default(true)
+    - _codex_standalone_check.rc != 0
+
+- name: Stat system-level Codex shim
+  ansible.builtin.stat:
+    path: /usr/local/bin/codex
+  register: _codex_system_shim
+  when: codex_standalone_enabled | default(true)
+
+- name: Remove broken system-level Codex symlink
+  # Some base images ship a dangling /usr/local/bin/codex (pointing at a
+  # /usr/bin/codex that is never installed). In shells without the user bin
+  # directories on PATH it shadows the working launcher and makes `codex`
+  # fail with "No such file or directory". Only symlinks are removed; a real
+  # file is left for the operator to review.
+  ansible.builtin.file:
+    path: /usr/local/bin/codex
+    state: absent
+  when:
+    - codex_standalone_enabled | default(true)
+    - _codex_system_shim.stat.exists
+    - _codex_system_shim.stat.islnk
+
+# =============================================================================
 # Optional Qwen Code provider configuration
 # =============================================================================
 # The secret command is supplied by the operator in protected variables. This
