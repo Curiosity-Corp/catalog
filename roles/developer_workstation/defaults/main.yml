@@ -149,7 +149,7 @@ workstation_application_contracts:
   vault: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/vault, version]}
   packer: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/packer, version]}
   m365-cli: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/m365", --version]}
-  codex: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/codex", --version]}
+  codex: {installer: codex-standalone, verification: official-installer, scope: user, healthcheck: [.local/bin/codex, --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
 
 # Dynamic includes are entered only when their include task carries the
@@ -272,7 +272,7 @@ workstation_update_managed_paths:
   - /usr/local/bin/packer
   - "{{ npm_global_prefix }}/bin/npm"
   - "{{ npm_global_prefix }}/bin/m365"
-  - "{{ npm_global_prefix }}/bin/codex"
+  - "{{ dev_user_home }}/.local/bin/codex"
   - "{{ npm_global_prefix }}/bin/pnpm"
   - "{{ npm_global_prefix }}/bin/yarn"
   - "{{ npm_global_prefix }}/bin/tsc"
@@ -330,10 +330,12 @@ npm_global_command_links:
 
 # AI coding assistants are also user-scoped and refreshed nightly. Keep the
 # package list in defaults so every workstation profile gets the same policy.
+# Codex is deliberately excluded: the official standalone installer owns
+# ~/.local/bin/codex (see codex_standalone_* below), and a nightly npm copy
+# created a second codex whose PATH order decided which install ran.
 ai_assistant_packages:
   - "@anthropic-ai/claude-code"
   - "@google/gemini-cli"
-  - "@openai/codex"
   - "@qwen-code/qwen-code"
 
 # npm considers an already-installed package current even when an interrupted
@@ -342,8 +344,17 @@ ai_assistant_packages:
 ai_assistant_command_links:
   - {package: "@anthropic-ai/claude-code", command: claude, relative_path: bin/claude.exe}
   - {package: "@google/gemini-cli", command: gemini, relative_path: bundle/gemini.js}
-  - {package: "@openai/codex", command: codex, relative_path: bin/codex.js}
   - {package: "@qwen-code/qwen-code", command: qwen, relative_path: cli-entry.js}
+
+# Standalone Codex CLI. The role ensures the official standalone binary is
+# present at the user-scoped launcher path and migrates machines away from the
+# legacy npm-managed install. A user-level auto-update timer (codex-auto-update)
+# keeps the release current between ansible-pull runs.
+codex_standalone_enabled: true
+codex_standalone_installer_url: "https://chatgpt.com/codex/install.sh"
+codex_standalone_release: latest
+codex_standalone_install_dir: "{{ dev_user_home }}/.local/bin"
+codex_standalone_home_dir: "{{ dev_user_home }}/.codex"
 
 # Microsoft 365 CLI is kept in its own user-scoped package list (installed by
 # tasks/m365-cli.yml, tag: m365) rather than folded into npm_global_packages,
@@ -358,7 +369,7 @@ m365_cli_packages:
 workstation_update_rollback_excluded_paths:
   - "{{ npm_global_prefix }}/bin/npm"
   - "{{ npm_global_prefix }}/bin/m365"
-  - "{{ npm_global_prefix }}/bin/codex"
+  - "{{ dev_user_home }}/.local/bin/codex"
   - "{{ npm_global_prefix }}/bin/pnpm"
   - "{{ npm_global_prefix }}/bin/yarn"
   - "{{ npm_global_prefix }}/bin/tsc"

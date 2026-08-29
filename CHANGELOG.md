@@ -31,6 +31,14 @@ All notable changes to this project are documented here. The format follows
   `npm_global_packages` baseline into its own `m365_cli_packages` list and
   `tasks/m365-cli.yml`, gated behind a new `m365` Ansible tag, so consumers
   can select it independently of the rest of the Node.js toolchain.
+- Codex CLI is now managed by the official standalone installer at
+  `~/.local/bin/codex` instead of the nightly `@openai/codex` npm refresh.
+  The npm package and the standalone binary both provide a `codex` command,
+  and PATH order decided which install ran, so a missing or broken npm copy
+  broke the user's `codex` command on pulls where the refresh failed. The
+  role now migrates legacy npm installs, repairs a missing standalone
+  launcher, and removes dangling `/usr/local/bin/codex` symlinks shipped by
+  some base images.
 
 ## [0.1.0] - planned
 
