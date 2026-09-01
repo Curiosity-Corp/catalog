@@ -111,6 +111,8 @@ The most important variables are:
 | `ziti_enabled` | `false` | Opt into OpenZiti and supply local domains/provider |
 | `sunshine_enabled` | `false` | Opt into remote desktop streaming |
 | `profile_cleanup_enabled` | `false` | Opt into shared-machine profile cleanup |
+| `t460_console_diagnostics_enabled` | `true` | Install the read-only T460 DRM/fbcon status helper when a T460 hardware profile is selected |
+| `t460_fbcon_horizontal_enabled` | `false` | Write an explicit, operator-reviewed fbcon test command line; never changes GRUB automatically |
 | `custom_ca_certificates` | `[]` | Controller-local private CA files, kept outside Git |
 
 See [`docs/configuration.md`](docs/configuration.md) for examples and the

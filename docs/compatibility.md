@@ -9,6 +9,7 @@ evidence.
 | Ubuntu 22.04 (amd64) | supported target | Core role and desktop profile are the primary compatibility path |
 | Ubuntu 24.04 (amd64) | supported target | Recommended starting point for new deployments |
 | Ubuntu 25.10+ (amd64) | experimental | Some third-party repositories may use `apt_fallback_release` |
+| Ubuntu 26.04 (amd64) | experimental target | Used by the T460 BYOD image; validate package availability and hardware behavior before fleet rollout |
 | Debian 12/13 (amd64) | experimental | Test profile-specific package names before fleet rollout |
 | ARM64 Debian-family devices | experimental | Use thin-client or generic hardware profile first |
 | Other distributions | unsupported for now | Contributions welcome with CI and VM evidence |
