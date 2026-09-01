@@ -1,0 +1,100 @@
+---
+# Lenovo T460 console support.
+#
+# This file intentionally does not install a custom kernel or modify GRUB.
+# The horizontal fbcon patch is experimental and lives with the T460 image
+# research in the T460 image repository. The role provides diagnostics for
+# every matching hardware profile and writes a command-line artifact only when
+# an operator explicitly supplies the opt-in variables.
+
+- name: Verify the T460 console profile is running on x86
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture in ['x86_64', 'amd64']
+    fail_msg: >-
+      The T460 console profile requires x86_64/amd64 facts; refusing to apply
+      it to {{ ansible_architecture }}.
+
+- name: Install T460 console status helper
+  ansible.builtin.copy:
+    dest: "{{ t460_console_status_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by curiosity.workstation. Read-only T460 DRM/fbcon diagnostics.
+      set -eu
+
+      printf '%s\n' 'T460 console status'
+      printf 'kernel: %s\n' "$(uname -r)"
+
+      if [ -r /proc/cmdline ]; then
+        printf 'cmdline: %s\n' "$(cat /proc/cmdline)"
+      fi
+
+      parameter=/sys/module/drm_kms_helper/parameters/fbdev_layout_horizontal
+      if [ -r "$parameter" ]; then
+        printf 'horizontal_fbcon_parameter: %s\n' "$(cat "$parameter")"
+      else
+        printf '%s\n' 'horizontal_fbcon_parameter: unavailable (stock/unpatched helper or module not loaded)'
+      fi
+
+      printf '%s\n' 'drm_connectors:'
+      found_connector=0
+      for connector in /sys/class/drm/card*-*; do
+        [ -r "$connector/status" ] || continue
+        found_connector=1
+        name=${connector##*/}
+        status=$(cat "$connector/status")
+        printf '  %s: %s' "$name" "$status"
+        if [ -r "$connector/modes" ]; then
+          mode=$(head -n 1 "$connector/modes" 2>/dev/null || true)
+          [ -z "$mode" ] || printf ' first_mode=%s' "$mode"
+        fi
+        printf '\n'
+      done
+      [ "$found_connector" -eq 1 ] || printf '%s\n' '  (none exposed)'
+
+      printf '%s\n' 'framebuffers:'
+      found_framebuffer=0
+      for framebuffer in /sys/class/graphics/fb*; do
+        [ -d "$framebuffer" ] || continue
+        found_framebuffer=1
+        name=${framebuffer##*/}
+        printf '  %s' "$name"
+        if [ -r "$framebuffer/virtual_size" ]; then
+          printf ' virtual_size=%s' "$(cat "$framebuffer/virtual_size")"
+        fi
+        if [ -r "$framebuffer/stride" ]; then
+          printf ' stride=%s' "$(cat "$framebuffer/stride")"
+        fi
+        printf '\n'
+      done
+      [ "$found_framebuffer" -eq 1 ] || printf '%s\n' '  (none exposed)'
+
+- name: Validate explicit horizontal fbcon inputs
+  ansible.builtin.assert:
+    that:
+      - t460_fbcon_kernel_parameter | length > 0
+      - t460_fbcon_video_args | length >= 2
+    fail_msg: >-
+      t460_fbcon_horizontal_enabled requires the kernel parameter and at least
+      two explicit video= connector arguments; no automatic connector layout
+      is safe across T460 docks/adapters.
+  when: t460_fbcon_horizontal_enabled | bool
+
+- name: Write explicit horizontal fbcon test command line
+  ansible.builtin.copy:
+    dest: "{{ t460_fbcon_cmdline_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ ([t460_fbcon_kernel_parameter] + t460_fbcon_video_args) | join(' ') }}\n"
+  when: t460_fbcon_horizontal_enabled | bool
+
+- name: Remove disabled horizontal fbcon command-line artifact
+  ansible.builtin.file:
+    path: "{{ t460_fbcon_cmdline_path }}"
+    state: absent
+  when: not (t460_fbcon_horizontal_enabled | bool)

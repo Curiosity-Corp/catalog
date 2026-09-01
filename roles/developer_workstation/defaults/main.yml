@@ -500,6 +500,17 @@ workspace_gitlab_external_auth_provider: gitlab
 # Enable on iGPU passthrough VMs that need physical display + VNC
 display_config_enabled: false
 
+# Lenovo T460 raw-console support. The status command is a harmless diagnostic
+# for the two T460 hardware profiles. The horizontal fbcon mode remains
+# explicitly disabled: it requires a separately built/signed kernel containing
+# the experimental patch documented in the T460 image repository.
+t460_console_diagnostics_enabled: true
+t460_console_status_path: /usr/local/bin/curiosity-t460-console-status
+t460_fbcon_horizontal_enabled: false
+t460_fbcon_kernel_parameter: drm_kms_helper.fbdev_layout_horizontal=1
+t460_fbcon_video_args: []
+t460_fbcon_cmdline_path: /etc/curiosity/t460-fbcon-horizontal.cmdline
+
 # Minimal desktop (Openbox + LightDM + Firefox)
 # Lightweight GUI for machines that only need a browser and terminal.
 # Mutually exclusive with display_config_enabled (GDM/GNOME).
@@ -619,6 +630,7 @@ hardware_profiles:
       - acpid
       - tlp
     pia_vpn: false
+    console_diagnostics: true
 
   z590:
     description: "ASUS TUF Gaming Z590 — iGPU passthrough VM host"
@@ -678,3 +690,4 @@ hardware_profiles:
     pipx_packages: []
     udev_rules: []
     pia_vpn: false
+    console_diagnostics: true

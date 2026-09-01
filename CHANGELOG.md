@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format follows
   documentation.
 - Optional custom CA, GitLab/Coder, Ziti service, and split-DNS configuration.
 - Regression checks for update policy and public-surface hygiene.
+- T460 console diagnostics and a guarded handoff for the experimental
+  horizontal DRM fbcon test command line.
 
 ### Changed
 

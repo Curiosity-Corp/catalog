@@ -243,6 +243,14 @@
   ansible.builtin.include_tasks: user-env.yml
   tags: [user]
 
+- name: Include T460 console support
+  ansible.builtin.include_tasks: t460-console.yml
+  tags: [t460, console, display]
+  when:
+    - hardware_profile in ['t460', 'x86-byod-laptop']
+    - hardware_profiles[hardware_profile].console_diagnostics | default(false) | bool
+    - t460_console_diagnostics_enabled | default(true) | bool
+
 - name: Include shell RC fallback
   ansible.builtin.include_tasks: user-shell-fallback.yml
   tags: [user, shell]
