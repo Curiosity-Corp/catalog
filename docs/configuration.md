@@ -14,6 +14,12 @@ dev_user: researcher
 dev_user_home: /home/researcher
 workstation_profile: desktop
 hardware_profile: generic
+
+# Optional: permanently mask obsolete user-scoped systemd units. Keep this in
+# protected host/group inventory when the names identify private applications.
+workstation_user_systemd_masked_units:
+  - obsolete-helper.service
+  - obsolete-helper.timer
 ```
 
 For a VM or an existing user, pass the actual account and home directory. The
@@ -46,6 +52,17 @@ ziti_etc_hosts_pins:
 Use `ziti_service_name` and `ziti_manage_service: false` when a separate
 operator-managed tunnel unit owns the interface. Pins are refreshed only for
 names explicitly supplied by the operator.
+
+## User-scoped systemd masks
+
+`workstation_user_systemd_masked_units` is an opt-in list of bare user-unit
+names. For each entry the role stops and disables a running unit when the
+managed user's systemd session is available, removes stale `default.target`
+and `timers.target` links, and converges the unit path to systemd's native
+`/dev/null` mask. A mask prevents a superseded timer or service from being
+started again by an installer or helper. The default is empty so unrelated
+workstations are unchanged; keep organization-specific unit names in protected
+inventory rather than in this public collection.
 
 ## Custom CA certificates
 

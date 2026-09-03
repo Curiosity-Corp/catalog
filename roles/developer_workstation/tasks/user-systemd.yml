@@ -1,0 +1,132 @@
+---
+# =============================================================================
+# Declarative user-scoped systemd policy
+# =============================================================================
+# Site-specific host inventory may list user units that are obsolete or
+# superseded by another scheduler. A /dev/null symlink is systemd's native
+# persistent mask representation; it is safer than merely deleting a unit,
+# because a package or helper cannot start the unit again until an operator
+# deliberately removes the declared mask. The public defaults remain empty.
+
+- name: Validate user systemd mask declarations
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item | length > 0
+      - item is match('^[A-Za-z0-9@_.:-]+$')
+    fail_msg: >-
+      workstation_user_systemd_masked_units entries must be bare systemd unit
+      names without path separators: {{ item | default('undefined') }}
+  loop: "{{ workstation_user_systemd_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Ensure the managed user's systemd unit directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Discover the managed user's runtime directory
+  ansible.builtin.stat:
+    path: "/run/user/{{ getent_passwd[dev_user][1] }}"
+  register: _user_systemd_runtime_dir
+
+- name: Probe the managed user's systemd manager
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - show-environment
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    USER: "{{ dev_user }}"
+    LOGNAME: "{{ dev_user }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+  register: _user_systemd_manager
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _user_systemd_runtime_dir.stat.exists | default(false)
+
+- name: Stop and disable any active declared user units
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    scope: user
+    state: stopped
+    enabled: false
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    USER: "{{ dev_user }}"
+    LOGNAME: "{{ dev_user }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+  register: _user_systemd_stop
+  failed_when: >-
+    _user_systemd_stop is failed and
+    not (
+      'not found' in ((_user_systemd_stop.msg | default('')) | lower) or
+      'not loaded' in ((_user_systemd_stop.msg | default('')) | lower) or
+      'masked' in ((_user_systemd_stop.msg | default('')) | lower)
+    )
+  no_log: true
+  loop: "{{ workstation_user_systemd_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - _user_systemd_runtime_dir.stat.exists | default(false)
+    - _user_systemd_manager.rc | default(1) == 0
+
+- name: Remove stale default-target enablement links
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/systemd/user/default.target.wants/{{ item }}"
+    state: absent
+  loop: "{{ workstation_user_systemd_masked_units }}"
+  loop_control:
+    label: "default.target.wants/{{ item }}"
+
+- name: Remove stale timer-target enablement links
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/systemd/user/timers.target.wants/{{ item }}"
+    state: absent
+  loop: "{{ workstation_user_systemd_masked_units }}"
+  loop_control:
+    label: "timers.target.wants/{{ item }}"
+
+- name: Enforce native systemd masks for declared user units
+  ansible.builtin.file:
+    src: /dev/null
+    dest: "{{ dev_user_home }}/.config/systemd/user/{{ item }}"
+    state: link
+    force: true
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+  loop: "{{ workstation_user_systemd_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Reload the managed user's systemd manager after mask convergence
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: user
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    USER: "{{ dev_user }}"
+    LOGNAME: "{{ dev_user }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - _user_systemd_runtime_dir.stat.exists | default(false)
+    - _user_systemd_manager.rc | default(1) == 0

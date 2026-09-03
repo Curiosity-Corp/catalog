@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The format follows
 - Regression checks for update policy and public-surface hygiene.
 - T460 console diagnostics and a guarded handoff for the experimental
   horizontal DRM fbcon test command line.
+- An opt-in declarative policy for masking obsolete user-scoped systemd units.
 
 ### Changed
 

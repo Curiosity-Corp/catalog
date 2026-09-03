@@ -82,6 +82,14 @@
     mode: "0750"
     recurse: false
 
+- name: Enforce declarative user systemd policy
+  ansible.builtin.include_tasks:
+    file: user-systemd.yml
+    apply:
+      tags: [systemd, user-systemd]
+  tags: [systemd, user-systemd]
+  when: workstation_user_systemd_masked_units | default([]) | length > 0
+
 - name: Initialize workstation update control plane
   ansible.builtin.include_tasks:
     file: update-foundation.yml
