@@ -4,6 +4,14 @@ dev_user_home: /home/curiosity
 # Optional machine-local override file. Keep per-person/user values here on the
 # target host instead of committing host-specific maps to this repo.
 developer_workstation_local_vars_file: /etc/ansible/local-vars.yml
+
+# User-scoped systemd units that must remain masked on this workstation. This
+# is intentionally empty for the public baseline: site operators can declare
+# obsolete or superseded user timers in protected inventory without putting
+# private application names in the collection. The role owns the mask and
+# removes stale target-wants links idempotently on every convergence.
+workstation_user_systemd_masked_units: []
+
 # Role profile:
 #   desktop   = full workstation (physical/VM desktop host)
 #   workspace = container-safe Coder workspace profile

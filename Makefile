@@ -18,6 +18,7 @@ lint:
 
 test:
 	$(PYTHON) tests/test_update_policy.py
+	$(PYTHON) tests/test_user_systemd_policy.py
 	$(PYTHON) -m pytest -q tests/test_public_contract.py
 
 collection:
