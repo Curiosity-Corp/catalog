@@ -84,6 +84,66 @@
     - _user_systemd_runtime_dir.stat.exists | default(false)
     - _user_systemd_manager.rc | default(1) == 0
 
+- name: Read declared user unit failure state  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - show
+      - --property=ActiveState
+      - --property=Result
+      - "{{ item }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    USER: "{{ dev_user }}"
+    LOGNAME: "{{ dev_user }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+  register: _user_systemd_failure_states
+  changed_when: false
+  failed_when: false
+  no_log: true
+  loop: "{{ workstation_user_systemd_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - _user_systemd_runtime_dir.stat.exists | default(false)
+    - _user_systemd_manager.rc | default(1) == 0
+
+- name: Clear stale failure state for declared user units  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - --user
+      - reset-failed
+      - "{{ item.item }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    USER: "{{ dev_user }}"
+    LOGNAME: "{{ dev_user }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+  register: _user_systemd_reset_failed
+  changed_when: >-
+    item.stdout is search('(?m)^ActiveState=failed$') or
+    item.stdout is search('(?m)^Result=(?!success$).+$')
+  failed_when: _user_systemd_reset_failed.rc != 0
+  no_log: true
+  loop: "{{ _user_systemd_failure_states.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - _user_systemd_runtime_dir.stat.exists | default(false)
+    - _user_systemd_manager.rc | default(1) == 0
+    - item.rc | default(1) == 0
+    - >-
+      item.stdout is search('(?m)^ActiveState=failed$') or
+      item.stdout is search('(?m)^Result=(?!success$).+$')
+
 - name: Remove stale default-target enablement links
   ansible.builtin.file:
     path: "{{ dev_user_home }}/.config/systemd/user/default.target.wants/{{ item }}"
