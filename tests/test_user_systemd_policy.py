@@ -24,6 +24,9 @@ def test_user_systemd_masks_are_opt_in_and_native() -> None:
         "timers.target.wants",
         "systemctl",
         "show-environment",
+        "ActiveState=failed",
+        "Result=",
+        "reset-failed",
     ):
         assert fragment in policy, f"user systemd policy is missing {fragment!r}"
 

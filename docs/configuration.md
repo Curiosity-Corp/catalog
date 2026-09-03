@@ -59,10 +59,12 @@ names explicitly supplied by the operator.
 names. For each entry the role stops and disables a running unit when the
 managed user's systemd session is available, removes stale `default.target`
 and `timers.target` links, and converges the unit path to systemd's native
-`/dev/null` mask. A mask prevents a superseded timer or service from being
-started again by an installer or helper. The default is empty so unrelated
-workstations are unchanged; keep organization-specific unit names in protected
-inventory rather than in this public collection.
+`/dev/null` mask. It also clears any stale failed state recorded for the unit,
+so a retired timer cannot continue to appear as a failed user service after it
+is masked. A mask prevents a superseded timer or service from being started
+again by an installer or helper. The default is empty so unrelated workstations
+are unchanged; keep organization-specific unit names in protected inventory
+rather than in this public collection.
 
 ## Custom CA certificates
 
