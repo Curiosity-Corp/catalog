@@ -18,6 +18,16 @@
     group: "{{ dev_user }}"
     mode: "0755"
 
+- name: Disable corepack shims so npm-managed pnpm is canonical
+  # Corepack ships pnpm shims that shadow the npm-global launcher. Under
+  # ansible-pull's stripped non-interactive environment the shim exits nonzero,
+  # which trips the post-update pnpm healthcheck and rolls the transaction
+  # back. Runs as root so the shims are removed system-wide.
+  ansible.builtin.command: corepack disable
+  register: _corepack_disable_result
+  changed_when: "'removed' in ((_corepack_disable_result.stdout | default('')) + (_corepack_disable_result.stderr | default('')))"
+  failed_when: false
+
 - name: Update user-scoped npm global packages to latest
   community.general.npm:
     name: "{{ item }}"
