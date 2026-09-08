@@ -190,6 +190,10 @@ def main() -> None:
         ROLE / "tasks/node-packages.yml"
     ).read_text():
         raise SystemExit("Corepack shims must be disabled so npm-managed pnpm is canonical")
+    if "Ensure repaired launcher targets are executable" not in (
+        ROLE / "tasks/node-packages.yml"
+    ).read_text():
+        raise SystemExit("Repaired package-manager launchers must be executable")
     # m365-cli is deliberately NOT in npm_global_packages: it lives in its own
     # m365_cli_packages list (installed by tasks/m365-cli.yml, tag: m365) so a
     # consumer can select it independently of the rest of the Node toolchain.

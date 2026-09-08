@@ -56,6 +56,20 @@
   loop_control:
     label: "{{ item.command }}"
 
+- name: Ensure repaired launcher targets are executable
+  # Corepack provisions its pnpm entry points (bin/pnpm.mjs, bin/pnpx.mjs)
+  # without the execute bit, and npm will not repair permissions when the
+  # installed version is already latest. Without this, the post-update pnpm
+  # healthcheck fails with permission denied and rolls the transaction back.
+  ansible.builtin.file:
+    path: "{{ npm_global_prefix }}/lib/node_modules/{{ item.package }}/{{ item.relative_path }}"
+    mode: "0755"
+  become: true
+  become_user: "{{ dev_user }}"
+  loop: "{{ npm_global_command_links }}"
+  loop_control:
+    label: "{{ item.command }}"
+
 - name: Remove obsolete root-scoped copies of catalog-managed npm apps
   community.general.npm:
     name: "{{ item }}"
