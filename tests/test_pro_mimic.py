@@ -147,12 +147,26 @@ def test_ssh_hardening_is_a_minimal_hand_rolled_subset() -> None:
     assert "cmd: sshd -t" in handlers
 
 
+def test_hwe_drift_is_surfaced_never_enforced() -> None:
+    kernel = (TASKS / "pro-mimic-kernel.yml").read_text()
+    assert "linux-generic" in kernel
+    assert "linux-*hwe*" in kernel
+    # A hard assert would fail the nightly pull on any HWE-carrying laptop
+    # and stop the fleet converging; drift is warned and recorded instead.
+    assert "ansible.builtin.assert" not in kernel
+    assert "ansible.builtin.debug" in kernel
+    status = (TASKS / "pro-mimic-pull-status.yml").read_text()
+    assert "hwe_packages" in status
+
+
 def test_display_manager_modes_are_explicit() -> None:
     display = (TASKS / "pro-mimic-display-manager.yml").read_text()
     assert "display_manager_mode in ['always', 'ondemand', 'disabled']" in display
     assert "systemctl get-default" in display
     assert "systemctl set-default multi-user.target" in display
     assert "lightdm" in display
+    # Boot behavior only: a pull must never kill a live on-demand GUI session.
+    assert "state: stopped" not in "\n".join(_code_lines(display))
 
 
 def test_no_livepatch_diy() -> None:

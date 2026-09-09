@@ -14,6 +14,10 @@
 # graphical.target. This file runs AFTER the minimal-desktop include in
 # main.yml, so ondemand/disabled wins on every pull without editing the
 # existing desktop tasks.
+#
+# Live-session safety: these tasks only change boot behavior (enablement and
+# default target). They never stop a running LightDM session — an operator
+# who started the GUI on demand keeps it until logout/reboot.
 # =============================================================================
 
 - name: Validate display_manager_mode
@@ -32,22 +36,18 @@
   ansible.builtin.systemd:
     name: lightdm
     enabled: false
-    state: stopped
   when:
     - display_manager_mode == 'ondemand'
     - _pro_mimic_lightdm_unit.stat.exists | default(false)
-  failed_when: false
 
 - name: Mask LightDM when the display manager is disabled
   ansible.builtin.systemd:
     name: lightdm
     masked: true
     enabled: false
-    state: stopped
   when:
     - display_manager_mode == 'disabled'
     - _pro_mimic_lightdm_unit.stat.exists | default(false)
-  failed_when: false
 
 - name: Get current systemd default target
   ansible.builtin.command:

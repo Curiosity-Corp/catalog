@@ -24,6 +24,19 @@
     path: /var/run/reboot-required
   register: _pro_mimic_reboot_required
 
+# Self-contained HWE observation (mirrors pro-mimic-kernel.yml) so focused
+# `--tags pro-mimic` runs record the drift even when the kernel tasks were
+# filtered out. Never fails: HWE drift is surfaced, not enforced.
+- name: List installed HWE kernel packages for the status record
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dpkg -l 'linux-*hwe*' 2>/dev/null | awk '/^ii/ {print $2}'
+    executable: /bin/bash
+  register: _pro_mimic_hwe_status
+  changed_when: false
+  failed_when: false
+
 - name: Write the ansible-pull convergence status record
   ansible.builtin.copy:
     content: >-
@@ -42,6 +55,7 @@
             'motd_news_enabled': pro_mimic_motd_news_enabled | default(false)
           },
           'reboot_required': _pro_mimic_reboot_required.stat.exists,
+          'hwe_packages': _pro_mimic_hwe_status.stdout_lines | default([]),
           'catalog_commit': workstation_catalog_commit | default(''),
           'catalog_commit_verified': workstation_catalog_commit_verified | default(false)
         } | to_nice_json
