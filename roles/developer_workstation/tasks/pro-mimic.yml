@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# Pro-free-mimic: free Ubuntu-Pro equivalents (report-only, never reboot)
+# =============================================================================
+# Ubuntu 26.04 LTS carries standard support to ~2031, so a Pro subscription
+# buys this fleet almost nothing today (partial Universe SLA, Livepatch
+# convenience, compliance content). This plane converges the free
+# equivalents idempotently via ansible-pull instead of attaching machines to
+# Pro. Wired into main.yml with tags [pro-mimic, security] after the
+# minimal-desktop include so display_manager_mode wins over LightDM's
+# unconditional graphical.target (see pro-mimic-display-manager.yml).
+#
+# Explicit NON-GOALS (enforced by tests/test_pro_mimic.py):
+#   - No kpatch/livepatch DIY and no `pro attach` outside the pre-existing
+#     ubuntu_pro_token gate in maintenance.yml (token default stays "").
+#   - No CIS auto-remediation: pro_mimic_cis_remediate defaults false, and any
+#     future remediation requires an explicit per-profile rule-ID allowlist.
+#   - No automatic reboots: Unattended-Upgrade::Automatic-Reboot is "false";
+#     pending reboots surface via MOTD and the pull-status record only.
+# =============================================================================
+
+- name: Include explicit unattended-upgrades origins (no auto-reboot)
+  ansible.builtin.include_tasks: pro-mimic-unattended-origins.yml
+  tags: [pro-mimic, security, updates]
+
+- name: Include needrestart automatic-restart policy
+  ansible.builtin.include_tasks: pro-mimic-needrestart.yml
+  tags: [pro-mimic, security, updates]
+
+- name: Include minimal hardened sshd subset
+  ansible.builtin.include_tasks: pro-mimic-ssh.yml
+  tags: [pro-mimic, security, ssh]
+
+- name: Include MOTD security visibility
+  ansible.builtin.include_tasks: pro-mimic-motd.yml
+  tags: [pro-mimic, security, motd]
+
+- name: Include ESM/security-status visibility (report-only)
+  ansible.builtin.include_tasks: pro-mimic-esm.yml
+  tags: [pro-mimic, security]
+
+- name: Include GA kernel pinning (surface reboot, never reboot)
+  ansible.builtin.include_tasks: pro-mimic-kernel.yml
+  tags: [pro-mimic, security, kernel]
+
+- name: Include display-manager mode control
+  ansible.builtin.include_tasks: pro-mimic-display-manager.yml
+  tags: [pro-mimic, security, display]
+
+- name: Include ansible-pull convergence status record
+  ansible.builtin.include_tasks: pro-mimic-pull-status.yml
+  tags: [pro-mimic, security]

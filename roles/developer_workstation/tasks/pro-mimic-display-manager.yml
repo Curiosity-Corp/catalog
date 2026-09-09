@@ -1,0 +1,65 @@
+---
+# =============================================================================
+# Pro-free-mimic: display-manager mode (always | ondemand | disabled)
+# =============================================================================
+# Controls whether a graphical login manager starts at boot. The public
+# default `always` is a strict no-op (zero behavior change for existing
+# consumers). Fleet T460 laptops set `display_manager_mode: ondemand` via
+# /etc/ansible/local-vars.yml to match their hand-applied posture: LightDM
+# stays installed but disabled and the default target is multi-user, so the
+# GUI starts only on explicit request (`sudo systemctl start lightdm`).
+# `disabled` additionally masks LightDM so nothing can start it implicitly.
+#
+# Ordering note: minimal-desktop-lightdm.yml unconditionally forces
+# graphical.target. This file runs AFTER the minimal-desktop include in
+# main.yml, so ondemand/disabled wins on every pull without editing the
+# existing desktop tasks.
+#
+# Live-session safety: these tasks only change boot behavior (enablement and
+# default target). They never stop a running LightDM session — an operator
+# who started the GUI on demand keeps it until logout/reboot.
+# =============================================================================
+
+- name: Validate display_manager_mode
+  ansible.builtin.assert:
+    that:
+      - display_manager_mode in ['always', 'ondemand', 'disabled']
+    fail_msg: "display_manager_mode must be 'always', 'ondemand', or 'disabled'"
+
+- name: Check whether LightDM is installed
+  ansible.builtin.stat:
+    path: /lib/systemd/system/lightdm.service
+  register: _pro_mimic_lightdm_unit
+  when: display_manager_mode != 'always'
+
+- name: Disable LightDM for on-demand graphical sessions
+  ansible.builtin.systemd:
+    name: lightdm
+    enabled: false
+  when:
+    - display_manager_mode == 'ondemand'
+    - _pro_mimic_lightdm_unit.stat.exists | default(false)
+
+- name: Mask LightDM when the display manager is disabled
+  ansible.builtin.systemd:
+    name: lightdm
+    masked: true
+    enabled: false
+  when:
+    - display_manager_mode == 'disabled'
+    - _pro_mimic_lightdm_unit.stat.exists | default(false)
+
+- name: Get current systemd default target
+  ansible.builtin.command:
+    cmd: systemctl get-default
+  register: _pro_mimic_default_target
+  changed_when: false
+  when: display_manager_mode != 'always'
+
+- name: Set multi-user.target as systemd default (display starts on demand)
+  ansible.builtin.command:
+    cmd: systemctl set-default multi-user.target
+  when:
+    - display_manager_mode != 'always'
+    - _pro_mimic_default_target.stdout | default('') | trim != 'multi-user.target'
+  changed_when: true

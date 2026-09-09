@@ -190,7 +190,7 @@
 # hibernate requests from desktop helpers and login sessions.
 # =============================================================================
 
-- name: Deploy optional wired Netplan policy for the T460
+- name: Deploy optional wired Netplan policy for admin laptops
   ansible.builtin.copy:
     src: 99-curiosity-laptop-wired-optional.yaml
     dest: /etc/netplan/99-curiosity-laptop-wired-optional.yaml
@@ -200,7 +200,7 @@
   register: _laptop_netplan_optional
   notify: Regenerate Netplan after laptop wired-link policy changes
   when:
-    - hardware_profile == 'x86-byod-laptop'
+    - hardware_profile in ['t460', 'x86-byod-laptop']
 
 - name: Ensure laptop no-sleep logind drop-in directory exists
   ansible.builtin.file:

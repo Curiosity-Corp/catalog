@@ -1,0 +1,71 @@
+---
+# =============================================================================
+# Pro-free-mimic: GA kernel pinning (no HWE, no livepatch DIY, never reboot)
+# =============================================================================
+# The fleet standardizes on the general-availability kernel (linux-generic):
+# HWE stacks trade stability churn for newer hardware enablement this fleet
+# does not need, and unattended HWE major-version transitions have stranded
+# machines before. linux-generic is ensured present; any installed HWE
+# kernel package on a laptop profile fails the pull with an explanatory
+# message so the drift is fixed deliberately, not silently.
+#
+# Explicit NON-GOAL: no kpatch/livepatch DIY — rebootless patching without
+# Canonical's signed livepatch payloads is out of scope. A pending reboot is
+# surfaced via MOTD below and recorded in the pull-status record; the role
+# never reboots a workstation (see Unattended-Upgrade::Automatic-Reboot).
+#
+# HWE drift is SURFACED, never a hard failure: one fleet laptop legitimately
+# runs the HWE stack today, and failing its pull every night would stop the
+# fleet converging. Migrating that host to the GA kernel needs a deliberate
+# maintenance window with a reboot, so the finding is warned in the pull log
+# and recorded in the pull-status record until an operator remediates it.
+# =============================================================================
+
+- name: Ensure the GA kernel metapackage is installed
+  ansible.builtin.apt:
+    name: linux-generic
+    state: present
+  # The GA metapackage name is x86-centric; ARM thin clients track their own
+  # board kernels, so pinning applies to the x86_64 fleet only.
+  when: ansible_architecture == 'x86_64'
+
+- name: List installed HWE kernel packages
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dpkg -l 'linux-*hwe*' 2>/dev/null | awk '/^ii/ {print $2}'
+    executable: /bin/bash
+  register: _pro_mimic_hwe_packages
+  changed_when: false
+  failed_when: false
+
+- name: Warn when an HWE kernel is installed on a laptop profile
+  ansible.builtin.debug:
+    msg: >-
+      HWE kernel packages are installed on a laptop-profile host
+      ({{ _pro_mimic_hwe_packages.stdout_lines | join(', ') }}), but the
+      fleet standard is the GA kernel (linux-generic). This is recorded in
+      the pull-status record; migrate deliberately (remove the HWE stack and
+      reboot by hand) instead of letting automation fail the pull.
+  when:
+    - hardware_profile in ['t460', 'x86-byod-laptop']
+    - _pro_mimic_hwe_packages.stdout_lines | length > 0
+
+- name: Deploy reboot-required MOTD notice (surface only, never reboot)
+  ansible.builtin.copy:
+    dest: /etc/update-motd.d/97-curiosity-reboot-required
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by Ansible — developer-workstation role (pro-free-mimic).
+      # Surfaces a pending reboot at login. This fleet never reboots itself.
+      if [ -f /var/run/reboot-required ]; then
+        echo '*** System restart required ***'
+        if [ -f /var/run/reboot-required.pkgs ]; then
+          echo 'Packages requesting restart:'
+          sed 's/^/  /' /var/run/reboot-required.pkgs 2>/dev/null || true
+        fi
+      fi
+      exit 0

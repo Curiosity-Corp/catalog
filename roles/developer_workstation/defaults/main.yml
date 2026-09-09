@@ -596,6 +596,46 @@ fwupd_auto_apply: false
 failed_sweep_webhook_url: ""
 
 # =============================================================================
+# Free Ubuntu-Pro equivalents (pro-free-mimic plane, tasks/pro-mimic.yml)
+# =============================================================================
+# Ubuntu 26.04 LTS carries standard support to ~2031, so a Pro subscription
+# buys this fleet almost nothing today (partial Universe SLA, Livepatch
+# convenience, compliance content). This plane converges the free equivalents
+# instead: explicit security origins, automatic service restarts, hardened
+# SSH, MOTD visibility, ESM-status reporting, GA kernel pinning, pull-status
+# records, and display-manager mode control.
+#
+# Explicit NON-GOALS (do not add these here):
+#   - No kpatch/livepatch DIY. Rebootless kernel patching without Canonical's
+#     signed livepatch payloads is out of scope; pending reboots are surfaced
+#     via MOTD and the pull-status record instead. The fleet never reboots
+#     itself (Unattended-Upgrade::Automatic-Reboot stays "false").
+#   - No CIS auto-remediation. pro_mimic_cis_remediate stays false; flipping it
+#     in the future requires an explicit per-profile allowlist of rule IDs in
+#     host/group vars — never a blanket --remediate run.
+# No token work: ubuntu_pro_token above stays "" and its existing attach gate
+# in maintenance.yml is untouched.
+pro_mimic_needrestart_auto: true
+# Perl regex sources (without delimiters) for services needrestart must never
+# restart automatically, e.g. ['^docker$', '^libvirtd$']. Empty by default.
+pro_mimic_needrestart_blacklist: []
+# SSH stays hardened by default. Set true ONLY on hosts where an operator has
+# explicitly accepted password authentication (the drop-in is then removed).
+pro_mimic_ssh_password_auth: false
+# CIS content remains scan/report-only (see security.yml). Documented
+# allowlist approach only — see NON-GOALS above.
+pro_mimic_cis_remediate: false
+# Display-manager mode: always (leave the display stack alone), ondemand
+# (disable lightdm + multi-user.target so the GUI starts only on request), or
+# disabled (mask lightdm + multi-user.target). Fleet T460 laptops run
+# ondemand via /etc/ansible/local-vars.yml to match their hand-applied
+# posture; the public default stays always (no behavior change).
+display_manager_mode: always
+# MOTD news stays off by default (phoning home to Canonical's news feed on
+# every login is not fleet behavior). Set true to re-enable motd-news.
+pro_mimic_motd_news_enabled: false
+
+# =============================================================================
 # Hardware Profiles
 # =============================================================================
 # Select via: -e hardware_profile=z590
@@ -694,6 +734,11 @@ hardware_profiles:
       - fprintd
       - libpam-fprintd
       - libfprint-2-tod1
+    # Same always-available posture as x86-byod-laptop: the fleet runs
+    # hardware_profile=t460, so these flags must be present here or the
+    # TLP/no-sleep/netplan tasks in system-tuning.yml never fire.
+    disable_sleep: true
+    performance_mode: true
     services: []
     pipx_packages: []
     udev_rules: []

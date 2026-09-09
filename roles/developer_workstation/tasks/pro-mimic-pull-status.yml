@@ -1,0 +1,66 @@
+---
+# =============================================================================
+# Pro-free-mimic: ansible-pull convergence status record
+# =============================================================================
+# Writes /var/lib/curiosity/ansible-pull-status.json on every pull, mirroring
+# the update-manifest.yml pattern (copy with to_nice_json, root-only mode).
+# Deliberately self-contained: it uses only always-available facts plus
+# guarded defaults, so focused runs such as `--tags pro-mimic` record a
+# status line even when the update-transaction facts were never built. The
+# MOTD helper in pro-mimic-motd.yml renders the reboot_required and
+# timestamp fields from this file at login.
+# =============================================================================
+
+- name: Ensure the curiosity state directory exists
+  ansible.builtin.file:
+    path: /var/lib/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check whether a reboot is pending
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: _pro_mimic_reboot_required
+
+# Self-contained HWE observation (mirrors pro-mimic-kernel.yml) so focused
+# `--tags pro-mimic` runs record the drift even when the kernel tasks were
+# filtered out. Never fails: HWE drift is surfaced, not enforced.
+- name: List installed HWE kernel packages for the status record
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dpkg -l 'linux-*hwe*' 2>/dev/null | awk '/^ii/ {print $2}'
+    executable: /bin/bash
+  register: _pro_mimic_hwe_status
+  changed_when: false
+  failed_when: false
+
+- name: Write the ansible-pull convergence status record
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'schema': 'curiosity.ansible-pull.status/v1',
+          'recorded_at': ansible_date_time.iso8601,
+          'host': inventory_hostname,
+          'workstation_profile': workstation_profile,
+          'hardware_profile': hardware_profile,
+          'display_manager_mode': display_manager_mode | default('always'),
+          'pro_mimic': {
+            'needrestart_auto': pro_mimic_needrestart_auto | default(true),
+            'ssh_password_auth': pro_mimic_ssh_password_auth | default(false),
+            'cis_remediate': pro_mimic_cis_remediate | default(false),
+            'motd_news_enabled': pro_mimic_motd_news_enabled | default(false)
+          },
+          'reboot_required': _pro_mimic_reboot_required.stat.exists,
+          'hwe_packages': _pro_mimic_hwe_status.stdout_lines | default([]),
+          'catalog_commit': workstation_catalog_commit | default(''),
+          'catalog_commit_verified': workstation_catalog_commit_verified | default(false)
+        } | to_nice_json
+      }}
+    dest: /var/lib/curiosity/ansible-pull-status.json
+    owner: root
+    group: root
+    mode: "0640"

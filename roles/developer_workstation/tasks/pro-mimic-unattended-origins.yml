@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# Pro-free-mimic: explicit unattended-upgrades origins (free security posture)
+# =============================================================================
+# maintenance.yml installs unattended-upgrades with generic cleanup settings.
+# This file pins the *origins* explicitly so security coverage does not depend
+# on distro-image defaults: the security pocket (which includes
+# universe-security) plus updates, templated on the running release codename
+# so a release upgrade re-renders the file on the next pull.
+#
+# Documented policy: the fleet NEVER reboots itself. Automatic-Reboot stays
+# "false"; a pending reboot is surfaced via MOTD (see
+# pro-mimic-kernel.yml) and recorded in the pull-status record instead.
+# =============================================================================
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+
+- name: Deploy explicit unattended-upgrades origins (security + updates, no auto-reboot)
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52-curiosity-pro-mimic-origins
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by Ansible — developer-workstation role (pro-free-mimic).
+      // Explicit free-security origins for {{ ansible_distribution_release }}.
+      // The -security pocket covers main, restricted, universe (incl.
+      // universe-security), and multiverse; -updates keeps non-security fixes
+      // flowing. Documented policy: never reboot a workstation automatically.
+      Unattended-Upgrade::Origins-Pattern {
+        "origin=Ubuntu,archive={{ ansible_distribution_release }}-security";
+        "origin=Ubuntu,archive={{ ansible_distribution_release }}-updates";
+      };
+      Unattended-Upgrade::Automatic-Reboot "false";

@@ -296,6 +296,13 @@
   tags: [keyboard, system]
   when: workstation_profile in ['thin-client', 'byod-kiosk']
 
+- name: Include free Ubuntu-Pro equivalents (origins, ssh, MOTD, kernel, display)
+  ansible.builtin.include_tasks: pro-mimic.yml
+  tags: [pro-mimic, security]
+  # Machine-level plane: systemd units, MOTD, and default-target changes have
+  # no meaning in the container-safe workspace profile (no systemd there).
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+
 - name: Include kiosk session lockdown (Chromium kiosk, no shell, idle lock)
   ansible.builtin.include_tasks: kiosk-session.yml
   tags: [kiosk, lockdown]

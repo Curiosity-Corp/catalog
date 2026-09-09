@@ -1,0 +1,81 @@
+---
+# =============================================================================
+# Pro-free-mimic: ESM/security-status visibility (report-only, no attach)
+# =============================================================================
+# Free equivalent of "is this machine covered": ubuntu-security-status runs
+# weekly, logs to syslog, and records a JSON observation next to the update
+# manifest for fleet collection. Report-only — this never runs `pro attach`
+# (the only attach path stays behind the ubuntu_pro_token gate in
+# maintenance.yml) and never enables ESM services.
+# =============================================================================
+
+- name: Install update-manager-core (provides ubuntu-security-status)
+  ansible.builtin.apt:
+    name: update-manager-core
+    state: present
+
+- name: Deploy weekly ESM visibility script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/curiosity-esm-visibility.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      # Managed by Ansible — developer-workstation role (pro-free-mimic).
+      # Report-only: records ubuntu-security-status output for fleet review.
+      set -uo pipefail
+      OUT_DIR=/var/lib/curiosity/workstation-updates
+      mkdir -p "$OUT_DIR"
+      STAMP=$(date +%Y%m%d)
+      if ubuntu-security-status >"$OUT_DIR/esm-visibility-$STAMP.txt" 2>&1; then
+        RC=0
+      else
+        RC=$?
+      fi
+      COUNT=$(grep -ciE 'esm|security' "$OUT_DIR/esm-visibility-$STAMP.txt" 2>/dev/null || true)
+      logger -t esm-visibility "ubuntu-security-status complete (rc=$RC, security lines=$COUNT) — see $OUT_DIR/esm-visibility-$STAMP.txt"
+      # Keep four weekly observations; the pull also prunes older ones.
+      ls -t "$OUT_DIR"/esm-visibility-*.txt 2>/dev/null | tail -n +5 | xargs -r rm -f
+      exit 0
+
+- name: Create weekly ESM visibility systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/curiosity-esm-visibility.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly Ubuntu security-status visibility snapshot (report only)
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/curiosity-esm-visibility.sh
+  notify: Reload systemd
+
+- name: Create weekly ESM visibility timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/curiosity-esm-visibility.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Weekly Ubuntu security-status visibility snapshot
+
+      [Timer]
+      OnCalendar=Wed *-*-* 06:00:00
+      RandomizedDelaySec=1h
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable weekly ESM visibility timer
+  ansible.builtin.systemd:
+    name: curiosity-esm-visibility.timer
+    enabled: true
+    state: started
+    daemon_reload: true

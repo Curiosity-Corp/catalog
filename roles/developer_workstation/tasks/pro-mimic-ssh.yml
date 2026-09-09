@@ -1,0 +1,56 @@
+---
+# =============================================================================
+# Pro-free-mimic: minimal hardened sshd subset (hand-rolled, workstation-safe)
+# =============================================================================
+# Decision: hand-rolled instead of the devsec.hardening collection. The
+# ansible-pull wrapper (see ansible-pull-timer.yml) runs ansible-pull
+# directly and never installs Galaxy collections, so a NEW collection
+# dependency would not converge idempotently on the fleet — it would fail on
+# every box until an operator manually ran `ansible-galaxy collection
+# install`. requirements.yml only carries community.general (whose modules
+# were bootstrapped onto the fleet at image time), and the os-hardening role
+# would additionally drag in sysctl/file-permission changes this workstation
+# baseline never reviewed. The four settings below are the reviewed subset.
+#
+# Workstation-safe by construction: port 22 is untouched, no AllowUsers /
+# AllowGroups restriction is introduced, and key-only access keeps working.
+# The opt-in escape hatch is pro_mimic_ssh_password_auth=true, which removes
+# this drop-in and restores distro sshd defaults.
+# =============================================================================
+
+- name: Check whether OpenSSH server is installed
+  ansible.builtin.stat:
+    path: /usr/sbin/sshd
+  register: _pro_mimic_sshd_binary
+
+- name: Deploy hardened sshd drop-in
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/60-pro-mimic.conf
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Managed by Ansible — developer-workstation role (pro-free-mimic).
+      # Key-only SSH: no password or keyboard-interactive logins, no root
+      # password login, no X11 forwarding. Port and user access unchanged.
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+      X11Forwarding no
+  when:
+    - _pro_mimic_sshd_binary.stat.exists
+    - not (pro_mimic_ssh_password_auth | default(false) | bool)
+  notify:
+    - Validate sshd configuration
+    - Reload sshd
+
+- name: Remove hardened sshd drop-in when password auth is explicitly allowed
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/60-pro-mimic.conf
+    state: absent
+  when:
+    - _pro_mimic_sshd_binary.stat.exists
+    - pro_mimic_ssh_password_auth | default(false) | bool
+  notify:
+    - Validate sshd configuration
+    - Reload sshd

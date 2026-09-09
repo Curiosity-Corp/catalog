@@ -91,3 +91,30 @@ provide a non-default credential from a protected variable or configure it
 interactively. If enabling cleanup, test the retention window on a disposable
 shared machine. If enabling automatic updates, choose an update ring and keep
 the local rollback state on a persistent filesystem.
+
+## Free Ubuntu-Pro equivalents (pro-mimic)
+
+The `pro-mimic` plane (tags `pro-mimic, security`, `tasks/pro-mimic.yml`)
+converges free Pro-equivalent posture on every pull without attaching
+machines to Ubuntu Pro (`ubuntu_pro_token` stays empty). It is report-only
+by default: automatic reboots stay disabled, CIS content stays
+scan/report-only (`pro_mimic_cis_remediate: false`), and no livepatch DIY is
+attempted — pending reboots surface via MOTD and
+`/var/lib/curiosity/ansible-pull-status.json` instead.
+
+```yaml
+---
+# Fleet laptop posture: GUI starts only on explicit request.
+display_manager_mode: ondemand
+# Restart services automatically after library upgrades (default true).
+pro_mimic_needrestart_auto: true
+# Never auto-restart these services, e.g. ['^docker$', '^libvirtd$'].
+pro_mimic_needrestart_blacklist: []
+# Allow password SSH logins (default false keeps key-only hardening).
+pro_mimic_ssh_password_auth: false
+```
+
+Per-host values like `display_manager_mode` belong in the machine-local
+`/etc/ansible/local-vars.yml` (or host/group vars), never in the role
+defaults. Run a focused convergence with
+`ansible-playbook playbooks/site.yml --tags pro-mimic`.
