@@ -84,3 +84,13 @@
   ansible.builtin.systemd:
     name: fail2ban
     state: restarted
+
+- name: Validate sshd configuration
+  ansible.builtin.command:
+    cmd: sshd -t
+  changed_when: true
+
+- name: Reload sshd
+  ansible.builtin.systemd:
+    name: ssh
+    state: reloaded

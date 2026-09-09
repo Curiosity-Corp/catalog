@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# Pro-free-mimic: GA kernel pinning (no HWE, no livepatch DIY, never reboot)
+# =============================================================================
+# The fleet standardizes on the general-availability kernel (linux-generic):
+# HWE stacks trade stability churn for newer hardware enablement this fleet
+# does not need, and unattended HWE major-version transitions have stranded
+# machines before. linux-generic is ensured present; any installed HWE
+# kernel package on a laptop profile fails the pull with an explanatory
+# message so the drift is fixed deliberately, not silently.
+#
+# Explicit NON-GOAL: no kpatch/livepatch DIY — rebootless patching without
+# Canonical's signed livepatch payloads is out of scope. A pending reboot is
+# surfaced via MOTD below and recorded in the pull-status record; the role
+# never reboots a workstation (see Unattended-Upgrade::Automatic-Reboot).
+# =============================================================================
+
+- name: Ensure the GA kernel metapackage is installed
+  ansible.builtin.apt:
+    name: linux-generic
+    state: present
+
+- name: List installed HWE kernel packages
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      dpkg -l 'linux-*hwe*' 2>/dev/null | awk '/^ii/ {print $2}'
+    executable: /bin/bash
+  register: _pro_mimic_hwe_packages
+  changed_when: false
+  failed_when: false
+
+- name: Assert no HWE kernel is installed on laptop profiles
+  ansible.builtin.assert:
+    that:
+      - _pro_mimic_hwe_packages.stdout_lines | length == 0
+    fail_msg: >-
+      HWE kernel packages are installed on a laptop-profile host
+      ({{ _pro_mimic_hwe_packages.stdout_lines | join(', ') }}), but the
+      fleet standard is the GA kernel (linux-generic). Remove the HWE stack
+      deliberately (apt remove --purge 'linux-*-hwe-*' && apt autoremove)
+      and reboot by hand, or move this host off the laptop profile.
+  when: hardware_profile in ['t460', 'x86-byod-laptop']
+
+- name: Deploy reboot-required MOTD notice (surface only, never reboot)
+  ansible.builtin.copy:
+    dest: /etc/update-motd.d/97-curiosity-reboot-required
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by Ansible — developer-workstation role (pro-free-mimic).
+      # Surfaces a pending reboot at login. This fleet never reboots itself.
+      if [ -f /var/run/reboot-required ]; then
+        echo '*** System restart required ***'
+        if [ -f /var/run/reboot-required.pkgs ]; then
+          echo 'Packages requesting restart:'
+          sed 's/^/  /' /var/run/reboot-required.pkgs 2>/dev/null || true
+        fi
+      fi
+      exit 0

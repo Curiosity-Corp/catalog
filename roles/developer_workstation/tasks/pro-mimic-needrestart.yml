@@ -1,0 +1,45 @@
+---
+# =============================================================================
+# Pro-free-mimic: needrestart automatic service restarts (Livepatch-adjacent
+# convenience without the subscription)
+# =============================================================================
+# security.yml installs needrestart; this file converges its *policy* so
+# library upgrades restart affected services without prompting during
+# unattended runs. Fully automatic mode ($nrconf{restart} = 'a') is the
+# default; operators with restart-sensitive services (hypervisors, container
+# runtimes) list them in pro_mimic_needrestart_blacklist as Perl regex
+# sources (without delimiters) instead of disabling automation fleet-wide.
+# Kernel updates still only take effect after a reboot, which the fleet
+# never performs automatically — see pro-mimic-kernel.yml.
+# =============================================================================
+
+- name: Install needrestart
+  ansible.builtin.apt:
+    name: needrestart
+    state: present
+
+- name: Deploy needrestart automatic-restart policy
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/60-pro-mimic-auto.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — developer-workstation role (pro-free-mimic).
+      # Restart services automatically after library upgrades.
+      $nrconf{restart} = 'a';
+      {% if pro_mimic_needrestart_blacklist | default([]) | length > 0 %}
+      # Operator-supplied service blacklist (pro_mimic_needrestart_blacklist).
+      push @{$nrconf{blacklist}}, (
+      {% for pattern in pro_mimic_needrestart_blacklist %}
+        qr/{{ pattern }}/,
+      {% endfor %}
+      );
+      {% endif %}
+  when: pro_mimic_needrestart_auto | default(true) | bool
+
+- name: Remove needrestart automatic-restart policy when automation is disabled
+  ansible.builtin.file:
+    path: /etc/needrestart/conf.d/60-pro-mimic-auto.conf
+    state: absent
+  when: not (pro_mimic_needrestart_auto | default(true) | bool)

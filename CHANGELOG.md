@@ -16,6 +16,17 @@ All notable changes to this project are documented here. The format follows
   horizontal DRM fbcon test command line.
 - An opt-in declarative policy for masking obsolete user-scoped systemd units.
 - Declarative user-unit convergence now clears stale failed state after masking.
+- A free Ubuntu-Pro equivalents plane (`pro-mimic`, tags `pro-mimic,
+  security`): explicit security origins with automatic reboots disabled,
+  needrestart automation, a minimal hardened sshd subset, MOTD security
+  visibility, weekly ESM-status reporting, GA kernel pinning with
+  reboot-required surfacing, a pull-status record, and display-manager mode
+  control. Report-only by default; no Pro attach, no livepatch DIY, no CIS
+  remediation, and no automatic reboots.
+- T460 hardware-profile posture-flag parity (`disable_sleep`,
+  `performance_mode`) so the laptop TLP/no-sleep/netplan policies converge
+  on the T460 fleet, with the wired-netplan policy extended to both laptop
+  profiles.
 
 ### Changed
 
