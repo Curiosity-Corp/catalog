@@ -52,6 +52,9 @@ def test_pro_mimic_files_are_included_with_tags() -> None:
     main = (TASKS / "main.yml").read_text()
     assert "ansible.builtin.include_tasks: pro-mimic.yml" in main
     assert "tags: [pro-mimic, security]" in main
+    # Machine-level plane only: the container-safe workspace profile has no
+    # systemd, MOTD, or default target to converge.
+    assert "workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']" in main
 
     parent = (TASKS / "pro-mimic.yml").read_text()
     for name in PRO_MIMIC_CHILDREN:
@@ -150,6 +153,7 @@ def test_ssh_hardening_is_a_minimal_hand_rolled_subset() -> None:
 def test_hwe_drift_is_surfaced_never_enforced() -> None:
     kernel = (TASKS / "pro-mimic-kernel.yml").read_text()
     assert "linux-generic" in kernel
+    assert "ansible_architecture == 'x86_64'" in kernel
     assert "linux-*hwe*" in kernel
     # A hard assert would fail the nightly pull on any HWE-carrying laptop
     # and stop the fleet converging; drift is warned and recorded instead.

@@ -25,6 +25,9 @@
   ansible.builtin.apt:
     name: linux-generic
     state: present
+  # The GA metapackage name is x86-centric; ARM thin clients track their own
+  # board kernels, so pinning applies to the x86_64 fleet only.
+  when: ansible_architecture == 'x86_64'
 
 - name: List installed HWE kernel packages
   ansible.builtin.shell:
