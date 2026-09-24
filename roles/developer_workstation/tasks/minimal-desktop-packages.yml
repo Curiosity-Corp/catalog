@@ -30,6 +30,9 @@
       # System tray applets
       - volumeicon-alsa
       - network-manager-gnome
+      # Bluetooth stack + tray applet (logged-in session tray, non-kiosk)
+      - bluez
+      - blueman
       # X11 utilities
       - x11-xserver-utils
       - xdotool
