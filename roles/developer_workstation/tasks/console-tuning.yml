@@ -1,0 +1,172 @@
+---
+# =============================================================================
+# Console tuning (opt-in): full-screen fbcon, bitmap font, soft palette
+# =============================================================================
+# Included from main.yml only when console_tuning_enabled is true, on the
+# desktop/thin-client profiles, on Linux, and outside containers.
+#
+# Linux sizes the fbdev console to the SMALLEST enabled display although the
+# framebuffer itself is as large as the LARGEST one, so a big monitor next to a
+# lit small panel shows a console in one corner only. The managed helper grows
+# the visible size to the virtual size, then loads the configured font and
+# palette. A systemd oneshot runs it at boot, and udev re-runs it when the KMS
+# framebuffer appears (it replaces the early firmware one) and on display
+# hotplug.
+#
+# This file intentionally does not touch the bootloader or the kernel command line, install
+# a kernel, or restart the machine. The stronger boot-time fix (video=<panel>:d) is only
+# documented in docs/console-tuning.md.
+# =============================================================================
+
+- name: Validate console tuning inputs
+  ansible.builtin.assert:
+    that:
+      - console_tuning_font is string
+      - console_tuning_font is match('^[A-Za-z0-9_./+-]*$')
+      - console_tuning_palette is mapping
+      - >-
+        console_tuning_palette.keys() | map('string')
+        | select('match', '^([0-9]|1[0-5])$') | list | length
+        == console_tuning_palette | length
+      - >-
+        console_tuning_palette.values() | map('string')
+        | select('match', '^[0-9a-fA-F]{6}$') | list | length
+        == console_tuning_palette | length
+      - console_tuning_ttys is sequence
+      - console_tuning_ttys | length > 0
+      - console_tuning_ttys | map('string') | select('match', '^([1-9]|[1-5][0-9]|6[0-3])$') | list | length == console_tuning_ttys | length
+      - console_tuning_wait_seconds | int >= 0
+      - console_tuning_settle_seconds | int >= 0
+    fail_msg: >-
+      console_tuning_font must be a plain file name or path (no spaces),
+      console_tuning_palette must map indexes 0-15 to rrggbb hex strings,
+      console_tuning_ttys must list VT numbers 1-63, and the wait/settle
+      values must be non-negative integers.
+
+- name: Install console tuning packages (Debian family)
+  ansible.builtin.apt:
+    name: "{{ console_tuning_packages + console_tuning_extra_packages }}"
+    state: present
+  when:
+    - console_tuning_install_packages | bool
+    - ansible_os_family == 'Debian'
+
+- name: Ensure the Curiosity configuration directory exists
+  ansible.builtin.file:
+    path: /etc/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install console tuning helper
+  ansible.builtin.copy:
+    src: curiosity-console-tuning
+    dest: "{{ console_tuning_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Apply console tuning now
+
+- name: Install console tuning status command
+  ansible.builtin.copy:
+    dest: "{{ console_tuning_status_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by curiosity.workstation. Read-only console diagnostics; run as
+      # root so /dev/fb0 can be queried.
+      exec {{ console_tuning_script_path }} --config {{ console_tuning_config_path }} --status "$@"
+
+- name: Write console tuning configuration
+  ansible.builtin.template:
+    src: console-tuning.conf.j2
+    dest: "{{ console_tuning_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply console tuning now
+
+- name: Install console tuning systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/curiosity-console-tuning.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Curiosity console tuning (full-screen fbcon, font, palette)
+      # Run after console-setup so its font load cannot overwrite ours.
+      After=console-setup.service systemd-vconsole-setup.service
+      ConditionVirtualization=!container
+      # Display hotplug can fire in bursts; the helper is idempotent and cheap.
+      StartLimitIntervalSec=30
+      StartLimitBurst=20
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ console_tuning_script_path }} --config {{ console_tuning_config_path }}
+      TimeoutStartSec=90
+      NoNewPrivileges=yes
+      PrivateNetwork=yes
+      ProtectHome=yes
+      ProtectKernelModules=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - Reload systemd
+    - Apply console tuning now
+
+- name: Install console tuning udev triggers
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/90-curiosity-console-tuning.rules
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by curiosity.workstation. Re-run the console tuning helper when
+      # the KMS framebuffer appears (it replaces the early firmware one) and
+      # when a display is hot-plugged. The helper is a no-op when nothing needs
+      # changing.
+      SUBSYSTEM=="graphics", KERNEL=="fb0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="curiosity-console-tuning.service"
+      # A device that is already active does not re-start its SYSTEMD_WANTS
+      # units on "change", so start the unit explicitly (non-blocking).
+      SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ACTION=="change", ENV{HOTPLUG}=="1", RUN+="/usr/bin/systemctl --no-block start curiosity-console-tuning.service"
+  notify: Reload udev rules
+
+- name: Enable console tuning service
+  ansible.builtin.systemd:
+    name: curiosity-console-tuning.service
+    enabled: true
+    daemon_reload: true
+
+# ---- Optional: persist the font through console-setup ----
+# setupcon (console-setup) honours FONT= as one or more font FILE names looked
+# up under /usr/share/consolefonts or given as absolute paths; it does not take
+# a setfont id such as Uni3-Terminus20x10 without the file extension.
+
+- name: Check for console-setup configuration
+  ansible.builtin.stat:
+    path: /etc/default/console-setup
+  register: _console_tuning_console_setup
+  when:
+    - console_tuning_manage_console_setup | bool
+    - console_tuning_font | length > 0
+
+- name: Persist the console font in console-setup
+  ansible.builtin.lineinfile:
+    path: /etc/default/console-setup
+    regexp: '^FONT='
+    line: 'FONT="{{ console_tuning_font }}"'
+    insertafter: EOF
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - console_tuning_manage_console_setup | bool
+    - console_tuning_font | length > 0
+    - _console_tuning_console_setup.stat.exists | default(false)
+  notify: Save console-setup font cache

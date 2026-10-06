@@ -259,6 +259,18 @@
     - hardware_profiles[hardware_profile].console_diagnostics | default(false) | bool
     - t460_console_diagnostics_enabled | default(true) | bool
 
+- name: Include console tuning (full-screen fbcon, bitmap font, soft palette)
+  ansible.builtin.include_tasks: console-tuning.yml
+  tags: [console, display]
+  # Opt-in and machine-level: a text console only exists on a real Linux host,
+  # so skip containers and the workspace/kiosk profiles. The helper itself
+  # exits 0 with a message when /dev/fb0 is absent.
+  when:
+    - console_tuning_enabled | default(false) | bool
+    - workstation_profile in ['desktop', 'thin-client']
+    - ansible_system == 'Linux'
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include shell RC fallback
   ansible.builtin.include_tasks: user-shell-fallback.yml
   tags: [user, shell]

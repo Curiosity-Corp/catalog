@@ -1,0 +1,16 @@
+# Managed by curiosity.workstation (tasks/console-tuning.yml). Do not edit.
+# Read by {{ console_tuning_script_path }}; see docs/console-tuning.md.
+[console-tuning]
+fill_framebuffer = {{ 'true' if console_tuning_fill_framebuffer | bool else 'false' }}
+font = {{ console_tuning_font }}
+ttys = {{ console_tuning_ttys | join(' ') }}
+wait_seconds = {{ console_tuning_wait_seconds }}
+settle_seconds = {{ console_tuning_settle_seconds }}
+
+[palette]
+{% for index in range(16) %}
+{% set rgb = console_tuning_palette.get(index, console_tuning_palette.get(index | string)) %}
+{% if rgb %}
+{{ index }} = {{ rgb | lower }}
+{% endif %}
+{% endfor %}
