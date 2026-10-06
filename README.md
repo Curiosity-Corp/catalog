@@ -113,6 +113,7 @@ The most important variables are:
 | `profile_cleanup_enabled` | `false` | Opt into shared-machine profile cleanup |
 | `t460_console_diagnostics_enabled` | `true` | Install the read-only T460 DRM/fbcon status helper when a T460 hardware profile is selected |
 | `t460_fbcon_horizontal_enabled` | `false` | Write an explicit, operator-reviewed fbcon test command line; never changes GRUB automatically |
+| `console_tuning_enabled` | `false` | Opt into full-screen text console, bitmap font, and soft palette tuning ([guide](docs/console-tuning.md)) |
 | `custom_ca_certificates` | `[]` | Controller-local private CA files, kept outside Git |
 
 See [`docs/configuration.md`](docs/configuration.md) for examples and the
@@ -139,6 +140,7 @@ public-surface checks, and collection building. See
 - [Support policy](SUPPORT.md)
 - [Change log](CHANGELOG.md)
 - [Architecture](docs/architecture.md)
+- [Console tuning](docs/console-tuning.md)
 - [Roadmap](docs/roadmap.md)
 
 Please do not put passwords, tokens, private keys, internal inventories, or

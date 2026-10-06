@@ -27,6 +27,12 @@ All notable changes to this project are documented here. The format follows
   `performance_mode`) so the laptop TLP/no-sleep/netplan policies converge
   on the T460 fleet, with the wired-netplan policy extended to both laptop
   profiles.
+- Opt-in console tuning (`console_tuning_enabled`, tags `console, display`) for
+  large or mixed-size displays: grows the Linux text console to the whole
+  framebuffer, optionally loads a PSF bitmap font and a soft VT palette,
+  re-applies them from a systemd oneshot plus udev triggers, and ships a
+  read-only `curiosity-console-status` diagnostic. Default off; never edits
+  the bootloader or kernel command line.
 
 ### Changed
 

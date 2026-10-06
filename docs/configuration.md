@@ -92,6 +92,17 @@ interactively. If enabling cleanup, test the retention window on a disposable
 shared machine. If enabling automatic updates, choose an update ring and keep
 the local rollback state on a persistent filesystem.
 
+## Console tuning
+
+`console_tuning_enabled` (default `false`) opts a large or mixed-size-display
+workstation into a full-screen text console, a readable PSF bitmap font
+(`console_tuning_font`), and softer console colours (`console_tuning_palette`).
+It never edits the bootloader or kernel command line and is skipped in
+containers and on workspace/kiosk profiles. See
+[`docs/console-tuning.md`](console-tuning.md) for the cause, variables,
+verification (`curiosity-console-status`), and the documented-only kernel
+command-line option.
+
 ## Free Ubuntu-Pro equivalents (pro-mimic)
 
 The `pro-mimic` plane (tags `pro-mimic, security`, `tasks/pro-mimic.yml`)
