@@ -48,7 +48,7 @@ def _fake_var(xres, yres, xv, yv, xoff=0, yoff=0, bpp=32, activate=0):
     words = [0] * 40
     words[0], words[1], words[2], words[3] = xres, yres, xv, yv
     words[4], words[5], words[6], words[21] = xoff, yoff, bpp, activate
-    words[26] = 12345  # pixclock: must survive a PUT untouched
+    words[25] = 12345  # pixclock: must survive a PUT untouched
     return helper.parse_var(struct.pack("=40I", *words))
 
 
@@ -141,6 +141,9 @@ def test_unit_and_udev_rule_are_sane() -> None:
     assert 'ENV{SYSTEMD_WANTS}+="curiosity-console-tuning.service"' in rules
     assert 'SUBSYSTEM=="drm"' in rules and 'ACTION=="change"' in rules
     assert "systemctl --no-block start curiosity-console-tuning.service" in rules
+    # console-setup reloads its font when fbcon binds; we must re-run after it.
+    assert 'SUBSYSTEM=="vtconsole"' in rules
+    assert "plymouth-quit-wait.service" in unit
 
 
 def test_console_setup_integration_uses_font_and_save_only() -> None:
@@ -237,7 +240,7 @@ def test_put_buffer_only_changes_geometry_and_activation() -> None:
     assert (out.xres, out.yres) == (3840, 2160)
     assert (out.xres_virtual, out.yres_virtual) == (3840, 2160)
     assert out.raw[21] == helper.FB_ACTIVATE_NOW | helper.FB_ACTIVATE_ALL == 64
-    assert out.raw[26] == 12345
+    assert out.raw[25] == 12345
     assert out.bits_per_pixel == 32
     # Applying the plan to its own output is a no-op: idempotent.
     assert helper.plan_resize(out)[0] is None

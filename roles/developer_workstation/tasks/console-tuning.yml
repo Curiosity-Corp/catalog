@@ -98,8 +98,10 @@
     content: |
       [Unit]
       Description=Curiosity console tuning (full-screen fbcon, font, palette)
-      # Run after console-setup so its font load cannot overwrite ours.
-      After=console-setup.service systemd-vconsole-setup.service
+      # Run after console-setup so its font load cannot overwrite ours, and after
+      # Plymouth releases the VT (a splash keeps it in graphics mode, which
+      # defers the framebuffer step). Ordering against absent units is a no-op.
+      After=console-setup.service systemd-vconsole-setup.service plymouth-quit-wait.service
       ConditionVirtualization=!container
       # Display hotplug can fire in bursts; the helper is idempotent and cheap.
       StartLimitIntervalSec=30
@@ -128,13 +130,16 @@
     mode: "0644"
     content: |
       # Managed by curiosity.workstation. Re-run the console tuning helper when
-      # the KMS framebuffer appears (it replaces the early firmware one) and
-      # when a display is hot-plugged. The helper is a no-op when nothing needs
+      # the KMS framebuffer appears (it replaces the early firmware one), when
+      # fbcon binds, and when a display is hot-plugged. The helper is a no-op when nothing needs
       # changing.
       SUBSYSTEM=="graphics", KERNEL=="fb0", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="curiosity-console-tuning.service"
       # A device that is already active does not re-start its SYSTEMD_WANTS
       # units on "change", so start the unit explicitly (non-blocking).
       SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ACTION=="change", ENV{HOTPLUG}=="1", RUN+="/usr/bin/systemctl --no-block start curiosity-console-tuning.service"
+      # console-setup reloads its own font when fbcon binds a VT console; the
+      # helper's settle delay orders it after that load.
+      SUBSYSTEM=="vtconsole", KERNEL=="vtcon[0-9]*", ACTION=="add", RUN+="/usr/bin/systemctl --no-block start curiosity-console-tuning.service"
   notify: Reload udev rules
 
 - name: Enable console tuning service

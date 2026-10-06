@@ -66,8 +66,8 @@ console_tuning_enabled: true
 console_tuning_font: Uni3-Terminus20x10.psf.gz
 # Optional: soften the default foreground (7) and bright white (15).
 console_tuning_palette:
-  7: 857f7a
-  15: b4afaa
+  7: "857f7a"
+  15: "b4afaa"
 ```
 
 | Variable | Default | Purpose |
@@ -115,7 +115,8 @@ palette are not something console-setup can do.
 ### Palette notes
 
 The palette is per VT and lost on reboot, which is why the same oneshot applies
-it. Index 7 is the default foreground and 15 is bright/bold white. Leave
+it. Index 7 is the default foreground and 15 is bright/bold white. Quote the
+values in YAML so all-digit colours such as `001100` stay strings. Leave
 `console_tuning_palette` empty to keep stock colours.
 
 ## How to verify
@@ -149,6 +150,15 @@ Service logs: `journalctl -u curiosity-console-tuning`.
   framebuffer step while a graphical session is on the active VT; run
   `sudo systemctl start curiosity-console-tuning` from a text console
   afterwards (hotplug and `fb0` creation re-run it automatically).
+- With a graphical splash (for example Plymouth) or a display manager on the
+  first VT, the active VT is in graphics mode and the framebuffer step is
+  deferred; the unit is ordered after `plymouth-quit-wait.service`, but on a
+  machine that boots straight into a display manager the step stays deferred
+  until a display hotplug or a manual `systemctl start` from a text console.
+  The font and palette are still applied.
+- console-setup reloads its own font when fbcon binds a VT. The helper's
+  settle delay orders it afterwards; set `console_tuning_manage_console_setup:
+  true` so both load the same font.
 - It does not create one console per monitor and does not change X11/Wayland.
 - Removal: set `console_tuning_enabled: false` (the role then no longer manages
   the files), then `systemctl disable --now curiosity-console-tuning` and delete

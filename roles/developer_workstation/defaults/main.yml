@@ -545,7 +545,7 @@ console_tuning_fill_framebuffer: true
 console_tuning_font: ""
 # VT palette overrides, index (0-15) -> rrggbb. Empty leaves colours alone.
 # Index 7 is the default foreground and 15 bright/bold white. Example soft
-# greys: {7: 857f7a, 15: b4afaa}. The palette is per-VT and lost on reboot, so
+# greys (quote the values): {7: "857f7a", 15: "b4afaa"}. The palette is per-VT and lost on reboot, so
 # the same oneshot re-applies it.
 console_tuning_palette: {}
 # Virtual terminals that receive the font and palette.
