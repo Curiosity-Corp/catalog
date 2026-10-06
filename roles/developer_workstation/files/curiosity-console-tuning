@@ -1,0 +1,616 @@
+#!/usr/bin/env python3
+# Managed by curiosity.workstation (tasks/console-tuning.yml).
+"""Tune the Linux text console on large or mixed-size displays.
+
+Why this exists: with fbcon on a KMS driver (for example i915) the kernel sizes
+the fbdev surface to the LARGEST active display but sets the visible fbdev
+resolution (var.xres/yres) to the SMALLEST enabled output.  fbcon builds its
+character grid from the visible resolution, so a lit 1920x1080 panel next to a
+3840x2160 monitor yields a console that only draws in the top-left quarter of
+the big screen.  This tool grows the visible resolution to the virtual size
+(the same effect as `fbset -fb /dev/fb0 -xres W -yres H`), then optionally
+loads a PSF bitmap font and a VT colour palette on each virtual terminal.
+
+Everything here is fail-safe: when there is nothing to do (no framebuffer,
+container, graphical session on the active VT, console already full size) it
+logs one clear line and exits 0.  It never edits the bootloader or kernel
+command line and never restarts the machine.
+
+Modes:
+  (default)   apply the configuration
+  --dry-run   show what apply would do, change nothing
+  --status    read-only diagnostics with a one-line verdict
+"""
+
+from __future__ import annotations
+
+import argparse
+import configparser
+import ctypes
+import fcntl
+import glob
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import termios
+import time
+import traceback
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+DEFAULT_CONFIG = "/etc/curiosity/console-tuning.conf"
+DEFAULT_FB = "/dev/fb0"
+SYSFS_FB = "/sys/class/graphics"
+SYSFS_DRM = "/sys/class/drm"
+
+FBIOGET_VSCREENINFO = 0x4600
+FBIOPUT_VSCREENINFO = 0x4601
+FB_ACTIVATE_NOW = 0
+FB_ACTIVATE_ALL = 64
+KDGETMODE = 0x4B3B
+KD_TEXT = 0
+KD_GRAPHICS = 1
+KDFONTOP = 0x4B72
+KD_FONT_OP_GET = 1
+
+# struct fb_var_screeninfo is 40 consecutive 32-bit words.
+VAR_STRUCT = struct.Struct("=40I")
+IDX_XRES, IDX_YRES, IDX_XRES_VIRTUAL, IDX_YRES_VIRTUAL = 0, 1, 2, 3
+IDX_XOFFSET, IDX_YOFFSET, IDX_BPP, IDX_ACTIVATE = 4, 5, 6, 21
+
+# Framebuffers that exist before the real KMS driver loads; they are replaced
+# when i915/amdgpu/... bind, so a one-shot that runs too early must wait.
+EARLY_FB_PREFIXES = ("simpledrm", "simplefb", "efifb", "vesafb", "offb")
+# fbdev emulation built by drm_fb_helper names itself "<driver>drmfb".
+DRM_FB_SUFFIX = "drmfb"
+
+HEX6 = re.compile(r"^[0-9a-fA-F]{6}$")
+
+
+@dataclass(frozen=True)
+class VarScreenInfo:
+    """Decoded view of a raw fb_var_screeninfo."""
+
+    raw: Tuple[int, ...]
+
+    @property
+    def xres(self) -> int:
+        return self.raw[IDX_XRES]
+
+    @property
+    def yres(self) -> int:
+        return self.raw[IDX_YRES]
+
+    @property
+    def xres_virtual(self) -> int:
+        return self.raw[IDX_XRES_VIRTUAL]
+
+    @property
+    def yres_virtual(self) -> int:
+        return self.raw[IDX_YRES_VIRTUAL]
+
+    @property
+    def xoffset(self) -> int:
+        return self.raw[IDX_XOFFSET]
+
+    @property
+    def yoffset(self) -> int:
+        return self.raw[IDX_YOFFSET]
+
+    @property
+    def bits_per_pixel(self) -> int:
+        return self.raw[IDX_BPP]
+
+
+@dataclass
+class Config:
+    """Settings read from the Ansible-managed config file."""
+
+    fill_framebuffer: bool = True
+    font: str = ""
+    palette: Dict[int, str] = field(default_factory=dict)
+    ttys: List[int] = field(default_factory=lambda: [1, 2, 3, 4, 5, 6])
+    wait_seconds: int = 15
+    settle_seconds: int = 2
+
+
+def log(message: str) -> None:
+    print(f"curiosity-console-tuning: {message}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (unit-tested without hardware)
+# ---------------------------------------------------------------------------
+
+
+def parse_var(buf: bytes) -> VarScreenInfo:
+    """Decode the bytes returned by FBIOGET_VSCREENINFO."""
+    if len(buf) != VAR_STRUCT.size:
+        raise ValueError(
+            f"fb_var_screeninfo must be {VAR_STRUCT.size} bytes, got {len(buf)}"
+        )
+    return VarScreenInfo(raw=VAR_STRUCT.unpack(buf))
+
+
+def is_early_fb(name: str) -> bool:
+    """True for firmware/simple framebuffers that a KMS driver later replaces."""
+    return name.startswith(EARLY_FB_PREFIXES)
+
+
+def is_drm_fb(name: str) -> bool:
+    """True for fbdev emulation created by drm_fb_helper."""
+    return name.endswith(DRM_FB_SUFFIX)
+
+
+def plan_resize(var: VarScreenInfo) -> Tuple[Optional[Tuple[int, int]], str]:
+    """Decide whether the visible size must grow to the virtual size.
+
+    Returns (target, reason).  target is None when nothing should be done.
+    """
+    if var.xres_virtual == 0 or var.yres_virtual == 0:
+        return None, "framebuffer reports a zero virtual size"
+    if var.xres >= var.xres_virtual and var.yres >= var.yres_virtual:
+        return None, (
+            f"already full size ({var.xres}x{var.yres}, "
+            f"virtual {var.xres_virtual}x{var.yres_virtual})"
+        )
+    if var.xoffset != 0 or var.yoffset != 0:
+        return None, "framebuffer is panned; refusing to alter its geometry"
+    return (var.xres_virtual, var.yres_virtual), (
+        f"visible {var.xres}x{var.yres} is smaller than virtual "
+        f"{var.xres_virtual}x{var.yres_virtual}"
+    )
+
+
+def build_put_buffer(var: VarScreenInfo, xres: int, yres: int) -> bytes:
+    """Return a FBIOPUT_VSCREENINFO payload that only changes xres/yres."""
+    words = list(var.raw)
+    words[IDX_XRES] = xres
+    words[IDX_YRES] = yres
+    words[IDX_ACTIVATE] = FB_ACTIVATE_NOW | FB_ACTIVATE_ALL
+    return VAR_STRUCT.pack(*words)
+
+
+def palette_sequence(palette: Dict[int, str]) -> bytes:
+    """Build Linux VT OSC palette escapes: ESC ] P <hex index> <rrggbb>."""
+    parts = []
+    for index in sorted(palette):
+        rgb = palette[index]
+        if not 0 <= index <= 15 or not HEX6.match(rgb):
+            raise ValueError(f"invalid palette entry {index!r}={rgb!r}")
+        parts.append(f"\x1b]P{index:X}{rgb.lower()}")
+    return "".join(parts).encode("ascii")
+
+
+def parse_config(parser: configparser.ConfigParser) -> Tuple[Config, List[str]]:
+    """Turn a parsed ini into a Config, returning (config, warnings).
+
+    Invalid values are reported and skipped so one typo cannot disable the
+    rest of the tuning.
+    """
+    cfg = Config()
+    warnings: List[str] = []
+    section = "console-tuning"
+    if parser.has_section(section):
+        try:
+            cfg.fill_framebuffer = parser.getboolean(
+                section, "fill_framebuffer", fallback=cfg.fill_framebuffer
+            )
+        except ValueError:
+            warnings.append("fill_framebuffer is not a boolean; using default")
+        cfg.font = parser.get(section, "font", fallback="").strip()
+        for key in ("wait_seconds", "settle_seconds"):
+            try:
+                value = parser.getint(section, key, fallback=getattr(cfg, key))
+            except ValueError:
+                warnings.append(f"{key} is not an integer; using default")
+                continue
+            setattr(cfg, key, max(0, min(value, 120)))
+        raw_ttys = parser.get(section, "ttys", fallback="").split()
+        if raw_ttys:
+            ttys = [int(t) for t in raw_ttys if t.isdigit() and 1 <= int(t) <= 63]
+            if ttys:
+                cfg.ttys = ttys
+            else:
+                warnings.append("ttys has no valid entries; using default")
+    if parser.has_section("palette"):
+        for key, value in parser.items("palette"):
+            value = value.strip()
+            if key.isdigit() and 0 <= int(key) <= 15 and HEX6.match(value):
+                cfg.palette[int(key)] = value.lower()
+            else:
+                warnings.append(f"ignoring invalid palette entry {key}={value}")
+    return cfg, warnings
+
+
+def load_config(path: str) -> Tuple[Config, List[str]]:
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            parser.read_file(handle)
+    except FileNotFoundError:
+        return Config(), [f"no config at {path}; using built-in defaults"]
+    except (OSError, configparser.Error) as exc:
+        return Config(), [f"cannot read {path} ({exc}); using built-in defaults"]
+    return parse_config(parser)
+
+
+def wait_for_framebuffer(
+    exists: Callable[[], bool],
+    name: Callable[[], str],
+    timeout: int,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Wait (bounded) until fb0 exists and is no longer an early boot fb.
+
+    Returns False only when the device is absent.  A device that is still an
+    early framebuffer when the budget runs out is used as-is: the udev rule
+    runs the tool again when the KMS driver replaces it.
+    """
+    if not exists():
+        return False
+    deadline = clock() + timeout
+    while is_early_fb(name()) and clock() < deadline:
+        sleep(1)
+        if not exists():
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Kernel / sysfs access
+# ---------------------------------------------------------------------------
+
+
+def read_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def fb_name(fb_path: str) -> str:
+    return read_text(f"{SYSFS_FB}/{os.path.basename(fb_path)}/name")
+
+
+def read_fb_var(fb_path: str) -> VarScreenInfo:
+    fd = os.open(fb_path, os.O_RDONLY | os.O_NOCTTY)
+    try:
+        buf = bytearray(VAR_STRUCT.size)
+        fcntl.ioctl(fd, FBIOGET_VSCREENINFO, buf, True)
+    finally:
+        os.close(fd)
+    return parse_var(bytes(buf))
+
+
+def put_fb_var(fb_path: str, payload: bytes) -> None:
+    fd = os.open(fb_path, os.O_RDWR | os.O_NOCTTY)
+    try:
+        fcntl.ioctl(fd, FBIOPUT_VSCREENINFO, bytearray(payload), True)
+    finally:
+        os.close(fd)
+
+
+def vt_text_mode(tty: str = "/dev/tty0") -> Optional[int]:
+    """KD_TEXT (0) / KD_GRAPHICS (1) for a VT, or None when unreadable."""
+    try:
+        fd = os.open(tty, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        buf = bytearray(4)
+        fcntl.ioctl(fd, KDGETMODE, buf, True)
+        return struct.unpack("=i", bytes(buf))[0]
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def vt_grid(tty: str = "/dev/tty0") -> Optional[Tuple[int, int]]:
+    """(columns, rows) of a VT, or None when unreadable."""
+    try:
+        fd = os.open(tty, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        buf = bytearray(8)
+        fcntl.ioctl(fd, termios.TIOCGWINSZ, buf, True)
+        rows, cols, _, _ = struct.unpack("=4H", bytes(buf))
+        return (cols, rows) if cols and rows else None
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def vt_font_cell(tty: str = "/dev/tty0") -> Optional[Tuple[int, int]]:
+    """(width, height) in pixels of the font loaded on a VT, if readable."""
+    op = struct.Struct("@5IP")
+    # The kernel copies glyph data out when a buffer is supplied: up to 512
+    # glyphs of 32 bytes each (the legacy KDFONTOP maximum).
+    glyphs = ctypes.create_string_buffer(512 * 32 * 4)
+    try:
+        fd = os.open(tty, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        buf = bytearray(
+            # width/height/charcount are the buffer capacity on input; the
+            # kernel answers -ENOSPC when the loaded font is larger.
+            op.pack(KD_FONT_OP_GET, 0, 32, 32, 512, ctypes.addressof(glyphs))
+        )
+        fcntl.ioctl(fd, KDFONTOP, buf, True)
+        _, _, width, height, _, _ = op.unpack(bytes(buf))
+        return (width, height) if width and height else None
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def drm_connectors() -> List[Tuple[str, str, str, str]]:
+    """(name, status, enabled, first_mode) for each DRM connector."""
+    rows = []
+    for path in sorted(glob.glob(f"{SYSFS_DRM}/card*-*")):
+        status = read_text(f"{path}/status")
+        if not status:
+            continue
+        modes = read_text(f"{path}/modes").splitlines()
+        rows.append(
+            (
+                os.path.basename(path),
+                status,
+                read_text(f"{path}/enabled") or "unknown",
+                modes[0] if modes else "-",
+            )
+        )
+    return rows
+
+
+def in_container() -> bool:
+    return os.path.exists("/run/systemd/container") or os.path.exists("/.dockerenv")
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+
+
+def fill_framebuffer(fb_path: str, dry_run: bool, force: bool) -> None:
+    try:
+        var = read_fb_var(fb_path)
+    except (OSError, ValueError) as exc:
+        log(f"cannot read {fb_path} ({exc}); skipping framebuffer step")
+        return
+    target, reason = plan_resize(var)
+    if target is None:
+        log(f"framebuffer: nothing to do: {reason}")
+        return
+    name = fb_name(fb_path)
+    if not force and not is_drm_fb(name):
+        log(
+            f"framebuffer: {reason}, but {name or 'unknown'!r} is not a DRM fbdev "
+            "emulation; leaving it alone (use --force to override)"
+        )
+        return
+    if vt_text_mode() == KD_GRAPHICS:
+        log(
+            "framebuffer: a graphical session owns the active VT; deferring. "
+            "Re-run from a text console: systemctl start curiosity-console-tuning"
+        )
+        return
+    if dry_run:
+        log(f"dry-run: would set {fb_path} xres/yres to {target[0]}x{target[1]} ({reason})")
+        return
+    try:
+        put_fb_var(fb_path, build_put_buffer(var, *target))
+        after = read_fb_var(fb_path)
+    except (OSError, ValueError) as exc:
+        log(f"framebuffer: kernel refused the resize ({exc}); continuing")
+        return
+    if (after.xres, after.yres) == target:
+        log(f"framebuffer: grew visible size to {target[0]}x{target[1]} ({reason})")
+    else:
+        log(
+            f"framebuffer: requested {target[0]}x{target[1]} but the kernel now reports "
+            f"{after.xres}x{after.yres}; continuing"
+        )
+
+
+def tty_path(number: int) -> str:
+    return f"/dev/tty{number}"
+
+
+def apply_font(cfg: Config, dry_run: bool) -> None:
+    if not cfg.font:
+        log("font: none configured; leaving the console font alone")
+        return
+    setfont = shutil.which("setfont")
+    if setfont is None:
+        log("font: setfont (package kbd) is not installed; skipping")
+        return
+    for number in cfg.ttys:
+        tty = tty_path(number)
+        if not os.path.exists(tty):
+            continue
+        if dry_run:
+            log(f"dry-run: would run setfont -C {tty} {cfg.font}")
+            continue
+        try:
+            result = subprocess.run(
+                [setfont, "-C", tty, cfg.font],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"font: setfont failed on {tty}: {exc}")
+            continue
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            log(
+                f"font: setfont rejected {cfg.font!r} on {tty}: "
+                f"{detail[0] if detail else 'exit ' + str(result.returncode)}"
+            )
+        else:
+            log(f"font: loaded {cfg.font} on {tty}")
+
+
+def apply_palette(cfg: Config, dry_run: bool) -> None:
+    if not cfg.palette:
+        log("palette: none configured; leaving console colours alone")
+        return
+    payload = palette_sequence(cfg.palette)
+    for number in cfg.ttys:
+        tty = tty_path(number)
+        if not os.path.exists(tty):
+            continue
+        if dry_run:
+            log(f"dry-run: would write {len(cfg.palette)} palette entries to {tty}")
+            continue
+        try:
+            fd = os.open(tty, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+        except OSError as exc:
+            log(f"palette: cannot open {tty}: {exc}")
+            continue
+        try:
+            os.write(fd, payload)
+            log(f"palette: set {len(cfg.palette)} entries on {tty}")
+        except OSError as exc:
+            log(f"palette: cannot write {tty}: {exc}")
+        finally:
+            os.close(fd)
+
+
+def run_apply(args: argparse.Namespace) -> int:
+    if not sys.platform.startswith("linux"):
+        log("not Linux; nothing to do")
+        return 0
+    if in_container():
+        log("running in a container; nothing to do")
+        return 0
+    cfg, warnings = load_config(args.config)
+    for warning in warnings:
+        log(f"config: {warning}")
+    fb_path = args.fb
+    if not os.path.exists(fb_path):
+        log(f"{fb_path} not present (no framebuffer console); nothing to do")
+        return 0
+    if not args.dry_run and not args.no_wait:
+        wait_for_framebuffer(
+            lambda: os.path.exists(fb_path),
+            lambda: fb_name(fb_path),
+            cfg.wait_seconds,
+        )
+        if not os.path.exists(fb_path):
+            log(f"{fb_path} disappeared while waiting; nothing to do")
+            return 0
+        if cfg.settle_seconds:
+            time.sleep(cfg.settle_seconds)
+    if cfg.fill_framebuffer:
+        fill_framebuffer(fb_path, args.dry_run, args.force)
+    else:
+        log("framebuffer: disabled by configuration")
+    apply_font(cfg, args.dry_run)
+    apply_palette(cfg, args.dry_run)
+    return 0
+
+
+def run_status(args: argparse.Namespace) -> int:
+    cfg, warnings = load_config(args.config)
+    print("Console status (curiosity-console-tuning)")
+    print(f"kernel: {os.uname().release}")
+    cmdline = read_text("/proc/cmdline")
+    if cmdline:
+        print(f"cmdline: {cmdline}")
+    print("drm_connectors:")
+    connectors = drm_connectors()
+    for name, status, enabled, mode in connectors:
+        print(f"  {name}: {status} enabled={enabled} first_mode={mode}")
+    if not connectors:
+        print("  (none exposed)")
+
+    print("framebuffer:")
+    mode = vt_text_mode()
+    verdict = "no framebuffer console (/dev/fb0 absent); nothing to tune"
+    if os.path.exists(args.fb):
+        try:
+            var = read_fb_var(args.fb)
+        except (OSError, ValueError) as exc:
+            verdict = f"cannot read {args.fb} ({exc}); run as root"
+        else:
+            print(
+                f"  {os.path.basename(args.fb)}: name={fb_name(args.fb) or 'unknown'} "
+                f"xres={var.xres} yres={var.yres} "
+                f"virtual={var.xres_virtual}x{var.yres_virtual} bpp={var.bits_per_pixel}"
+            )
+            cropped = var.xres < var.xres_virtual or var.yres < var.yres_virtual
+            if mode == KD_GRAPHICS:
+                verdict = (
+                    "a graphical session owns the active VT, so these values are not "
+                    "representative; re-run from a text console (Ctrl+Alt+F3)"
+                )
+            elif cropped:
+                verdict = "console is using only a crop of the framebuffer"
+            else:
+                verdict = "OK, the console covers the whole framebuffer"
+
+    label = {KD_TEXT: "text", KD_GRAPHICS: "graphics"}.get(mode, "unknown")
+    grid = vt_grid()
+    cell = vt_font_cell()
+    print(
+        f"active_vt: mode={label}"
+        + (f" grid={grid[0]}x{grid[1]}" if grid else "")
+        + (f" font_cell={cell[0]}x{cell[1]}" if cell else "")
+    )
+    print(
+        f"configured: fill_framebuffer={cfg.fill_framebuffer} "
+        f"font={cfg.font or '(unchanged)'} palette_entries={len(cfg.palette)}"
+    )
+    for warning in warnings:
+        print(f"note: {warning}")
+    print(f"verdict: {verdict}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Tune the Linux text console on large or mixed-size displays."
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--status", action="store_true", help="read-only diagnostics")
+    mode.add_argument(
+        "--dry-run", action="store_true", help="show what would change; change nothing"
+    )
+    parser.add_argument("--config", default=DEFAULT_CONFIG, help="config file path")
+    parser.add_argument("--fb", default=DEFAULT_FB, help="framebuffer device")
+    parser.add_argument(
+        "--no-wait", action="store_true", help="skip the bounded wait for the KMS fb"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="resize even when the framebuffer is not a DRM fbdev emulation",
+    )
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return run_status(args) if args.status else run_apply(args)
+    except Exception:  # noqa: BLE001 - safety net: log full context, never fail boot
+        log("unexpected error, exiting 0 so provisioning is not blocked:")
+        traceback.print_exc(file=sys.stdout)
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

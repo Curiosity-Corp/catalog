@@ -519,6 +519,60 @@ t460_fbcon_kernel_parameter: drm_kms_helper.fbdev_layout_horizontal=1
 t460_fbcon_video_args: []
 t460_fbcon_cmdline_path: /etc/curiosity/t460-fbcon-horizontal.cmdline
 
+# Console tuning (tasks/console-tuning.yml, tags console/display). OPT-IN: off
+# by default, so unrelated machines are unchanged. For Linux text consoles
+# (fbcon on KMS, e.g. i915) on large/HiDPI or mixed-size displays:
+#   - grow the console to the whole framebuffer (the kernel otherwise sizes it
+#     to the SMALLEST active display and leaves the rest of a big monitor black);
+#   - load a readable PSF bitmap font;
+#   - soften the default VT text colours.
+# A root-owned helper plus a systemd oneshot and udev triggers re-apply the
+# settings at boot and on display hotplug. Nothing here edits GRUB, installs a
+# kernel, or reboots; see docs/console-tuning.md for the documented-only
+# kernel-command-line alternative. Skipped on workspace/kiosk profiles, in
+# containers, and on hosts without /dev/fb0 (the helper exits 0 with a message).
+console_tuning_enabled: false
+# Grow fb0's visible size to its virtual size (fixes the cropped console).
+console_tuning_fill_framebuffer: true
+# PSF font FILE NAME from /usr/share/consolefonts (with extension), or an
+# absolute path. Empty leaves the console font alone. The kernel accepts only
+# 256- or 512-glyph PSF fonts; the cell size changes the VT grid. Examples:
+#   Uni3-Terminus20x10.psf.gz   (10x20, ships with console-setup; a good
+#                                in-between size for a 55-inch 4K)
+#   Uni3-Terminus16.psf.gz      (8x16)
+#   spleen-12x24.psfu.gz        (needs console_tuning_extra_packages:
+#                                [fonts-spleen]; also 5x8, 6x12, 8x16, 16x32, 32x64)
+console_tuning_font: ""
+# VT palette overrides, index (0-15) -> rrggbb. Empty leaves colours alone.
+# Index 7 is the default foreground and 15 bright/bold white. Example soft
+# greys (quote the values): {7: "857f7a", 15: "b4afaa"}. The palette is per-VT and lost on reboot, so
+# the same oneshot re-applies it.
+console_tuning_palette: {}
+# Virtual terminals that receive the font and palette.
+console_tuning_ttys: [1, 2, 3, 4, 5, 6]
+# Upper bound (seconds) to wait for the early firmware framebuffer to be
+# replaced by the KMS driver, and a short settle delay before reading fb0.
+console_tuning_wait_seconds: 15
+console_tuning_settle_seconds: 2
+# Also write FONT= into /etc/default/console-setup (when that file exists) so
+# console-setup loads the same font; the helper still re-applies afterwards.
+console_tuning_manage_console_setup: false
+# Debian/Ubuntu packages providing setfont, setupcon and the interpreter.
+console_tuning_install_packages: true
+console_tuning_packages:
+  - kbd
+  - console-setup
+  - python3
+# Extra packages, e.g. [fonts-spleen] for the Spleen PSF fonts.
+console_tuning_extra_packages: []
+# Run the helper immediately when its files change (it is otherwise run at
+# boot and by udev). It defers the framebuffer step while a graphical session
+# owns the active VT.
+console_tuning_apply_now: true
+console_tuning_script_path: /usr/local/sbin/curiosity-console-tuning
+console_tuning_status_path: /usr/local/bin/curiosity-console-status
+console_tuning_config_path: /etc/curiosity/console-tuning.conf
+
 # Minimal desktop (Openbox + LightDM + Firefox)
 # Lightweight GUI for machines that only need a browser and terminal.
 # Mutually exclusive with display_config_enabled (GDM/GNOME).

@@ -94,3 +94,21 @@
   ansible.builtin.systemd:
     name: ssh
     state: reloaded
+
+- name: Reload udev rules
+  ansible.builtin.command: udevadm control --reload
+  changed_when: true
+
+- name: Apply console tuning now
+  ansible.builtin.systemd:
+    name: curiosity-console-tuning.service
+    state: restarted
+  when: console_tuning_apply_now | default(true) | bool
+
+- name: Save console-setup font cache
+  # Copies the configured font into /etc/console-setup; touches no display.
+  # A missing/failed setupcon must not fail the pull.
+  ansible.builtin.command: setupcon --save-only
+  changed_when: true
+  failed_when: false
+  when: _console_tuning_console_setup.stat.exists | default(false)
