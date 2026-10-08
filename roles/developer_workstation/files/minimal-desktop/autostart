@@ -16,3 +16,4 @@ dunst &
 # System tray applets
 nm-applet &
 volumeicon &
+blueman-applet &

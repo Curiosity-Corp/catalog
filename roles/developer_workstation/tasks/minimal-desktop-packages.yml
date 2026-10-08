@@ -27,9 +27,18 @@
       - lxappearance
       - arc-theme
       - adwaita-icon-theme
+      # Provides /usr/share/backgrounds/warty-final-ubuntu.png, the vendor
+      # default referenced by 01_ubuntu.conf in the greeter conf.d. Our managed
+      # greeter config uses a solid color, but the file must still resolve so
+      # seat0-greeter.log stays free of missing-background warnings (e.g. on
+      # first boot before converge manages the greeter config).
+      - ubuntu-wallpapers
       # System tray applets
       - volumeicon-alsa
       - network-manager-gnome
+      # Bluetooth stack + tray applet (logged-in session tray, non-kiosk)
+      - bluez
+      - blueman
       # X11 utilities
       - x11-xserver-utils
       - xdotool
