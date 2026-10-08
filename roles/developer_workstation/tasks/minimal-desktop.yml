@@ -27,6 +27,22 @@
   ansible.builtin.include_tasks: minimal-desktop-openbox.yml
   tags: [minimal-desktop, openbox]
 
+- name: Validate optional FocusPass screen lock settings
+  ansible.builtin.include_tasks: minimal-desktop-focuspass-preflight.yml
+  tags: [minimal-desktop, locking, focuspass]
+  when:
+    - workstation_profile != 'byod-kiosk'
+    - focuspass_screenlock_enabled | default(false) | bool
+
+- name: Install optional FocusPass screen lock package
+  ansible.builtin.include_tasks: minimal-desktop-focuspass.yml
+  tags: [minimal-desktop, locking, focuspass]
+  when:
+    - workstation_profile != 'byod-kiosk'
+    - focuspass_screenlock_enabled | default(false) | bool
+    # Check mode validates inputs above but skips downloading/installing.
+    - not ansible_check_mode
+
 - name: Deploy picom compositor config
   ansible.builtin.include_tasks: minimal-desktop-picom.yml
   tags: [minimal-desktop, picom]

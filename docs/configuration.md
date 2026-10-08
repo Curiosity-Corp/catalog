@@ -127,6 +127,33 @@ After `ansible-pull` updates a running machine, reboot once so LightDM restarts
 on VT8 and the new Openbox autostart and keybinding load. An existing graphical
 session keeps its already-started processes until it restarts.
 
+The branded FocusPass screen-lock package is an optional local-PAM integration.
+It is installed only when all three variables below are supplied for a
+desktop or thin-client profile with the minimal desktop enabled:
+
+```yaml
+focuspass_screenlock_enabled: true
+focuspass_screenlock_install_url: https://artifact-host.example/focuspass-screenlock.deb
+focuspass_screenlock_install_sha256: <64-hex-character-sha256>
+```
+
+The role downloads the package into its digest-addressed artifact cache and
+installs it with APT. The supplied URL must use HTTPS, its SHA-256 must match,
+the host must be amd64, and the package must identify as
+`focuspass-screenlock` and provide both expected launchers. The role records
+the installed artifact digest and
+reinstalls when that pin changes, even if the Debian version does not.
+Ansible check mode validates the architecture, URL, and digest settings, then
+skips downloading and installing the package; run a normal pull to apply it.
+Disabling the option, disabling the minimal desktop, or switching to another
+profile removes the optional package. When it is installed, Openbox starts
+`focuspass-screenlock` and Super+L runs `focuspass-screenlock-command`; both
+commands fall back to the distribution XScreenSaver launcher if FocusPass is
+missing. With the default `false` value, the stock locker runs. The package
+uses the same `/etc/pam.d/xscreensaver` contract shown above and does not
+authenticate to a network IdP or require a FocusPass account. It is excluded
+from `byod-kiosk`.
+
 ## Safety-sensitive switches
 
 `sunshine_enabled`, `profile_cleanup_enabled`, `ziti_enabled`, and all

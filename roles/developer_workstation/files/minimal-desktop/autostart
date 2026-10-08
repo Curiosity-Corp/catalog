@@ -21,7 +21,10 @@ blueman-applet &
 # XScreenSaver provides a PAM conversation window: it can display each login
 # prompt (including a second-factor prompt) instead of treating every keypress
 # as an unexplained radial indicator. Its resource file sets a 10-minute
-# timeout, blank mode, and immediate locking.
-if command -v xscreensaver >/dev/null 2>&1; then
+# timeout, blank mode, and immediate locking. Prefer the optional branded
+# FocusPass launcher when installed, otherwise use the distribution binary.
+if command -v focuspass-screenlock >/dev/null; then
+    focuspass-screenlock --no-splash &
+elif command -v xscreensaver >/dev/null 2>&1; then
     xscreensaver --no-splash &
 fi

@@ -581,6 +581,14 @@ minimal_desktop_autologin: true
 minimal_desktop_firefox_tweaks: true
 minimal_desktop_idle_lock_minutes: 10
 
+# Optional FocusPass-branded XScreenSaver package. The package keeps the
+# role's local PAM contract; it does not connect to a network identity
+# provider. Supply the artifact URL and its trusted SHA-256 in host/group
+# variables when opting in. Kiosk profiles never use this integration.
+focuspass_screenlock_enabled: false
+focuspass_screenlock_install_url: ""
+focuspass_screenlock_install_sha256: ""
+
 # Sunshine remote streaming (Moonlight-compatible, KMS capture + VAAPI encode)
 # Disabled until the operator explicitly chooses to expose a streaming
 # service. Never use a shared/default password; provide credentials from Vault

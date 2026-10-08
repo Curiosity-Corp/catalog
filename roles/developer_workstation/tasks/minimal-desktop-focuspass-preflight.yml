@@ -1,0 +1,27 @@
+---
+# Pure input checks also run in Ansible check mode. Package retrieval and
+# installation live in a separate include that check mode skips.
+- name: Require the supported amd64 FocusPass build architecture
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture == 'x86_64'
+    fail_msg: >-
+      The supplied FocusPass screen-lock package is currently built only for
+      amd64 Linux workstations.
+
+- name: Require FocusPass screen lock package source when enabled
+  ansible.builtin.assert:
+    that:
+      - focuspass_screenlock_install_url | default('') is match('^https://[^\s]+\Z')
+    fail_msg: >-
+      Set focuspass_screenlock_install_url to an HTTPS URL for the FocusPass
+      screen-lock .deb, reachable from the managed host, before enabling
+      focuspass_screenlock_enabled.
+
+- name: Require a SHA-256 for the FocusPass screen lock package
+  ansible.builtin.assert:
+    that:
+      - focuspass_screenlock_install_sha256 | default('') is match('^[0-9a-fA-F]{64}\Z')
+    fail_msg: >-
+      Set focuspass_screenlock_install_sha256 to the trusted SHA-256 of the
+      FocusPass screen-lock .deb before enabling focuspass_screenlock_enabled.

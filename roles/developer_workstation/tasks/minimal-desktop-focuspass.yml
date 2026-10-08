@@ -1,0 +1,113 @@
+---
+# =============================================================================
+# Optional FocusPass-branded XScreenSaver package
+# =============================================================================
+# This package is a local PAM screen-locking derivative. It is not an IdP
+# client and does not authenticate to a network service. The artifact must be
+# supplied by the operator and reachable from the managed host over HTTPS,
+# then pinned with a SHA-256 digest.
+
+- name: Ensure the verified FocusPass artifact cache exists
+  ansible.builtin.file:
+    path: "{{ workstation_update_artifact_cache_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Download the verified FocusPass screen lock package
+  ansible.builtin.get_url:
+    url: "{{ focuspass_screenlock_install_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/focuspass-screenlock-{{ focuspass_screenlock_install_sha256 | lower }}.deb"
+    checksum: "sha256:{{ focuspass_screenlock_install_sha256 | lower }}"
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+
+- name: Read the downloaded FocusPass Debian package name
+  ansible.builtin.command:
+    argv:
+      - dpkg-deb
+      - --field
+      - "{{ workstation_update_artifact_cache_dir }}/focuspass-screenlock-{{ focuspass_screenlock_install_sha256 | lower }}.deb"
+      - Package
+  register: _focuspass_screenlock_deb_package
+  changed_when: false
+
+- name: Require the expected FocusPass Debian package identity
+  ansible.builtin.assert:
+    that:
+      - _focuspass_screenlock_deb_package.stdout == 'focuspass-screenlock'
+    fail_msg: >-
+      The verified artifact must be the focuspass-screenlock Debian package.
+
+- name: Inspect the previously installed FocusPass artifact digest
+  ansible.builtin.stat:
+    path: /var/lib/curiosity/focuspass-screenlock.sha256
+  register: _focuspass_screenlock_digest_stamp
+
+- name: Read the previously installed FocusPass artifact digest
+  ansible.builtin.slurp:
+    src: /var/lib/curiosity/focuspass-screenlock.sha256
+  register: _focuspass_screenlock_installed_digest
+  when: _focuspass_screenlock_digest_stamp.stat.exists
+
+- name: Remove FocusPass package before installing a different pinned artifact
+  ansible.builtin.apt:
+    name: focuspass-screenlock
+    state: absent
+    purge: true
+  when: >-
+    (_focuspass_screenlock_installed_digest.content | default('') | b64decode | trim | lower)
+    != (focuspass_screenlock_install_sha256 | lower)
+
+- name: Install the verified FocusPass screen lock package
+  ansible.builtin.apt:
+    deb: "{{ workstation_update_artifact_cache_dir }}/focuspass-screenlock-{{ focuspass_screenlock_install_sha256 | lower }}.deb"
+    state: present
+
+- name: Inspect the FocusPass screen-lock launcher
+  ansible.builtin.stat:
+    path: /usr/bin/focuspass-screenlock
+  become: true
+  become_user: "{{ dev_user }}"
+  register: _focuspass_screenlock_daemon
+
+- name: Inspect the FocusPass screen-lock command
+  ansible.builtin.stat:
+    path: /usr/bin/focuspass-screenlock-command
+  become: true
+  become_user: "{{ dev_user }}"
+  register: _focuspass_screenlock_command
+
+- name: Require executable FocusPass screen-lock launchers
+  ansible.builtin.assert:
+    that:
+      - _focuspass_screenlock_daemon.stat.exists
+      - _focuspass_screenlock_daemon.stat.isreg
+      - _focuspass_screenlock_daemon.stat.executable
+      - _focuspass_screenlock_command.stat.exists
+      - _focuspass_screenlock_command.stat.isreg
+      - _focuspass_screenlock_command.stat.executable
+    fail_msg: >-
+      The focuspass-screenlock package must install executable
+      /usr/bin/focuspass-screenlock and
+      /usr/bin/focuspass-screenlock-command launchers before it is recorded
+      as the active FocusPass artifact.
+
+- name: Ensure the FocusPass artifact digest state directory exists
+  ansible.builtin.file:
+    path: /var/lib/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Record the installed FocusPass artifact digest
+  ansible.builtin.copy:
+    dest: /var/lib/curiosity/focuspass-screenlock.sha256
+    content: "{{ focuspass_screenlock_install_sha256 | lower }}\n"
+    owner: root
+    group: root
+    mode: "0644"
