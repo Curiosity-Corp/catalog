@@ -51,10 +51,15 @@ def test_openbox_uses_pam_aware_locker_and_keeps_tty_locking() -> None:
     assert "does not reliably enforce PAM account-expiry" in docs
 
     autostart = (ROLE / "files/minimal-desktop/autostart").read_text()
-    assert "if command -v focuspass-screenlock >/dev/null; then" in autostart
-    assert "elif command -v xscreensaver >/dev/null 2>&1; then" in autostart
-    assert autostart.index("focuspass-screenlock >/dev/null") < autostart.index(
-        "elif command -v xscreensaver"
+    assert "display_xscreensaver_pids()" in autostart
+    assert 'tr \'\\000\' \'\\n\' <"/proc/$pid/environ"' in autostart
+    assert 'focuspass_path=/opt/focuspass-screenlock/bin/xscreensaver' in autostart
+    assert "screen locked since" in autostart
+    assert "active; leaving it in place" in autostart
+    assert "xscreensaver-command --exit" in autostart
+    assert "did not exit; leaving it untouched" in autostart
+    assert autostart.index("screen locked since") < autostart.index(
+        "xscreensaver-command --exit"
     )
     assert "focuspass-screenlock --no-splash &" in autostart
     assert "xscreensaver --no-splash &" in autostart

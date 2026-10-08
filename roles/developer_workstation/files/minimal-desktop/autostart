@@ -18,13 +18,58 @@ nm-applet &
 volumeicon &
 blueman-applet &
 
-# XScreenSaver provides a PAM conversation window: it can display each login
-# prompt (including a second-factor prompt) instead of treating every keypress
-# as an unexplained radial indicator. Its resource file sets a 10-minute
-# timeout, blank mode, and immediate locking. Prefer the optional branded
-# FocusPass launcher when installed, otherwise use the distribution binary.
-if command -v focuspass-screenlock >/dev/null; then
+# XScreenSaver provides a PAM conversation window for password and optional
+# second-factor prompts. Prefer FocusPass when installed. Replace a stock
+# daemon only on this DISPLAY; never disturb another graphical session.
+display_xscreensaver_pids() {
+    for pid in $(pgrep -x xscreensaver 2>/dev/null || true); do
+        [ -r "/proc/$pid/environ" ] || continue
+        process_display=$(tr '\000' '\n' <"/proc/$pid/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)
+        [ "$process_display" = "${DISPLAY:-}" ] && printf '%s\n' "$pid"
+    done
+}
+
+screenlock_pids=$(display_xscreensaver_pids)
+focuspass_current=false
+focuspass_path=/opt/focuspass-screenlock/bin/xscreensaver
+focuspass_identity=$(stat -Lc '%d:%i' "$focuspass_path" 2>/dev/null || true)
+for pid in $screenlock_pids; do
+    process_exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)
+    if [ "$process_exe" = "$focuspass_path" ] && [ -n "$focuspass_identity" ]; then
+        process_identity=$(stat -Lc '%d:%i' "/proc/$pid/exe" 2>/dev/null || true)
+        [ "$process_identity" = "$focuspass_identity" ] && focuspass_current=true
+    fi
+done
+
+if [ "$focuspass_current" = true ]; then
+    :
+elif command -v focuspass-screenlock >/dev/null 2>&1; then
+    if [ -n "$screenlock_pids" ]; then
+        lock_status=$(xscreensaver-command -time 2>/dev/null || true)
+        case "$lock_status" in
+            *"screen locked since"*)
+                echo "The existing XScreenSaver lock on ${DISPLAY:-unknown} is active; leaving it in place." >&2
+                exit 1
+                ;;
+        esac
+        if ! xscreensaver-command --exit >/dev/null 2>&1; then
+            echo "Could not gracefully stop the existing XScreenSaver daemon on ${DISPLAY:-unknown}." >&2
+            exit 1
+        fi
+        for attempt in $(seq 1 20); do
+            still_running=false
+            for pid in $screenlock_pids; do
+                kill -0 "$pid" 2>/dev/null && still_running=true
+            done
+            [ "$still_running" = false ] && break
+            sleep 0.25
+        done
+        if [ "$still_running" = true ]; then
+            echo "XScreenSaver on ${DISPLAY:-unknown} did not exit; leaving it untouched." >&2
+            exit 1
+        fi
+    fi
     focuspass-screenlock --no-splash &
-elif command -v xscreensaver >/dev/null 2>&1; then
+elif [ -z "$screenlock_pids" ] && command -v xscreensaver >/dev/null 2>&1; then
     xscreensaver --no-splash &
 fi
