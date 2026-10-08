@@ -2,6 +2,11 @@
 # Rate-limits imuxsock to prevent high-verbosity daemons (e.g. ziti-edge-tunnel)
 # from flooding /var/log/syslog. At 1000 msgs/5 s a chatty daemon is throttled
 # to ~200 msg/s instead of saturating the socket without bound.
+#
+# Single-load ownership: this drop-in is the ONLY imuxsock load. The bare
+# module(load="imuxsock") in /etc/rsyslog.conf is removed by this role
+# (logrotate.yml); a second load fails closed with "already in this config"
+# and leaves the limiter unapplied (rsyslogd -N1 reports it).
 module(load="imuxsock"
        SysSock.RateLimit.Interval="{{ rsyslog_ratelimit_interval }}"
        SysSock.RateLimit.Burst="{{ rsyslog_ratelimit_burst }}")

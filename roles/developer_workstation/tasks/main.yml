@@ -283,6 +283,11 @@
   tags: [dotfiles, user]
   when: user_dotfiles_repo | default('') | length > 0
 
+- name: Restore saved workstation state when leaving the kiosk profile
+  ansible.builtin.include_tasks: kiosk-cleanup.yml
+  tags: [kiosk, lockdown]
+  when: workstation_profile != 'byod-kiosk'
+
 - name: Include display configuration (GDM, VNC, GNOME)
   ansible.builtin.include_tasks: display-config.yml
   tags: [display]
@@ -315,7 +320,7 @@
   # no meaning in the container-safe workspace profile (no systemd there).
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
-- name: Include kiosk session lockdown (Chromium kiosk, no shell, idle lock)
+- name: Include kiosk session lockdown (Chromium kiosk, no shell, no idle lock)
   ansible.builtin.include_tasks: kiosk-session.yml
   tags: [kiosk, lockdown]
   when: workstation_profile == 'byod-kiosk'

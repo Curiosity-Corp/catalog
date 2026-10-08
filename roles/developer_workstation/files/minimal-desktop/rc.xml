@@ -61,6 +61,11 @@
   <keyboard>
     <chainQuitKey>C-g</chainQuitKey>
 
+    <!-- Lock the current X11 session with the visible PAM prompt. -->
+    <keybind key="W-l">
+      <action name="Execute"><command>xscreensaver-command --lock</command></action>
+    </keybind>
+
     <!-- Launch apps -->
     <keybind key="W-Return">
       <action name="Execute"><command>lxterminal</command></action>

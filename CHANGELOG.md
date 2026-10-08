@@ -33,6 +33,13 @@ All notable changes to this project are documented here. The format follows
   re-applies them from a systemd oneshot plus udev triggers, and ships a
   read-only `curiosity-console-status` diagnostic. Default off; never edits
   the bootloader or kernel command line.
+- PAM-aware XScreenSaver locking for standard Openbox desktops, with separate
+  visible authentication prompts and `vlock` for text consoles.
+- Kiosk profile state snapshots for account groups, sudoers, desktop files,
+  and TTY/sleep unit state, with guarded restoration when leaving kiosk mode.
+- SDKMAN runtime metadata and launcher repair that preserves dirty or
+  non-Git source installations, plus a managed guard against recursive init
+  sourcing.
 
 ### Changed
 
@@ -60,6 +67,11 @@ All notable changes to this project are documented here. The format follows
   role now migrates legacy npm installs, repairs a missing standalone
   launcher, and removes dangling `/usr/local/bin/codex` symlinks shipped by
   some base images.
+- The minimal Openbox profile replaces Light Locker and the single-field
+  `i3lock`/`xss-lock` path with XScreenSaver, uses a ten-minute idle timeout,
+  and leaves kiosk sessions without screen locking by design. Ubuntu-only
+  wallpaper assets are now distro-gated; LightDM indicators and rsyslog
+  restart validation are corrected.
 
 ## [0.1.0] - planned
 

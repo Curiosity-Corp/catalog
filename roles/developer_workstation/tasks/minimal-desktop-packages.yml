@@ -37,3 +37,42 @@
       - libnss3-tools
     state: present
     update_cache: true
+
+- name: Install the Ubuntu greeter wallpaper asset
+  ansible.builtin.apt:
+    name: ubuntu-wallpapers
+    state: present
+    update_cache: false
+  when: ansible_distribution == 'Ubuntu'
+
+- name: Install PAM-aware locking tools for standard Openbox sessions
+  ansible.builtin.apt:
+    name:
+      - xscreensaver
+      - vlock
+    state: present
+    update_cache: false
+  when: workstation_profile != 'byod-kiosk'
+
+- name: Remove the single-prompt i3lock and its xss-lock launcher
+  ansible.builtin.apt:
+    name:
+      - i3lock
+      - xss-lock
+    state: absent
+    autoremove: false
+  when: workstation_profile != 'byod-kiosk'
+
+- name: Install Bluetooth tray support for standard Openbox sessions
+  ansible.builtin.apt:
+    name:
+      - bluez
+      - blueman
+    state: present
+    update_cache: false
+  when: workstation_profile != 'byod-kiosk'
+
+- name: Remove Light Locker from the LightDM/Openbox session
+  ansible.builtin.apt:
+    name: light-locker
+    state: absent

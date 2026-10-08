@@ -1,0 +1,294 @@
+---
+# Undo only state recorded by this role when leaving byod-kiosk. Per-unit
+# snapshots prevent the role from unmasking services an administrator had
+# already masked before the kiosk profile was applied.
+- name: Check whether this host has saved kiosk profile state
+  ansible.builtin.stat:
+    path: /var/lib/curiosity/workstation/byod-kiosk/active
+  register: _kiosk_profile_state
+
+- name: Check for saved kiosk account identity
+  ansible.builtin.stat:
+    path: /var/lib/curiosity/workstation/byod-kiosk/identity.json
+  register: _kiosk_saved_identity_file
+  when: _kiosk_profile_state.stat.exists
+
+- name: Read the saved kiosk account identity
+  ansible.builtin.slurp:
+    src: /var/lib/curiosity/workstation/byod-kiosk/identity.json
+  register: _kiosk_saved_identity_content
+  when:
+    - _kiosk_profile_state.stat.exists
+    - _kiosk_saved_identity_file.stat.exists | default(false)
+
+- name: Decode the saved kiosk account identity
+  ansible.builtin.set_fact:
+    _kiosk_saved_identity: "{{ _kiosk_saved_identity_content.content | b64decode | from_json }}"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - _kiosk_saved_identity_file.stat.exists | default(false)
+
+- name: Require kiosk cleanup to target the account captured at lockdown
+  ansible.builtin.assert:
+    that:
+      - _kiosk_saved_identity_file.stat.exists | default(false)
+      - _kiosk_saved_identity.user | default('') == dev_user
+      - _kiosk_saved_identity.home | default('') == dev_user_home
+    fail_msg: >-
+      The saved kiosk snapshot belongs to a different or unknown account.
+      Refusing to restore its groups, sudoers, or desktop files for
+      {{ dev_user }}. Restore the original dev_user and dev_user_home settings,
+      or manually reconcile the saved profile state first.
+  when: _kiosk_profile_state.stat.exists
+
+- name: Read saved kiosk user groups
+  ansible.builtin.slurp:
+    src: /var/lib/curiosity/workstation/byod-kiosk/groups
+  register: _kiosk_original_groups_state
+  no_log: true
+  when: _kiosk_profile_state.stat.exists
+
+- name: Restore the kiosk user's original supplementary groups
+  ansible.builtin.user:
+    name: "{{ dev_user }}"
+    groups: "{{ (_kiosk_original_groups_state.content | b64decode | trim).split() | join(',') }}"
+    append: false
+  when: _kiosk_profile_state.stat.exists
+
+- name: Check for a saved per-user sudoers file
+  ansible.builtin.stat:
+    path: /var/lib/curiosity/workstation/byod-kiosk/user-sudoers
+  register: _kiosk_saved_sudoers
+  when: _kiosk_profile_state.stat.exists
+
+- name: Restore the prior per-user sudoers file
+  ansible.builtin.copy:
+    src: /var/lib/curiosity/workstation/byod-kiosk/user-sudoers
+    dest: "/etc/sudoers.d/{{ dev_user }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - _kiosk_saved_sudoers.stat.exists
+
+- name: Remove any kiosk-only per-user sudoers file
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ dev_user }}"
+    state: absent
+  when:
+    - _kiosk_profile_state.stat.exists
+    - not (_kiosk_saved_sudoers.stat.exists | default(false))
+
+- name: Remove the obsolete kiosk package-manager sudoers rule
+  ansible.builtin.file:
+    path: /etc/sudoers.d/kiosk-deny-pkg
+    state: absent
+  when: _kiosk_profile_state.stat.exists
+
+- name: Stop and disable the kiosk browser user service
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ dev_user }}"
+      - --
+      - env
+      - "XDG_RUNTIME_DIR=/run/user/{{ (lookup('pipe', 'id -u ' + dev_user)) }}"
+      - "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{{ (lookup('pipe', 'id -u ' + dev_user)) }}/bus"
+      - systemctl
+      - --user
+      - disable
+      - --now
+      - curiosity-kiosk-browser.service
+  register: _kiosk_browser_stop
+  changed_when: _kiosk_browser_stop.rc == 0
+  failed_when: false
+  when: _kiosk_profile_state.stat.exists
+
+- name: Remove the kiosk browser user service and its Openbox autostart artifacts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ dev_user_home }}/.config/systemd/user/curiosity-kiosk-browser.service"
+    - /etc/sudoers.d/kiosk-deny-pkg
+    - /etc/systemd/logind.conf.d/10-kiosk-nosleep.conf
+    - /etc/systemd/logind.conf.d/kiosk-idle.conf
+  when: _kiosk_profile_state.stat.exists
+
+- name: Check saved standard Openbox and LightDM files
+  ansible.builtin.stat:
+    path: "{{ item.backup }}"
+  loop:
+    - backup: /var/lib/curiosity/workstation/byod-kiosk/autostart
+      dest: "{{ dev_user_home }}/.config/openbox/autostart"
+      owner: "{{ dev_user }}"
+      group: "{{ dev_user }}"
+      mode: "0755"
+    - backup: /var/lib/curiosity/workstation/byod-kiosk/rc_xml
+      dest: "{{ dev_user_home }}/.config/openbox/rc.xml"
+      owner: "{{ dev_user }}"
+      group: "{{ dev_user }}"
+      mode: "0644"
+    - backup: /var/lib/curiosity/workstation/byod-kiosk/50-autologin_conf
+      dest: /etc/lightdm/lightdm.conf.d/50-autologin.conf
+      owner: root
+      group: root
+      mode: "0644"
+  register: _kiosk_saved_desktop_files
+  when: _kiosk_profile_state.stat.exists
+
+- name: Restore the original standard Openbox and LightDM files
+  ansible.builtin.copy:
+    src: "{{ item.item.backup }}"
+    dest: "{{ item.item.dest }}"
+    remote_src: true
+    owner: "{{ item.item.owner }}"
+    group: "{{ item.item.group }}"
+    mode: "{{ item.item.mode }}"
+  loop: "{{ _kiosk_saved_desktop_files.results | default([]) }}"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - item.stat.exists
+
+- name: Remove standard desktop files that did not exist before kiosk mode
+  ansible.builtin.file:
+    path: "{{ item.item.dest }}"
+    state: absent
+  loop: "{{ _kiosk_saved_desktop_files.results | default([]) }}"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - not item.stat.exists
+
+- name: Reload the systemd manager and logind after kiosk policy removal
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: _kiosk_profile_state.stat.exists
+
+- name: Reload systemd-logind after kiosk policy removal
+  ansible.builtin.command:
+    argv: [systemctl, kill, -s, HUP, systemd-logind]
+  changed_when: true
+  when: _kiosk_profile_state.stat.exists
+
+- name: Read saved enablement of TTY and sleep units
+  ansible.builtin.command:
+    argv:
+      - cat
+      - "/var/lib/curiosity/workstation/byod-kiosk/{{ item | replace('@', '_') | replace('.', '_') }}.enabled"
+  loop:
+    - getty@tty2.service
+    - getty@tty3.service
+    - getty@tty4.service
+    - getty@tty5.service
+    - getty@tty6.service
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+  register: _kiosk_original_enablement_on_exit
+  changed_when: false
+  when: _kiosk_profile_state.stat.exists
+
+- name: Validate saved TTY and sleep unit enablement snapshots
+  ansible.builtin.assert:
+    that:
+      - _kiosk_original_enablement_on_exit.results | length == 9
+      - >-
+        item.stdout | trim in [
+          'enabled', 'enabled-runtime', 'disabled', 'masked', 'masked-runtime',
+          'static', 'indirect', 'generated', 'transient', 'alias', 'linked',
+          'linked-runtime', 'not-found'
+        ]
+    fail_msg: >-
+      Refusing kiosk cleanup because the saved systemd enablement state is
+      missing or unrecognized; the original snapshot will be retained.
+  loop: "{{ _kiosk_original_enablement_on_exit.results | default([]) }}"
+  when: _kiosk_profile_state.stat.exists
+
+- name: Read saved active state of TTY and sleep units
+  ansible.builtin.command:
+    argv:
+      - cat
+      - "/var/lib/curiosity/workstation/byod-kiosk/{{ item | replace('@', '_') | replace('.', '_') }}.active"
+  loop:
+    - getty@tty2.service
+    - getty@tty3.service
+    - getty@tty4.service
+    - getty@tty5.service
+    - getty@tty6.service
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+  register: _kiosk_original_activity_on_exit
+  changed_when: false
+  when: _kiosk_profile_state.stat.exists
+
+- name: Validate saved active state snapshots
+  ansible.builtin.assert:
+    that:
+      - _kiosk_original_activity_on_exit.results | length == 9
+      - item.stdout | trim in ['active', 'inactive', 'failed', 'activating', 'deactivating']
+    fail_msg: >-
+      Refusing kiosk cleanup because a saved systemd activity state is missing
+      or unrecognized; the original snapshot will be retained.
+  loop: "{{ _kiosk_original_activity_on_exit.results | default([]) }}"
+  when: _kiosk_profile_state.stat.exists
+
+- name: Remove the kiosk persistent mask while preserving pre-existing masks
+  ansible.builtin.command:
+    argv: [systemctl, unmask, "{{ item.item }}"]
+  loop: "{{ _kiosk_original_enablement_on_exit.results | default([]) }}"
+  register: _kiosk_persistent_unmask
+  changed_when: "'Removed' in _kiosk_persistent_unmask.stdout or 'Removed' in _kiosk_persistent_unmask.stderr"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - item.stdout | default('') | trim not in ['masked', 'unknown', '']
+
+- name: Reapply originally runtime-masked TTY and sleep units
+  ansible.builtin.command:
+    argv: [systemctl, --runtime, mask, "{{ item.item }}"]
+  loop: "{{ _kiosk_original_enablement_on_exit.results | default([]) }}"
+  register: _kiosk_runtime_mask
+  changed_when: "'Created symlink' in _kiosk_runtime_mask.stdout or 'Created symlink' in _kiosk_runtime_mask.stderr"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - item.stdout | default('') | trim == 'masked-runtime'
+
+- name: Restore previously enabled TTY and sleep units
+  ansible.builtin.systemd:
+    name: "{{ item.item }}"
+    enabled: true
+  loop: "{{ _kiosk_original_enablement_on_exit.results | default([]) }}"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - item.stdout | default('') | trim == 'enabled'
+
+- name: Restore previously runtime-enabled TTY and sleep units
+  ansible.builtin.command:
+    argv: [systemctl, --runtime, enable, "{{ item.item }}"]
+  loop: "{{ _kiosk_original_enablement_on_exit.results | default([]) }}"
+  register: _kiosk_runtime_enable
+  changed_when: "'Created symlink' in _kiosk_runtime_enable.stdout or 'Created symlink' in _kiosk_runtime_enable.stderr"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - item.stdout | default('') | trim == 'enabled-runtime'
+
+- name: Restore previously active TTY and sleep units
+  ansible.builtin.systemd:
+    name: "{{ item.item }}"
+    state: started
+  loop: "{{ _kiosk_original_activity_on_exit.results | default([]) }}"
+  when:
+    - _kiosk_profile_state.stat.exists
+    - item.stdout | default('') | trim == 'active'
+
+- name: Remove saved kiosk profile state after cleanup
+  ansible.builtin.file:
+    path: /var/lib/curiosity/workstation/byod-kiosk
+    state: absent
+  when: _kiosk_profile_state.stat.exists

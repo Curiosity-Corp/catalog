@@ -346,7 +346,7 @@ def main() -> None:
             "https://api.sdkman.io/2/candidates/all",
             "Inspect the existing SDKMAN directory",
             "Check whether the existing SDKMAN checkout is dirty",
-            "Preserve an existing SDKMAN installation that is not a clean Git checkout",
+            "Preserve SDKMAN source when it is not a clean Git checkout",
             "Install the SDKMAN shell launcher",
             "Ensure Bun's bunx alias is available",
         ),

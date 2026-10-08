@@ -579,6 +579,7 @@ console_tuning_config_path: /etc/curiosity/console-tuning.conf
 minimal_desktop_enabled: false
 minimal_desktop_autologin: true
 minimal_desktop_firefox_tweaks: true
+minimal_desktop_idle_lock_minutes: 10
 
 # Sunshine remote streaming (Moonlight-compatible, KMS capture + VAAPI encode)
 # Disabled until the operator explicitly chooses to expose a streaming
@@ -618,9 +619,6 @@ vscode_extensions:
 # Kiosk session (byod-kiosk profile)
 # Target URL for the full-screen kiosk browser session.
 kiosk_target_url: "https://example.org"
-# Idle timeout before screen lock, in minutes.
-kiosk_idle_lock_minutes: 15
-
 # UFW firewall (SSH open, VNC restricted to ziti0)
 firewall_enabled: false
 

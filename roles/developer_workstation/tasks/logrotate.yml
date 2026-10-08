@@ -94,6 +94,34 @@
     mode: "0755"
   tags: [logrotate, logging]
 
+# -----------------------------------------------------------------------------
+# rsyslog: remove bare imuxsock load so the drop-in owns the single load
+# -----------------------------------------------------------------------------
+# The package-owned /etc/rsyslog.conf already loads imuxsock bare
+# (module(load="imuxsock")). Loading it a second time from our drop-in fails
+# closed ("module 'imuxsock' already in this config", parameters not known),
+# which rsyslogd -N1 reports and which leaves the rate limiter unapplied.
+# This drop-in therefore owns the single parameterized imuxsock load, and the
+# bare load is removed here. Verified on rsyslog 8.2512.0: bare line removed
+# plus this drop-in validates clean under rsyslogd -N1; the duplicate load
+# reproduces the parse errors. Guarded on the file existing so machines
+# without rsyslog (this role creates /etc/rsyslog.d unconditionally) still
+# converge.
+- name: Check for package-owned rsyslog.conf
+  ansible.builtin.stat:
+    path: /etc/rsyslog.conf
+  register: _curiosity_rsyslog_conf
+  tags: [logrotate, logging]
+
+- name: Remove bare imuxsock load from rsyslog.conf (drop-in owns the single load)
+  ansible.builtin.lineinfile:
+    path: /etc/rsyslog.conf
+    regexp: '^module\(load="imuxsock"\)\s*(#.*)?$'
+    state: absent
+  when: _curiosity_rsyslog_conf.stat.exists
+  notify: Restart rsyslog
+  tags: [logrotate, logging]
+
 - name: Deploy rsyslog imuxsock rate-limit config
   ansible.builtin.template:
     src: 10-curiosity-ratelimit.conf.j2

@@ -390,6 +390,83 @@
     path: "{{ dev_user_home }}/.sdkman/.git"
   register: _sdkman_git_dir
 
+- name: Set the SDKMAN source-discovery patch marker path
+  ansible.builtin.set_fact:
+    _sdkman_source_patch_marker: "{{ dev_user_home }}/.cache/curiosity-corp/sdkman-init.sha256"
+
+- name: Inspect the SDKMAN init source and role-owned patch marker
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.sdkman/src/main/bash/sdkman-init.sh"
+    checksum_algorithm: sha256
+  register: _sdkman_init_source
+  when: _sdkman_git_dir.stat.exists | default(false)
+
+- name: Inspect the SDKMAN source-discovery patch marker
+  ansible.builtin.stat:
+    path: "{{ _sdkman_source_patch_marker }}"
+  register: _sdkman_source_patch_marker_stat
+
+- name: Read the SDKMAN source-discovery patch marker
+  ansible.builtin.slurp:
+    src: "{{ _sdkman_source_patch_marker }}"
+  register: _sdkman_source_patch_marker_content
+  when: _sdkman_source_patch_marker_stat.stat.exists | default(false)
+
+- name: Inspect all existing SDKMAN checkout changes before restoring our patch
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ dev_user_home }}/.sdkman"
+      - status
+      - --porcelain
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  register: _sdkman_git_status_before_restore
+  changed_when: false
+  failed_when: false
+  when: _sdkman_git_dir.stat.exists | default(false)
+
+- name: Set the SDKMAN role-managed patch state
+  ansible.builtin.set_fact:
+    _sdkman_source_patch_checksum: >-
+      {{ (_sdkman_source_patch_marker_content.content | b64decode | trim)
+         if (_sdkman_source_patch_marker_stat.stat.exists | default(false))
+         else '' }}
+    _sdkman_source_patch_exact: >-
+      {{ ( _sdkman_git_dir.stat.exists | default(false) | bool )
+         and ( _sdkman_init_source.stat.exists | default(false) | bool )
+         and (
+           _sdkman_init_source.stat.checksum | default('') ==
+           (
+             (_sdkman_source_patch_marker_content.content | b64decode | trim)
+             if (_sdkman_source_patch_marker_stat.stat.exists | default(false))
+             else ''
+           )
+         ) }}
+
+- name: Restore the exact role-managed SDKMAN source patch before updating
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ dev_user_home }}/.sdkman"
+      - restore
+      - --source=HEAD
+      - --
+      - src/main/bash/sdkman-init.sh
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  register: _sdkman_source_patch_restore
+  changed_when: _sdkman_source_patch_exact | bool
+  when:
+    - _sdkman_source_patch_exact | bool
+    - _sdkman_git_status_before_restore.stdout_lines | default([]) | map('trim') | list == ['M src/main/bash/sdkman-init.sh']
+
 - name: Check whether the existing SDKMAN checkout is dirty
   ansible.builtin.command:
     argv:
@@ -407,11 +484,16 @@
   failed_when: false
   when: _sdkman_git_dir.stat.exists | default(false)
 
-- name: Set SDKMAN checkout state
+- name: Set SDKMAN source-update and runtime-repair eligibility
   ansible.builtin.set_fact:
     _sdkman_git_checkout: "{{ _sdkman_git_dir.stat.exists | default(false) }}"
     _sdkman_git_dirty: >-
       {{ (_sdkman_git_status.stdout | default('') | trim | length) > 0 }}
+    _sdkman_allow_source_update: >-
+      {{ not (_sdkman_root.stat.isdir | default(false)) or
+         (_sdkman_git_dir.stat.exists | default(false) and
+          (_sdkman_git_status.stdout | default('') | trim | length) == 0) }}
+    _sdkman_manage_runtime: true
 
 - name: Install or update SDKMAN from its Git repository
   ansible.builtin.git:
@@ -425,10 +507,16 @@
   environment:
     HOME: "{{ dev_user_home }}"
   when:
-    - not (_sdkman_root.stat.isdir | default(false)) or
-      (_sdkman_git_checkout and not _sdkman_git_dirty)
+    - _sdkman_allow_source_update | bool
 
-- name: Preserve an existing SDKMAN installation that is not a clean Git checkout
+- name: Inspect the SDKMAN init source after checkout synchronization
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.sdkman/src/main/bash/sdkman-init.sh"
+    checksum_algorithm: sha256
+  register: _sdkman_init_source_after_checkout
+  when: _sdkman_allow_source_update | bool
+
+- name: Preserve SDKMAN source when it is not a clean Git checkout
   ansible.builtin.debug:
     msg: >-
       Preserving {{ dev_user_home }}/.sdkman because it is an existing
@@ -436,7 +524,17 @@
       repair will continue without replacing user state.
   when:
     - _sdkman_root.stat.isdir | default(false)
-    - not (_sdkman_git_checkout and not _sdkman_git_dirty)
+    - not (_sdkman_allow_source_update | bool)
+
+- name: Ensure the SDKMAN role-owned state directory exists
+  ansible.builtin.file:
+    path: "{{ _sdkman_source_patch_marker | dirname }}"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0750"
+  become: true
+  when: _sdkman_manage_runtime | bool
 
 - name: Ensure SDKMAN runtime directories exist
   ansible.builtin.file:
@@ -453,6 +551,7 @@
     - tmp
     - var
   become: true
+  when: _sdkman_manage_runtime | bool
 
 - name: Resolve the SDKMAN candidate list
   ansible.builtin.uri:
@@ -460,6 +559,7 @@
     return_content: true
   register: _sdkman_candidates
   changed_when: false
+  when: _sdkman_manage_runtime | bool
 
 - name: Set the SDKMAN platform identifier
   ansible.builtin.set_fact:
@@ -469,6 +569,7 @@
       {% elif ansible_facts.system == 'Darwin' and ansible_facts.architecture == 'x86_64' %}darwinx64
       {% elif ansible_facts.system == 'Darwin' and ansible_facts.architecture == 'arm64' %}darwinarm64
       {% else %}exotic{% endif %}
+  when: _sdkman_manage_runtime | bool
 
 - name: Seed SDKMAN candidate metadata
   ansible.builtin.copy:
@@ -478,6 +579,7 @@
     group: "{{ dev_user }}"
     mode: "0640"
   become: true
+  when: _sdkman_manage_runtime | bool
 
 - name: Seed SDKMAN platform metadata
   ansible.builtin.copy:
@@ -487,6 +589,66 @@
     group: "{{ dev_user }}"
     mode: "0640"
   become: true
+  when: _sdkman_manage_runtime | bool
+
+- name: Exclude SDKMAN's own init file from source discovery
+  ansible.builtin.replace:
+    path: "{{ dev_user_home }}/.sdkman/src/main/bash/sdkman-init.sh"
+    regexp: '^scripts=\(\$\(find "\$\{SDKMAN_DIR\}/src" "\$\{SDKMAN_DIR\}/ext" -type f -name ''sdkman-\*\.sh''\)\)$'
+    replace: 'scripts=($(find "${SDKMAN_DIR}/src" "${SDKMAN_DIR}/ext" -type f -name ''sdkman-*.sh'' ! -path "${SDKMAN_DIR}/src/main/bash/sdkman-init.sh"))'
+  become: true
+  become_user: "{{ dev_user }}"
+  register: _sdkman_source_patch
+  when:
+    - _sdkman_allow_source_update | bool
+    - _sdkman_init_source_after_checkout.stat.exists | default(false)
+
+- name: Verify SDKMAN source discovery excludes only its recursive init file
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -F
+      - --
+      - '! -path "${SDKMAN_DIR}/src/main/bash/sdkman-init.sh"'
+      - "{{ dev_user_home }}/.sdkman/src/main/bash/sdkman-init.sh"
+  register: _sdkman_source_patch_check
+  changed_when: false
+  failed_when: false
+  when:
+    - _sdkman_allow_source_update | bool
+    - _sdkman_init_source_after_checkout.stat.exists | default(false)
+
+- name: Stop if the SDKMAN recursive-source fix no longer matches upstream
+  ansible.builtin.assert:
+    that:
+      - _sdkman_source_patch_check.rc == 0
+    fail_msg: >-
+      SDKMAN's source discovery changed upstream; update the managed recursion
+      exclusion before enabling SDKMAN in this checkout.
+  when:
+    - _sdkman_allow_source_update | bool
+    - _sdkman_init_source_after_checkout.stat.exists | default(false)
+
+- name: Record the SDKMAN source-discovery patch checksum
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.sdkman/src/main/bash/sdkman-init.sh"
+    checksum_algorithm: sha256
+  register: _sdkman_init_source_after_patch
+  when:
+    - _sdkman_allow_source_update | bool
+    - _sdkman_init_source_after_checkout.stat.exists | default(false)
+
+- name: Record the role-owned SDKMAN source-discovery patch
+  ansible.builtin.copy:
+    content: "{{ _sdkman_init_source_after_patch.stat.checksum }}\n"
+    dest: "{{ _sdkman_source_patch_marker }}"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0640"
+  become: true
+  when:
+    - _sdkman_allow_source_update | bool
+    - _sdkman_init_source_after_checkout.stat.exists | default(false)
 
 - name: Install the SDKMAN shell launcher
   ansible.builtin.copy:
@@ -501,6 +663,7 @@
     group: "{{ dev_user }}"
     mode: "0755"
   become: true
+  when: _sdkman_manage_runtime | bool
 
 - name: Configure SDKMAN curl timeouts to fail fast when unreachable
   ansible.builtin.lineinfile:
@@ -514,3 +677,4 @@
     - { regexp: '^sdkman_curl_max_time=', line: 'sdkman_curl_max_time=3' }
   become: true
   become_user: "{{ dev_user }}"
+  when: _sdkman_manage_runtime | bool
