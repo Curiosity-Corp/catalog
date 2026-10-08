@@ -65,6 +65,18 @@
     fail_msg: >-
       workstation_profile must be 'desktop', 'workspace', 'thin-client', or 'byod-kiosk'
 
+- name: Inspect FocusPass ownership state before optional package cleanup
+  ansible.builtin.stat:
+    path: /var/lib/curiosity/focuspass-screenlock.managed
+  register: _focuspass_managed_marker_stamp
+  tags: [minimal-desktop, locking, focuspass]
+
+- name: Inspect FocusPass digest state before optional package cleanup
+  ansible.builtin.stat:
+    path: /var/lib/curiosity/focuspass-screenlock.sha256
+  register: _focuspass_installed_digest_stamp
+  tags: [minimal-desktop, locking, focuspass]
+
 - name: Remove FocusPass lock package outside its enabled minimal-desktop profiles
   ansible.builtin.apt:
     name: focuspass-screenlock
@@ -73,6 +85,9 @@
   tags: [minimal-desktop, locking, focuspass]
   when:
     - ansible_os_family == 'Debian'
+    - >-
+      _focuspass_managed_marker_stamp.stat.exists or
+      _focuspass_installed_digest_stamp.stat.exists
     - >-
       not (
         (focuspass_screenlock_enabled | default(false) | bool) and
@@ -83,6 +98,20 @@
 - name: Remove stale FocusPass artifact digest when integration is inactive
   ansible.builtin.file:
     path: /var/lib/curiosity/focuspass-screenlock.sha256
+    state: absent
+  tags: [minimal-desktop, locking, focuspass]
+  when:
+    - ansible_os_family == 'Debian'
+    - >-
+      not (
+        (focuspass_screenlock_enabled | default(false) | bool) and
+        workstation_profile in ['desktop', 'thin-client'] and
+        (workstation_profile != 'desktop' or (minimal_desktop_enabled | default(false) | bool))
+      )
+
+- name: Remove stale FocusPass ownership marker when integration is inactive
+  ansible.builtin.file:
+    path: /var/lib/curiosity/focuspass-screenlock.managed
     state: absent
   tags: [minimal-desktop, locking, focuspass]
   when:

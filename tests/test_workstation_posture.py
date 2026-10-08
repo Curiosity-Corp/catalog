@@ -160,7 +160,14 @@ def test_focuspass_screenlock_is_opt_in_verified_and_profile_scoped() -> None:
         focuspass, "Remove FocusPass package before installing a different pinned artifact"
     )
     install = _named(focuspass, "Install the verified FocusPass screen lock package")
-    assert focuspass.index(package_identity) < focuspass.index(changed_digest_remove)
+    managed_marker = _named(
+        focuspass, "Mark FocusPass as Catalog-managed before package mutation"
+    )
+    assert managed_marker["ansible.builtin.copy"]["dest"] == (
+        "/var/lib/curiosity/focuspass-screenlock.managed"
+    )
+    assert focuspass.index(package_identity) < focuspass.index(managed_marker)
+    assert focuspass.index(managed_marker) < focuspass.index(changed_digest_remove)
     assert focuspass.index(changed_digest_remove) < focuspass.index(install)
     assert "b64decode" in changed_digest_remove["when"]
     assert install["ansible.builtin.apt"]["deb"] == get_url["dest"]
@@ -187,6 +194,18 @@ def test_focuspass_screenlock_is_opt_in_verified_and_profile_scoped() -> None:
     ]["content"]
 
     main_tasks = _tasks(TASKS / "main.yml")
+    ownership_stamp = _named(
+        main_tasks, "Inspect FocusPass ownership state before optional package cleanup"
+    )
+    assert ownership_stamp["ansible.builtin.stat"]["path"] == (
+        "/var/lib/curiosity/focuspass-screenlock.managed"
+    )
+    digest_stamp = _named(
+        main_tasks, "Inspect FocusPass digest state before optional package cleanup"
+    )
+    assert digest_stamp["ansible.builtin.stat"]["path"] == (
+        "/var/lib/curiosity/focuspass-screenlock.sha256"
+    )
     cleanup = _named(
         main_tasks,
         "Remove FocusPass lock package outside its enabled minimal-desktop profiles",
@@ -195,6 +214,8 @@ def test_focuspass_screenlock_is_opt_in_verified_and_profile_scoped() -> None:
     assert cleanup["ansible.builtin.apt"]["state"] == "absent"
     cleanup_condition = " ".join(cleanup["when"])
     assert "ansible_os_family == 'Debian'" in cleanup_condition
+    assert "_focuspass_managed_marker_stamp.stat.exists" in cleanup_condition
+    assert "_focuspass_installed_digest_stamp.stat.exists" in cleanup_condition
     assert "focuspass_screenlock_enabled" in cleanup_condition
     assert "workstation_profile in ['desktop', 'thin-client']" in cleanup_condition
     assert "minimal_desktop_enabled" in cleanup_condition
@@ -203,11 +224,26 @@ def test_focuspass_screenlock_is_opt_in_verified_and_profile_scoped() -> None:
         index for index, task in enumerate(main_tasks)
         if task.get("name") == "Include minimal desktop (Openbox, LightDM, Firefox)"
     )
-    assert cleanup_index < desktop_include_index
+    assert (
+        main_tasks.index(ownership_stamp)
+        < main_tasks.index(digest_stamp)
+        < cleanup_index
+        < desktop_include_index
+    )
     digest_cleanup = _named(
         main_tasks, "Remove stale FocusPass artifact digest when integration is inactive"
     )
     assert digest_cleanup["ansible.builtin.file"]["state"] == "absent"
+    marker_cleanup = _named(
+        main_tasks,
+        "Remove stale FocusPass ownership marker when integration is inactive",
+    )
+    assert marker_cleanup["ansible.builtin.file"]["path"] == (
+        "/var/lib/curiosity/focuspass-screenlock.managed"
+    )
+    assert marker_cleanup["ansible.builtin.file"]["state"] == "absent"
+    assert main_tasks.index(cleanup) < main_tasks.index(digest_cleanup)
+    assert main_tasks.index(cleanup) < main_tasks.index(marker_cleanup)
 
 
 def test_kiosk_cleanup_checks_identity_and_retains_snapshots_on_restore_errors() -> None:

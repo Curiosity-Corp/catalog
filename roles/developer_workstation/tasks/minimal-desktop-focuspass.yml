@@ -42,6 +42,22 @@
     fail_msg: >-
       The verified artifact must be the focuspass-screenlock Debian package.
 
+- name: Ensure the FocusPass artifact state directory exists before installation
+  ansible.builtin.file:
+    path: /var/lib/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Mark FocusPass as Catalog-managed before package mutation
+  ansible.builtin.copy:
+    dest: /var/lib/curiosity/focuspass-screenlock.managed
+    content: "managed by curiosity-corp/catalog\n"
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Inspect the previously installed FocusPass artifact digest
   ansible.builtin.stat:
     path: /var/lib/curiosity/focuspass-screenlock.sha256
@@ -95,14 +111,6 @@
       /usr/bin/focuspass-screenlock and
       /usr/bin/focuspass-screenlock-command launchers before it is recorded
       as the active FocusPass artifact.
-
-- name: Ensure the FocusPass artifact digest state directory exists
-  ansible.builtin.file:
-    path: /var/lib/curiosity
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
 
 - name: Record the installed FocusPass artifact digest
   ansible.builtin.copy:

@@ -146,10 +146,14 @@ reinstalls when that pin changes, even if the Debian version does not.
 Ansible check mode validates the architecture, URL, and digest settings, then
 skips downloading and installing the package; run a normal pull to apply it.
 Disabling the option, disabling the minimal desktop, or switching to another
-profile removes the optional package. When it is installed, Openbox starts
+profile removes the package when Catalog previously installed it and recorded
+its ownership marker. An unmanaged package already on the host is left in
+place. The default `false` setting prevents Ansible from installing
+FocusPass; Openbox still prefers its launcher if it was installed separately.
+When FocusPass is installed, Openbox starts
 `focuspass-screenlock` and Super+L runs `focuspass-screenlock-command`; both
 commands fall back to the distribution XScreenSaver launcher if FocusPass is
-missing. With the default `false` value, the stock locker runs. The package
+missing. The package
 uses the same `/etc/pam.d/xscreensaver` contract shown above and does not
 authenticate to a network IdP or require a FocusPass account. It is excluded
 from `byod-kiosk`.
