@@ -36,6 +36,16 @@
     group: root
     mode: "0755"
 
+- name: Keep the LightDM X session on VT8, leaving lower VTs for TTYs
+  ansible.builtin.copy:
+    dest: /etc/lightdm/lightdm.conf.d/10-virtual-terminal.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [LightDM]
+      minimum-vt=8
+
 - name: Configure LightDM auto-login
   ansible.builtin.copy:
     dest: /etc/lightdm/lightdm.conf.d/50-autologin.conf

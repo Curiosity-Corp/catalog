@@ -39,6 +39,10 @@
       # Bluetooth stack + tray applet (logged-in session tray, non-kiosk)
       - bluez
       - blueman
+      # Current-session X11 lock and a separate lock command for text TTYs.
+      - i3lock
+      - xss-lock
+      - vlock
       # X11 utilities
       - x11-xserver-utils
       - xdotool
@@ -46,3 +50,8 @@
       - libnss3-tools
     state: present
     update_cache: true
+
+- name: Remove Light Locker from the LightDM/Openbox session
+  ansible.builtin.apt:
+    name: light-locker
+    state: absent

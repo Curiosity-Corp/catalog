@@ -83,6 +83,30 @@ the certificate into the managed user's NSS database. Do not commit a private
 CA certificate merely because it is not a private key: certificate subjects,
 names, and topology can still disclose sensitive infrastructure.
 
+## Screen locking
+
+The minimal Openbox desktop installs `i3lock`, `xss-lock`, and `vlock`, and
+removes Light Locker. LightDM starts the graphical session no earlier than
+VT8, leaving the lower virtual terminals available for text consoles. Openbox
+starts `xss-lock` in the existing X session, sets a 10-minute idle timeout,
+and uses `i3lock` for idle, suspend, and logind lock requests. Press
+**Super+L** or run `loginctl lock-session` to lock the graphical session
+manually. Locking stays in the current X session instead of handing off to the
+LightDM greeter on another VT.
+
+To lock a text console, log in on that TTY and run `vlock`. It locks the
+current virtual console; other VTs remain available. Do not use `vlock --all`
+unless you intentionally want to disable VT switching.
+
+For the `desktop` profile, this Openbox setup is opt-in:
+
+```yaml
+minimal_desktop_enabled: true
+```
+
+The `thin-client` profile includes the minimal desktop automatically. The
+`byod-kiosk` profile replaces the normal Openbox startup with its kiosk session.
+
 ## Safety-sensitive switches
 
 `sunshine_enabled`, `profile_cleanup_enabled`, `ziti_enabled`, and all
