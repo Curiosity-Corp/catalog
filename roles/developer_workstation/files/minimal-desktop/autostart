@@ -1,3 +1,5 @@
+#!/bin/sh
+
 # Set cursor immediately
 xsetroot -cursor_name left_ptr &
 
@@ -21,48 +23,88 @@ blueman-applet &
 # XScreenSaver provides a PAM conversation window for password and optional
 # second-factor prompts. Prefer FocusPass when installed. Replace a stock
 # daemon only on this DISPLAY; never disturb another graphical session.
+#
+# The daemon's process name is the same for the stock and FocusPass builds.
+# Process identity therefore includes the real executable's path and device /
+# inode pair, plus the DISPLAY in its environment. A matching process is only
+# considered live after its command helper responds on this DISPLAY.
 display_xscreensaver_pids() {
     for pid in $(pgrep -x xscreensaver 2>/dev/null || true); do
-        [ -r "/proc/$pid/environ" ] || continue
-        process_display=$(tr '\000' '\n' <"/proc/$pid/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)
+        [ -r "${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ" ] || continue
+        process_display=$(tr '\000' '\n' <"${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)
         [ "$process_display" = "${DISPLAY:-}" ] && printf '%s\n' "$pid"
     done
 }
 
-screenlock_pids=$(display_xscreensaver_pids)
-focuspass_current=false
+screenlock_pid_is_alive() {
+    if [ -n "${FOCUSPASS_PROCESS_ALIVE_HELPER:-}" ]; then
+        "$FOCUSPASS_PROCESS_ALIVE_HELPER" "$1"
+    else
+        kill -0 "$1" 2>/dev/null
+    fi
+}
+
 focuspass_path=/opt/focuspass-screenlock/bin/xscreensaver
 focuspass_identity=$(stat -Lc '%d:%i' "$focuspass_path" 2>/dev/null || true)
-for pid in $screenlock_pids; do
-    process_exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)
-    if [ "$process_exe" = "$focuspass_path" ] && [ -n "$focuspass_identity" ]; then
-        process_identity=$(stat -Lc '%d:%i' "/proc/$pid/exe" 2>/dev/null || true)
-        [ "$process_identity" = "$focuspass_identity" ] && focuspass_current=true
-    fi
-done
 
-if [ "$focuspass_current" = true ]; then
+focuspass_pids() {
+    for pid in $(display_xscreensaver_pids); do
+        process_exe=$(readlink -f "${FOCUSPASS_PROC_ROOT:-/proc}/$pid/exe" 2>/dev/null || true)
+        [ "$process_exe" = "$focuspass_path" ] || continue
+        [ -n "$focuspass_identity" ] || continue
+        process_identity=$(stat -Lc '%d:%i' "${FOCUSPASS_PROC_ROOT:-/proc}/$pid/exe" 2>/dev/null || true)
+        [ "$process_identity" = "$focuspass_identity" ] && printf '%s\n' "$pid"
+    done
+}
+
+focuspass_command_responds() {
+    focuspass_status=$(focuspass-screenlock-command -time 2>/dev/null) || return 1
+    [ -n "$focuspass_status" ]
+}
+
+screenlock_reports_unlocked() {
+    screenlock_status_lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    case "$screenlock_status_lower" in
+        *"screen non-blanked since"*|*"screen unblanked since"*) return 0 ;;
+    esac
+    return 1
+}
+
+focuspass_is_healthy=false
+pre_handoff_screenlock_pids=$(display_xscreensaver_pids)
+focuspass_existing_pids=$(focuspass_pids)
+if [ -n "$focuspass_existing_pids" ] \
+    && [ "$focuspass_existing_pids" = "$pre_handoff_screenlock_pids" ] \
+    && focuspass_command_responds; then
+    focuspass_is_healthy=true
+fi
+
+if [ "$focuspass_is_healthy" = true ]; then
     :
 elif command -v focuspass-screenlock >/dev/null 2>&1; then
+    screenlock_pids=$pre_handoff_screenlock_pids
     if [ -n "$screenlock_pids" ]; then
-        lock_status=$(xscreensaver-command -time 2>/dev/null || true)
-        case "$lock_status" in
-            *"screen locked since"*)
-                echo "The existing XScreenSaver lock on ${DISPLAY:-unknown} is active; leaving it in place." >&2
-                exit 1
-                ;;
-        esac
+        lock_status=''
+        lock_status_rc=0
+        lock_status=$(xscreensaver-command -time 2>/dev/null) || lock_status_rc=$?
+        if [ "$lock_status_rc" -ne 0 ] || ! screenlock_reports_unlocked "$lock_status"; then
+            echo "The existing XScreenSaver lock on ${DISPLAY:-unknown} is active or unknown; leaving it in place." >&2
+            exit 1
+        fi
         if ! xscreensaver-command --exit >/dev/null 2>&1; then
             echo "Could not gracefully stop the existing XScreenSaver daemon on ${DISPLAY:-unknown}." >&2
             exit 1
         fi
-        for attempt in $(seq 1 20); do
+        still_running=true
+        attempt=1
+        while [ "$attempt" -le 20 ]; do
             still_running=false
             for pid in $screenlock_pids; do
-                kill -0 "$pid" 2>/dev/null && still_running=true
+                screenlock_pid_is_alive "$pid" && still_running=true
             done
             [ "$still_running" = false ] && break
             sleep 0.25
+            attempt=$((attempt + 1))
         done
         if [ "$still_running" = true ]; then
             echo "XScreenSaver on ${DISPLAY:-unknown} did not exit; leaving it untouched." >&2
@@ -70,6 +112,55 @@ elif command -v focuspass-screenlock >/dev/null 2>&1; then
         fi
     fi
     focuspass-screenlock --no-splash &
-elif [ -z "$screenlock_pids" ] && command -v xscreensaver >/dev/null 2>&1; then
+    focuspass_started=false
+    attempt=1
+    while [ "$attempt" -le 20 ]; do
+        if [ -n "$(focuspass_pids)" ] && focuspass_command_responds; then
+            focuspass_started=true
+            break
+        fi
+        sleep 0.25
+        attempt=$((attempt + 1))
+    done
+    if [ "$focuspass_started" != true ]; then
+        remaining_screenlock_pids=$(display_xscreensaver_pids)
+        rollback_safe_to_restore=false
+        if [ -z "$remaining_screenlock_pids" ]; then
+            rollback_status=''
+            rollback_status_rc=0
+            rollback_status=$(xscreensaver-command -time 2>/dev/null) || rollback_status_rc=$?
+            if [ "$rollback_status_rc" -ne 0 ] || screenlock_reports_unlocked "$rollback_status"; then
+                rollback_safe_to_restore=true
+            fi
+        else
+            rollback_status=''
+            rollback_status_rc=0
+            rollback_status=$(xscreensaver-command -time 2>/dev/null) || rollback_status_rc=$?
+            if [ "$rollback_status_rc" -eq 0 ] && screenlock_reports_unlocked "$rollback_status"; then
+                rollback_safe_to_restore=true
+            fi
+        fi
+        if [ "$rollback_safe_to_restore" = true ]; then
+            focuspass_remaining_pids=$(focuspass_pids)
+            if [ -n "$focuspass_remaining_pids" ]; then
+                focuspass-screenlock-command --exit >/dev/null 2>&1 || true
+                attempt=1
+                while [ "$attempt" -le 20 ] && [ -n "$(focuspass_pids)" ]; do
+                    sleep 0.25
+                    attempt=$((attempt + 1))
+                done
+            fi
+            remaining_screenlock_pids=$(display_xscreensaver_pids)
+            if [ -z "$remaining_screenlock_pids" ] && command -v xscreensaver >/dev/null 2>&1; then
+                xscreensaver --no-splash &
+                echo "FocusPass did not become responsive; restored stock XScreenSaver on ${DISPLAY:-unknown}." >&2
+            else
+                echo "FocusPass did not become responsive; another XScreenSaver process remains, so the current screen-lock state is preserved." >&2
+            fi
+        else
+            echo "FocusPass did not become responsive; preserving the current screen-lock state." >&2
+        fi
+    fi
+elif [ -z "$(display_xscreensaver_pids)" ] && command -v xscreensaver >/dev/null 2>&1; then
     xscreensaver --no-splash &
 fi

@@ -1,9 +1,11 @@
 """Regression checks for the minimal desktop and profile transitions."""
 
-from pathlib import Path
+import os
 import re
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import yaml
 
@@ -19,6 +21,198 @@ def _tasks(path: Path) -> list[dict]:
 
 def _named(tasks: list[dict], fragment: str) -> dict:
     return next(task for task in tasks if fragment in task.get("name", ""))
+
+
+def _run_autostart_harness(
+    *,
+    initial_state: str,
+    initial_status: str,
+    focuspass_responsive: bool,
+    rollback_status: str | None = None,
+    focuspass_registers: bool = True,
+    focuspass_exit_delay: bool = False,
+    focuspass_exit_never: bool = False,
+    focuspass_exit_refuses: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], str, str]:
+    """Exercise the screen-lock handoff with fake process and X11 commands."""
+
+    autostart = (ROLE / "files/minimal-desktop/autostart").read_text()
+    with tempfile.TemporaryDirectory(prefix="focuspass-autostart-") as temp_dir:
+        root = Path(temp_dir)
+        bin_dir = root / "bin"
+        proc_dir = root / "proc"
+        bin_dir.mkdir()
+        for pid, display in (("111", ":test"), ("222", ":other"), ("123", ":test")):
+            (proc_dir / pid).mkdir(parents=True)
+            (proc_dir / pid / "environ").write_bytes(f"DISPLAY={display}\0".encode())
+            (proc_dir / pid / "exe").touch()
+        (root / "state").write_text(initial_state)
+        (root / "log").write_text("")
+
+        scripts = {
+            "pgrep": r'''#!/bin/sh
+state=$(cat "$HARNESS_ROOT/state")
+case "$state" in
+  stock) echo 111 ;;
+  other) echo 222 ;;
+  focuspass|focuspass-failed) echo 123 ;;
+  focuspass-stopping)
+    if [ "$HARNESS_FOCUSPASS_EXIT_NEVER" = 1 ]; then
+      echo 123
+    else
+      polls=$(cat "$HARNESS_ROOT/exit-polls")
+      if [ "$polls" -ge 2 ]; then
+        printf '%s' none >"$HARNESS_ROOT/state"
+      else
+        printf '%s' "$((polls + 1))" >"$HARNESS_ROOT/exit-polls"
+        echo 123
+      fi
+    fi
+    ;;
+esac
+''',
+            "readlink": r'''#!/bin/sh
+if [ "$1" = -f ]; then
+  case "$2" in
+    "$HARNESS_PROC"/111/exe|"$HARNESS_PROC"/222/exe)
+      echo /usr/bin/xscreensaver
+      exit 0
+      ;;
+    "$HARNESS_PROC"/123/exe)
+      echo /opt/focuspass-screenlock/bin/xscreensaver
+      exit 0
+      ;;
+    /opt/focuspass-screenlock/bin/xscreensaver)
+      echo /opt/focuspass-screenlock/bin/xscreensaver
+      exit 0
+      ;;
+  esac
+fi
+exec /usr/bin/readlink "$@"
+''',
+            "stat": r'''#!/bin/sh
+if [ "$1" = -Lc ]; then
+  case "$3" in
+    /opt/focuspass-screenlock/bin/xscreensaver|"$HARNESS_PROC"/123/exe)
+      echo 1:99
+      exit 0
+      ;;
+  esac
+fi
+exec /usr/bin/stat "$@"
+''',
+            "xscreensaver-command": r'''#!/bin/sh
+state=$(cat "$HARNESS_ROOT/state")
+case "$1" in
+  -time)
+    status="$HARNESS_INITIAL_STATUS"
+    case "$state" in
+      focuspass|focuspass-failed|focuspass-stopping|none) status="${HARNESS_ROLLBACK_STATUS:-$status}" ;;
+    esac
+    case "$status" in
+      locked) echo 'XScreenSaver 6.08: screen locked since now'; exit 0 ;;
+      unlocked) echo 'XScreenSaver 6.08: screen unblanked since now'; exit 0 ;;
+      error) exit 1 ;;
+    esac
+    ;;
+  --exit)
+    printf '%s\n' xscreensaver-exit >>"$HARNESS_ROOT/log"
+    printf '%s' none >"$HARNESS_ROOT/state"
+    exit 0
+    ;;
+esac
+exit 1
+''',
+            "focuspass-screenlock-command": r'''#!/bin/sh
+state=$(cat "$HARNESS_ROOT/state")
+case "$1" in
+  -time)
+    if [ "$HARNESS_FOCUSPASS_RESPONSIVE" = 1 ] && [ "$state" = focuspass ]; then
+      echo 'XScreenSaver 6.08: screen unblanked since now'
+      exit 0
+    fi
+    exit 1
+    ;;
+  --exit)
+    printf '%s\n' focuspass-exit >>"$HARNESS_ROOT/log"
+    if [ "$HARNESS_FOCUSPASS_EXIT_REFUSES" = 1 ]; then
+      exit 1
+    fi
+    if [ "$HARNESS_FOCUSPASS_EXIT_DELAY" = 1 ] || [ "$HARNESS_FOCUSPASS_EXIT_NEVER" = 1 ]; then
+      printf '%s' focuspass-stopping >"$HARNESS_ROOT/state"
+      printf '%s' 0 >"$HARNESS_ROOT/exit-polls"
+    else
+      printf '%s' none >"$HARNESS_ROOT/state"
+    fi
+    exit 0
+    ;;
+esac
+exit 1
+''',
+            "focuspass-screenlock": r'''#!/bin/sh
+printf '%s\n' focuspass-start >>"$HARNESS_ROOT/log"
+if [ "$HARNESS_FOCUSPASS_REGISTERS" = 1 ]; then
+  printf '%s' focuspass >"$HARNESS_ROOT/state"
+fi
+sleep 0.1
+''',
+            "xscreensaver": r'''#!/bin/sh
+printf '%s\n' stock-start >>"$HARNESS_ROOT/log"
+printf '%s' stock >"$HARNESS_ROOT/state"
+sleep 0.1
+''',
+            "process-alive": r'''#!/bin/sh
+pid=$1
+case "$(cat "$HARNESS_ROOT/state"):$pid" in
+  stock:111|other:222|focuspass:123|focuspass-failed:123|focuspass-stopping:123)
+    exit 0
+    ;;
+esac
+exit 1
+''',
+        }
+        for name in (
+            "xsetroot",
+            "nitrogen",
+            "picom",
+            "tint2",
+            "dunst",
+            "nm-applet",
+            "volumeicon",
+            "blueman-applet",
+        ):
+            scripts[name] = "#!/bin/sh\nexit 0\n"
+        for name, content in scripts.items():
+            script = bin_dir / name
+            script.write_text(content)
+            script.chmod(0o755)
+
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PATH": f"{bin_dir}:{environment['PATH']}",
+                "DISPLAY": ":test",
+                "FOCUSPASS_PROC_ROOT": str(proc_dir),
+                "FOCUSPASS_PROCESS_ALIVE_HELPER": str(bin_dir / "process-alive"),
+                "HARNESS_ROOT": str(root),
+                "HARNESS_PROC": str(proc_dir),
+                "HARNESS_INITIAL_STATUS": initial_status,
+                "HARNESS_FOCUSPASS_RESPONSIVE": "1" if focuspass_responsive else "0",
+                "HARNESS_FOCUSPASS_REGISTERS": "1" if focuspass_registers else "0",
+                "HARNESS_FOCUSPASS_EXIT_DELAY": "1" if focuspass_exit_delay else "0",
+                "HARNESS_FOCUSPASS_EXIT_NEVER": "1" if focuspass_exit_never else "0",
+                "HARNESS_FOCUSPASS_EXIT_REFUSES": "1" if focuspass_exit_refuses else "0",
+                "HARNESS_ROLLBACK_STATUS": rollback_status or "",
+            }
+        )
+        result = subprocess.run(
+            ["sh", "-c", autostart],
+            text=True,
+            capture_output=True,
+            env=environment,
+            timeout=15,
+        )
+        return result, (root / "state").read_text(), (root / "log").read_text()
 
 
 def test_openbox_uses_pam_aware_locker_and_keeps_tty_locking() -> None:
@@ -52,13 +246,22 @@ def test_openbox_uses_pam_aware_locker_and_keeps_tty_locking() -> None:
 
     autostart = (ROLE / "files/minimal-desktop/autostart").read_text()
     assert "display_xscreensaver_pids()" in autostart
-    assert 'tr \'\\000\' \'\\n\' <"/proc/$pid/environ"' in autostart
+    assert 'tr \'\\000\' \'\\n\' <"${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ"' in autostart
     assert 'focuspass_path=/opt/focuspass-screenlock/bin/xscreensaver' in autostart
-    assert "screen locked since" in autostart
-    assert "active; leaving it in place" in autostart
+    assert '"screen non-blanked since"' in autostart
+    assert "active or unknown; leaving it in place" in autostart
     assert "xscreensaver-command --exit" in autostart
     assert "did not exit; leaving it untouched" in autostart
-    assert autostart.index("screen locked since") < autostart.index(
+    assert "focuspass_command_responds" in autostart
+    assert "focuspass_is_healthy" in autostart
+    assert "focuspass_path" in autostart
+    assert "process_identity" in autostart
+    assert "FocusPass did not become responsive" in autostart
+    assert "restored stock XScreenSaver" in autostart
+    assert "rollback_status_rc" in autostart
+    assert "screenlock_reports_unlocked" in autostart
+    assert "screenlock_pid_is_alive" in autostart
+    assert autostart.index("screenlock_reports_unlocked") < autostart.index(
         "xscreensaver-command --exit"
     )
     assert "focuspass-screenlock --no-splash &" in autostart
@@ -78,6 +281,141 @@ def test_openbox_uses_pam_aware_locker_and_keeps_tty_locking() -> None:
         ["sh", "-n", "-c", shortcut.text], text=True, capture_output=True
     )
     assert shell_check.returncode == 0, shell_check.stderr
+
+
+def test_autostart_preserves_locked_stock_screen() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="stock",
+        initial_status="locked",
+        focuspass_responsive=True,
+    )
+    assert result.returncode == 1
+    assert state == "stock"
+    assert log == ""
+    assert "active or unknown" in result.stderr
+
+
+def test_autostart_ignores_stock_daemon_on_another_display() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="other",
+        initial_status="unlocked",
+        focuspass_responsive=True,
+    )
+    assert result.returncode == 0
+    assert state == "focuspass"
+    assert log.splitlines() == ["focuspass-start"]
+
+
+def test_autostart_replaces_unlocked_stock_after_responsive_focuspass_start() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="stock",
+        initial_status="unlocked",
+        focuspass_responsive=True,
+    )
+    assert result.returncode == 0
+    assert state == "focuspass"
+    assert log.splitlines() == ["xscreensaver-exit", "focuspass-start"]
+
+
+def test_autostart_does_not_trust_unresponsive_existing_focuspass() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="focuspass",
+        initial_status="unlocked",
+        focuspass_responsive=False,
+        rollback_status="unlocked",
+        focuspass_exit_delay=True,
+    )
+    assert result.returncode == 0
+    assert state == "stock"
+    assert log.splitlines() == [
+        "xscreensaver-exit",
+        "focuspass-start",
+        "focuspass-exit",
+        "stock-start",
+    ]
+    assert "restored stock XScreenSaver" in result.stderr
+
+
+def test_autostart_failure_rolls_back_only_when_status_is_not_locked() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="stock",
+        initial_status="unlocked",
+        focuspass_responsive=False,
+        rollback_status="locked",
+    )
+    assert result.returncode == 0
+    assert state == "focuspass"
+    assert log.splitlines() == ["xscreensaver-exit", "focuspass-start"]
+    assert "preserving the current screen-lock state" in result.stderr
+
+
+def test_autostart_preserves_a_daemon_when_rollback_status_is_unknown() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="stock",
+        initial_status="unlocked",
+        focuspass_responsive=False,
+        rollback_status="error",
+    )
+    assert result.returncode == 0
+    assert state == "focuspass"
+    assert log.splitlines() == ["xscreensaver-exit", "focuspass-start"]
+    assert "preserving the current screen-lock state" in result.stderr
+
+
+def test_autostart_restores_stock_when_focuspass_registers_no_daemon() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="stock",
+        initial_status="unlocked",
+        focuspass_responsive=False,
+        rollback_status="error",
+        focuspass_registers=False,
+    )
+    assert result.returncode == 0
+    assert state == "stock"
+    assert log.splitlines() == ["xscreensaver-exit", "focuspass-start", "stock-start"]
+    assert "restored stock XScreenSaver" in result.stderr
+
+
+def test_autostart_restores_stock_on_fresh_session_without_a_daemon() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="none",
+        initial_status="error",
+        focuspass_responsive=False,
+        rollback_status="error",
+        focuspass_registers=False,
+    )
+    assert result.returncode == 0
+    assert state == "stock"
+    assert log.splitlines() == ["focuspass-start", "stock-start"]
+    assert "restored stock XScreenSaver" in result.stderr
+
+
+def test_autostart_preserves_a_focuspass_daemon_that_will_not_exit() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="focuspass",
+        initial_status="unlocked",
+        focuspass_responsive=False,
+        rollback_status="unlocked",
+        focuspass_exit_never=True,
+    )
+    assert result.returncode == 0
+    assert state == "focuspass-stopping"
+    assert log.splitlines() == ["xscreensaver-exit", "focuspass-start", "focuspass-exit"]
+    assert "current screen-lock state is preserved" in result.stderr
+
+
+def test_autostart_preserves_focuspass_if_graceful_exit_is_refused() -> None:
+    result, state, log = _run_autostart_harness(
+        initial_state="focuspass",
+        initial_status="unlocked",
+        focuspass_responsive=False,
+        rollback_status="unlocked",
+        focuspass_exit_refuses=True,
+    )
+    assert result.returncode == 0
+    assert state == "focuspass"
+    assert log.splitlines() == ["xscreensaver-exit", "focuspass-start", "focuspass-exit"]
+    assert "current screen-lock state is preserved" in result.stderr
 
 
 def test_focuspass_screenlock_is_opt_in_verified_and_profile_scoped() -> None:
