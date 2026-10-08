@@ -18,12 +18,10 @@ nm-applet &
 volumeicon &
 blueman-applet &
 
-# Lock the current X11 session after 10 minutes of inactivity. xss-lock also
-# handles logind lock requests and coordinates locking before suspend.
-xset s 600 0
-if command -v xss-lock >/dev/null 2>&1 && command -v i3lock >/dev/null 2>&1; then
-    if ! command -v pgrep >/dev/null 2>&1 || \
-       ! pgrep -u "$(id -u)" -x xss-lock >/dev/null 2>&1; then
-        xss-lock --transfer-sleep-lock -- i3lock --nofork &
-    fi
+# XScreenSaver provides a PAM conversation window: it can display each login
+# prompt (including a second-factor prompt) instead of treating every keypress
+# as an unexplained radial indicator. Its resource file sets a 10-minute
+# timeout, blank mode, and immediate locking.
+if command -v xscreensaver >/dev/null 2>&1; then
+    xscreensaver --no-splash &
 fi

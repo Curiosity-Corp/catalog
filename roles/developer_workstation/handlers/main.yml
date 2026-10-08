@@ -54,11 +54,19 @@
     name: earlyoom
     state: restarted
 
+- name: Validate rsyslog configuration before restart
+  ansible.builtin.command:
+    argv: [rsyslogd, -N1]
+  changed_when: false
+  when: _curiosity_rsyslog_conf.stat.exists | default(false)
+  listen: Restart rsyslog
+
 - name: Restart rsyslog
   ansible.builtin.systemd:
     name: rsyslog
     state: restarted
-  failed_when: false
+  when: _curiosity_rsyslog_conf.stat.exists | default(false)
+  listen: Restart rsyslog
 
 - name: Restart logrotate timer
   ansible.builtin.systemd:

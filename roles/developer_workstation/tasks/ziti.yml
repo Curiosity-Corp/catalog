@@ -30,7 +30,8 @@
           'noble': 'jammy',
           'oracular': 'jammy',
           'plucky': 'jammy',
-          'questing': 'jammy'
+          'questing': 'jammy',
+          'resolute': 'jammy'
         }.get(ansible_distribution_release, 'jammy')
       }}
 

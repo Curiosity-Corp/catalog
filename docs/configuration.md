@@ -85,18 +85,29 @@ names, and topology can still disclose sensitive infrastructure.
 
 ## Screen locking
 
-The minimal Openbox desktop installs `i3lock`, `xss-lock`, and `vlock`, and
-removes Light Locker. LightDM starts the graphical session no earlier than
-VT8, leaving the lower virtual terminals available for text consoles. Openbox
-starts `xss-lock` in the existing X session, sets a 10-minute idle timeout,
-and uses `i3lock` for idle, suspend, and logind lock requests. Press
-**Super+L** or run `loginctl lock-session` to lock the graphical session
-manually. Locking stays in the current X session instead of handing off to the
-LightDM greeter on another VT.
+The standard minimal Openbox desktop installs XScreenSaver and `vlock`, and
+removes Light Locker, `i3lock`, and `xss-lock`. LightDM starts the graphical
+session no earlier than VT8, leaving the lower virtual terminals available for
+text consoles. Openbox starts XScreenSaver with a 10-minute idle timeout and
+blank-only mode. It uses the host's login PAM policy and displays its prompts in
+the unlock dialog, so a machine that requires a password and a second factor
+asks for them separately. The lock uses the current account; no username or
+password change is needed. Accounts whose login PAM requires Google
+Authenticator must be enrolled before automatic locking is enabled; the role
+does not create or replace MFA secrets. Press **Super+L** or run
+`xscreensaver-command --lock` to lock manually. XScreenSaver also locks on
+system suspend through its systemd integration.
+
+The locker uses the host's PAM authentication factors. The packaged
+XScreenSaver 6.08 implementation does not reliably enforce PAM account-expiry
+or account-disable checks for an already-running desktop session; terminate
+the user session to revoke an existing session immediately.
 
 To lock a text console, log in on that TTY and run `vlock`. It locks the
 current virtual console; other VTs remain available. Do not use `vlock --all`
-unless you intentionally want to disable VT switching.
+unless you intentionally want to disable VT switching. The role checks that
+the graphical account has a usable password hash before enabling automatic
+locking and never changes account passwords.
 
 For the `desktop` profile, this Openbox setup is opt-in:
 
@@ -105,7 +116,16 @@ minimal_desktop_enabled: true
 ```
 
 The `thin-client` profile includes the minimal desktop automatically. The
-`byod-kiosk` profile replaces the normal Openbox startup with its kiosk session.
+`byod-kiosk` profile is deliberately separate: it replaces the normal Openbox
+startup, disables blanking and system sleep, and does not install or start
+these locking tools. The kiosk also disables the lower virtual terminals as
+part of its lockdown policy. The role records original TTY/sleep-unit and user
+group state so leaving kiosk mode can restore it without unmasking units that
+were already masked by an administrator.
+
+After `ansible-pull` updates a running machine, reboot once so LightDM restarts
+on VT8 and the new Openbox autostart and keybinding load. An existing graphical
+session keeps its already-started processes until it restarts.
 
 ## Safety-sensitive switches
 

@@ -6,7 +6,7 @@
 #   - Replaces Openbox autostart with Chromium --kiosk to kiosk_target_url
 #   - Disables virtual terminals 2-6 (blocks ctrl+alt+Fx shell escape)
 #   - Removes sudo access for the kiosk user
-#   - Configures systemd-logind idle lock (15 min default, configurable)
+#   - Intentionally disables automatic screen locking for the kiosk session
 #   - Installs a systemd user service that relaunches Chromium on crash
 #   - Configures Ziti DNS routing via systemd-resolved drop-in
 # =============================================================================
@@ -14,6 +14,152 @@
 # -----------------------------------------------------------------------------
 # Chromium kiosk package
 # -----------------------------------------------------------------------------
+- name: Ensure persistent kiosk profile state directory exists
+  ansible.builtin.file:
+    path: /var/lib/curiosity/workstation/byod-kiosk
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Check whether kiosk profile state has already been captured
+  ansible.builtin.stat:
+    path: /var/lib/curiosity/workstation/byod-kiosk/active
+  register: _kiosk_profile_state
+
+- name: Save the account identity associated with the kiosk profile snapshot
+  ansible.builtin.copy:
+    dest: /var/lib/curiosity/workstation/byod-kiosk/identity.json
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ {'user': dev_user, 'home': dev_user_home} | to_json }}\n"
+  when: not _kiosk_profile_state.stat.exists
+
+- name: Capture kiosk user's supplementary groups before lockdown
+  ansible.builtin.command:
+    argv: [id, -nG, "{{ dev_user }}"]
+  register: _kiosk_original_groups
+  changed_when: false
+  when: not _kiosk_profile_state.stat.exists
+
+- name: Save kiosk user's original supplementary groups for profile cleanup
+  ansible.builtin.copy:
+    dest: /var/lib/curiosity/workstation/byod-kiosk/groups
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ _kiosk_original_groups.stdout | trim }}\n"
+  when: not _kiosk_profile_state.stat.exists
+
+- name: Capture original enablement of TTY and sleep units
+  ansible.builtin.command:
+    argv: [systemctl, is-enabled, "{{ item }}"]
+  loop:
+    - getty@tty2.service
+    - getty@tty3.service
+    - getty@tty4.service
+    - getty@tty5.service
+    - getty@tty6.service
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+  register: _kiosk_original_unit_enablement
+  changed_when: false
+  failed_when: false
+  when: not _kiosk_profile_state.stat.exists
+
+- name: Save original TTY and sleep unit enablement
+  ansible.builtin.copy:
+    dest: >-
+      /var/lib/curiosity/workstation/byod-kiosk/{{ item.item | replace('@', '_') | replace('.', '_') }}.enabled
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ item.stdout | default('unknown') | trim }}\n"
+  loop: "{{ _kiosk_original_unit_enablement.results | default([]) }}"
+  when: not _kiosk_profile_state.stat.exists
+
+- name: Capture active state of TTY and sleep units
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ item }}"]
+  loop:
+    - getty@tty2.service
+    - getty@tty3.service
+    - getty@tty4.service
+    - getty@tty5.service
+    - getty@tty6.service
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+  register: _kiosk_original_unit_activity
+  changed_when: false
+  failed_when: false
+  when: not _kiosk_profile_state.stat.exists
+
+- name: Save original TTY and sleep unit activity
+  ansible.builtin.copy:
+    dest: >-
+      /var/lib/curiosity/workstation/byod-kiosk/{{ item.item | replace('@', '_') | replace('.', '_') }}.active
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ item.stdout | default('unknown') | trim }}\n"
+  loop: "{{ _kiosk_original_unit_activity.results | default([]) }}"
+  when: not _kiosk_profile_state.stat.exists
+
+- name: Check for an existing per-user sudoers file before kiosk lockdown
+  ansible.builtin.stat:
+    path: "/etc/sudoers.d/{{ dev_user }}"
+  register: _kiosk_original_sudoers
+
+- name: Preserve an existing per-user sudoers file for profile cleanup
+  ansible.builtin.copy:
+    src: "/etc/sudoers.d/{{ dev_user }}"
+    dest: /var/lib/curiosity/workstation/byod-kiosk/user-sudoers
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - not _kiosk_profile_state.stat.exists
+    - _kiosk_original_sudoers.stat.exists
+
+- name: Inspect standard Openbox and LightDM files before kiosk replacement
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ dev_user_home }}/.config/openbox/autostart"
+    - "{{ dev_user_home }}/.config/openbox/rc.xml"
+    - /etc/lightdm/lightdm.conf.d/50-autologin.conf
+  register: _kiosk_original_desktop_files
+  when: not _kiosk_profile_state.stat.exists
+
+- name: Save standard Openbox and LightDM files for profile cleanup
+  ansible.builtin.copy:
+    src: "{{ item.stat.path }}"
+    dest: >-
+      /var/lib/curiosity/workstation/byod-kiosk/{{ item.item | basename | replace('.', '_') }}
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ _kiosk_original_desktop_files.results | default([]) }}"
+  when:
+    - not _kiosk_profile_state.stat.exists
+    - item.stat.exists | default(false)
+
+- name: Mark kiosk profile state capture complete
+  ansible.builtin.copy:
+    dest: /var/lib/curiosity/workstation/byod-kiosk/active
+    owner: root
+    group: root
+    mode: "0600"
+    content: "managed by curiosity-corp/catalog\n"
+  when: not _kiosk_profile_state.stat.exists
+
 - name: Install Chromium browser for kiosk session
   ansible.builtin.apt:
     name:
@@ -186,16 +332,28 @@
 # -----------------------------------------------------------------------------
 # Remove sudo access for kiosk user
 # -----------------------------------------------------------------------------
-- name: Ensure kiosk user is not in sudo group
+- name: Read kiosk user's current supplementary groups
+  ansible.builtin.command:
+    argv: [id, -nG, "{{ dev_user }}"]
+  register: _kiosk_current_groups
+  changed_when: false
+
+- name: Remove administrative groups while preserving other kiosk groups
   ansible.builtin.user:
     name: "{{ dev_user }}"
-    groups: sudo
+    groups: >-
+      {{ _kiosk_current_groups.stdout.split()
+         | reject('in', ['sudo', 'admin', 'wheel']) | join(',') }}
     append: false
-  failed_when: false
 
 - name: Remove kiosk user sudoers file if present
   ansible.builtin.file:
     path: "/etc/sudoers.d/{{ dev_user }}"
+    state: absent
+
+- name: Remove the legacy ineffective kiosk package-manager sudoers rule
+  ansible.builtin.file:
+    path: /etc/sudoers.d/kiosk-deny-pkg
     state: absent
 
 # -----------------------------------------------------------------------------
@@ -255,30 +413,8 @@
     cmd: systemctl kill -s HUP systemd-logind
   changed_when: true
 
-# Belt-and-suspenders for x86 laptops running GNOME power daemon:
-# if gnome-settings-daemon power plugin schema exists, silence it too.
-- name: Disable GNOME power-daemon sleep if schema is present
-  ansible.builtin.command: >-
-    runuser -u {{ dev_user }} --
-    gsettings set {{ item.schema }} {{ item.key }} {{ item.value }}
-  environment:
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ (lookup('pipe', 'id -u ' + dev_user)) }}/bus"
-  loop:
-    - schema: org.gnome.settings-daemon.plugins.power
-      key: sleep-inactive-ac-type
-      value: "'nothing'"
-    - schema: org.gnome.settings-daemon.plugins.power
-      key: sleep-inactive-battery-type
-      value: "'nothing'"
-    - schema: org.gnome.settings-daemon.plugins.power
-      key: idle-dim
-      value: "false"
-    - schema: org.gnome.desktop.session
-      key: idle-delay
-      value: "uint32 0"
-  register: _gnome_power_result
-  changed_when: _gnome_power_result.rc == 0
-  failed_when: false
+# The kiosk uses Openbox and systemd-logind policy for no-sleep behavior; do
+# not mutate persistent GNOME preferences from this profile.
 
 # -----------------------------------------------------------------------------
 # Ziti DNS routing
@@ -292,18 +428,3 @@
 #     stubs in /etc/NetworkManager/dnsmasq.d/.
 # Nothing to do here — split-DNS is not kiosk-specific and runs for both
 # thin-client and byod-kiosk profiles.
-
-# -----------------------------------------------------------------------------
-# Disable package management for kiosk user (no apt-get, no snap)
-# -----------------------------------------------------------------------------
-- name: Deploy sudoers rule blocking package managers for kiosk user
-  ansible.builtin.copy:
-    dest: /etc/sudoers.d/kiosk-deny-pkg
-    owner: root
-    group: root
-    mode: "0440"
-    content: |
-      # Kiosk mode: deny package manager access for the kiosk user
-      {{ dev_user }} ALL=(ALL) !NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg, /usr/bin/snap
-    validate: "visudo -cf %s"
-  failed_when: false

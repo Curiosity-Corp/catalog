@@ -61,9 +61,9 @@
   <keyboard>
     <chainQuitKey>C-g</chainQuitKey>
 
-    <!-- Lock the current X11 session through xss-lock. -->
+    <!-- Lock the current X11 session with the visible PAM prompt. -->
     <keybind key="W-l">
-      <action name="Execute"><command>loginctl lock-session</command></action>
+      <action name="Execute"><command>xscreensaver-command --lock</command></action>
     </keybind>
 
     <!-- Launch apps -->

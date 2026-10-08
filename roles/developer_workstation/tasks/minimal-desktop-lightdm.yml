@@ -23,7 +23,7 @@
       hide-user-image = true
       transition-duration = 0
       transition-type = none
-      indicators = host;spacer;session;language;a11y;clock;power
+      indicators = ~host;~spacer;~session;~language;~a11y;~clock;~power
       clock-format = %H:%M
       panel-position = top
       position = 50% 50%

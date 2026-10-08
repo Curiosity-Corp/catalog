@@ -14,6 +14,11 @@
   ansible.builtin.include_tasks: minimal-desktop-packages.yml
   tags: [minimal-desktop, packages]
 
+- name: Configure PAM-aware graphical and TTY locking
+  ansible.builtin.include_tasks: minimal-desktop-locking.yml
+  tags: [minimal-desktop, locking]
+  when: workstation_profile != 'byod-kiosk'
+
 - name: Configure LightDM greeter
   ansible.builtin.include_tasks: minimal-desktop-lightdm.yml
   tags: [minimal-desktop, lightdm]
