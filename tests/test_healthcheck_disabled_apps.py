@@ -25,6 +25,7 @@ EXPECTED_CONDITIONS = {
     "glab": "cloud_clis_enabled",
     "codex": "codex_standalone_enabled",
     "litra": "litra_cli_enabled",
+    "bitwarden_desktop": "bitwarden_desktop_enabled",
 }
 # Flags derived from other configuration (a template string) rather than a
 # literal boolean; tests/test_litra_cli.py evaluates the litra expression.

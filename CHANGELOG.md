@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Bitwarden desktop app on every `desktop`-profile workstation, system-wide, so
+  every managed user (for example `mrh` and `seantech` on DeskMeet1) finds
+  Bitwarden in the application menu (`/usr/share/applications/bitwarden.desktop`,
+  `/usr/bin/bitwarden`). The role installs the official amd64 `.deb` from the
+  newest stable `desktop-v*` release of `bitwarden/clients` (new
+  `latest_github_release_tag_prefixes`, because that repository also publishes
+  `cli-`, `browser-` and `web-` releases and `/releases/latest` is not
+  reliably the desktop app) and refuses to install unless the asset carries a
+  SHA-256 digest, which the download is verified against. It is skipped for
+  `byod-kiosk`, `thin-client` and `workspace`, on non-x86_64 hosts, and when
+  `bitwarden_desktop_enabled` is `false`. It joins the update contract with a
+  non-launching `chrome_crashpad_handler --version` healthcheck and rollback
+  inventory. Users sign in themselves; the role never touches credentials or
+  vault data.
 - tint2 panel layouts for the minimal desktop: `minimal_desktop_tint2_layout`
   (`bottom`, the default dark 32px bar, or `top`, a 36px bar with launcher,
   multi-desktop taskbar and a PulseAudio volume item) and a per-user

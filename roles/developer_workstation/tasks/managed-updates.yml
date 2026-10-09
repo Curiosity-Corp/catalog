@@ -182,6 +182,18 @@
     - workstation_profile == 'desktop'
     - workstation_update_install_allowed | default(true)
 
+- name: Include Bitwarden desktop app
+  ansible.builtin.include_tasks:
+    file: bitwarden-desktop.yml
+    apply:
+      tags: [collaboration, bitwarden]
+  tags: [collaboration, bitwarden]
+  when:
+    - workstation_profile == 'desktop'
+    - bitwarden_desktop_enabled | default(true) | bool
+    - ansible_architecture == 'x86_64'
+    - workstation_update_install_allowed | default(true)
+
 - name: Include WeeChat TUI chat client
   ansible.builtin.include_tasks:
     file: weechat.yml

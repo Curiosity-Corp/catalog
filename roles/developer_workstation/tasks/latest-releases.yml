@@ -57,7 +57,13 @@
       }}
     return_content: true
     status_code: [200]
-  loop: "{{ latest_github_repositories | dict2items }}"
+  # Monorepo sources (see latest_github_release_tag_prefixes) are resolved from
+  # the release list below: /releases/latest returns whichever component
+  # shipped last, not necessarily the one this workstation installs.
+  loop: >-
+    {{ latest_github_repositories | dict2items
+       | rejectattr('key', 'in', latest_github_release_tag_prefixes | default({}) | list)
+       | list }}
   loop_control:
     label: "{{ item.key }} ({{ item.value }})"
   register: _latest_release_queries
@@ -151,6 +157,68 @@
         | list
         | length
       ) > 0
+
+# bitwarden/clients publishes desktop-v*, cli-v*, browser-v* and web-v* releases
+# from one repository, so /releases/latest can be any of them. Sources named in
+# latest_github_release_tag_prefixes are resolved from the release list instead:
+# the newest published release (not a draft, not a prerelease) whose tag starts
+# with the configured prefix and that carries assets. A page of 50 covers many
+# months of interleaved component releases.
+- name: Query recent GitHub releases for tag-prefixed monorepo sources
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/{{ item.value }}/releases?per_page=50"
+    headers: >-
+      {{
+        {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'curiosity-catalog-workstation-updater'
+        }
+        | combine(
+            ({'Authorization': 'Bearer ' ~ _github_api_token}
+             if (_github_api_token | default('') | length > 0) else {})
+          )
+      }}
+    return_content: true
+    status_code: [200]
+  loop: >-
+    {{ latest_github_repositories | dict2items
+       | selectattr('key', 'in', latest_github_release_tag_prefixes | default({}) | list)
+       | list }}
+  loop_control:
+    label: "{{ item.key }} ({{ item.value }})"
+  register: _github_tagged_release_queries
+  retries: 3
+  delay: 2
+  until: (_github_tagged_release_queries.status | default(0)) == 200
+  failed_when: false
+  changed_when: false
+  # Same optional bearer header as the other release queries.
+  no_log: true
+
+- name: Index newest stable GitHub release for each tag prefix
+  ansible.builtin.set_fact:
+    latest_github_releases: >-
+      {{ latest_github_releases | default({}) |
+         combine({item.item.key: (_tagged_release_candidates | first)}) }}
+  vars:
+    _tagged_release_prefix: "{{ latest_github_release_tag_prefixes[item.item.key] }}"
+    _tagged_release_candidates: >-
+      {{
+        item.json | default([])
+        | selectattr('draft', 'equalto', false)
+        | selectattr('prerelease', 'equalto', false)
+        | selectattr('tag_name', 'match', '^' ~ (_tagged_release_prefix | regex_escape))
+        | selectattr('assets', 'defined')
+        | selectattr('assets')
+        | list
+      }}
+  loop: "{{ _github_tagged_release_queries.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - item.status | default(0) == 200
+    - _tagged_release_candidates | length > 0
 
 - name: Require latest metadata for every binary release source
   ansible.builtin.assert:

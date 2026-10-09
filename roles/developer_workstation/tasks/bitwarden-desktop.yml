@@ -1,0 +1,87 @@
+---
+# =============================================================================
+# Bitwarden desktop app (system-wide)
+# =============================================================================
+# Installs the official Bitwarden desktop .deb from the newest stable
+# `desktop-v*` release of bitwarden/clients (selected in latest-releases.yml;
+# the repository also publishes cli-, browser- and web- releases). The package
+# is verified against the SHA-256 digest GitHub records for the release asset
+# before apt sees it, then installed with apt so dependencies resolve.
+#
+# The package owns every installed file:
+#   /opt/Bitwarden/bitwarden                   launcher
+#   /usr/bin/bitwarden                         PATH link (update-alternatives)
+#   /usr/share/applications/bitwarden.desktop  application-menu entry
+# so every managed user sees the app. This role never reads or writes any
+# user's Bitwarden configuration, vault data, or credentials; each user signs in
+# themselves. No .desktop override or NODE_EXTRA_CA_CERTS wrapper is written:
+# Electron's network stack is Chromium's, which trusts the per-user NSS database
+# (see internal-cas.yml), not NODE_EXTRA_CA_CERTS.
+#
+# Only an x86_64 .deb is selected here, so the include is skipped on other
+# architectures (see managed-updates.yml).
+# =============================================================================
+
+- name: Resolve the current Bitwarden desktop release and amd64 package
+  ansible.builtin.set_fact:
+    _bitwarden_desktop_version: "{{ latest_github_releases.bitwarden_desktop.tag_name | regex_replace('^desktop-v', '') }}"
+    _bitwarden_desktop_asset: >-
+      {{
+        latest_github_releases.bitwarden_desktop.assets
+        | selectattr('name', 'match',
+            '^Bitwarden-' ~ (latest_github_releases.bitwarden_desktop.tag_name | regex_replace('^desktop-v', '') | regex_escape)
+            ~ '-amd64[.]deb$')
+        | first
+        | default({})
+      }}
+
+- name: Require a verified Bitwarden desktop package
+  ansible.builtin.assert:
+    that:
+      - latest_github_releases.bitwarden_desktop.tag_name is match('^desktop-v')
+      - _bitwarden_desktop_version is match('^[0-9]+([.][0-9]+)*$')
+      - _bitwarden_desktop_asset | default({}) | length > 0
+      - _bitwarden_desktop_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: >-
+      The latest Bitwarden desktop release did not publish an amd64 .deb with a
+      SHA-256 digest; refusing to install an unverified package.
+
+- name: Download the Bitwarden desktop .deb
+  ansible.builtin.get_url:
+    url: "{{ _bitwarden_desktop_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/bitwarden-desktop-{{ _bitwarden_desktop_asset.digest | regex_replace('^sha256:', '') }}.deb"
+    checksum: "{{ _bitwarden_desktop_asset.digest }}"
+    mode: "0644"
+    force: false
+
+- name: Install the Bitwarden desktop .deb (with dependencies)
+  ansible.builtin.apt:
+    deb: "{{ workstation_update_artifact_cache_dir }}/bitwarden-desktop-{{ _bitwarden_desktop_asset.digest | regex_replace('^sha256:', '') }}.deb"
+    state: present
+
+- name: Read the installed Bitwarden desktop package version
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - --showformat=${Version}
+      - --show
+      - bitwarden
+  register: _bitwarden_desktop_installed
+  changed_when: false
+
+- name: Check the Bitwarden desktop menu entry and launcher
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/share/applications/bitwarden.desktop
+    - /opt/Bitwarden/bitwarden
+  register: _bitwarden_desktop_files
+
+- name: Require the installed Bitwarden desktop to match the verified release
+  ansible.builtin.assert:
+    that:
+      - _bitwarden_desktop_installed.stdout == _bitwarden_desktop_version
+      - _bitwarden_desktop_files.results | map(attribute='stat.exists') | reject('equalto', true) | list | length == 0
+    fail_msg: >-
+      Bitwarden desktop {{ _bitwarden_desktop_version }} was not installed
+      correctly (dpkg reports '{{ _bitwarden_desktop_installed.stdout }}').

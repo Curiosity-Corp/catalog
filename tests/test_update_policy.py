@@ -483,6 +483,7 @@ def main() -> None:
         "tasks/fonts.yml",
         "tasks/languages.yml",
         "tasks/collaboration.yml",
+        "tasks/bitwarden-desktop.yml",
         "tasks/dotfiles.yml",
     )
     for relative in direct_release_tasks:
