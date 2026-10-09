@@ -203,6 +203,17 @@
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - workstation_update_install_allowed | default(true)
 
+- name: Include Litra CLI
+  ansible.builtin.include_tasks:
+    file: litra-cli.yml
+    apply:
+      tags: [hardware, litra]
+  tags: [hardware, litra]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - litra_cli_enabled | default(false) | bool
+    - workstation_update_install_allowed | default(true)
+
 - name: Include fonts
   ansible.builtin.include_tasks:
     file: fonts.yml

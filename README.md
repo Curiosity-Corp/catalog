@@ -110,6 +110,7 @@ The most important variables are:
 | `keycloak_sso_enabled` | `false` | Opt into Keycloak login integration |
 | `ziti_enabled` | `false` | Opt into OpenZiti and supply local domains/provider |
 | `sunshine_enabled` | `false` | Opt into remote desktop streaming |
+| `litra_cli_enabled` | from hardware profile (`false` unless the profile sets `litra_cli: true`, as `deskmeet-b760` does) | Install the `litra` CLI to control Logitech Litra lightbars |
 | `profile_cleanup_enabled` | `false` | Opt into shared-machine profile cleanup |
 | `focuspass_screenlock_enabled` | `false` | Opt into the locally authenticated FocusPass-branded XScreenSaver package (requires a supplied `.deb` URL and SHA-256) |
 | `t460_console_diagnostics_enabled` | `true` | Install the read-only T460 DRM/fbcon status helper when a T460 hardware profile is selected |

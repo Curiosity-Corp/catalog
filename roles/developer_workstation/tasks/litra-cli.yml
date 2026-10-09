@@ -1,0 +1,52 @@
+---
+# =============================================================================
+# Logitech Litra CLI (timrogers/litra-rs)
+# =============================================================================
+# Makes Litra lightbars (for example the Litra Beam, USB 046d:c901) scriptable
+# from the command line. Included only when `litra_cli_enabled` is true, which
+# defaults to the selected hardware profile's `litra_cli` flag. The matching
+# udev rule that grants hidraw access ships in the same hardware profile.
+#
+# Upstream publishes bare binaries (no archive) named
+# litra_v<version>_linux-amd64 and litra_v<version>_linux-aarch64, so the
+# asset is verified against its GitHub SHA-256 digest and copied into place.
+# =============================================================================
+
+- name: Resolve the latest Litra CLI release asset for this architecture
+  ansible.builtin.set_fact:
+    _litra_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'aarch64'}.get(ansible_architecture, '') }}"
+
+- name: Select the latest Litra CLI binary
+  ansible.builtin.set_fact:
+    _latest_litra_asset: >-
+      {{
+        latest_github_releases.litra.assets
+        | selectattr('name', 'match', '^litra_v[^_]+_linux-' ~ (_litra_arch | regex_escape) ~ '$')
+        | first | default({}, true)
+      }}
+
+- name: Require a verifiable Litra CLI asset
+  ansible.builtin.assert:
+    that:
+      - _litra_arch | length > 0
+      - _latest_litra_asset | default({}) | length > 0
+      - _latest_litra_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: >-
+      Litra CLI has no verifiable current Linux asset for {{ ansible_architecture }}
+
+- name: Download the latest Litra CLI
+  ansible.builtin.get_url:
+    url: "{{ _latest_litra_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/litra-{{ _latest_litra_asset.digest | regex_replace('^sha256:', '') }}"
+    checksum: "{{ _latest_litra_asset.digest }}"
+    mode: "0644"
+    force: false
+
+- name: Atomically install the latest Litra CLI
+  ansible.builtin.copy:
+    src: "{{ workstation_update_artifact_cache_dir }}/litra-{{ _latest_litra_asset.digest | regex_replace('^sha256:', '') }}"
+    dest: /usr/local/bin/litra
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
