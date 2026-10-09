@@ -36,6 +36,14 @@ def test_user_systemd_masks_are_opt_in_and_native() -> None:
     assert "systemctl mask" not in policy
 
 
+def test_stop_tolerates_units_absent_on_host() -> None:
+    # A mask list shared across hosts names units that may not exist locally;
+    # systemd reports those as "Could not find the requested service".
+    policy = (ROLE / "tasks/user-systemd.yml").read_text()
+    for phrase in ("'not found'", "'could not find'", "'not loaded'", "'masked'"):
+        assert phrase in policy, f"stop task must tolerate {phrase}"
+
+
 def test_main_reaches_user_systemd_policy() -> None:
     main = (ROLE / "tasks/main.yml").read_text()
     assert "file: user-systemd.yml" in main
