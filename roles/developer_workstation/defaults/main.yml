@@ -623,6 +623,8 @@ tmp_hygiene_exclusions:
   - X /tmp/.com.google.Chrome.*
   - X /tmp/com.google.Chrome.*
   - X /tmp/.mount_*
+  - X /tmp/tsx-*
+  - X /tmp/claude-*
 # Host-specific additions without replacing the list above.
 tmp_hygiene_extra_exclusions: []
 tmp_hygiene_tmpfiles_path: /etc/tmpfiles.d/00-curiosity-tmp.conf

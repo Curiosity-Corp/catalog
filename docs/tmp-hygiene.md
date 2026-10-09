@@ -68,7 +68,7 @@ systemd-tmpfiles-clean.timer`.
 | `tmp_hygiene_pressure_threshold` | `85` | Percent usage that triggers the helper (1-100) |
 | `tmp_hygiene_pressure_age` | `1d` | Age for the second pass; empty means warn only |
 | `tmp_hygiene_pressure_interval` | `1h` | Time between pressure checks |
-| `tmp_hygiene_exclusions` | X11, ICE, XIM, font sockets, `systemd-private-%b-*`, `tmux-*`, `ssh-*`, `snap-private-tmp`, Chromium singletons, AppImage mounts | tmpfiles `x`/`X` lines excluded from aging |
+| `tmp_hygiene_exclusions` | X11, ICE, XIM, font sockets, `systemd-private-%b-*`, `tmux-*`, `ssh-*`, `snap-private-tmp`, Chromium singletons, AppImage mounts, `tsx-*`, `claude-*` | tmpfiles `x`/`X` lines excluded from aging |
 | `tmp_hygiene_extra_exclusions` | `[]` | Host-specific additions, for example `X /tmp/my-long-lived-dir` |
 | `tmp_hygiene_tmpfiles_path` | `/etc/tmpfiles.d/00-curiosity-tmp.conf` | Drop-in location |
 | `tmp_hygiene_pressure_script_path` | `/usr/local/sbin/curiosity-tmp-pressure` | Helper location |
@@ -82,8 +82,10 @@ systemd-tmpfiles-clean.timer`.
 - Age is judged from file times, not liveness. A long-running program whose
   socket or lock file in `/tmp` is older than the age loses it unless a rule
   excludes it (a socket's timestamps do not advance while it is in use). The
-  defaults cover X11, tmux, ssh-agent, systemd, snap, Chromium/Chrome and
-  AppImage paths; add anything else your tools keep in `/tmp` with
+  defaults cover X11, tmux, ssh-agent, systemd, snap, Chromium/Chrome,
+  AppImage, tsx IPC pipes and Claude Code session directories. tmpfiles.d has
+  no way to filter by file type (it cannot say "keep sockets and FIFOs"), so
+  protection is by path only; add anything else your tools keep in `/tmp` with
   `tmp_hygiene_extra_exclusions`, for example `X /tmp/my-tool-*`.
 - Disk-backed `/tmp` still gets the daily age-based cleanup; the pressure timer
   does nothing there because `/tmp` is not a mount point.

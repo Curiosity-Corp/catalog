@@ -75,6 +75,8 @@ def test_default_exclusions_are_x_rules_under_tmp_and_cover_live_sessions() -> N
         "/tmp/snap-private-tmp",
         "/tmp/com.google.Chrome.*",
         "/tmp/org.chromium.*",
+        "/tmp/tsx-*",
+        "/tmp/claude-*",
     ):
         assert required in paths
 
