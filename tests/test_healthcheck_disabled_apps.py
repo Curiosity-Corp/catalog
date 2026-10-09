@@ -165,6 +165,13 @@ def test_failures_of_enabled_applications_still_fail_hard() -> None:
     assert warnings == ["coder"]
 
 
+def test_failures_without_an_enabled_key_still_fail_hard() -> None:
+    legacy = {"item": {"item": {"name": "hostcheck"}}, "rc": 1}
+    failures, warnings = _inventories([], [legacy])
+    assert failures == ["hostcheck"]
+    assert warnings == []
+
+
 def test_skipped_checks_without_rc_are_ignored() -> None:
     failures, warnings = _inventories([_result("sunshine", None, False)], [_result("npm", None, True)])
     assert failures == []
