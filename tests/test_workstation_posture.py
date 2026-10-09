@@ -51,6 +51,9 @@ def _run_autostart_harness(
 
         scripts = {
             "pgrep": r'''#!/bin/sh
+case "$*" in
+  *tint2*) exit 1 ;;
+esac
 state=$(cat "$HARNESS_ROOT/state")
 case "$state" in
   stock) echo 111 ;;

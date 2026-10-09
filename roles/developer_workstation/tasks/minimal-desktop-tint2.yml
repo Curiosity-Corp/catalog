@@ -2,6 +2,21 @@
 # =============================================================================
 # Minimal Desktop — Tint2 Panel Configuration
 # =============================================================================
+# Included once per item of dev_users with loop_var dw_user. The layout comes
+# from the item's optional tint2_layout, else minimal_desktop_tint2_layout.
+
+- name: Select the tint2 panel layout for this user
+  ansible.builtin.set_fact:
+    _minimal_desktop_tint2_layout: "{{ dw_user.tint2_layout | default(minimal_desktop_tint2_layout) }}"
+
+- name: Validate the tint2 panel layout
+  ansible.builtin.assert:
+    that:
+      - _minimal_desktop_tint2_layout in ['bottom', 'top']
+    fail_msg: >-
+      Unknown tint2 layout '{{ _minimal_desktop_tint2_layout }}' for
+      {{ dw_user.name }}. Set minimal_desktop_tint2_layout or the dev_users
+      item's tint2_layout to one of: bottom, top.
 
 - name: Ensure tint2 config directory exists
   ansible.builtin.file:
@@ -11,9 +26,9 @@
     group: "{{ dw_user.name }}"
     mode: "0755"
 
-- name: Deploy tint2 panel config (dark, 28px bottom bar)
+- name: Deploy the selected tint2 panel layout
   ansible.builtin.copy:
-    src: minimal-desktop/tint2rc
+    src: "minimal-desktop/tint2/{{ _minimal_desktop_tint2_layout }}.tint2rc"
     dest: "{{ dw_user.home }}/.config/tint2/tint2rc"
     owner: "{{ dw_user.name }}"
     group: "{{ dw_user.name }}"

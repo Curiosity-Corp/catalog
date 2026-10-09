@@ -1,0 +1,110 @@
+# Managed by Ansible (roles/developer_workstation, minimal desktop). Local edits
+# are overwritten on the next run.
+#
+# Layout "top": 36px top bar with launcher, multi-desktop task list, system
+# tray, PulseAudio volume executor and clock. Select it with
+# minimal_desktop_tint2_layout or a per-user tint2_layout. Every *_background_id
+# below refers to a background block that is defined EARLIER in this file;
+# tint2 17 crashes on an undefined id.
+#
+# The battery item is intentionally omitted: the session's power manager owns
+# power status and tint2 must not probe for stale receiver names such as
+# hidpp_battery_0.
+
+# Background 1: panel
+rounded = 0
+border_width = 0
+border_sides = TBLR
+background_color = #202124 96
+border_color = #202124 100
+
+# Background 2: active task
+rounded = 3
+border_width = 0
+border_sides = TBLR
+background_color = #4b4f58 100
+border_color = #4b4f58 100
+
+# Panel: launcher, task list, notification area, volume and clock.
+panel_items = LTSEC
+panel_size = 100% 36
+panel_margin = 0 0
+panel_padding = 5 3 5
+panel_background_id = 1
+panel_position = top center horizontal
+panel_layer = top
+panel_monitor = all
+panel_shrink = 0
+autohide = 0
+strut_policy = follow_size
+wm_menu = 1
+font_shadow = 0
+
+# Task list
+taskbar_mode = multi_desktop
+taskbar_padding = 0 0 0
+taskbar_background_id = 0
+task_text = 1
+task_icon = 1
+task_centered = 0
+task_maximum_size = 260 34
+task_padding = 7 4 7
+task_font = sans 9
+task_font_color = #e8eaed 100
+task_active_font_color = #ffffff 100
+task_background_id = 0
+task_active_background_id = 2
+mouse_left = toggle_iconify
+mouse_right = close
+
+# System tray (network, Bluetooth, PolicyKit and helper applets)
+systray_padding = 4 2 4
+systray_background_id = 0
+systray_sort = ascending
+systray_icon_size = 24
+systray_monitor = 1
+
+# Launcher. Items whose .desktop file is missing are skipped silently; each
+# one is installed by the minimal desktop package list (Firefox is installed
+# separately).
+launcher_padding = 3 1 3
+launcher_background_id = 0
+launcher_icon_size = 25
+launcher_icon_theme = Adwaita
+launcher_icon_theme_override = 1
+launcher_tooltip = 1
+launcher_item_app = /usr/share/applications/pcmanfm.desktop
+launcher_item_app = /usr/share/applications/firefox.desktop
+launcher_item_app = /usr/share/applications/lxterminal.desktop
+launcher_item_app = /usr/share/applications/arandr.desktop
+launcher_item_app = /usr/share/applications/org.pulseaudio.pavucontrol.desktop
+
+# Clock
+time1_format = %a %d %b  %H:%M
+time1_font = sans bold 10
+time2_format = %A, %d %B %Y
+time2_font = sans 9
+clock_font_color = #e8eaed 100
+clock_padding = 8 0
+clock_background_id = 0
+
+# Tooltips
+tooltip_show_timeout = 0.5
+tooltip_hide_timeout = 0.1
+tooltip_padding = 4 4
+tooltip_font = sans 9
+
+# PulseAudio volume (PipeWire-pulse hosts work too; needs pactl from
+# pulseaudio-utils): click opens the mixer, right-click mutes, scroll adjusts.
+execp = new
+execp_command = /usr/local/bin/tint2-volume-status
+execp_interval = 3
+execp_has_icon = 0
+execp_font = sans 9
+execp_font_color = #e8eaed 100
+execp_padding = 8 0
+execp_tooltip = Left-click: sound settings; right-click: mute; scroll: volume
+execp_lclick_command = pavucontrol
+execp_rclick_command = pactl set-sink-mute @DEFAULT_SINK@ toggle
+execp_uwheel_command = pactl set-sink-volume @DEFAULT_SINK@ +5%
+execp_dwheel_command = pactl set-sink-volume @DEFAULT_SINK@ -5%

@@ -63,6 +63,15 @@
     label: "{{ dw_user.name }}"
   tags: [minimal-desktop, picom]
 
+- name: Install the tint2 volume status helper
+  ansible.builtin.copy:
+    src: minimal-desktop/tint2-volume-status
+    dest: /usr/local/bin/tint2-volume-status
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [minimal-desktop, tint2]
+
 - name: Deploy tint2 panel config
   ansible.builtin.include_tasks: minimal-desktop-tint2.yml
   loop: "{{ dev_users }}"
@@ -70,6 +79,15 @@
     loop_var: dw_user
     label: "{{ dw_user.name }}"
   tags: [minimal-desktop, tint2]
+
+- name: Hide XDG autostart entries the Openbox autostart already starts
+  ansible.builtin.include_tasks: minimal-desktop-xdg-autostart.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
+  tags: [minimal-desktop, openbox, xdg-autostart]
+  when: workstation_profile != 'byod-kiosk'
 
 - name: Deploy dunst notification config
   ansible.builtin.include_tasks: minimal-desktop-dunst.yml

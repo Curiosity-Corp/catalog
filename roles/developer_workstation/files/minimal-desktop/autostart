@@ -20,16 +20,39 @@ fi
 # Compositor
 picom --config ~/.config/picom/picom.conf &
 
-# Panel
-tint2 &
+# Panel. Re-running this script in a live session must replace the panel, not
+# stack a second one. Only this user's tint2 on this DISPLAY is stopped, so a
+# panel belonging to another account or another X server is never touched. The
+# layout (bottom or top) is deployed per user to ~/.config/tint2/tint2rc.
+display_tint2_pids() {
+    for pid in $(pgrep -u "$(id -u)" -x tint2 2>/dev/null || true); do
+        [ -r "${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ" ] || continue
+        process_display=$(tr '\000' '\n' <"${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)
+        [ "$process_display" = "${DISPLAY:-}" ] && printf '%s\n' "$pid"
+    done
+}
+
+previous_panel_pids=$(display_tint2_pids)
+if [ -n "$previous_panel_pids" ]; then
+    # shellcheck disable=SC2086
+    kill $previous_panel_pids 2>/dev/null || true
+    sleep 0.5
+fi
+tint2 -c "$HOME/.config/tint2/tint2rc" &
 
 # Notifications
 dunst &
 
-# System tray applets
+# System tray applets. Their XDG autostart entries (nm-applet, blueman,
+# pasystray, picom) are hidden per user by the role so openbox-xdg-autostart
+# does not launch a second copy.
 nm-applet &
 pasystray &
 blueman-applet &
+
+# The PolicyKit authentication agent (lxpolkit) is deliberately not started
+# here: its /etc/xdg/autostart entry has no OPENBOX exclusion, so
+# openbox-xdg-autostart (python3-xdg) starts it exactly once.
 
 # Screenshot tray applet
 flameshot &

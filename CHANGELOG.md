@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- tint2 panel layouts for the minimal desktop: `minimal_desktop_tint2_layout`
+  (`bottom`, the default dark 32px bar, or `top`, a 36px bar with launcher,
+  multi-desktop taskbar and a PulseAudio volume item) and a per-user
+  `tint2_layout` key on `dev_users` items. An unknown layout fails the run.
+  The role installs `/usr/local/bin/tint2-volume-status` for the `top` layout,
+  and `pulseaudio-utils`, `zenity` and `arandr` for the panels.
+- XDG autostart for Openbox sessions: `python3-xdg` is installed, and each
+  `dev_users` account gets `Hidden=true` overrides in `~/.config/autostart` for
+  the ids in `minimal_desktop_xdg_autostart_hidden` (nm-applet, blueman,
+  pasystray, picom, light-locker, xfce4-screensaver), so XDG autostart does not
+  duplicate tray applets, the compositor or competing screen lockers.
+- `lxpolkit` (available on Ubuntu and Debian) provides the PolicyKit
+  authentication agent for GUI privilege prompts; the XDG autostart starts it.
+  The `byod-kiosk` profile keeps XDG autostart off.
 - Multi-user desktop convergence: `dev_users` (default derived from
   `dev_user`) drives per-user home checks, user-systemd policy, Openbox,
   picom, tint2, dunst, rofi, GTK, Firefox and screen-lock settings;
@@ -113,6 +127,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- The minimal desktop's tint2 panel config set `panel_background_id = 1` before
+  any background block existed and used options tint2 17 rejects
+  (`taskbar_name_active_color`, `taskbar_name_color`, `task_icon_size`). tint2
+  17.0.1 (Ubuntu 26.04) segfaulted at startup, so every catalog-managed Openbox
+  session had no panel, taskbar or tray. The role now ships valid layouts, and
+  the Openbox autostart starts tint2 with that config and replaces an existing
+  panel on the same display instead of stacking a second one.
 - User-systemd masking tolerates declared units that are absent on the host
   ("Could not find the requested service").
 - Pinned VT sessions keep their getty drop-ins: the stale-drop-in cleanup used
