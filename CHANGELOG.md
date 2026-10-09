@@ -57,6 +57,10 @@ All notable changes to this project are documented here. The format follows
   visible authentication prompts and `vlock` for text consoles.
 - Kiosk profile state snapshots for account groups, sudoers, desktop files,
   and TTY/sleep unit state, with guarded restoration when leaving kiosk mode.
+- `flameshot` in the minimal Openbox desktop, started from the session
+  autostart as a screenshot tray applet; the `deskmeet-b760` hardware profile
+  adds `libgphoto2-dev` so camera tooling that builds gphoto2 Python bindings
+  can rebuild its virtualenv.
 - SDKMAN runtime metadata and launcher repair that preserves dirty or
   non-Git source installations, plus a managed guard against recursive init
   sourcing.
