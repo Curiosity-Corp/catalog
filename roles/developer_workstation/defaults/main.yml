@@ -105,7 +105,22 @@ latest_github_repositories:
   flux: fluxcd/flux2
   mattermost: mattermost/mattermost
   mattermost_desktop: mattermost/desktop
+  bitwarden_desktop: bitwarden/clients
   nerd_fonts: ryanoasis/nerd-fonts
+
+# Sources whose repository publishes several products as separate releases
+# (bitwarden/clients tags desktop-v*, cli-v*, browser-v* and web-v*), so
+# /releases/latest is not the product this role installs. Each entry maps a
+# latest_github_repositories key to the tag prefix of the newest stable release
+# to use; discovery lists releases and picks the newest non-draft,
+# non-prerelease release with that prefix.
+latest_github_release_tag_prefixes:
+  bitwarden_desktop: desktop-v
+
+# Install the official Bitwarden desktop app (.deb) system-wide on desktop
+# workstations. Each user signs in to their own vault; the role never touches
+# credentials or vault data.
+bitwarden_desktop_enabled: true
 
 # Every API-backed release source also has an explicit application contract.
 # The contract is inventory/provenance data, not a release pin: it says how an
@@ -160,6 +175,7 @@ latest_release_contracts:
   flux: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/flux, --version]}
   mattermost: {installer: mattermost-release, verification: mattermost-package-sha256, healthcheck: [/usr/local/bin/mmctl, version]}
   mattermost_desktop: {installer: github-archive, verification: github-asset-digest, scope: user, healthcheck: [/opt/mattermost-desktop/mattermost-desktop, --version]}
+  bitwarden_desktop: {installer: github-deb, verification: github-asset-digest, enabled_when: bitwarden_desktop_enabled, healthcheck: [/opt/Bitwarden/chrome_crashpad_handler, --version]}
   nerd_fonts: {installer: github-archive, verification: github-asset-digest, healthcheck: [fc-cache, -V]}
 
 # Applications whose native update channel is not a GitHub release API. They
@@ -213,6 +229,7 @@ workstation_update_transaction_tags:
   - vscode
   - extensions
   - collaboration
+  - bitwarden
   - weechat
   - chat
   - hardware
@@ -297,6 +314,7 @@ workstation_update_managed_paths:
   - /usr/local/bin/composer
   - "{{ dev_user_home }}/.local/bin/uv"
   - /usr/bin/sunshine
+  - /usr/bin/bitwarden
   - /usr/local/bin/litra
   - /usr/local/bin/terraform
   - /usr/local/bin/vault
@@ -322,6 +340,7 @@ workstation_update_non_removable_paths:
   # These are package-owned files. Removing a newly-created binary on
   # rollback would leave dpkg's ownership database inconsistent.
   - /usr/bin/sunshine
+  - /usr/bin/bitwarden
 
 # Fail-closed is available as soon as the catalog signing key is provisioned.
 # Current public history is not uniformly signed, so warn is the safe bootstrap
