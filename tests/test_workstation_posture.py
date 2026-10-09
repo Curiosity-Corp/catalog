@@ -289,6 +289,48 @@ def test_openbox_uses_pam_aware_locker_and_keeps_tty_locking() -> None:
     assert shell_check.returncode == 0, shell_check.stderr
 
 
+def test_minimal_desktop_keybindings_match_the_standard_workstation() -> None:
+    xml_root = ET.parse(ROLE / "files/minimal-desktop/rc.xml").getroot()
+    ns = {"ob": "http://openbox.org/3.4/rc"}
+    keys = [k.get("key") for k in xml_root.findall(".//ob:keyboard/ob:keybind", ns)]
+    assert len(keys) == len(set(keys)), "duplicate keybindings shadow each other"
+
+    def command(key: str) -> str:
+        node = xml_root.find(f".//ob:keybind[@key='{key}']/ob:action/ob:command", ns)
+        assert node is not None and node.text, key
+        return node.text
+
+    for key in ("Print", "S-Print", "A-Print"):
+        text = command(key)
+        assert "flameshot gui" in text
+        assert '"$HOME/Pictures/Screenshots"' in text
+        check = subprocess.run(["sh", "-n", "-c", text], text=True, capture_output=True)
+        assert check.returncode == 0, check.stderr
+    assert "--accept-on-select" in command("S-Print")
+    assert "@DEFAULT_AUDIO_SINK@ 5%+" in command("XF86AudioRaiseVolume")
+    assert "@DEFAULT_AUDIO_SINK@ 5%-" in command("XF86AudioLowerVolume")
+    assert "set-mute @DEFAULT_AUDIO_SINK@" in command("XF86AudioMute")
+    assert "set-mute @DEFAULT_AUDIO_SOURCE@" in command("XF86AudioMicMute")
+    assert command("W-a") == "pavucontrol"
+    # Existing catalog bindings keep their meaning.
+    assert command("W-d").startswith("rofi")
+
+    stock = {
+        "A-space": "ShowMenu",
+        "A-Escape": "Lower",
+        "C-A-Tab": "NextWindow",
+        "W-F1": "GoToDesktop",
+        "W-F4": "GoToDesktop",
+    }
+    for direction in ("Left", "Right", "Up", "Down"):
+        stock[f"C-A-{direction}"] = "GoToDesktop"
+        stock[f"S-A-{direction}"] = "SendToDesktop"
+        stock[f"W-S-{direction}"] = "DirectionalCycleWindows"
+    for key, action in stock.items():
+        node = xml_root.find(f".//ob:keybind[@key='{key}']/ob:action", ns)
+        assert node is not None and node.get("name") == action, key
+
+
 def test_autostart_preserves_locked_stock_screen() -> None:
     result, state, log = _run_autostart_harness(
         initial_state="stock",

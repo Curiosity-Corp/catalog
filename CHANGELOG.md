@@ -77,6 +77,11 @@ All notable changes to this project are documented here. The format follows
   autostart as a screenshot tray applet; the `deskmeet-b760` hardware profile
   adds `libgphoto2-dev` so camera tooling that builds gphoto2 Python bindings
   can rebuild its virtualenv.
+- Minimal-desktop Openbox keybindings for screenshots (`Print`, `S-Print`,
+  `A-Print` run `flameshot gui` into `~/Pictures/Screenshots`), media keys
+  (`wpctl` volume, mute and microphone mute), `W-a` for `pavucontrol`, and the
+  stock Openbox window and desktop navigation keys. Existing catalog bindings
+  are unchanged.
 - SDKMAN runtime metadata and launcher repair that preserves dirty or
   non-Git source installations, plus a managed guard against recursive init
   sourcing.

@@ -158,6 +158,71 @@
     <keybind key="W-A-Up"><action name="MoveRelative"><x>0</x><y>-20</y></action></keybind>
     <keybind key="W-A-Down"><action name="MoveRelative"><x>0</x><y>20</y></action></keybind>
 
+    <!-- Stock Openbox navigation, kept for people used to the default rc.xml -->
+    <keybind key="A-space">
+      <action name="ShowMenu"><menu>client-menu</menu></action>
+    </keybind>
+    <keybind key="A-Escape">
+      <action name="Lower"/>
+      <action name="FocusToBottom"/>
+      <action name="Unfocus"/>
+    </keybind>
+    <keybind key="C-A-Tab">
+      <action name="NextWindow">
+        <panels>yes</panels><desktop>yes</desktop>
+        <finalactions>
+          <action name="Focus"/>
+          <action name="Raise"/>
+          <action name="Unshade"/>
+        </finalactions>
+      </action>
+    </keybind>
+    <keybind key="C-A-Left"><action name="GoToDesktop"><to>left</to><wrap>no</wrap></action></keybind>
+    <keybind key="C-A-Right"><action name="GoToDesktop"><to>right</to><wrap>no</wrap></action></keybind>
+    <keybind key="C-A-Up"><action name="GoToDesktop"><to>up</to><wrap>no</wrap></action></keybind>
+    <keybind key="C-A-Down"><action name="GoToDesktop"><to>down</to><wrap>no</wrap></action></keybind>
+    <keybind key="S-A-Left"><action name="SendToDesktop"><to>left</to><wrap>no</wrap></action></keybind>
+    <keybind key="S-A-Right"><action name="SendToDesktop"><to>right</to><wrap>no</wrap></action></keybind>
+    <keybind key="S-A-Up"><action name="SendToDesktop"><to>up</to><wrap>no</wrap></action></keybind>
+    <keybind key="S-A-Down"><action name="SendToDesktop"><to>down</to><wrap>no</wrap></action></keybind>
+    <keybind key="W-F1"><action name="GoToDesktop"><to>1</to></action></keybind>
+    <keybind key="W-F2"><action name="GoToDesktop"><to>2</to></action></keybind>
+    <keybind key="W-F3"><action name="GoToDesktop"><to>3</to></action></keybind>
+    <keybind key="W-F4"><action name="GoToDesktop"><to>4</to></action></keybind>
+    <keybind key="W-S-Left"><action name="DirectionalCycleWindows"><direction>left</direction></action></keybind>
+    <keybind key="W-S-Right"><action name="DirectionalCycleWindows"><direction>right</direction></action></keybind>
+    <keybind key="W-S-Up"><action name="DirectionalCycleWindows"><direction>up</direction></action></keybind>
+    <keybind key="W-S-Down"><action name="DirectionalCycleWindows"><direction>down</direction></action></keybind>
+
+    <!-- Screenshots (flameshot). Openbox does not expand $HOME, so a shell
+         creates the per-user directory and passes the path. -->
+    <keybind key="Print">
+      <action name="Execute"><command>sh -c 'mkdir -p "$HOME/Pictures/Screenshots" &amp;&amp; exec flameshot gui --path "$HOME/Pictures/Screenshots"'</command></action>
+    </keybind>
+    <keybind key="S-Print">
+      <action name="Execute"><command>sh -c 'mkdir -p "$HOME/Pictures/Screenshots" &amp;&amp; exec flameshot gui --path "$HOME/Pictures/Screenshots" --accept-on-select'</command></action>
+    </keybind>
+    <keybind key="A-Print">
+      <action name="Execute"><command>sh -c 'mkdir -p "$HOME/Pictures/Screenshots" &amp;&amp; exec flameshot gui --path "$HOME/Pictures/Screenshots"'</command></action>
+    </keybind>
+
+    <!-- Media keys (PipeWire/WirePlumber) and the mixer -->
+    <keybind key="XF86AudioRaiseVolume">
+      <action name="Execute"><command>wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+</command></action>
+    </keybind>
+    <keybind key="XF86AudioLowerVolume">
+      <action name="Execute"><command>wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-</command></action>
+    </keybind>
+    <keybind key="XF86AudioMute">
+      <action name="Execute"><command>wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle</command></action>
+    </keybind>
+    <keybind key="XF86AudioMicMute">
+      <action name="Execute"><command>wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle</command></action>
+    </keybind>
+    <keybind key="W-a">
+      <action name="Execute"><command>pavucontrol</command></action>
+    </keybind>
+
   </keyboard>
 
   <mouse>
