@@ -341,6 +341,18 @@
     - ansible_system == 'Linux'
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
+- name: Include /tmp hygiene (age-based cleanup and pressure relief)
+  ansible.builtin.include_tasks: tmp-hygiene.yml
+  tags: [tmp-hygiene, system]
+  # Machine-level systemd policy: skip the container-safe workspace profile and
+  # containers. The task file itself retires the managed files when the feature
+  # is off, so switching tmp_hygiene_enabled to false converges.
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_system == 'Linux'
+    - ansible_service_mgr | default('') == 'systemd'
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include shell RC fallback
   ansible.builtin.include_tasks: user-shell-fallback.yml
   tags: [user, shell]

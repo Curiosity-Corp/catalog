@@ -19,7 +19,7 @@ lint:
 test:
 	$(PYTHON) tests/test_update_policy.py
 	$(PYTHON) tests/test_user_systemd_policy.py
-	$(PYTHON) -m pytest -q tests/test_public_contract.py tests/test_console_tuning.py tests/test_workstation_posture.py tests/test_hardware_profiles.py tests/test_desktop_multiuser.py
+	$(PYTHON) -m pytest -q tests/test_public_contract.py tests/test_console_tuning.py tests/test_tmp_hygiene.py tests/test_workstation_posture.py tests/test_hardware_profiles.py tests/test_desktop_multiuser.py
 
 collection:
 	ansible-galaxy collection build --force

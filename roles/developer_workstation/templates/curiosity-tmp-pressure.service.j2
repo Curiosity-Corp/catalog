@@ -1,0 +1,27 @@
+# Managed by curiosity.workstation (tmp_hygiene_enabled)
+[Unit]
+Description=Curiosity /tmp pressure relief
+Documentation=man:systemd-tmpfiles(8) man:tmpfiles.d(5)
+# Only meaningful when /tmp is its own (tmpfs) mount; on a disk-backed /tmp the
+# root filesystem is not this unit's business.
+ConditionPathIsMountPoint=/tmp
+
+[Service]
+Type=oneshot
+Environment=TMP_PRESSURE_THRESHOLD={{ tmp_hygiene_pressure_threshold }}
+{% if tmp_hygiene_pressure_age | length > 0 %}
+Environment=TMP_PRESSURE_CONFIG={{ tmp_hygiene_pressure_config_path }}
+{% endif %}
+# Scratch space for the merged tmpfiles rules; lives in /run, never in /tmp.
+RuntimeDirectory=curiosity-tmp-pressure
+RuntimeDirectoryMode=0700
+ExecStart={{ tmp_hygiene_pressure_script_path }}
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+# This unit must see the real /tmp, so no private temporary directory and no
+# read-only filesystem sandboxing here.
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectKernelModules=yes

@@ -45,6 +45,14 @@ All notable changes to this project are documented here. The format follows
   re-applies them from a systemd oneshot plus udev triggers, and ships a
   read-only `curiosity-console-status` diagnostic. Default off; never edits
   the bootloader or kernel command line.
+- Opt-in `/tmp` hygiene (`tmp_hygiene_enabled`, tags `tmp-hygiene, system`):
+  an age-based `/etc/tmpfiles.d` drop-in (default `3d`) run by the native
+  `systemd-tmpfiles-clean.timer`, and an hourly `curiosity-tmp-pressure`
+  oneshot timer that runs `systemd-tmpfiles --clean --prefix=/tmp` when
+  tmpfs `/tmp` reaches `tmp_hygiene_pressure_threshold` (default `85`), with an
+  optional shorter-age second pass that keeps package-declared exclusions.
+  Never deletes by name pattern or removes live `systemd-private-*`
+  directories. Default off; skipped on workspace profiles and in containers.
 - PAM-aware XScreenSaver locking for standard Openbox desktops, with separate
   visible authentication prompts and `vlock` for text consoles.
 - Kiosk profile state snapshots for account groups, sudoers, desktop files,

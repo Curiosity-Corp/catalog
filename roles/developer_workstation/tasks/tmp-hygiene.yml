@@ -1,0 +1,163 @@
+---
+# =============================================================================
+# /tmp hygiene: age-based cleanup plus hourly pressure relief
+# =============================================================================
+# Included from main.yml on systemd-based desktop/thin-client/kiosk profiles
+# outside containers. Everything is declarative and uses native tooling:
+#
+#   * /etc/tmpfiles.d/00-curiosity-tmp.conf gives /tmp an age, so the stock
+#     systemd-tmpfiles-clean.timer does the daily cleaning (no custom cleaner);
+#   * curiosity-tmp-pressure.{service,timer} run the same cleanup early when
+#     the tmpfs holding /tmp is nearly full, optionally followed by one
+#     shorter-age pass that is scoped to /tmp and keeps every package-declared
+#     exclusion.
+#
+# It never deletes by name pattern and never touches systemd-private-*
+# directories of running services. When tmp_hygiene_enabled is false (or the
+# pressure sub-feature is off) the files it previously managed are removed.
+# =============================================================================
+
+- name: Apply /tmp hygiene policy
+  when: tmp_hygiene_enabled | bool
+  block:
+    - name: Validate /tmp hygiene inputs
+      ansible.builtin.assert:
+        that:
+          - tmp_hygiene_max_age is string
+          - tmp_hygiene_max_age is match('^[1-9][0-9]*(m|h|d|w)$')
+          - tmp_hygiene_pressure_threshold | string is match('^[0-9]+$')
+          - tmp_hygiene_pressure_threshold | int >= 1
+          - tmp_hygiene_pressure_threshold | int <= 100
+          - tmp_hygiene_pressure_age is string
+          - tmp_hygiene_pressure_age == '' or tmp_hygiene_pressure_age is match('^[1-9][0-9]*(m|h|d|w)$')
+          - tmp_hygiene_pressure_interval is string
+          - tmp_hygiene_pressure_interval is match('^[1-9][0-9]*(min|m|h|d)$')
+          - tmp_hygiene_exclusions is sequence
+          - tmp_hygiene_exclusions is not string
+          - tmp_hygiene_extra_exclusions is sequence
+          - tmp_hygiene_extra_exclusions is not string
+          - >-
+            (tmp_hygiene_exclusions + tmp_hygiene_extra_exclusions)
+            | reject('match', '^[xX] /tmp/[^ ]+$') | list | length == 0
+          - >-
+            (tmp_hygiene_exclusions + tmp_hygiene_extra_exclusions)
+            | select('search', '[.][.]') | list | length == 0
+        fail_msg: >-
+          tmp_hygiene_max_age and tmp_hygiene_pressure_age must be a systemd
+          time span such as 3d (units m, h, d, w; the age may be empty only for
+          tmp_hygiene_pressure_age), tmp_hygiene_pressure_threshold must be 1-100,
+          tmp_hygiene_pressure_interval must look like 1h, and every exclusion
+          must be a tmpfiles.d 'x' or 'X' line for a path under /tmp (no spaces,
+          no '..').
+
+    - name: Install /tmp age-based cleanup drop-in
+      # Read by the vendor systemd-tmpfiles-clean.timer; no custom cleaner.
+      ansible.builtin.template:
+        src: curiosity-tmp-hygiene.tmpfiles.conf.j2
+        dest: "{{ tmp_hygiene_tmpfiles_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Ensure the native tmpfiles clean timer is enabled
+      ansible.builtin.systemd:
+        name: systemd-tmpfiles-clean.timer
+        enabled: true
+        state: started
+
+- name: Remove the /tmp age-based cleanup drop-in when /tmp hygiene is off
+  ansible.builtin.file:
+    path: "{{ tmp_hygiene_tmpfiles_path }}"
+    state: absent
+  when: not (tmp_hygiene_enabled | bool)
+
+# ---- Pressure relief ----
+
+- name: Apply /tmp pressure relief
+  when:
+    - tmp_hygiene_enabled | bool
+    - tmp_hygiene_pressure_enabled | bool
+  block:
+    - name: Ensure the Curiosity configuration directory exists
+      ansible.builtin.file:
+        path: /etc/curiosity
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install /tmp pressure helper
+      ansible.builtin.copy:
+        src: curiosity-tmp-pressure
+        dest: "{{ tmp_hygiene_pressure_script_path }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Deliberately outside /etc/tmpfiles.d so the daily timer never reads it.
+    - name: Write the shorter-age pressure pass configuration
+      ansible.builtin.template:
+        src: curiosity-tmp-pressure.tmpfiles.conf.j2
+        dest: "{{ tmp_hygiene_pressure_config_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: tmp_hygiene_pressure_age | length > 0
+
+    - name: Remove the shorter-age pressure pass configuration when it is disabled
+      ansible.builtin.file:
+        path: "{{ tmp_hygiene_pressure_config_path }}"
+        state: absent
+      when: tmp_hygiene_pressure_age | length == 0
+
+    - name: Install /tmp pressure systemd service
+      ansible.builtin.template:
+        src: curiosity-tmp-pressure.service.j2
+        dest: /etc/systemd/system/curiosity-tmp-pressure.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Install /tmp pressure systemd timer
+      ansible.builtin.template:
+        src: curiosity-tmp-pressure.timer.j2
+        dest: /etc/systemd/system/curiosity-tmp-pressure.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart curiosity tmp-pressure timer
+
+    - name: Enable /tmp pressure timer
+      ansible.builtin.systemd:
+        name: curiosity-tmp-pressure.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Retire /tmp pressure relief when it is not wanted
+  when: not ((tmp_hygiene_enabled | bool) and (tmp_hygiene_pressure_enabled | bool))
+  block:
+    - name: Check for a previously managed /tmp pressure timer
+      ansible.builtin.stat:
+        path: /etc/systemd/system/curiosity-tmp-pressure.timer
+      register: _tmp_hygiene_pressure_timer
+
+    - name: Stop and disable the /tmp pressure timer
+      ansible.builtin.systemd:
+        name: curiosity-tmp-pressure.timer
+        enabled: false
+        state: stopped
+        daemon_reload: true
+      when: _tmp_hygiene_pressure_timer.stat.exists
+
+    - name: Remove managed /tmp pressure files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/curiosity-tmp-pressure.timer
+        - /etc/systemd/system/curiosity-tmp-pressure.service
+        - "{{ tmp_hygiene_pressure_script_path }}"
+        - "{{ tmp_hygiene_pressure_config_path }}"
+      notify: Reload systemd

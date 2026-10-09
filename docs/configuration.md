@@ -230,7 +230,8 @@ from `byod-kiosk`.
 
 ## Safety-sensitive switches
 
-`sunshine_enabled`, `profile_cleanup_enabled`, `ziti_enabled`, and all
+`sunshine_enabled`, `profile_cleanup_enabled`, `tmp_hygiene_enabled`,
+`ziti_enabled`, and all
 identity-provider integrations default to `false`. If enabling Sunshine,
 provide a non-default credential from a protected variable or configure it
 interactively. If enabling cleanup, test the retention window on a disposable
@@ -247,6 +248,28 @@ containers and on workspace/kiosk profiles. See
 [`docs/console-tuning.md`](console-tuning.md) for the cause, variables,
 verification (`curiosity-console-status`), and the documented-only kernel
 command-line option.
+
+## /tmp hygiene
+
+`tmp_hygiene_enabled` (default `false`, because it deletes files) gives `/tmp`
+an age-based cleanup through a `/etc/tmpfiles.d` drop-in that the native
+`systemd-tmpfiles-clean.timer` already runs daily, plus an hourly
+`curiosity-tmp-pressure` timer that runs the same cleanup early when the
+tmpfs holding `/tmp` is nearly full. Variables:
+
+| Variable | Default |
+| --- | --- |
+| `tmp_hygiene_enabled` | `false` |
+| `tmp_hygiene_max_age` | `3d` |
+| `tmp_hygiene_pressure_enabled` | `true` |
+| `tmp_hygiene_pressure_threshold` | `85` |
+| `tmp_hygiene_pressure_age` | `1d` (empty: warn only, no second pass) |
+| `tmp_hygiene_pressure_interval` | `1h` |
+| `tmp_hygiene_exclusions` / `tmp_hygiene_extra_exclusions` | live-session paths / `[]` |
+
+It is skipped on the `workspace` profile and in containers. See
+[`docs/tmp-hygiene.md`](tmp-hygiene.md) for the design, safety properties, and
+how to retire a hand-installed cleaner.
 
 ## Free Ubuntu-Pro equivalents (pro-mimic)
 

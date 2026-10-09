@@ -1,0 +1,11 @@
+# Managed by curiosity.workstation (tmp_hygiene_enabled)
+[Unit]
+Description=Hourly /tmp pressure check
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ tmp_hygiene_pressure_interval }}
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

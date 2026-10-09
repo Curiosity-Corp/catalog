@@ -1,0 +1,14 @@
+# Managed by curiosity.workstation (tmp_hygiene_pressure_age). Do not edit.
+#
+# Shorter-age pass used only by curiosity-tmp-pressure when /tmp stays above
+# the threshold after the standard pass. It is deliberately NOT in
+# /etc/tmpfiles.d, so the daily systemd-tmpfiles-clean.timer never reads it.
+# At run time the script appends every x/X rule under /tmp that installed
+# packages ship, so the list below only needs paths no package declares.
+#
+# Type Path Mode User Group Age
+q /tmp 1777 root root {{ tmp_hygiene_pressure_age }}
+
+{% for rule in tmp_hygiene_exclusions + tmp_hygiene_extra_exclusions %}
+{{ rule }}
+{% endfor %}
