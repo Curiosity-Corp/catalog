@@ -63,6 +63,7 @@ policy:
       tests/test_desktop_multiuser.py tests/test_apt_keyring_policy.py
       tests/test_user_systemd_policy.py tests/test_pipx_repair.py
       tests/test_science_venv_repair.py tests/test_m365_cli_entrypoints.py
+      tests/test_sunshine_asset_selection.py
 
 collection:
   extends: .python_setup

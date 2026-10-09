@@ -117,6 +117,12 @@ All notable changes to this project are documented here. The format follows
   after each refresh. `@pnp/cli-microsoft365` publishes `dist/index.js` as
   0644 and npm 12.2 installed it unchanged, so `m365` failed with permission
   denied and the post-update healthcheck rolled the transaction back.
+- Sunshine package selection follows the host release and architecture and the
+  current upstream asset names (`sunshine_<version>-1+ubuntu26.04_amd64.deb`,
+  `+debiantrixie`), with the older `sunshine-ubuntu-24.04-amd64.deb` form still
+  accepted. The hard-coded 24.04 name no longer exists upstream, so enabled
+  hosts could not install or upgrade Sunshine, and a 24.04 build on 26.04 fails
+  to load `libminiupnpc.so.18`.
 - Vendor APT signing keys (GitHub CLI, Microsoft, Google Cloud, Google Chrome,
   1Password, Brave, MongoDB, NodeSource, OpenZiti, Mozilla) were fetched once
   behind `creates:` or a non-forcing download and never refreshed, so a vendor
