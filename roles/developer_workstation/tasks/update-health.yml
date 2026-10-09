@@ -5,6 +5,12 @@
 # Health checks are intentionally opportunistic: a contract is checked when
 # its executable exists on this profile. A failed check is not swallowed; it
 # fails the transaction and sends control to update-rollback.yml.
+#
+# A contract may declare `enabled_when: <variable name>`. When that variable is
+# false on this host the application's feature is off, so a failing check (for
+# example a stale, broken /usr/bin/sunshine left behind when sunshine_enabled is
+# false) is recorded as a warning instead of failing the transaction. An absent
+# key, an undefined variable, or a true value keeps the check a hard gate.
 # =============================================================================
 
 - name: Build healthcheck definitions from application contracts
@@ -17,7 +23,9 @@
           'argv': ((([item.value.healthcheck[0]] if (item.value.healthcheck[0] is match('^/'))
                     else [dev_user_home ~ '/' ~ item.value.healthcheck[0]]) + item.value.healthcheck[1:])
                    if (item.value.scope | default('system')) == 'user'
-                   else item.value.healthcheck)
+                   else item.value.healthcheck),
+          'enabled': ((lookup('vars', item.value.enabled_when, default=true) | bool)
+                      if item.value.enabled_when is defined else true)
         }
       ] }}
   loop: "{{ (workstation_all_application_contracts | default(latest_release_contracts)) | dict2items }}"
@@ -44,10 +52,13 @@
     workstation_update_user_healthchecks:
       - name: npm
         argv: ["{{ npm_global_prefix }}/bin/npm", --version]
+        enabled: true
       - name: pnpm
         argv: ["{{ npm_global_prefix }}/bin/pnpm", --version]
+        enabled: true
       - name: playwright
         argv: ["{{ npm_global_prefix }}/bin/playwright", --version]
+        enabled: true
   when: workstation_update_healthcheck_enabled | default(true)
 
 - name: Add user-scoped contract healthchecks
@@ -126,15 +137,40 @@
       {{
         (_workstation_system_healthchecks.results | default([])
           | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+          | selectattr('item.item.enabled', 'equalto', true)
           | map(attribute='item.item.name') | list)
         +
         (_workstation_user_healthchecks.results | default([])
           | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+          | selectattr('item.item.enabled', 'equalto', true)
           | map(attribute='item.item.name') | list)
         +
         (['dpkg'] if (_workstation_dpkg_audit.rc | default(0) != 0) else [])
       }}
+    workstation_update_healthcheck_warnings: >-
+      {{
+        (_workstation_system_healthchecks.results | default([])
+          | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+          | selectattr('item.item.enabled', 'equalto', false)
+          | map(attribute='item.item.name') | list)
+        +
+        (_workstation_user_healthchecks.results | default([])
+          | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+          | selectattr('item.item.enabled', 'equalto', false)
+          | map(attribute='item.item.name') | list)
+      }}
   when: workstation_update_healthcheck_enabled | default(true)
+
+- name: Warn about failing healthchecks of disabled applications
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: healthchecks failed for applications whose feature is disabled
+      on this host: {{ workstation_update_healthcheck_warnings | join(', ') }}.
+      This does not fail or roll back the update; remove or repair the stale
+      binaries, or enable the feature.
+  when:
+    - workstation_update_healthcheck_enabled | default(true)
+    - workstation_update_healthcheck_warnings | default([]) | length > 0
 
 - name: Require all installed application healthchecks to pass
   ansible.builtin.assert:
