@@ -3,10 +3,12 @@
 import os
 import re
 import subprocess
+import importlib.machinery
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -811,3 +813,101 @@ def test_desktop_self_healing_installs_hardware_monitoring() -> None:
     tasks = _tasks(TASKS / "self-healing.yml")
     assert _named(tasks, "Install smartmontools")["ansible.builtin.apt"]["name"] == "smartmontools"
     assert _named(tasks, "Install lm-sensors")["ansible.builtin.apt"]["name"] == "lm-sensors"
+
+
+ZONE_KEYS = {
+    "W-A-1": "agent-top",
+    "W-A-2": "agent-bottom",
+    "W-A-3": "browser",
+    "W-A-4": "chats",
+    "W-A-5": "top",
+    "W-A-6": "bottom",
+}
+
+
+def _load_openbox_zone():
+    import importlib.util
+
+    path = ROLE / "files/minimal-desktop/openbox-zone"
+    loader = importlib.machinery.SourceFileLoader("openbox_zone", str(path))
+    spec = importlib.util.spec_from_loader("openbox_zone", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def test_openbox_zone_keybindings_are_managed() -> None:
+    xml_root = ET.parse(ROLE / "files/minimal-desktop/rc.xml").getroot()
+    ns = {"ob": "http://openbox.org/3.4/rc"}
+    for key, zone in ZONE_KEYS.items():
+        node = xml_root.find(f".//ob:keybind[@key='{key}']/ob:action", ns)
+        assert node is not None and node.get("name") == "Execute", key
+        assert node.findtext("ob:command", namespaces=ns) == (
+            f"/usr/local/bin/openbox-zone {zone}"
+        )
+    assert len(ZONE_KEYS) == len(set(ZONE_KEYS.values()))
+
+
+def test_openbox_zone_helper_install_and_packages() -> None:
+    script = ROLE / "files/minimal-desktop/openbox-zone"
+    assert script.read_text().splitlines()[0] == "#!/usr/bin/python3"
+    assert os.access(script, os.X_OK)
+    compile(script.read_text(), str(script), "exec")
+    tasks = _tasks(TASKS / "minimal-desktop-packages.yml")
+    install = _named(tasks, "openbox-zone")
+    copy = install["ansible.builtin.copy"]
+    assert copy["dest"] == "/usr/local/bin/openbox-zone"
+    assert copy["src"] == "minimal-desktop/openbox-zone"
+    assert copy["mode"] == "0755"
+    assert copy["owner"] == "root"
+    packages = _named(tasks, "Install minimal desktop packages")
+    names = packages["ansible.builtin.apt"]["name"]
+    assert "xdotool" in names and "x11-utils" in names
+
+
+def _overlaps(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
+@pytest.mark.parametrize(
+    "area",
+    [(0, 0, 3840, 2160), (0, 0, 1920, 1080), (0, 40, 1920, 1040)],
+)
+def test_openbox_zone_geometry_fits_work_area(area) -> None:
+    module = _load_openbox_zone()
+    zones = module.zones(area)
+    assert set(zones) == set(ZONE_KEYS.values()) == set(module.ZONE_NAMES)
+    x, y, width, height = area
+    for name, (zx, zy, zw, zh) in zones.items():
+        assert zw > 0 and zh > 0, name
+        assert zx >= x + module.MARGIN and zy >= y + module.MARGIN, name
+        assert zx + zw <= x + width - module.MARGIN, name
+        assert zy + zh <= y + height - module.MARGIN, name
+    items = list(zones.items())
+    for i, (name_a, rect_a) in enumerate(items):
+        for name_b, rect_b in items[i + 1 :]:
+            assert not _overlaps(rect_a, rect_b), (name_a, name_b)
+
+
+def test_openbox_zone_work_area_uses_ewmh_and_falls_back() -> None:
+    module = _load_openbox_zone()
+    answers = {
+        ("xdotool", "getdisplaygeometry"): "3840 2160",
+        ("xprop", "-root", "_NET_CURRENT_DESKTOP"): "_NET_CURRENT_DESKTOP(CARDINAL) = 1",
+        ("xprop", "-root", "_NET_WORKAREA"): (
+            "_NET_WORKAREA(CARDINAL) = 0, 0, 3840, 2160, 0, 30, 3840, 2100"
+        ),
+    }
+    module.run = lambda *args: answers[args]
+    assert module.work_area() == (0, 30, 3840, 2100)
+    del answers[("xprop", "-root", "_NET_WORKAREA")]
+
+    def failing(*args):
+        if args[0] == "xprop":
+            raise module.subprocess.CalledProcessError(1, args)
+        return answers[args]
+
+    module.run = failing
+    assert module.work_area() == (0, 0, 3840, 2160)

@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Six-zone Openbox window snapping on every managed minimal desktop (laptop and
+  DeskMeet1, all users): `/usr/local/bin/openbox-zone` (ported from the
+  seantech workstation) and managed `rc.xml` bindings Super+Alt+1..6 for
+  `agent-top`, `agent-bottom`, `browser`, `chats`, `top` and `bottom`. The
+  script needs `xdotool` and `x11-utils` (`xprop`), now installed; run
+  `openbox-zone --list` for the zone names.
 - Bitwarden desktop app on every `desktop`-profile workstation, system-wide, so
   every managed user (for example `mrh` and `seantech` on DeskMeet1) finds
   Bitwarden in the application menu (`/usr/share/applications/bitwarden.desktop`,

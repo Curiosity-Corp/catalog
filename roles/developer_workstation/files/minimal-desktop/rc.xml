@@ -158,6 +158,26 @@
     <keybind key="W-A-Up"><action name="MoveRelative"><x>0</x><y>-20</y></action></keybind>
     <keybind key="W-A-Down"><action name="MoveRelative"><x>0</x><y>20</y></action></keybind>
 
+    <!-- Snap the focused window into the six-zone AI workspace layout. -->
+    <keybind key="W-A-1">
+      <action name="Execute"><command>/usr/local/bin/openbox-zone agent-top</command></action>
+    </keybind>
+    <keybind key="W-A-2">
+      <action name="Execute"><command>/usr/local/bin/openbox-zone agent-bottom</command></action>
+    </keybind>
+    <keybind key="W-A-3">
+      <action name="Execute"><command>/usr/local/bin/openbox-zone browser</command></action>
+    </keybind>
+    <keybind key="W-A-4">
+      <action name="Execute"><command>/usr/local/bin/openbox-zone chats</command></action>
+    </keybind>
+    <keybind key="W-A-5">
+      <action name="Execute"><command>/usr/local/bin/openbox-zone top</command></action>
+    </keybind>
+    <keybind key="W-A-6">
+      <action name="Execute"><command>/usr/local/bin/openbox-zone bottom</command></action>
+    </keybind>
+
     <!-- Stock Openbox navigation, kept for people used to the default rc.xml -->
     <keybind key="A-space">
       <action name="ShowMenu"><menu>client-menu</menu></action>

@@ -41,10 +41,22 @@
       # X11 utilities
       - x11-xserver-utils
       - xdotool
+      # xprop, used by openbox-zone to read the EWMH work area
+      - x11-utils
       # NSS cert tools (import internal CAs into Firefox snap cert store)
       - libnss3-tools
     state: present
     update_cache: true
+
+# Six-zone window snapping (Super+Alt+1..6 in the managed rc.xml). System-wide
+# so every managed Openbox user gets the same binding target.
+- name: Install openbox-zone window snapping helper
+  ansible.builtin.copy:
+    src: minimal-desktop/openbox-zone
+    dest: /usr/local/bin/openbox-zone
+    owner: root
+    group: root
+    mode: "0755"
 
 # openbox-xdg-autostart needs PyXDG; once installed it runs every entry in
 # /etc/xdg/autostart and ~/.config/autostart, including lxpolkit (the PolicyKit
