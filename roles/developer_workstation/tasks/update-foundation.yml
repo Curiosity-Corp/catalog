@@ -182,6 +182,21 @@
     label: "{{ item }}"
   register: _workstation_managed_paths_before
 
+# Launchers such as /usr/local/bin/aws are symlinks into an install tree. A
+# followed stat reports them as regular files, so the snapshot used to copy the
+# binary out of its tree and rollback replaced the link with that copy, which
+# cannot find its bundled libraries. Record links separately and restore them
+# as links.
+- name: Check which managed paths are symlinks before the update transaction
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+  loop: "{{ workstation_update_managed_paths }}"
+  loop_control:
+    label: "{{ item }}"
+  register: _workstation_managed_links_before
+
 - name: Build the pre-update binary inventory
   ansible.builtin.set_fact:
     workstation_update_before_inventory: >-
@@ -189,6 +204,10 @@
         {
           'path': item.item,
           'exists': item.stat.exists | default(false),
+          'regular': item.stat.isreg | default(false),
+          'link_target': (_workstation_managed_links_before.results[_managed_path_index].stat.lnk_target | default(''))
+                         if (_workstation_managed_links_before.results[_managed_path_index].stat.islnk | default(false))
+                         else '',
           'checksum': item.stat.checksum | default(''),
           'mode': item.stat.mode | default('0755'),
           'owner': item.stat.pw_name | default('root'),
@@ -198,21 +217,23 @@
   loop: "{{ _workstation_managed_paths_before.results }}"
   loop_control:
     label: "{{ item.item }}"
+    index_var: _managed_path_index
 
 - name: Snapshot existing managed binaries for rollback
   ansible.builtin.copy:
-    src: "{{ item.item }}"
-    dest: "{{ workstation_update_snapshot_dir }}/{{ item.item | basename }}"
+    src: "{{ item.path }}"
+    dest: "{{ workstation_update_snapshot_dir }}/{{ item.path | basename }}"
     remote_src: true
     owner: root
     group: root
     mode: "0755"
-  loop: "{{ _workstation_managed_paths_before.results }}"
+  loop: "{{ workstation_update_before_inventory }}"
   loop_control:
-    label: "{{ item.item }}"
+    label: "{{ item.path }}"
   when:
-    - item.stat.exists | default(false)
-    - item.stat.isreg | default(false)
+    - item.exists
+    - item.regular
+    - item.link_target | length == 0
 
 - name: Save the pre-update inventory
   ansible.builtin.copy:

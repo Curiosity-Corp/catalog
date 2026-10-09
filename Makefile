@@ -18,7 +18,7 @@ lint:
 
 test:
 	$(PYTHON) tests/test_update_policy.py
-	$(PYTHON) -m pytest -q tests/test_public_contract.py tests/test_console_tuning.py tests/test_tmp_hygiene.py tests/test_workstation_posture.py tests/test_hardware_profiles.py tests/test_desktop_multiuser.py tests/test_apt_keyring_policy.py tests/test_user_systemd_policy.py tests/test_pipx_repair.py tests/test_science_venv_repair.py tests/test_m365_cli_entrypoints.py tests/test_sunshine_asset_selection.py
+	$(PYTHON) -m pytest -q tests/test_public_contract.py tests/test_console_tuning.py tests/test_tmp_hygiene.py tests/test_workstation_posture.py tests/test_hardware_profiles.py tests/test_desktop_multiuser.py tests/test_apt_keyring_policy.py tests/test_user_systemd_policy.py tests/test_pipx_repair.py tests/test_science_venv_repair.py tests/test_m365_cli_entrypoints.py tests/test_sunshine_asset_selection.py tests/test_update_rollback_symlinks.py
 
 collection:
 	ansible-galaxy collection build --force
