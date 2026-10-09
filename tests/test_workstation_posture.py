@@ -766,12 +766,7 @@ def test_openbox_zone_helper_install_and_packages() -> None:
     script = ROLE / "files/minimal-desktop/openbox-zone"
     assert script.read_text().splitlines()[0] == "#!/usr/bin/python3"
     assert os.access(script, os.X_OK)
-    check = subprocess.run(
-        ["/usr/bin/python3", "-m", "py_compile", str(script)],
-        capture_output=True,
-        text=True,
-    )
-    assert check.returncode == 0, check.stderr
+    compile(script.read_text(), str(script), "exec")
     tasks = _tasks(TASKS / "minimal-desktop-packages.yml")
     install = _named(tasks, "openbox-zone")
     copy = install["ansible.builtin.copy"]
