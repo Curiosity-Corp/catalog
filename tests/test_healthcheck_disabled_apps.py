@@ -24,7 +24,11 @@ EXPECTED_CONDITIONS = {
     "aws": "cloud_clis_enabled",
     "glab": "cloud_clis_enabled",
     "codex": "codex_standalone_enabled",
+    "litra": "litra_cli_enabled",
 }
+# Flags derived from other configuration (a template string) rather than a
+# literal boolean; tests/test_litra_cli.py evaluates the litra expression.
+DERIVED_FLAGS = {"litra_cli_enabled"}
 
 
 def _task(tasks: list[dict], name: str) -> dict:
@@ -87,7 +91,10 @@ def _contract_is_valid(contract: dict) -> bool:
 def test_opt_in_application_contracts_name_their_feature_flag() -> None:
     for name, flag in EXPECTED_CONDITIONS.items():
         assert CONTRACTS[name]["enabled_when"] == flag, name
-        assert isinstance(DEFAULTS[flag], bool), f"{flag} must be a boolean default"
+        if flag in DERIVED_FLAGS:
+            assert isinstance(DEFAULTS[flag], str), f"{flag} must be a derived default"
+        else:
+            assert isinstance(DEFAULTS[flag], bool), f"{flag} must be a boolean default"
     conditioned = {n for n, c in CONTRACTS.items() if "enabled_when" in c}
     assert conditioned == set(EXPECTED_CONDITIONS)
 

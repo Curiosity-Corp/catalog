@@ -64,6 +64,14 @@ All notable changes to this project are documented here. The format follows
 - SDKMAN runtime metadata and launcher repair that preserves dirty or
   non-Git source installations, plus a managed guard against recursive init
   sourcing.
+- Opt-in Logitech Litra CLI for lightbar hardware profiles: a hardware profile
+  with `litra_cli: true` (enabled for `deskmeet-b760`, which already grants
+  Litra Beam hidraw access) sets the derived `litra_cli_enabled` flag and
+  installs the latest `timrogers/litra-rs` release binary to
+  `/usr/local/bin/litra` through the managed-update contract: GitHub asset
+  digest verification, rollback inventory, and a `litra --version` healthcheck
+  that only warns on hosts where the flag is off. Other profiles install
+  nothing.
 
 ### Changed
 

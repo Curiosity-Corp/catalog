@@ -26,6 +26,18 @@ For a VM or an existing user, pass the actual account and home directory. The
 role asserts that the account exists and that its home is a directory before it
 changes anything else.
 
+## Hardware profile opt-ins
+
+A hardware profile in `hardware_profiles` may set `litra_cli: true` to install
+the upstream `litra` CLI (`timrogers/litra-rs`) to `/usr/local/bin/litra` so a
+Logitech Litra lightbar is controllable from software. The derived
+`litra_cli_enabled` variable follows the selected profile (`deskmeet-b760`
+opts in; every other profile is `false`) and can be overridden per host. The
+release asset is verified against its GitHub SHA-256 digest, the binary is part
+of the update rollback inventory, and the `litra --version` healthcheck only
+warns on hosts where the flag is off. The profile's udev rule must still grant
+the user hidraw access to the lightbar.
+
 ## Optional private services
 
 Keep these values out of the repository:
