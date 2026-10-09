@@ -180,6 +180,7 @@ exit 1
             "nm-applet",
             "pasystray",
             "blueman-applet",
+            "flameshot",
         ):
             scripts[name] = "#!/bin/sh\nexit 0\n"
         for name, content in scripts.items():

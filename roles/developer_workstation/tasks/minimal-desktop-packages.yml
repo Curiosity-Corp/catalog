@@ -31,6 +31,8 @@
       - pasystray
       - pavucontrol
       - network-manager-gnome
+      # Screenshots (PrtSc capture and annotation)
+      - flameshot
       # X11 utilities
       - x11-xserver-utils
       - xdotool
