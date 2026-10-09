@@ -105,6 +105,13 @@ All notable changes to this project are documented here. The format follows
   replacing the keyring, and reports `changed` and refreshes the apt cache
   only when the vendor content differs. Keyring paths and `signed-by=` lines
   are unchanged; staging copies live in `apt_keyring_staging_dir`.
+- Hosts bootstrapped with the upstream OpenZiti install script kept
+  `/etc/apt/sources.list.d/openziti.list` with
+  `signed-by=/usr/share/keyrings/openziti.gpg`; the catalog's own OpenZiti
+  entry in the same file then made apt fail with "Conflicting values set for
+  option Signed-By". The upstream-form line is now removed before the catalog
+  entry is added, and the orphaned `openziti.gpg` keyring is deleted only when
+  nothing in `/etc/apt` still references it.
 
 ## [0.1.0] - planned
 

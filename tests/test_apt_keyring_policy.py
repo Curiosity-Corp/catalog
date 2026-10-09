@@ -135,10 +135,15 @@ def test_converge_flow_is_loud_retried_and_notifies_apt_cache() -> None:
 
 def test_every_signed_by_keyring_converges_through_the_shared_flow() -> None:
     for filename in ("repos.yml", "repos-workspace.yml", "repos-thin-client.yml"):
-        text = (TASKS / filename).read_text()
+        repos = [
+            " ".join(str(task["ansible.builtin.apt_repository"]["repo"]).split())
+            for task in _walk(_load(TASKS / filename))
+            if "ansible.builtin.apt_repository" in task
+        ]
         signed_by = {
             match
-            for match in re.findall(r"signed-by=(/[^\] \n]+)", text)
+            for repo in repos
+            for match in re.findall(r"signed-by=(/[^\] \n]+)", repo)
             if match.startswith(KEYRING_DIRS)
         }
         converged = {v["apt_keyring_dest"] for v in _includes(filename)}
@@ -189,3 +194,42 @@ def test_keyring_destinations_and_sources_are_stable() -> None:
         v["apt_keyring_name"]: v.get("apt_keyring_fingerprint")
         for v in _includes("repos.yml")
     }["mongodb"] == "{{ latest_mongodb_key_fingerprint }}"
+
+
+def test_openziti_upstream_script_source_is_removed_before_catalog_entry() -> None:
+    """The upstream installer's openziti.list conflicts on Signed-By."""
+    for filename in ("repos.yml", "repos-thin-client.yml"):
+        tasks = list(_walk(_load(TASKS / filename)))
+        names = [t["name"] for t in tasks]
+        cleanup = names.index(
+            "Remove upstream-script OpenZiti repository line (conflicting signed-by)"
+        )
+        orphan = names.index("Remove the orphaned upstream-script OpenZiti keyring")
+        add = names.index("Add OpenZiti repository")
+        assert cleanup < orphan < add
+
+        line = tasks[cleanup]["ansible.builtin.lineinfile"]
+        assert line["path"] == "/etc/apt/sources.list.d/openziti.list"
+        assert line["state"] == "absent"
+        upstream = (
+            "deb [signed-by=/usr/share/keyrings/openziti.gpg] "
+            "https://packages.openziti.org/zitipax-openziti-deb-stable debian main"
+        )
+        upstream_arch = upstream.replace("[", "[arch=amd64 ")
+        catalog = (
+            "deb [arch=amd64 signed-by=/usr/share/keyrings/openziti-archive-keyring.gpg] "
+            "https://packages.openziti.org/zitipax-openziti-deb-stable debian main"
+        )
+        regexp = re.compile(line["regexp"])
+        assert regexp.search(upstream)
+        assert regexp.search(upstream_arch)
+        assert not regexp.search(catalog)
+        assert tasks[cleanup]["notify"] == "Update apt cache"
+
+        # The orphaned upstream keyring is only removed when nothing in
+        # /etc/apt still references it.
+        refs = tasks[orphan - 1]
+        assert "/etc/apt" in refs["ansible.builtin.command"]["argv"]
+        assert "--regexp=/usr/share/keyrings/openziti.gpg" in refs["ansible.builtin.command"]["argv"]
+        assert tasks[orphan]["when"] == "_openziti_upstream_keyring_refs.rc == 1"
+        assert tasks[orphan]["ansible.builtin.file"]["path"] == "/usr/share/keyrings/openziti.gpg"

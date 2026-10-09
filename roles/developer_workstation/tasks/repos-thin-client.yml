@@ -54,6 +54,38 @@
     state: absent
   notify: Update apt cache
 
+# The upstream OpenZiti install script writes /etc/apt/sources.list.d/openziti.list
+# with signed-by=/usr/share/keyrings/openziti.gpg. Appending the catalog entry
+# to that same file makes apt abort with "Conflicting values set for option
+# Signed-By", so drop only the upstream-form line before adding ours.
+- name: Remove upstream-script OpenZiti repository line (conflicting signed-by)
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/openziti.list
+    regexp: '^\s*deb(-src)?\s+\[[^\]]*signed-by=/usr/share/keyrings/openziti\.gpg[^\]]*\]'
+    state: absent
+  notify: Update apt cache
+
+- name: Find remaining references to the upstream-script OpenZiti keyring
+  ansible.builtin.command:
+    argv:
+      - grep
+      - --recursive
+      - --files-with-matches
+      - --fixed-strings
+      - --binary-files=without-match
+      - --regexp=/usr/share/keyrings/openziti.gpg
+      - /etc/apt
+  register: _openziti_upstream_keyring_refs
+  changed_when: false
+  failed_when: _openziti_upstream_keyring_refs.rc not in [0, 1]
+
+- name: Remove the orphaned upstream-script OpenZiti keyring
+  ansible.builtin.file:
+    path: /usr/share/keyrings/openziti.gpg
+    state: absent
+  when: _openziti_upstream_keyring_refs.rc == 1
+  notify: Update apt cache
+
 - name: Converge openziti APT keyring
   ansible.builtin.include_tasks: apt-keyring.yml
   vars:
