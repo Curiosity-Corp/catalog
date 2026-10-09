@@ -11,10 +11,31 @@
 # and caused OOM crashes when compiling C extensions on constrained machines.
 # =============================================================================
 
-- name: Create /opt/science-venv virtual environment
+# A venv built on a Python minor the distro has since replaced (3.13 -> 3.14 on
+# Ubuntu 26.04) keeps bin/activate, but its site-packages and pip are invisible
+# to the new interpreter, so a creates: guard never rebuilt it and every pip
+# task failed. Probe the venv instead; a missing venv fails the probe too.
+- name: Probe /opt/science-venv for a usable interpreter and pip
   ansible.builtin.command:
-    cmd: python3 -m venv /opt/science-venv
-    creates: /opt/science-venv/bin/activate
+    argv:
+      - /opt/science-venv/bin/python
+      - -c
+      - import pip
+  register: _science_venv_probe
+  changed_when: false
+  failed_when: false
+
+- name: Create or rebuild /opt/science-venv virtual environment
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - venv
+      - --clear
+      - /opt/science-venv
+  # The declared packages below are reinstalled into the rebuilt venv.
+  when: _science_venv_probe.rc != 0
+  changed_when: true
 
 - name: Install/upgrade scientific Python packages into venv  # noqa: args package-latest
   ansible.builtin.pip:

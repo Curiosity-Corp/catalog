@@ -108,6 +108,11 @@ All notable changes to this project are documented here. The format follows
   a home copied from another host) are rebuilt with `pipx reinstall-all`
   before managed pipx installs (`pipx_repair_python`). The user-systemd policy
   test now runs under pytest in CI instead of as a no-op script.
+- `/opt/science-venv` built on a Python minor the distro has since replaced
+  (3.13 on hosts upgraded to Ubuntu 26.04's 3.14) is rebuilt with
+  `python3 -m venv --clear` when its interpreter cannot import pip. The old
+  `creates: bin/activate` guard kept the stale venv and every science pip task
+  failed, rolling back the whole update transaction.
 - Vendor APT signing keys (GitHub CLI, Microsoft, Google Cloud, Google Chrome,
   1Password, Brave, MongoDB, NodeSource, OpenZiti, Mozilla) were fetched once
   behind `creates:` or a non-forcing download and never refreshed, so a vendor
