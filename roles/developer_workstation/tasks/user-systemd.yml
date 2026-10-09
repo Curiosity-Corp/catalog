@@ -83,6 +83,7 @@
     _user_systemd_stop is failed and
     not (
       'not found' in ((_user_systemd_stop.msg | default('')) | lower) or
+      'could not find' in ((_user_systemd_stop.msg | default('')) | lower) or
       'not loaded' in ((_user_systemd_stop.msg | default('')) | lower) or
       'masked' in ((_user_systemd_stop.msg | default('')) | lower)
     )
