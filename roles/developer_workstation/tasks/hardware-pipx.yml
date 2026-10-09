@@ -1,6 +1,14 @@
 ---
 # Included once per item of dev_users with loop_var dw_user (see
 # hardware-drivers.yml).
+- name: Repair pipx virtualenvs left on a removed interpreter
+  ansible.builtin.include_tasks:
+    file: pipx-interpreter-repair.yml
+  vars:
+    pipx_repair_user: "{{ dw_user.name }}"
+    pipx_repair_home: "{{ dw_user.home }}"
+  when: hardware_profiles[hardware_profile].pipx_packages | default([]) | length > 0
+
 - name: Install hardware-specific pipx packages for the managed user
   community.general.pipx:
     name: "{{ item }}"

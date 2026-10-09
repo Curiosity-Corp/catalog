@@ -318,6 +318,10 @@ workstation_update_non_removable_paths:
 catalog_integrity_mode: warn
 catalog_signing_key_fingerprint: ""
 
+# Interpreter used to rebuild pipx virtualenvs whose base Python was removed
+# (distro upgrade or a home copied from another host).
+pipx_repair_python: /usr/bin/python3
+
 # npm globals are user-facing applications. They always follow the registry's
 # latest dist-tag; there is deliberately no compatibility-pin mode.
 npm_global_prefix: "{{ dev_user_home }}/.npm-global"
