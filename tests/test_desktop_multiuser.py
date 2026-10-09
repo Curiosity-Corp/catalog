@@ -241,6 +241,30 @@ def test_pinned_vt_tasks_enforce_vt_ordering_and_user_membership() -> None:
     )
 
 
+def test_pinned_vt_cleanup_keeps_current_dropins_and_removes_stale_ones() -> None:
+    # Render the real `when:` with Ansible's own filters. The first version used
+    # a '\1' backreference inside a Jinja string literal, which is U+0001, so it
+    # deleted every drop-in it had just written (seen on DeskMeet1).
+    from ansible.plugins.filter.core import FilterModule
+
+    env = jinja2.Environment()
+    env.filters.update(FilterModule().filters())
+    tasks = _tasks("minimal-desktop-pinned-vt.yml")
+    cleanup = _named(tasks, "Remove getty drop-ins for VTs that are no longer pinned")
+    condition = env.compile_expression(cleanup["when"])
+    sessions = [{"user": "mrh", "vt": 8}, {"user": "seantech", "vt": "9"}]
+
+    def stale(vt: int) -> bool:
+        path = f"/etc/systemd/system/getty@tty{vt}.service.d/curiosity-pinned-user.conf"
+        return bool(condition(item={"path": path}, minimal_desktop_pinned_vt_sessions=sessions))
+
+    assert not stale(8)
+    assert not stale(9)
+    assert stale(7)
+    assert stale(18)
+    assert "'\\1'" not in cleanup["when"]
+
+
 XRANDR_SAMPLE = """\
 Screen 0: minimum 320 x 200, current 3840 x 1080, maximum 16384 x 16384
 eDP-1 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 344mm x 193mm

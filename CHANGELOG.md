@@ -101,6 +101,9 @@ All notable changes to this project are documented here. The format follows
 
 - User-systemd masking tolerates declared units that are absent on the host
   ("Could not find the requested service").
+- Pinned VT sessions keep their getty drop-ins: the stale-drop-in cleanup used
+  a `'\1'` backreference inside a Jinja literal (U+0001) and removed every
+  drop-in it had just written.
 
 ### Fixed
 
