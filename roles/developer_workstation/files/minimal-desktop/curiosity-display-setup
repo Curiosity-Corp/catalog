@@ -7,6 +7,9 @@
 # '#' comments ignored. The first preferred output that is connected wins;
 # otherwise the first connected output is used. Its largest mode is applied at
 # the highest refresh rate that mode offers, and the output becomes primary.
+# When the output marks a preferred (+) mode, only modes with that mode's aspect
+# ratio are candidates, so a 16:9 UHD panel is not switched to the larger DCI
+# 4096x2160 (17:9) mode it also lists.
 # Every other connected output is switched off only when a preferred output
 # was found, so an empty or unmatched list never blanks a working screen.
 #
@@ -28,8 +31,10 @@ if ! query=$(xrandr --query 2>&1); then
     exit 0
 fi
 
-# One record per line: "C <output>" for a connected output and
-# "M <output> <width> <height> <rate>" for each progressive mode refresh rate.
+# One record per line: "C <output>" for a connected output,
+# "M <output> <width> <height> <rate>" for each progressive mode refresh rate,
+# and "P <output> <width> <height>" for a preferred (+) progressive mode. xrandr
+# prints the + marker attached to a rate ("60.00*+") or as its own field.
 records=$(printf '%s\n' "$query" | awk '
     $2 == "connected" || $2 == "disconnected" {
         output = $1
@@ -39,6 +44,7 @@ records=$(printf '%s\n' "$query" | awk '
     output != "" && $1 ~ /^[0-9]+x[0-9]+$/ {
         split($1, size, "x")
         for (i = 2; i <= NF; i++) {
+            if ($i ~ /\+/) print "P", output, size[1], size[2]
             rate = $i
             gsub(/[*+]/, "", rate)
             if (rate ~ /^[0-9]+(\.[0-9]+)?$/) print "M", output, size[1], size[2], rate
@@ -78,16 +84,34 @@ if [ -z "$target" ]; then
 fi
 
 best=$(printf '%s\n' "$records" | awk -v out="$target" '
-    $1 == "M" && $2 == out {
-        area = $3 * $4
-        if (area > best_area || (area == best_area && $5 + 0 > best_rate + 0)) {
-            best_area = area
-            best_width = $3
-            best_height = $4
-            best_rate = $5
-        }
+    $1 == "P" && $2 == out && !pref_height {
+        pref_width = $3
+        pref_height = $4
     }
-    END { if (best_area > 0) print best_width "x" best_height, best_rate }')
+    $1 == "M" && $2 == out {
+        n++
+        width[n] = $3
+        height[n] = $4
+        rate[n] = $5
+    }
+    END {
+        for (i = 1; i <= n; i++) {
+            # Same aspect as the preferred mode, within 1% (1366x768 ~ 16:9).
+            if (pref_height) {
+                skew = width[i] * pref_height - height[i] * pref_width
+                if (skew < 0) skew = -skew
+                if (skew > 0.01 * height[i] * pref_width) continue
+            }
+            area = width[i] * height[i]
+            if (area > best_area || (area == best_area && rate[i] + 0 > best_rate + 0)) {
+                best_area = area
+                best_width = width[i]
+                best_height = height[i]
+                best_rate = rate[i]
+            }
+        }
+        if (best_area > 0) print best_width "x" best_height, best_rate
+    }')
 
 if [ -n "$best" ]; then
     mode=${best% *}

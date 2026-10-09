@@ -341,6 +341,37 @@ def test_display_setup_picks_highest_refresh_for_the_largest_mode() -> None:
     assert calls == ["--output eDP-1 --mode 1920x1080 --rate 144.00 --primary"]
 
 
+UHD_TV_QUERY = (
+    "DP-1 disconnected primary (normal left inverted right x axis y axis)\n"
+    "HDMI-1 connected 3840x2160+0+0 (normal left inverted right x axis y axis) 1872mm x 1053mm\n"
+    "   3840x2160     30.00*+  25.00    24.00    29.97    23.98\n"
+    "   4096x2160     30.00    24.00    29.97    23.98\n"
+    "   2560x1440     59.95\n"
+    "   1920x1080    120.00   100.00   119.88    60.00    50.00\n"
+)
+
+
+def test_display_setup_keeps_a_uhd_panel_off_the_dci_mode() -> None:
+    # deskmeet1's Samsung UHD lists DCI 4096x2160, larger than its native mode.
+    result, calls = _run_display_setup("DP-1\n", UHD_TV_QUERY)
+    assert result.returncode == 0, result.stderr
+    assert calls == ["--output HDMI-1 --mode 3840x2160 --rate 30.00 --primary"]
+
+
+def test_display_setup_reaches_uhd_when_the_preferred_mode_is_1080p() -> None:
+    query = UHD_TV_QUERY.replace("30.00*+", "30.00* ").replace("60.00    50.00", "60.00 +  50.00")
+    result, calls = _run_display_setup(None, query)
+    assert result.returncode == 0, result.stderr
+    assert calls == ["--output HDMI-1 --mode 3840x2160 --rate 30.00 --primary"]
+
+
+def test_display_setup_without_a_preferred_mode_uses_the_largest() -> None:
+    query = UHD_TV_QUERY.replace("30.00*+", "30.00* ")
+    result, calls = _run_display_setup(None, query)
+    assert result.returncode == 0, result.stderr
+    assert calls == ["--output HDMI-1 --mode 4096x2160 --rate 30.00 --primary"]
+
+
 def test_display_setup_without_a_match_keeps_other_outputs_on() -> None:
     for outputs in (None, "", "# nothing\nDP-9\n"):
         result, calls = _run_display_setup(outputs)
