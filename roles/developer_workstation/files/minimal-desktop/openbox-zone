@@ -1,0 +1,149 @@
+#!/usr/bin/python3
+"""Move the focused Openbox window into one of the AI workspace zones."""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+
+
+MARGIN = 12
+GAP = 12
+
+
+ZONE_NAMES = ("agent-top", "agent-bottom", "browser", "chats", "top", "bottom")
+USAGE = "usage: openbox-zone {agent-top|agent-bottom|browser|chats|top|bottom}\n       openbox-zone --list"
+
+
+def run(*args: str) -> str:
+    return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL).strip()
+
+
+def work_area() -> tuple[int, int, int, int]:
+    screen_w, screen_h = map(int, run("xdotool", "getdisplaygeometry").split())
+    try:
+        desktop = int(re.search(r"=\s*(\d+)", run("xprop", "-root", "_NET_CURRENT_DESKTOP")).group(1))
+        values = [
+            int(value)
+            for value in re.findall(r"-?\d+", run("xprop", "-root", "_NET_WORKAREA"))
+        ]
+        offset = desktop * 4
+        x, y, width, height = values[offset : offset + 4]
+        if width > 0 and height > 0:
+            return x, y, width, height
+    except (subprocess.CalledProcessError, AttributeError, ValueError, IndexError):
+        pass
+    return 0, 0, screen_w, screen_h
+
+
+def zones(area: tuple[int, int, int, int]) -> dict[str, tuple[int, int, int, int]]:
+    x, y, width, height = area
+
+    usable_w = width - 2 * MARGIN - 2 * GAP
+    left_w = round(usable_w * 0.18)
+    center_w = round(usable_w * 0.57)
+    right_w = usable_w - left_w - center_w
+    left_x = x + MARGIN
+    center_x = left_x + left_w + GAP
+    right_x = center_x + center_w + GAP
+
+    left_inner_h = height - 2 * MARGIN - GAP
+    left_top_h = round(left_inner_h / 2)
+    left_top_y = y + MARGIN
+    left_bottom_y = left_top_y + left_top_h + GAP
+    left_bottom_h = left_inner_h - left_top_h
+
+    center_inner_h = height - 2 * MARGIN - 2 * GAP
+    top_h = round(center_inner_h * 0.14)
+    browser_h = round(center_inner_h * 0.68)
+    bottom_h = center_inner_h - top_h - browser_h
+    top_y = y + MARGIN
+    browser_y = top_y + top_h + GAP
+    bottom_y = browser_y + browser_h + GAP
+
+    full_y = y + MARGIN
+    full_h = height - 2 * MARGIN
+
+    return {
+        "agent-top": (left_x, left_top_y, left_w, left_top_h),
+        "agent-bottom": (left_x, left_bottom_y, left_w, left_bottom_h),
+        "browser": (center_x, browser_y, center_w, browser_h),
+        "chats": (right_x, full_y, right_w, full_h),
+        "top": (center_x, top_y, center_w, top_h),
+        "bottom": (center_x, bottom_y, center_w, bottom_h),
+    }
+
+
+def frame_extents(window_id: str) -> tuple[int, int, int, int]:
+    try:
+        output = run("xprop", "-id", window_id, "_NET_FRAME_EXTENTS")
+        values = [int(value) for value in re.findall(r"\d+", output.split("=", 1)[1])]
+        if len(values) >= 4:
+            return tuple(values[:4])  # left, right, top, bottom
+    except (subprocess.CalledProcessError, IndexError, ValueError):
+        pass
+    return 0, 0, 0, 0
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(USAGE, file=sys.stderr)
+        return 2
+
+    name = sys.argv[1]
+    if name == "--list":
+        print("\n".join(ZONE_NAMES))
+        return 0
+    if name not in ZONE_NAMES:
+        print(f"unknown zone: {name}\n{USAGE}", file=sys.stderr)
+        return 2
+
+    try:
+        zone = zones(work_area())[name]
+        window_id = run("xdotool", "getactivewindow")
+    except FileNotFoundError as exc:
+        print(
+            f"openbox-zone: required tool not found ({exc.filename}); "
+            "install the xdotool and x11-utils packages",
+            file=sys.stderr,
+        )
+        return 127
+    except subprocess.CalledProcessError:
+        print("no active window to place", file=sys.stderr)
+        return 1
+
+    x, y, width, height = zone
+    left, right, top, bottom = frame_extents(window_id)
+    client_w = max(1, width - left - right)
+    client_h = max(1, height - top - bottom)
+
+    subprocess.run(
+        [
+            "xdotool",
+            "windowstate",
+            "--remove",
+            "MAXIMIZED_VERT",
+            "--remove",
+            "MAXIMIZED_HORZ",
+            "--remove",
+            "FULLSCREEN",
+            window_id,
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["xdotool", "windowmove", "--sync", window_id, str(x), str(y)],
+        check=True,
+    )
+    subprocess.run(
+        ["xdotool", "windowsize", "--sync", window_id, str(client_w), str(client_h)],
+        check=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
