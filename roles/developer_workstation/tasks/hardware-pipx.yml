@@ -1,0 +1,13 @@
+---
+# Included once per item of dev_users with loop_var dw_user (see
+# hardware-drivers.yml).
+- name: Install hardware-specific pipx packages for the managed user
+  community.general.pipx:
+    name: "{{ item }}"
+    state: latest
+  become: true
+  become_user: "{{ dw_user.name }}"
+  environment:
+    HOME: "{{ dw_user.home }}"
+    PATH: "/usr/local/bin:{{ dw_user.home }}/.local/bin:/usr/bin:/bin"
+  loop: "{{ hardware_profiles[hardware_profile].pipx_packages | default([]) }}"

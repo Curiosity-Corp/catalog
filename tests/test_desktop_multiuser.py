@@ -30,6 +30,7 @@ PER_USER_FILES = (
     "minimal-desktop-gtk-theme.yml",
     "minimal-desktop-firefox.yml",
     "minimal-desktop-locking-user.yml",
+    "hardware-pipx.yml",
 )
 PRIMARY_USER_REFERENCE = re.compile(r"\bdev_user(_home)?\b")
 
@@ -70,7 +71,7 @@ def test_per_user_files_never_reference_the_primary_account() -> None:
 
 def test_per_user_files_are_looped_over_dev_users_with_dw_user() -> None:
     included: dict[str, dict] = {}
-    for caller in ("main.yml", "minimal-desktop.yml", "minimal-desktop-locking.yml"):
+    for caller in ("main.yml", "minimal-desktop.yml", "minimal-desktop-locking.yml", "hardware-drivers.yml"):
         included.update(_includes(_tasks(caller)))
     for name in PER_USER_FILES:
         task = included[name]
@@ -381,3 +382,13 @@ def test_display_setup_hooks_and_defaults() -> None:
     autostart = (FILES / "autostart").read_text()
     assert "command -v curiosity-display-setup" in autostart
     assert autostart.index("curiosity-display-setup") < autostart.index("picom --config")
+
+
+def test_hardware_pipx_is_per_user_and_keeps_path_and_error_behaviour() -> None:
+    tasks = _tasks("hardware-pipx.yml")
+    install = _named(tasks, "Install hardware-specific pipx packages")
+    assert install["become_user"] == "{{ dw_user.name }}"
+    assert install["environment"]["PATH"] == (
+        "/usr/local/bin:{{ dw_user.home }}/.local/bin:/usr/bin:/bin"
+    )
+    assert "failed_when" not in install and "ignore_errors" not in install
