@@ -1,5 +1,28 @@
 #!/bin/sh
 
+# Publish this session's display to systemd --user and the D-Bus activation
+# environment before anything that may need the Secret Service or a prompt.
+# Under LightDM the user manager inherits the greeter's DISPLAY (usually :0);
+# startx sessions on pinned VTs run on another display (:1, :2, ...) with their
+# own XAUTHORITY. Without this, D-Bus activated helpers (the gnome-keyring
+# unlock prompt) start on the wrong display or none, so Secret Service clients
+# such as Google Chrome block forever. Only variables set in this session are
+# exported. A missing or failing command never stops the session, and the call
+# is time-bounded in case the user bus does not answer.
+activation_env_vars="DISPLAY XAUTHORITY"
+for activation_env_var in XDG_CURRENT_DESKTOP XDG_SESSION_TYPE; do
+    eval "activation_env_value=\${$activation_env_var:-}"
+    [ -z "$activation_env_value" ] || activation_env_vars="$activation_env_vars $activation_env_var"
+done
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+    activation_env_timeout=
+    command -v timeout >/dev/null 2>&1 && activation_env_timeout="timeout 10"
+    # shellcheck disable=SC2086
+    $activation_env_timeout dbus-update-activation-environment --systemd $activation_env_vars \
+        || echo "dbus-update-activation-environment failed; Secret Service prompts may not appear on ${DISPLAY:-unknown}." >&2
+fi
+unset activation_env_vars activation_env_var activation_env_value activation_env_timeout
+
 # Set cursor immediately
 xsetroot -cursor_name left_ptr &
 

@@ -108,3 +108,70 @@
     path: /etc/profile.d/curiosity-pinned-x.sh
     state: absent
   when: minimal_desktop_pinned_vt_sessions | length == 0
+
+# =============================================================================
+# gnome-keyring unlock at console login
+# =============================================================================
+# LightDM's PAM stack unlocks the user's gnome-keyring "login" collection, but
+# the pinned-VT getty runs login(1), whose stack (/etc/pam.d/login) does not.
+# Secret Service clients such as Google Chrome then block on the locked
+# collection. These two optional lines mirror /etc/pam.d/lightdm: pam_gnome_
+# keyring.so receives the login password in the auth stage, and starts and
+# unlocks the daemon in the session stage. They are `optional`, so a missing or
+# failing keyring can never block a login, and no other PAM line is touched.
+# The collection only unlocks when its password matches the account password.
+
+- name: Install the gnome-keyring PAM module for pinned console logins
+  ansible.builtin.apt:
+    name: libpam-gnome-keyring
+    state: present
+    update_cache: false
+  when: minimal_desktop_pinned_vt_sessions | length > 0
+
+- name: Read the console login PAM stack
+  ansible.builtin.slurp:
+    src: /etc/pam.d/login
+  register: _pinned_vt_login_pam
+  when: minimal_desktop_pinned_vt_sessions | length > 0
+
+# Without the anchors blockinfile would append at end of file, which is the
+# wrong place in a PAM stack. Fail instead of guessing.
+- name: Require the stock includes that anchor the gnome-keyring PAM lines
+  ansible.builtin.assert:
+    that:
+      - (_pinned_vt_login_pam.content | b64decode).splitlines() | select('match', '^@include +common-auth *$') | list | length == 1
+      - (_pinned_vt_login_pam.content | b64decode).splitlines() | select('match', '^@include +common-session *$') | list | length == 1
+    fail_msg: >-
+      /etc/pam.d/login must contain exactly one '@include common-auth' and one
+      '@include common-session' line so pam_gnome_keyring can be placed as in
+      /etc/pam.d/lightdm. Refusing to edit an unrecognised login PAM stack.
+  when: minimal_desktop_pinned_vt_sessions | length > 0
+
+- name: Unlock gnome-keyring from the console login password (auth)
+  ansible.builtin.blockinfile:
+    path: /etc/pam.d/login
+    marker: "# {mark} ANSIBLE MANAGED BLOCK curiosity pinned-VT gnome-keyring (auth)"
+    insertafter: '^@include +common-auth *$'
+    block: |
+      auth optional pam_gnome_keyring.so
+  when: minimal_desktop_pinned_vt_sessions | length > 0
+
+- name: Start and unlock gnome-keyring for the console login session
+  ansible.builtin.blockinfile:
+    path: /etc/pam.d/login
+    marker: "# {mark} ANSIBLE MANAGED BLOCK curiosity pinned-VT gnome-keyring (session)"
+    insertafter: '^@include +common-session *$'
+    block: |
+      session optional pam_gnome_keyring.so auto_start
+  when: minimal_desktop_pinned_vt_sessions | length > 0
+
+- name: Remove the gnome-keyring console login PAM lines when no VT is pinned
+  ansible.builtin.blockinfile:
+    path: /etc/pam.d/login
+    marker: "# {mark} ANSIBLE MANAGED BLOCK curiosity pinned-VT gnome-keyring ({{ item }})"
+    block: ""
+    state: absent
+  loop:
+    - auth
+    - session
+  when: minimal_desktop_pinned_vt_sessions | length == 0

@@ -146,6 +146,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Google Chrome and other Secret Service clients hung on every page load in
+  console (`startx`) sessions, such as the pinned VT sessions on DeskMeet1,
+  while the same account worked under LightDM. Two causes: `/etc/pam.d/login`
+  never unlocked the user's gnome-keyring "login" collection, and the systemd
+  user / D-Bus activation environment kept the LightDM greeter's `DISPLAY` (or
+  none), so the keyring unlock prompt could not be shown. While
+  `minimal_desktop_pinned_vt_sessions` is non-empty the role now installs
+  `libpam-gnome-keyring` and adds `auth optional pam_gnome_keyring.so` and
+  `session optional pam_gnome_keyring.so auto_start` to `/etc/pam.d/login`
+  (`optional`, so a keyring failure never blocks login; removed when no VT is
+  pinned), and the Openbox autostart runs
+  `dbus-update-activation-environment --systemd` for `DISPLAY` and
+  `XAUTHORITY` first thing. Auto-unlock still requires the keyring password to
+  match the account's login password.
 - The autostart screen-lock harness tests no longer time out under full-suite
   load: the two worst-case handoff paths take ~11 s against a 15 s
   `subprocess.run` timeout, so the timeout is now a 60 s hang guard (#80).
