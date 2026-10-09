@@ -387,6 +387,14 @@ codex_standalone_home_dir: "{{ dev_user_home }}/.codex"
 m365_cli_packages:
   - "@pnp/cli-microsoft365"
 
+# The published tarball ships these entry points as 0644 and npm 12.2 installs
+# them unchanged, so the role restores the execute bit (see m365-cli.yml).
+m365_cli_command_links:
+  - {package: "@pnp/cli-microsoft365", command: m365, relative_path: dist/index.js}
+  - {package: "@pnp/cli-microsoft365", command: m365_comp, relative_path: dist/autocomplete.js}
+  - {package: "@pnp/cli-microsoft365", command: m365_chili, relative_path: dist/chili/index.js}
+  - {package: "@pnp/cli-microsoft365", command: microsoft365, relative_path: dist/index.js}
+
 # User-scoped npm applications are refreshed before binary installers. If a
 # later binary installer fails, rollback must not restore an older npm CLI over
 # the successful registry refresh.

@@ -62,7 +62,7 @@ policy:
       tests/test_tmp_hygiene.py tests/test_workstation_posture.py tests/test_hardware_profiles.py
       tests/test_desktop_multiuser.py tests/test_apt_keyring_policy.py
       tests/test_user_systemd_policy.py tests/test_pipx_repair.py
-      tests/test_science_venv_repair.py
+      tests/test_science_venv_repair.py tests/test_m365_cli_entrypoints.py
 
 collection:
   extends: .python_setup
