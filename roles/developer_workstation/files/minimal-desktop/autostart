@@ -28,7 +28,7 @@ dunst &
 
 # System tray applets
 nm-applet &
-volumeicon &
+pasystray &
 blueman-applet &
 
 # XScreenSaver provides a PAM conversation window for password and optional

@@ -178,7 +178,7 @@ exit 1
             "tint2",
             "dunst",
             "nm-applet",
-            "volumeicon",
+            "pasystray",
             "blueman-applet",
         ):
             scripts[name] = "#!/bin/sh\nexit 0\n"

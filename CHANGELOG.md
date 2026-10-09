@@ -85,7 +85,9 @@ All notable changes to this project are documented here. The format follows
   wallpaper assets are now distro-gated; LightDM indicators and rsyslog
   restart validation are corrected.
 - The minimal Openbox profile sets wallpapers with `feh` (restored from
-  `~/.fehbg`) because `nitrogen` is no longer packaged in Ubuntu 26.04.
+  `~/.fehbg`) and uses the PipeWire/Pulse `pasystray` volume applet (with
+  `pavucontrol`) because `nitrogen` and `volumeicon-alsa` are no longer
+  packaged in Ubuntu 26.04.
 
 ### Fixed
 
