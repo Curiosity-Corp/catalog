@@ -102,6 +102,26 @@ All notable changes to this project are documented here. The format follows
 - User-systemd masking tolerates declared units that are absent on the host
   ("Could not find the requested service").
 
+### Fixed
+
+- Vendor APT signing keys (GitHub CLI, Microsoft, Google Cloud, Google Chrome,
+  1Password, Brave, MongoDB, NodeSource, OpenZiti, Mozilla) were fetched once
+  behind `creates:` or a non-forcing download and never refreshed, so a vendor
+  key rotation left hosts failing `apt update` with `NO_PUBKEY` (GitHub CLI
+  key `5612B36462313325`). `tasks/apt-keyring.yml` now re-downloads every key
+  on each run with retries, dearmors only ASCII-armored sources, verifies the
+  OpenPGP content (and the pinned fingerprint where one is configured) before
+  replacing the keyring, and reports `changed` and refreshes the apt cache
+  only when the vendor content differs. Keyring paths and `signed-by=` lines
+  are unchanged; staging copies live in `apt_keyring_staging_dir`.
+- Hosts bootstrapped with the upstream OpenZiti install script kept
+  `/etc/apt/sources.list.d/openziti.list` with
+  `signed-by=/usr/share/keyrings/openziti.gpg`; the catalog's own OpenZiti
+  entry in the same file then made apt fail with "Conflicting values set for
+  option Signed-By". The upstream-form line is now removed before the catalog
+  entry is added, and the orphaned `openziti.gpg` keyring is deleted only when
+  nothing in `/etc/apt` still references it.
+
 ## [0.1.0] - planned
 
 The first supported public collection release. The release is complete only

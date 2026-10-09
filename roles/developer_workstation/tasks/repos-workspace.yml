@@ -30,14 +30,12 @@
   notify: Update apt cache
 
 # --- GitHub CLI ---
-- name: Download GitHub CLI GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/githubcli-archive-keyring.gpg
+- name: Converge github-cli APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: github-cli
+    apt_keyring_url: "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+    apt_keyring_dest: /usr/share/keyrings/githubcli-archive-keyring.gpg
 
 - name: Add GitHub CLI repository
   ansible.builtin.apt_repository:
@@ -47,14 +45,12 @@
   notify: Update apt cache
 
 # --- .NET SDK (Microsoft) ---
-- name: Download Microsoft GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-        | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/microsoft-archive-keyring.gpg
+- name: Converge microsoft APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: microsoft
+    apt_keyring_url: "https://packages.microsoft.com/keys/microsoft.asc"
+    apt_keyring_dest: /usr/share/keyrings/microsoft-archive-keyring.gpg
 
 - name: Add Microsoft .NET SDK repository
   ansible.builtin.apt_repository:
@@ -72,14 +68,12 @@
   notify: Update apt cache
 
 # --- Google Cloud CLI ---
-- name: Download Google Cloud GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-        | gpg --dearmor -o /usr/share/keyrings/cloud-google-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/cloud-google-archive-keyring.gpg
+- name: Converge google-cloud APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: google-cloud
+    apt_keyring_url: "https://packages.cloud.google.com/apt/doc/apt-key.gpg"
+    apt_keyring_dest: /usr/share/keyrings/cloud-google-archive-keyring.gpg
 
 - name: Add Google Cloud CLI repository
   ansible.builtin.apt_repository:
@@ -118,14 +112,12 @@
     that: latest_mongodb_channel | default('') | string | length > 0
     fail_msg: "MongoDB did not publish a current APT channel"
 
-- name: Download MongoDB GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://www.mongodb.org/static/pgp/server-{{ latest_mongodb_key_version }}.asc \
-        | gpg --dearmor --yes -o /usr/share/keyrings/mongodb-archive-keyring.gpg
-    executable: /bin/bash
-  changed_when: false
+- name: Converge mongodb APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: mongodb
+    apt_keyring_url: "https://www.mongodb.org/static/pgp/server-{{ latest_mongodb_key_version }}.asc"
+    apt_keyring_dest: /usr/share/keyrings/mongodb-archive-keyring.gpg
 
 - name: Add MongoDB repository
   ansible.builtin.apt_repository:
@@ -135,36 +127,13 @@
   notify: Update apt cache
 
 # --- Node.js (NodeSource) ---
-- name: Download NodeSource repository key
-  ansible.builtin.get_url:
-    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
-    dest: /tmp/nodesource-repo.gpg.key
-    mode: "0644"
-  register: _nodesource_key_download
-
-- name: Verify NodeSource repository key fingerprint
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --show-keys
-      - --with-colons
-      - /tmp/nodesource-repo.gpg.key
-  register: _nodesource_key_info
-  changed_when: false
-  failed_when: >-
-    nodesource_key_fingerprint not in (_nodesource_key_info.stdout | default(''))
-
-- name: Install NodeSource repository keyring
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --dearmor
-      - --yes
-      - -o
-      - /etc/apt/keyrings/nodesource.gpg
-      - /tmp/nodesource-repo.gpg.key
-  changed_when: _nodesource_key_download.changed
-  notify: Update apt cache
+- name: Converge nodesource APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: nodesource
+    apt_keyring_url: "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+    apt_keyring_dest: /etc/apt/keyrings/nodesource.gpg
+    apt_keyring_fingerprint: "{{ nodesource_key_fingerprint }}"
 
 - name: Add NodeSource Node.js 24 repository
   ansible.builtin.apt_repository:

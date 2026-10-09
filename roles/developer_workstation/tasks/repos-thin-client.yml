@@ -54,40 +54,45 @@
     state: absent
   notify: Update apt cache
 
-- name: Download OpenZiti GPG key
-  ansible.builtin.get_url:
-    url: https://get.openziti.io/tun/package-repos.gpg
-    dest: /tmp/openziti-package-repos.gpg
-    mode: "0644"
-  register: _openziti_key_download
+# The upstream OpenZiti install script writes /etc/apt/sources.list.d/openziti.list
+# with signed-by=/usr/share/keyrings/openziti.gpg. Appending the catalog entry
+# to that same file makes apt abort with "Conflicting values set for option
+# Signed-By", so drop only the upstream-form line before adding ours.
+- name: Remove upstream-script OpenZiti repository line (conflicting signed-by)
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/openziti.list
+    regexp: '^\s*deb(-src)?\s+\[[^\]]*signed-by=/usr/share/keyrings/openziti\.gpg[^\]]*\]'
+    state: absent
+  notify: Update apt cache
 
-- name: Verify OpenZiti repository key fingerprint
+- name: Find remaining references to the upstream-script OpenZiti keyring
   ansible.builtin.command:
     argv:
-      - gpg
-      - --show-keys
-      - --with-colons
-      - /tmp/openziti-package-repos.gpg
-  register: _openziti_key_info
+      - grep
+      - --recursive
+      - --files-with-matches
+      - --fixed-strings
+      - --binary-files=without-match
+      - --regexp=/usr/share/keyrings/openziti.gpg
+      - /etc/apt
+  register: _openziti_upstream_keyring_refs
   changed_when: false
-  failed_when: openziti_key_fingerprint not in (_openziti_key_info.stdout | default(''))
+  failed_when: _openziti_upstream_keyring_refs.rc not in [0, 1]
 
-- name: Check OpenZiti keyring presence
-  ansible.builtin.stat:
-    path: /usr/share/keyrings/openziti-archive-keyring.gpg
-  register: _openziti_keyring
+- name: Remove the orphaned upstream-script OpenZiti keyring
+  ansible.builtin.file:
+    path: /usr/share/keyrings/openziti.gpg
+    state: absent
+  when: _openziti_upstream_keyring_refs.rc == 1
+  notify: Update apt cache
 
-- name: Dearmor OpenZiti GPG key
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --dearmor
-      - --yes
-      - --output
-      - /usr/share/keyrings/openziti-archive-keyring.gpg
-      - /tmp/openziti-package-repos.gpg
-  changed_when: true
-  when: _openziti_key_download.changed or not _openziti_keyring.stat.exists
+- name: Converge openziti APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: openziti
+    apt_keyring_url: "https://get.openziti.io/tun/package-repos.gpg"
+    apt_keyring_dest: /usr/share/keyrings/openziti-archive-keyring.gpg
+    apt_keyring_fingerprint: "{{ openziti_key_fingerprint }}"
 
 - name: Add OpenZiti repository
   ansible.builtin.apt_repository:
@@ -100,11 +105,12 @@
   notify: Update apt cache
 
 # --- Mozilla Firefox (non-snap, required for OpenZiti tun compatibility) ---
-- name: Download Mozilla APT signing key
-  ansible.builtin.get_url:
-    url: https://packages.mozilla.org/apt/repo-signing-key.gpg
-    dest: /etc/apt/keyrings/packages.mozilla.org.asc
-    mode: "0644"
+- name: Converge mozilla APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: mozilla
+    apt_keyring_url: "https://packages.mozilla.org/apt/repo-signing-key.gpg"
+    apt_keyring_dest: /etc/apt/keyrings/packages.mozilla.org.asc
 
 - name: Add Mozilla APT repository
   ansible.builtin.apt_repository:
@@ -131,38 +137,13 @@
   failed_when: false
 
 # --- Node.js (optional, only for local Playwright on thin clients) ---
-- name: Download NodeSource repository key
-  ansible.builtin.get_url:
-    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
-    dest: /tmp/nodesource-repo.gpg.key
-    mode: "0644"
-  register: _nodesource_key_download
-  when: thin_client_playwright_enabled | default(false)
-
-- name: Verify NodeSource repository key fingerprint
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --show-keys
-      - --with-colons
-      - /tmp/nodesource-repo.gpg.key
-  register: _nodesource_key_info
-  changed_when: false
-  failed_when: >-
-    nodesource_key_fingerprint not in (_nodesource_key_info.stdout | default(''))
-  when: thin_client_playwright_enabled | default(false)
-
-- name: Install NodeSource repository keyring
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --dearmor
-      - --yes
-      - -o
-      - /etc/apt/keyrings/nodesource.gpg
-      - /tmp/nodesource-repo.gpg.key
-  changed_when: _nodesource_key_download.changed
-  notify: Update apt cache
+- name: Converge nodesource APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: nodesource
+    apt_keyring_url: "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+    apt_keyring_dest: /etc/apt/keyrings/nodesource.gpg
+    apt_keyring_fingerprint: "{{ nodesource_key_fingerprint }}"
   when: thin_client_playwright_enabled | default(false)
 
 - name: Add NodeSource Node.js 24 repository
