@@ -89,3 +89,9 @@
     name: smartmontools
     enabled: true
     state: started
+
+# --- lm-sensors: CPU/board temperatures and fans from the kernel hwmon drivers ---
+- name: Install lm-sensors
+  ansible.builtin.apt:
+    name: lm-sensors
+    state: present

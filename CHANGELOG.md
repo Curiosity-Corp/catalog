@@ -57,6 +57,8 @@ All notable changes to this project are documented here. The format follows
   visible authentication prompts and `vlock` for text consoles.
 - Kiosk profile state snapshots for account groups, sudoers, desktop files,
   and TTY/sleep unit state, with guarded restoration when leaving kiosk mode.
+- Desktop self-healing installs `lm-sensors` next to `smartmontools`, so CPU
+  and board temperatures from the kernel hwmon drivers are visible.
 - `flameshot` in the minimal Openbox desktop, started from the session
   autostart as a screenshot tray applet; the `deskmeet-b760` hardware profile
   adds `libgphoto2-dev` so camera tooling that builds gphoto2 Python bindings

@@ -671,3 +671,9 @@ def test_platform_specific_greeter_and_wallpaper_settings_are_gated() -> None:
     ]["content"]
 
     assert "'resolute': 'jammy'" in (TASKS / "ziti.yml").read_text()
+
+
+def test_desktop_self_healing_installs_hardware_monitoring() -> None:
+    tasks = _tasks(TASKS / "self-healing.yml")
+    assert _named(tasks, "Install smartmontools")["ansible.builtin.apt"]["name"] == "smartmontools"
+    assert _named(tasks, "Install lm-sensors")["ansible.builtin.apt"]["name"] == "lm-sensors"
