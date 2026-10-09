@@ -1,5 +1,5 @@
 #!/bin/sh
-# LightDM X server wrapper (managed by Ansible).
+# LightDM X server wrapper. Managed by Ansible.
 #
 # LightDM starts its X server with -novtswitch, which disables Ctrl+Alt+Fn
 # switching while the greeter or an autologin session is active. Drop that one

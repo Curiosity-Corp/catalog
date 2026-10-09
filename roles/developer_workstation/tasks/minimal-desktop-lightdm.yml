@@ -133,13 +133,29 @@
       xserver-command=/usr/local/bin/lightdm-xserver-wrapper -core
   when: minimal_desktop_lightdm_vtswitch_wrapper | bool
 
-- name: Remove the LightDM X server wrapper when it is disabled
+- name: Remove the LightDM X server wrapper drop-in when the wrapper is disabled
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: /etc/lightdm/lightdm.conf.d/40-xserver-wrapper.conf
     state: absent
-  loop:
-    - /etc/lightdm/lightdm.conf.d/40-xserver-wrapper.conf
-    - /usr/local/bin/lightdm-xserver-wrapper
+  when: not (minimal_desktop_lightdm_vtswitch_wrapper | bool)
+
+# A wrapper installed by hand at the same path is left alone: only a file
+# carrying this role's marker is removed.
+- name: Find a role-managed LightDM X server wrapper
+  ansible.builtin.find:
+    paths: /usr/local/bin
+    patterns: lightdm-xserver-wrapper
+    contains: 'Managed by Ansible'
+  register: _lightdm_managed_wrapper
+  when: not (minimal_desktop_lightdm_vtswitch_wrapper | bool)
+
+- name: Remove the role-managed LightDM X server wrapper when it is disabled
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _lightdm_managed_wrapper.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
   when: not (minimal_desktop_lightdm_vtswitch_wrapper | bool)
 
 - name: Remove LightDM drop-ins that conflict with this configuration

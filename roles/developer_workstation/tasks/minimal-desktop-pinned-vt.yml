@@ -15,7 +15,7 @@
       - minimal_desktop_pinned_vt_sessions is sequence
       - minimal_desktop_pinned_vt_sessions is not string
       - minimal_desktop_pinned_vt_sessions | selectattr('user', 'defined') | selectattr('vt', 'defined') | list | length == minimal_desktop_pinned_vt_sessions | length
-      - minimal_desktop_pinned_vt_sessions | map(attribute='user') | select('match', '^[a-z_][a-z0-9_-]*[$]?$') | list | length == minimal_desktop_pinned_vt_sessions | length
+      - minimal_desktop_pinned_vt_sessions | map(attribute='user') | select('match', '^[A-Za-z0-9_][A-Za-z0-9_.@-]*$') | list | length == minimal_desktop_pinned_vt_sessions | length
       - minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('string') | select('match', '^[1-9][0-9]?$') | list | length == minimal_desktop_pinned_vt_sessions | length
       - minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('int') | select('lt', minimal_desktop_lightdm_minimum_vt | int) | list | length == minimal_desktop_pinned_vt_sessions | length
       - minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('int') | unique | list | length == minimal_desktop_pinned_vt_sessions | length
@@ -58,7 +58,7 @@
       # for the pinned account, which still asks for the password.
       [Service]
       ExecStart=
-      ExecStart=-/sbin/agetty --noreset --noclear --skip-login --login-options '-p -- {{ item.user }}' --issue-file=/etc/issue:/etc/issue.d:/run/issue.d:/usr/lib/issue.d - ${TERM}
+      ExecStart=-/usr/sbin/agetty --noreset --noclear --skip-login --login-options '-p -- {{ item.user }}' --issue-file=/etc/issue:/etc/issue.d:/run/issue.d:/usr/lib/issue.d - ${TERM}
   loop: "{{ minimal_desktop_pinned_vt_sessions }}"
   loop_control:
     label: "tty{{ item.vt | int }} -> {{ item.user }}"

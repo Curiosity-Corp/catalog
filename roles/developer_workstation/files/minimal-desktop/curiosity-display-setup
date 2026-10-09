@@ -1,5 +1,6 @@
 #!/bin/sh
 # Pick one output, drive it at its best mode, and make it primary.
+# Managed by Ansible.
 #
 # Preferences come from /etc/curiosity/display-outputs (override with
 # CURIOSITY_DISPLAY_OUTPUTS): one xrandr output name per line, blank lines and
@@ -11,9 +12,9 @@
 #
 # Runs as the LightDM display-setup-script (as root, before the greeter) and
 # from the Openbox autostart (startx sessions have no display-setup hook).
-# Nothing here may block a login: when X is reachable the script exits 0 and
-# reports anything it could not do on stderr. It exits 1 only when xrandr
-# cannot query the display at all.
+# Nothing here may block a login: LightDM stops the display when its
+# display-setup-script fails, so the script always exits 0 and reports anything
+# it could not do on stderr.
 
 config=${CURIOSITY_DISPLAY_OUTPUTS:-/etc/curiosity/display-outputs}
 prog=curiosity-display-setup
@@ -24,7 +25,7 @@ warn() {
 
 if ! query=$(xrandr --query 2>&1); then
     warn "cannot query the display: $query"
-    exit 1
+    exit 0
 fi
 
 # One record per line: "C <output>" for a connected output and

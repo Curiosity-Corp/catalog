@@ -5,7 +5,7 @@
 # Installs curiosity-display-setup, its output preference list, and the LightDM
 # display-setup-script hook. The Openbox autostart runs the same helper for
 # startx sessions, which LightDM does not set up. Disabling the option removes
-# everything installed here.
+# the files installed here that still carry the role's marker.
 
 - name: Validate display setup settings
   ansible.builtin.assert:
@@ -60,12 +60,31 @@
       display-setup-script=/usr/local/bin/curiosity-display-setup
   when: minimal_desktop_display_setup_enabled | bool
 
-- name: Remove the display setup helper when it is disabled
+- name: Remove the display setup LightDM hook when the helper is disabled
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: /etc/lightdm/lightdm.conf.d/60-display-setup.conf
     state: absent
-  loop:
-    - /etc/lightdm/lightdm.conf.d/60-display-setup.conf
-    - /etc/curiosity/display-outputs
-    - /usr/local/bin/curiosity-display-setup
+  when: not (minimal_desktop_display_setup_enabled | bool)
+
+# Files installed by hand at the same paths are left alone: only files carrying
+# this role's marker are removed.
+- name: Find role-managed display setup files
+  ansible.builtin.find:
+    paths:
+      - /usr/local/bin
+      - /etc/curiosity
+    patterns:
+      - curiosity-display-setup
+      - display-outputs
+    contains: 'Managed by Ansible'
+  register: _display_setup_managed_files
+  when: not (minimal_desktop_display_setup_enabled | bool)
+
+- name: Remove role-managed display setup files when the helper is disabled
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _display_setup_managed_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
   when: not (minimal_desktop_display_setup_enabled | bool)

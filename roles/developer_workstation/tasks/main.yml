@@ -47,13 +47,13 @@
       - dev_users is not string
       - dev_users | length > 0
       - dev_users | selectattr('name', 'defined') | selectattr('home', 'defined') | list | length == dev_users | length
-      - dev_users | map(attribute='name') | select('match', '^[a-z_][a-z0-9_-]*[$]?$') | list | length == dev_users | length
+      - dev_users | map(attribute='name') | map('string') | map('length') | select('gt', 0) | list | length == dev_users | length
       - dev_users | map(attribute='home') | select('match', '^/[^ ]+$') | list | length == dev_users | length
       - dev_users | map(attribute='name') | unique | list | length == dev_users | length
       - dev_user in (dev_users | map(attribute='name') | list)
     fail_msg: >-
       dev_users must be a non-empty list of unique {name, home} items with
-      POSIX user names and absolute home paths, and it must include the primary
+      non-empty user names and absolute home paths, and it must include the primary
       account dev_user ({{ dev_user }}).
 
 - name: Verify every managed user exists and has a home directory

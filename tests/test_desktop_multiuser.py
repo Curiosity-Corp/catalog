@@ -78,6 +78,14 @@ def test_per_user_files_are_looped_over_dev_users_with_dw_user() -> None:
         assert task["loop_control"]["loop_var"] == "dw_user", name
 
 
+def test_dev_users_does_not_restrict_account_name_format() -> None:
+    # Directory-backed accounts (for example first.last or user@domain) are valid
+    # primary accounts on hosts that never set dev_users.
+    validate = _named(_tasks("main.yml"), "Validate the managed user list")
+    assert not any("match" in check for check in validate["ansible.builtin.assert"]["that"]
+                   if "attribute='name'" in check)
+
+
 def test_primary_account_must_be_listed_in_dev_users() -> None:
     validate = _named(_tasks("main.yml"), "Validate the managed user list")
     assert "dev_user in (dev_users | map(attribute='name') | list)" in validate[
@@ -123,6 +131,15 @@ def test_lightdm_greeter_vt_wrapper_and_service() -> None:
     service = tasks[-1]["ansible.builtin.systemd_service"]
     assert service == {"name": "lightdm", "enabled": True, "state": "started"}
     assert all("failed_when" not in task for task in tasks)
+
+    # A hand-installed wrapper at the same path must survive a default pull.
+    find = _named(tasks, "Find a role-managed LightDM X server wrapper")["ansible.builtin.find"]
+    assert find["contains"] == "Managed by Ansible"
+    assert "Managed by Ansible" in (FILES / "lightdm-xserver-wrapper").read_text()
+    assert not any(
+        task.get("ansible.builtin.file", {}).get("path") == "/usr/local/bin/lightdm-xserver-wrapper"
+        for task in tasks
+    )
 
 
 def test_lightdm_xserver_wrapper_strips_only_novtswitch() -> None:
@@ -211,6 +228,7 @@ def test_pinned_vt_tasks_enforce_vt_ordering_and_user_membership() -> None:
     assert "getty@tty{{ item.vt | int }}.service.d" in dropin["dest"]
     assert "--login-options '-p -- {{ item.user }}'" in dropin["content"]
     assert "--autologin" not in dropin["content"]
+    assert "ExecStart=-/usr/sbin/agetty " in dropin["content"]
     enable = _named(tasks, "Enable getty on the pinned VTs")["ansible.builtin.systemd_service"]
     assert enable["name"] == "getty@tty{{ item.vt | int }}.service"
     assert enable["enabled"] is True
@@ -306,6 +324,22 @@ def test_display_setup_without_a_match_keeps_other_outputs_on() -> None:
 
 
 def test_display_setup_never_blocks_login_but_reports_problems() -> None:
+    # LightDM stops the display when its display-setup-script fails.
+    with tempfile.TemporaryDirectory(prefix="display-setup-") as temp_dir:
+        bin_dir = Path(temp_dir) / "bin"
+        bin_dir.mkdir()
+        broken = bin_dir / "xrandr"
+        broken.write_text("#!/bin/sh\necho 'Can not open display' >&2\nexit 1\n")
+        broken.chmod(0o755)
+        result = subprocess.run(
+            ["sh", str(FILES / "curiosity-display-setup")],
+            text=True,
+            capture_output=True,
+            env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+        )
+    assert result.returncode == 0
+    assert "cannot query the display" in result.stderr
+
     result, calls = _run_display_setup("DP-1\n", "DP-1 disconnected (normal)\n")
     assert result.returncode == 0
     assert calls == []
@@ -328,8 +362,20 @@ def test_display_setup_hooks_and_defaults() -> None:
         "ansible.builtin.copy"
     ]["content"]
     assert hook["when"] == "minimal_desktop_display_setup_enabled | bool"
-    removal = _named(tasks, "Remove the display setup helper when it is disabled")
-    assert removal["when"] == "not (minimal_desktop_display_setup_enabled | bool)"
+    # Disabling removes only the role's own hook and marker-carrying files, so
+    # a hand-installed helper at the same path survives a default pull.
+    assert _named(tasks, "Remove the display setup LightDM hook")["when"] == (
+        "not (minimal_desktop_display_setup_enabled | bool)"
+    )
+    find = _named(tasks, "Find role-managed display setup files")["ansible.builtin.find"]
+    assert find["contains"] == "Managed by Ansible"
+    assert "Managed by Ansible" in (FILES / "curiosity-display-setup").read_text()
+    assert not any(
+        task.get("ansible.builtin.file", {}).get("path") in (
+            "/usr/local/bin/curiosity-display-setup", "/etc/curiosity/display-outputs"
+        )
+        for task in tasks
+    )
     assert all("failed_when" not in task for task in tasks)
 
     autostart = (FILES / "autostart").read_text()
