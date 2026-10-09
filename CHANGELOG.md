@@ -123,6 +123,12 @@ All notable changes to this project are documented here. The format follows
   accepted. The hard-coded 24.04 name no longer exists upstream, so enabled
   hosts could not install or upgrade Sunshine, and a 24.04 build on 26.04 fails
   to load `libminiupnpc.so.18`.
+- Update rollback restores symlinked launchers as symlinks. The pre-update
+  snapshot followed links, so a rollback replaced `/usr/local/bin/aws` (a link
+  into `/usr/local/aws-cli`) with a copy of the PyInstaller binary that could
+  not load its bundled `libpython`, and the next pull failed the aws
+  healthcheck. Symlinks are now recorded with `link_target`, skipped by the
+  snapshot, and re-linked on rollback.
 - Vendor APT signing keys (GitHub CLI, Microsoft, Google Cloud, Google Chrome,
   1Password, Brave, MongoDB, NodeSource, OpenZiti, Mozilla) were fetched once
   behind `creates:` or a non-forcing download and never refreshed, so a vendor

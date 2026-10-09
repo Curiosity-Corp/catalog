@@ -42,6 +42,22 @@
     label: "{{ item.path }}"
   when:
     - item.exists | default(false)
+    - item.regular | default(true)
+    - item.link_target | default('') | length == 0
+    - item.path not in (workstation_update_rollback_excluded_paths | default([]))
+
+- name: Restore managed launcher symlinks from the pre-update inventory
+  ansible.builtin.file:
+    src: "{{ item.link_target }}"
+    dest: "{{ item.path }}"
+    state: link
+    force: true
+  loop: "{{ workstation_update_before_inventory | default([]) }}"
+  loop_control:
+    label: "{{ item.path }} -> {{ item.link_target | default('') }}"
+  when:
+    - item.exists | default(false)
+    - item.link_target | default('') | length > 0
     - item.path not in (workstation_update_rollback_excluded_paths | default([]))
 
 - name: Remove binaries created by the failed transaction
