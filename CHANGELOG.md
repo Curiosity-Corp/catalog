@@ -113,6 +113,10 @@ All notable changes to this project are documented here. The format follows
   `python3 -m venv --clear` when its interpreter cannot import pip. The old
   `creates: bin/activate` guard kept the stale venv and every science pip task
   failed, rolling back the whole update transaction.
+- Microsoft 365 CLI entry points (`m365_cli_command_links`) are made executable
+  after each refresh. `@pnp/cli-microsoft365` publishes `dist/index.js` as
+  0644 and npm 12.2 installed it unchanged, so `m365` failed with permission
+  denied and the post-update healthcheck rolled the transaction back.
 - Vendor APT signing keys (GitHub CLI, Microsoft, Google Cloud, Google Chrome,
   1Password, Brave, MongoDB, NodeSource, OpenZiti, Mozilla) were fetched once
   behind `creates:` or a non-forcing download and never refreshed, so a vendor

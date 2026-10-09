@@ -29,3 +29,16 @@
   loop: "{{ m365_cli_packages }}"
   register: _m365_cli_npm_result
   failed_when: _m365_cli_npm_result is failed
+
+- name: Ensure Microsoft 365 CLI entry points are executable
+  # @pnp/cli-microsoft365 publishes dist/index.js as 0644 and npm 12.2 left it
+  # that way when linking the bin, so `m365` failed with permission denied and
+  # the post-update healthcheck rolled the whole transaction back.
+  ansible.builtin.file:
+    path: "{{ npm_global_prefix }}/lib/node_modules/{{ item.package }}/{{ item.relative_path }}"
+    mode: "0755"
+  become: true
+  become_user: "{{ dev_user }}"
+  loop: "{{ m365_cli_command_links }}"
+  loop_control:
+    label: "{{ item.command }}"
