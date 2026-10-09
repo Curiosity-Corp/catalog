@@ -11,13 +11,25 @@
 # Credentials are intentionally not supplied by this public role by default.
 # =============================================================================
 
+# Releases name packages sunshine_<version>-1+ubuntu26.04_amd64.deb and
+# sunshine_<version>-1+debiantrixie_amd64.deb; older releases used
+# sunshine-ubuntu-24.04-amd64.deb. Match this host's release and architecture
+# in either form so a distro upgrade never keeps a build linked against
+# libraries the new release removed.
 - name: Select latest Sunshine Debian package for this distribution
   ansible.builtin.set_fact:
-    _sunshine_latest_asset_name: >-
+    _sunshine_deb_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] | default(ansible_architecture) }}"
+    _sunshine_deb_distro: >-
       {{
-        'sunshine-ubuntu-24.04-amd64.deb'
+        ('ubuntu' ~ ansible_distribution_version)
         if ansible_distribution == 'Ubuntu'
-        else 'sunshine-debian-trixie-amd64.deb'
+        else ('debian' ~ ansible_distribution_release)
+      }}
+    _sunshine_deb_legacy_distro: >-
+      {{
+        ('ubuntu-' ~ ansible_distribution_version)
+        if ansible_distribution == 'Ubuntu'
+        else ('debian-' ~ ansible_distribution_release)
       }}
 
 - name: Resolve latest Sunshine Debian package asset
@@ -25,8 +37,11 @@
     _sunshine_latest_deb_asset: >-
       {{
         latest_github_releases.sunshine.assets
-        | selectattr('name', 'equalto', _sunshine_latest_asset_name)
+        | selectattr('name', 'match',
+            '^(sunshine_[^_]+[+]' ~ (_sunshine_deb_distro | regex_escape) ~ '_' ~ _sunshine_deb_arch
+            ~ '|sunshine-' ~ (_sunshine_deb_legacy_distro | regex_escape) ~ '-' ~ _sunshine_deb_arch ~ ')[.]deb$')
         | first
+        | default({})
       }}
 
 - name: Require a current Sunshine package for this distribution
