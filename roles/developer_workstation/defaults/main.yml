@@ -700,6 +700,11 @@ pro_mimic_motd_news_enabled: false
 # =============================================================================
 # Select via: -e hardware_profile=z590
 # Each profile defines packages and config specific to that hardware class.
+# Optional keys (all default to empty when absent): services, pipx_packages,
+# udev_rules ({name, content} -> /etc/udev/rules.d/<name>.rules; keep names
+# numbered 70 or lower so uaccess ACLs apply before 73-seat-late),
+# modprobe_options ({name, content} -> /etc/modprobe.d/<name>.conf) and
+# kernel_modules (loaded now and at boot via /etc/modules-load.d).
 # =============================================================================
 hardware_profile: generic
 
@@ -780,8 +785,71 @@ hardware_profiles:
     # Private Internet Access VPN
     pia_vpn: true
 
+  deskmeet-b760:
+    description: "ASRock DeskMeet B760 — Intel Arc A380 + desk USB hub peripherals"
+    packages:
+      # Logitech device management (Unifying/Bolt/Lightspeed receivers)
+      - solaar
+      # Bluetooth stack
+      - bluez
+      - bluez-tools
+      # Firmware blobs (Intel BT/WiFi, Arc GPU GuC/HuC, etc.)
+      - linux-firmware
+      # Intel Arc A380 VA-API video acceleration and diagnostics
+      - intel-media-va-driver
+      - intel-gpu-tools
+      - vainfo
+      # Elgato Stream Deck HID access
+      - libhidapi-libusb0
+      # Focusrite Scarlett 2i2 mixer/routing control
+      - alsa-scarlett-gui
+      # Canon camera tethered shooting and file transfer
+      - gphoto2
+      - entangle
+      # Virtual camera device for the tethered camera feed
+      - linux-modules-v4l2loopback-generic
+      - v4l2loopback-utils
+    services:
+      - bluetooth
+    # Always-available desk workstation: never sleep, performance CPU policy.
+    disable_sleep: true
+    performance_mode: true
+    pipx_packages:
+      - streamdeck-linux-gui
+    # Rule names must sort before 73-seat-late so uaccess ACLs are applied;
+    # keep them numbered 70 or lower.
+    udev_rules:
+      - name: 60-streamdeck
+        content: |
+          # Elgato Stream Deck — allow console-user and plugdev access
+          SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+      - name: 60-logitech-litra
+        content: |
+          # Logitech Litra Beam (046d:c901) — allow console-user and plugdev access
+          SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c901", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c901", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+      - name: 60-canon-eos-50d
+        content: |
+          # Canon EOS 50D (04a9:319b) — gphoto2 access; keep udisks from mounting it
+          SUBSYSTEM=="usb", ATTR{idVendor}=="04a9", ATTR{idProduct}=="319b", MODE="0660", GROUP="plugdev", TAG+="uaccess", ENV{UDISKS_IGNORE}="1"
+      - name: 60-v4l2loopback-camera
+        content: |
+          # v4l2loopback virtual camera node. Match on KERNEL only: ATTR{name}
+          # is not populated yet when the add event is processed.
+          SUBSYSTEM=="video4linux", KERNEL=="video42", GROUP="video", MODE="0660", TAG+="uaccess"
+    # /etc/modprobe.d/<name>.conf files
+    modprobe_options:
+      - name: curiosity-v4l2loopback
+        content: |
+          options v4l2loopback video_nr=42 card_label="Canon EOS 50D" exclusive_caps=1
+    # Loaded now and at boot via /etc/modules-load.d/curiosity-hardware.conf
+    kernel_modules:
+      - v4l2loopback
+    pia_vpn: false
+
   t460:
-    description: "Lenovo ThinkPad T460/T560 — Intel HD 520 (Skylake GT2) + Validity VFS5011 fingerprint"
+    description: "Lenovo ThinkPad T460/T560— Intel HD 520 (Skylake GT2) + Validity VFS5011 fingerprint"
     packages:
       # Intel iGPU video acceleration (Skylake GT2 / HD Graphics 520)
       - intel-media-va-driver
