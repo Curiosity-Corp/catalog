@@ -79,9 +79,12 @@
   loop_control:
     label: "{{ item.path }}"
   notify: Reload systemd
+  # Compare drop-in directory names directly. A '\1' backreference inside a
+  # Jinja string literal is the control character U+0001, not group 1.
   when: >-
-    (item.path | regex_replace('^.*/getty@(tty[0-9]+)[.]service[.]d/[^/]+$', '\1'))
-    not in (minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('int') | map('regex_replace', '^', 'tty') | list)
+    (item.path | dirname | basename)
+    not in (minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('int') | map('string')
+            | map('regex_replace', '^', 'getty@tty') | map('regex_replace', '$', '.service.d') | list)
 
 - name: Enable getty on the pinned VTs
   ansible.builtin.systemd_service:

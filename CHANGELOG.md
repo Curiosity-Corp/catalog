@@ -101,13 +101,13 @@ All notable changes to this project are documented here. The format follows
 
 - User-systemd masking tolerates declared units that are absent on the host
   ("Could not find the requested service").
+- Pinned VT sessions keep their getty drop-ins: the stale-drop-in cleanup used
+  a `'\1'` backreference inside a Jinja literal (U+0001) and removed every
+  drop-in it had just written.
 - pipx virtualenvs whose base interpreter was removed (distro Python upgrade or
   a home copied from another host) are rebuilt with `pipx reinstall-all`
   before managed pipx installs (`pipx_repair_python`). The user-systemd policy
   test now runs under pytest in CI instead of as a no-op script.
-
-### Fixed
-
 - Vendor APT signing keys (GitHub CLI, Microsoft, Google Cloud, Google Chrome,
   1Password, Brave, MongoDB, NodeSource, OpenZiti, Mozilla) were fetched once
   behind `creates:` or a non-forcing download and never refreshed, so a vendor
