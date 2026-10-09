@@ -1,0 +1,40 @@
+---
+# =============================================================================
+# systemd lingering
+# =============================================================================
+# Keeps the listed accounts' systemd user managers running without a login
+# session. logind records lingering as a file in /var/lib/systemd/linger, so
+# the state check is idempotent and `loginctl enable-linger` runs only when the
+# marker is missing.
+
+- name: Validate the linger user list
+  ansible.builtin.assert:
+    that:
+      - workstation_user_linger is sequence
+      - workstation_user_linger is not string
+      - workstation_user_linger | map('string') | select('match', '^[a-z_][a-z0-9_-]*[$]?$') | list | length == workstation_user_linger | length
+    fail_msg: workstation_user_linger must be a list of POSIX user names.
+
+- name: Verify every linger user exists
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ item }}"
+  loop: "{{ workstation_user_linger }}"
+
+- name: Read the current lingering state
+  ansible.builtin.stat:
+    path: "/var/lib/systemd/linger/{{ item }}"
+  loop: "{{ workstation_user_linger }}"
+  register: _workstation_linger_state
+
+- name: Enable lingering for users that do not have it
+  ansible.builtin.command:
+    argv:
+      - loginctl
+      - enable-linger
+      - "{{ item.item }}"
+  loop: "{{ _workstation_linger_state.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not item.stat.exists
+  changed_when: true

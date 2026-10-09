@@ -1,6 +1,18 @@
 ---
 dev_user: curiosity
 dev_user_home: /home/curiosity
+# Interactive accounts that receive per-user desktop and systemd convergence.
+# `dev_user` stays the primary account for every other user-scoped task and must
+# be listed here. The default derives from dev_user/dev_user_home, so an
+# `-e dev_user=...` override (extra-vars beat everything) keeps single-user hosts
+# unchanged. Per-user task files loop with `loop_var: dw_user`; never set
+# dev_user itself to address several accounts.
+dev_users:
+  - name: "{{ dev_user }}"
+    home: "{{ dev_user_home }}"
+# Accounts whose systemd user manager must keep running without a login session
+# (`loginctl enable-linger`). Empty leaves lingering untouched.
+workstation_user_linger: []
 # Optional machine-local override file. Keep per-person/user values here on the
 # target host instead of committing host-specific maps to this repo.
 developer_workstation_local_vars_file: /etc/ansible/local-vars.yml
@@ -580,6 +592,31 @@ minimal_desktop_enabled: false
 minimal_desktop_autologin: true
 minimal_desktop_firefox_tweaks: true
 minimal_desktop_idle_lock_minutes: 10
+
+# LightDM. The greeter is `gtk` (lightdm-gtk-greeter) or `slick`
+# (slick-greeter). Graphical sessions start no earlier than
+# minimal_desktop_lightdm_minimum_vt, which leaves lower VTs for text consoles
+# and pinned per-user sessions. The vtswitch wrapper strips -novtswitch from
+# LightDM's X server command line so Ctrl+Alt+Fn keeps switching VTs. Names in
+# minimal_desktop_lightdm_remove_dropins are deleted from
+# /etc/lightdm/lightdm.conf.d (file names only).
+minimal_desktop_greeter: gtk
+minimal_desktop_lightdm_minimum_vt: 8
+minimal_desktop_lightdm_vtswitch_wrapper: false
+minimal_desktop_lightdm_remove_dropins: []
+
+# Per-user graphical sessions pinned to a virtual terminal below
+# minimal_desktop_lightdm_minimum_vt. Each item is {user, vt}. The user must be
+# listed in dev_users. The VT's getty prefills the user name (the password is
+# still required) and the login shell starts X on that VT.
+minimal_desktop_pinned_vt_sessions: []
+
+# Display layout helper (curiosity-display-setup). When enabled, the first
+# connected output named in minimal_desktop_display_outputs (otherwise the first
+# connected output) is set to its largest mode at the highest refresh rate and
+# made primary. Other outputs are turned off only when a listed output matched.
+minimal_desktop_display_setup_enabled: false
+minimal_desktop_display_outputs: []
 
 # Optional FocusPass-branded XScreenSaver package. The package keeps the
 # role's local PAM contract; it does not connect to a network identity

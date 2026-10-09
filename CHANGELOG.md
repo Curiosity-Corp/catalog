@@ -8,6 +8,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Multi-user desktop convergence: `dev_users` (default derived from
+  `dev_user`) drives per-user home checks, user-systemd policy, Openbox,
+  picom, tint2, dunst, rofi, GTK, Firefox and screen-lock settings;
+  `workstation_user_linger` enables lingering.
+- LightDM parity options: `minimal_desktop_greeter` (`gtk` or `slick`),
+  `minimal_desktop_lightdm_minimum_vt`, an opt-in VT-switch X server wrapper,
+  `minimal_desktop_lightdm_remove_dropins`, an explicit Openbox user session,
+  and an enabled and running `lightdm.service`.
+- Per-user pinned VT sessions (`minimal_desktop_pinned_vt_sessions`) using a
+  username-prefilled getty and a login-shell `startx` hook.
+- Opt-in `curiosity-display-setup` helper (`minimal_desktop_display_setup_enabled`,
+  `minimal_desktop_display_outputs`) for LightDM and startx sessions.
 - Public-safe defaults, collection metadata, contributor policies, and release
   documentation.
 - Optional custom CA, GitLab/Coder, Ziti service, and split-DNS configuration.

@@ -1,0 +1,71 @@
+---
+# =============================================================================
+# Minimal Desktop — Display setup helper
+# =============================================================================
+# Installs curiosity-display-setup, its output preference list, and the LightDM
+# display-setup-script hook. The Openbox autostart runs the same helper for
+# startx sessions, which LightDM does not set up. Disabling the option removes
+# everything installed here.
+
+- name: Validate display setup settings
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_display_outputs is sequence
+      - minimal_desktop_display_outputs is not string
+      - minimal_desktop_display_outputs | map('string') | select('match', '^[A-Za-z0-9_.:-]+$') | list | length == minimal_desktop_display_outputs | length
+    fail_msg: >-
+      minimal_desktop_display_outputs must list xrandr output names such as
+      DP-1 or HDMI-A-1, in order of preference.
+
+- name: Ensure the Curiosity configuration directory exists
+  ansible.builtin.file:
+    path: /etc/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: minimal_desktop_display_setup_enabled | bool
+
+- name: Install the display setup helper
+  ansible.builtin.copy:
+    src: minimal-desktop/curiosity-display-setup
+    dest: /usr/local/bin/curiosity-display-setup
+    owner: root
+    group: root
+    mode: "0755"
+  when: minimal_desktop_display_setup_enabled | bool
+
+- name: Record the preferred display outputs
+  ansible.builtin.copy:
+    dest: /etc/curiosity/display-outputs
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible. One xrandr output name per line, in order of
+      # preference. Empty means any connected output.
+      {% for output in minimal_desktop_display_outputs %}
+      {{ output }}
+      {% endfor %}
+  when: minimal_desktop_display_setup_enabled | bool
+
+- name: Run the display setup helper before the LightDM greeter
+  ansible.builtin.copy:
+    dest: /etc/lightdm/lightdm.conf.d/60-display-setup.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Seat:*]
+      display-setup-script=/usr/local/bin/curiosity-display-setup
+  when: minimal_desktop_display_setup_enabled | bool
+
+- name: Remove the display setup helper when it is disabled
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/lightdm/lightdm.conf.d/60-display-setup.conf
+    - /etc/curiosity/display-outputs
+    - /usr/local/bin/curiosity-display-setup
+  when: not (minimal_desktop_display_setup_enabled | bool)

@@ -5,17 +5,17 @@
 
 - name: Ensure GTK3 config directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.config/gtk-3.0"
+    path: "{{ dw_user.home }}/.config/gtk-3.0"
     state: directory
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0755"
 
 - name: Deploy GTK2 theme config (Arc-Dark)
   ansible.builtin.copy:
-    dest: "{{ dev_user_home }}/.gtkrc-2.0"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.gtkrc-2.0"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
     content: |
       gtk-theme-name="Arc-Dark"
@@ -27,9 +27,9 @@
 
 - name: Deploy GTK3 theme config (Arc-Dark)
   ansible.builtin.copy:
-    dest: "{{ dev_user_home }}/.config/gtk-3.0/settings.ini"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.config/gtk-3.0/settings.ini"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
     content: |
       [Settings]

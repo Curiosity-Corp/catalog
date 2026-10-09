@@ -23,9 +23,21 @@
   ansible.builtin.include_tasks: minimal-desktop-lightdm.yml
   tags: [minimal-desktop, lightdm]
 
+- name: Install the display setup helper and its LightDM hook
+  ansible.builtin.include_tasks: minimal-desktop-display-setup.yml
+  tags: [minimal-desktop, lightdm, display]
+
 - name: Deploy Openbox configuration
   ansible.builtin.include_tasks: minimal-desktop-openbox.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
   tags: [minimal-desktop, openbox]
+
+- name: Configure pinned per-user VT sessions
+  ansible.builtin.include_tasks: minimal-desktop-pinned-vt.yml
+  tags: [minimal-desktop, pinned-vt]
 
 - name: Validate optional FocusPass screen lock settings
   ansible.builtin.include_tasks: minimal-desktop-focuspass-preflight.yml
@@ -45,18 +57,34 @@
 
 - name: Deploy picom compositor config
   ansible.builtin.include_tasks: minimal-desktop-picom.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
   tags: [minimal-desktop, picom]
 
 - name: Deploy tint2 panel config
   ansible.builtin.include_tasks: minimal-desktop-tint2.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
   tags: [minimal-desktop, tint2]
 
 - name: Deploy dunst notification config
   ansible.builtin.include_tasks: minimal-desktop-dunst.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
   tags: [minimal-desktop, dunst]
 
 - name: Deploy rofi launcher config
   ansible.builtin.include_tasks: minimal-desktop-rofi.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
   tags: [minimal-desktop, rofi]
 
 - name: Deploy touchpad configuration (tap-to-click, natural scroll)
@@ -65,9 +93,17 @@
 
 - name: Configure GTK dark theme
   ansible.builtin.include_tasks: minimal-desktop-gtk-theme.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
   tags: [minimal-desktop, gtk]
 
 - name: Deploy Firefox performance profile
   ansible.builtin.include_tasks: minimal-desktop-firefox.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
   tags: [minimal-desktop, firefox]
   when: minimal_desktop_firefox_tweaks | default(true)

@@ -40,23 +40,28 @@
       - ansible_user_id == 'root'
     fail_msg: "This role must run as root (use --become or run with sudo)"
 
-- name: Verify target user exists
-  ansible.builtin.getent:
-    database: passwd
-    key: "{{ dev_user }}"
-
-- name: Verify dev_user home directory exists
-  ansible.builtin.stat:
-    path: "{{ dev_user_home }}"
-  register: _dev_user_home_stat
-
-- name: Fail if dev_user home directory missing
+- name: Validate the managed user list
   ansible.builtin.assert:
     that:
-      - _dev_user_home_stat.stat.exists
-      - _dev_user_home_stat.stat.isdir
+      - dev_users is sequence
+      - dev_users is not string
+      - dev_users | length > 0
+      - dev_users | selectattr('name', 'defined') | selectattr('home', 'defined') | list | length == dev_users | length
+      - dev_users | map(attribute='name') | select('match', '^[a-z_][a-z0-9_-]*[$]?$') | list | length == dev_users | length
+      - dev_users | map(attribute='home') | select('match', '^/[^ ]+$') | list | length == dev_users | length
+      - dev_users | map(attribute='name') | unique | list | length == dev_users | length
+      - dev_user in (dev_users | map(attribute='name') | list)
     fail_msg: >-
-      Home directory {{ dev_user_home }} does not exist for user {{ dev_user }}
+      dev_users must be a non-empty list of unique {name, home} items with
+      POSIX user names and absolute home paths, and it must include the primary
+      account dev_user ({{ dev_user }}).
+
+- name: Verify every managed user exists and has a home directory
+  ansible.builtin.include_tasks: user-preflight.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
 
 - name: Verify workstation profile is valid
   ansible.builtin.assert:
@@ -127,24 +132,31 @@
 # Home directory ownership repair
 # =============================================================================
 # On server ISO builds the firstboot script may create the home directory as
-# root before the user account exists, leaving /home/<dev_user> root-owned.
+# root before the user account exists, leaving /home/<user> root-owned.
 # Any subsequent become_user task (e.g. git_config --global) will fail with
 # "Permission denied" trying to write into the home directory.
 # Repair ownership here, once, idempotently, before any user-scope tasks run.
-- name: Ensure dev_user owns their home directory
-  ansible.builtin.file:
-    path: "{{ dev_user_home }}"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
-    state: directory
-    mode: "0750"
-    recurse: false
+- name: Ensure every managed user owns their home directory
+  ansible.builtin.include_tasks: user-home-ownership.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
+
+- name: Enable systemd lingering for the configured users
+  ansible.builtin.include_tasks: user-linger.yml
+  tags: [systemd, user-systemd]
+  when: workstation_user_linger | length > 0
 
 - name: Enforce declarative user systemd policy
   ansible.builtin.include_tasks:
     file: user-systemd.yml
     apply:
       tags: [systemd, user-systemd]
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
   tags: [systemd, user-systemd]
   when: workstation_user_systemd_masked_units | default([]) | length > 0
 

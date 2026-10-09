@@ -5,16 +5,16 @@
 
 - name: Ensure dunst config directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.config/dunst"
+    path: "{{ dw_user.home }}/.config/dunst"
     state: directory
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0755"
 
 - name: Deploy dunst config (dark theme, compact)
   ansible.builtin.copy:
     src: minimal-desktop/dunstrc
-    dest: "{{ dev_user_home }}/.config/dunst/dunstrc"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.config/dunst/dunstrc"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
