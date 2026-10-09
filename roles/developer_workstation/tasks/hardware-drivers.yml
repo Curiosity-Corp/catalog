@@ -113,7 +113,10 @@
 # ---- pipx packages (installed for every managed user) ----
 
 - name: Install hardware-specific pipx packages ({{ hardware_profile }})
-  ansible.builtin.include_tasks: hardware-pipx.yml
+  ansible.builtin.include_tasks:
+    file: hardware-pipx.yml
+    apply:
+      tags: [hardware]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
