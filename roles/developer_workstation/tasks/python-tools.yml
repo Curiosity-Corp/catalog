@@ -87,6 +87,13 @@
     mode: "0750"
   become: true
 
+- name: Repair pipx virtualenvs left on a removed interpreter
+  ansible.builtin.include_tasks:
+    file: pipx-interpreter-repair.yml
+  vars:
+    pipx_repair_user: "{{ dev_user }}"
+    pipx_repair_home: "{{ dev_user_home }}"
+
 - name: Install or update uv from PyPI in the user's pipx scope
   community.general.pipx:
     name: uv
