@@ -2,7 +2,8 @@
 # =============================================================================
 # APT Repository Setup
 # =============================================================================
-# Uses shell+creates for GPG keys (idempotent, avoids deprecated apt_key)
+# Vendor GPG keys are converged on every run by apt-keyring.yml (avoids
+# deprecated apt_key; never `creates:`-guarded, so key rotations propagate)
 # Uses apt_repository for source lists
 # =============================================================================
 
@@ -30,14 +31,12 @@
   notify: Update apt cache
 
 # --- GitHub CLI ---
-- name: Download GitHub CLI GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/githubcli-archive-keyring.gpg
+- name: Converge github-cli APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: github-cli
+    apt_keyring_url: "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+    apt_keyring_dest: /usr/share/keyrings/githubcli-archive-keyring.gpg
 
 - name: Add GitHub CLI repository
   ansible.builtin.apt_repository:
@@ -55,14 +54,12 @@
     state: absent
   notify: Update apt cache
 
-- name: Download Microsoft GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-        | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/microsoft-archive-keyring.gpg
+- name: Converge microsoft APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: microsoft
+    apt_keyring_url: "https://packages.microsoft.com/keys/microsoft.asc"
+    apt_keyring_dest: /usr/share/keyrings/microsoft-archive-keyring.gpg
 
 - name: Add VS Code repository
   ansible.builtin.apt_repository:
@@ -89,14 +86,12 @@
   notify: Update apt cache
 
 # --- Google Cloud CLI ---
-- name: Download Google Cloud GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-        | gpg --dearmor -o /usr/share/keyrings/cloud-google-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/cloud-google-archive-keyring.gpg
+- name: Converge google-cloud APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: google-cloud
+    apt_keyring_url: "https://packages.cloud.google.com/apt/doc/apt-key.gpg"
+    apt_keyring_dest: /usr/share/keyrings/cloud-google-archive-keyring.gpg
 
 - name: Add Google Cloud CLI repository
   ansible.builtin.apt_repository:
@@ -142,21 +137,13 @@
     that: latest_mongodb_channel | default('') | string | length > 0
     fail_msg: "MongoDB did not publish a current APT channel"
 
-- name: Download and verify MongoDB GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -Eeuo pipefail
-      key_tmp="$(mktemp)"
-      trap 'rm -f "$key_tmp"' EXIT
-      curl -fsSL \
-        '{{ latest_mongodb_key_url }}' \
-        -o "$key_tmp"
-      actual_fingerprint="$(gpg --with-colons --import-options show-only --import "$key_tmp" \
-        | awk -F: '$1 == "fpr" { print $10; exit }')"
-      test "$actual_fingerprint" = "{{ latest_mongodb_key_fingerprint }}"
-      gpg --dearmor --yes -o /usr/share/keyrings/mongodb-archive-keyring.gpg "$key_tmp"
-    executable: /bin/bash
-  changed_when: false
+- name: Converge mongodb APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: mongodb
+    apt_keyring_url: "{{ latest_mongodb_key_url }}"
+    apt_keyring_dest: /usr/share/keyrings/mongodb-archive-keyring.gpg
+    apt_keyring_fingerprint: "{{ latest_mongodb_key_fingerprint }}"
 
 - name: Find legacy MongoDB repository definitions
   ansible.builtin.find:
@@ -193,14 +180,12 @@
     state: absent
   notify: Update apt cache
 
-- name: Download Google Chrome GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-        | gpg --dearmor -o /usr/share/keyrings/google-chrome-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/google-chrome-archive-keyring.gpg
+- name: Converge google-chrome APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: google-chrome
+    apt_keyring_url: "https://dl.google.com/linux/linux_signing_key.pub"
+    apt_keyring_dest: /usr/share/keyrings/google-chrome-archive-keyring.gpg
 
 - name: Add Google Chrome repository
   ansible.builtin.apt_repository:
@@ -210,14 +195,12 @@
   notify: Update apt cache
 
 # --- 1Password CLI ---
-- name: Download 1Password GPG key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      curl -fsSL https://downloads.1password.com/linux/keys/1password.asc \
-        | gpg --dearmor -o /usr/share/keyrings/1password-archive-keyring.gpg
-    executable: /bin/bash
-    creates: /usr/share/keyrings/1password-archive-keyring.gpg
+- name: Converge 1password APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: 1password
+    apt_keyring_url: "https://downloads.1password.com/linux/keys/1password.asc"
+    apt_keyring_dest: /usr/share/keyrings/1password-archive-keyring.gpg
 
 - name: Add 1Password CLI repository
   ansible.builtin.apt_repository:
@@ -233,11 +216,12 @@
     state: absent
   notify: Update apt cache
 
-- name: Download Brave Browser GPG key
-  ansible.builtin.get_url:
-    url: https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
-    dest: /usr/share/keyrings/brave-browser-archive-keyring.gpg
-    mode: "0644"
+- name: Converge brave-browser APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: brave-browser
+    apt_keyring_url: "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
+    apt_keyring_dest: /usr/share/keyrings/brave-browser-archive-keyring.gpg
 
 - name: Add Brave Browser repository
   ansible.builtin.apt_repository:
@@ -247,36 +231,13 @@
   notify: Update apt cache
 
 # --- Node.js (NodeSource) ---
-- name: Download NodeSource repository key
-  ansible.builtin.get_url:
-    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
-    dest: /tmp/nodesource-repo.gpg.key
-    mode: "0644"
-  register: _nodesource_key_download
-
-- name: Verify NodeSource repository key fingerprint
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --show-keys
-      - --with-colons
-      - /tmp/nodesource-repo.gpg.key
-  register: _nodesource_key_info
-  changed_when: false
-  failed_when: >-
-    nodesource_key_fingerprint not in (_nodesource_key_info.stdout | default(''))
-
-- name: Install NodeSource repository keyring
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --dearmor
-      - --yes
-      - -o
-      - /etc/apt/keyrings/nodesource.gpg
-      - /tmp/nodesource-repo.gpg.key
-  changed_when: _nodesource_key_download.changed
-  notify: Update apt cache
+- name: Converge nodesource APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: nodesource
+    apt_keyring_url: "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+    apt_keyring_dest: /etc/apt/keyrings/nodesource.gpg
+    apt_keyring_fingerprint: "{{ nodesource_key_fingerprint }}"
 
 - name: Add NodeSource Node.js 24 repository
   ansible.builtin.apt_repository:
@@ -292,40 +253,13 @@
     state: absent
   notify: Update apt cache
 
-- name: Download OpenZiti GPG key
-  ansible.builtin.get_url:
-    url: https://get.openziti.io/tun/package-repos.gpg
-    dest: /tmp/openziti-package-repos.gpg
-    mode: "0644"
-  register: _openziti_key_download
-
-- name: Verify OpenZiti repository key fingerprint
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --show-keys
-      - --with-colons
-      - /tmp/openziti-package-repos.gpg
-  register: _openziti_key_info
-  changed_when: false
-  failed_when: openziti_key_fingerprint not in (_openziti_key_info.stdout | default(''))
-
-- name: Check OpenZiti keyring presence
-  ansible.builtin.stat:
-    path: /usr/share/keyrings/openziti-archive-keyring.gpg
-  register: _openziti_keyring
-
-- name: Install OpenZiti repository keyring
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --dearmor
-      - --yes
-      - --output
-      - /usr/share/keyrings/openziti-archive-keyring.gpg
-      - /tmp/openziti-package-repos.gpg
-  changed_when: _openziti_key_download.changed or not _openziti_keyring.stat.exists
-  when: _openziti_key_download.changed or not _openziti_keyring.stat.exists
+- name: Converge openziti APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: openziti
+    apt_keyring_url: "https://get.openziti.io/tun/package-repos.gpg"
+    apt_keyring_dest: /usr/share/keyrings/openziti-archive-keyring.gpg
+    apt_keyring_fingerprint: "{{ openziti_key_fingerprint }}"
 
 - name: Add OpenZiti repository
   ansible.builtin.apt_repository:
@@ -337,14 +271,12 @@
 # --- Mozilla Firefox (non-snap, required for OpenZiti tun compatibility) ---
 # Snap Firefox sandbox blocks tun device traffic (ziti0), breaking access
 # to all Ziti-intercepted services. The Mozilla PPA provides a native .deb.
-- name: Download Mozilla APT signing key  # noqa: command-instead-of-module
-  ansible.builtin.shell:
-    cmd: |
-      set -o pipefail
-      wget -qO- https://packages.mozilla.org/apt/repo-signing-key.gpg \
-        | tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null
-    executable: /bin/bash
-    creates: /etc/apt/keyrings/packages.mozilla.org.asc
+- name: Converge mozilla APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: mozilla
+    apt_keyring_url: "https://packages.mozilla.org/apt/repo-signing-key.gpg"
+    apt_keyring_dest: /etc/apt/keyrings/packages.mozilla.org.asc
 
 - name: Add Mozilla APT repository
   ansible.builtin.apt_repository:
