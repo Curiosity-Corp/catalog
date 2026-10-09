@@ -25,6 +25,7 @@ PER_USER_FILES = (
     "minimal-desktop-openbox.yml",
     "minimal-desktop-picom.yml",
     "minimal-desktop-tint2.yml",
+    "minimal-desktop-xdg-autostart.yml",
     "minimal-desktop-dunst.yml",
     "minimal-desktop-rofi.yml",
     "minimal-desktop-gtk-theme.yml",

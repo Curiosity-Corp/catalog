@@ -31,6 +31,16 @@
       - pasystray
       - pavucontrol
       - network-manager-gnome
+      # XDG autostart (openbox-xdg-autostart needs PyXDG) and the PolicyKit
+      # authentication agent it starts. lxpolkit exists on Ubuntu and Debian;
+      # policykit-1-gnome was dropped from Debian trixie.
+      - python3-xdg
+      - lxpolkit
+      # tint2 helpers: pactl for the volume executor, zenity for the clock
+      # calendar, arandr for the top layout's launcher
+      - pulseaudio-utils
+      - zenity
+      - arandr
       # Screenshots (PrtSc capture and annotation)
       - flameshot
       # X11 utilities

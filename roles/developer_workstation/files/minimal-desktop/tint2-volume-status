@@ -1,0 +1,17 @@
+#!/bin/sh
+# Managed by Ansible (roles/developer_workstation, minimal desktop).
+# Prints the default PulseAudio/PipeWire-pulse sink state for the tint2 "top"
+# layout's volume executor. Needs pactl (pulseaudio-utils).
+
+mute=$(pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | sed -n 's/^Mute: //p')
+if [ "$mute" = yes ]; then
+    printf 'Muted'
+    exit 0
+fi
+
+volume=$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | sed -n '1s/.*\/ *\([0-9][0-9]*%\) .*/\1/p')
+if [ -n "$volume" ]; then
+    printf 'Sound %s' "$volume"
+else
+    printf 'Sound unavailable'
+fi

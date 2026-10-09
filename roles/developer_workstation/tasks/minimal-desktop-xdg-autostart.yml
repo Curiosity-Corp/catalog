@@ -1,0 +1,41 @@
+---
+# =============================================================================
+# Minimal Desktop — XDG autostart overrides
+# =============================================================================
+# Included once per item of dev_users with loop_var dw_user. Openbox runs
+# openbox-xdg-autostart (python3-xdg) over /etc/xdg/autostart and
+# ~/.config/autostart. A same-named user entry with Hidden=true wins over the
+# system one, so the applets and lockers the Openbox autostart already handles
+# are not started a second time.
+
+- name: Validate the hidden XDG autostart ids
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_xdg_autostart_hidden is sequence
+      - minimal_desktop_xdg_autostart_hidden is not string
+      - minimal_desktop_xdg_autostart_hidden | map('string') | select('match', '^[A-Za-z0-9_.+-]+$') | list | length == minimal_desktop_xdg_autostart_hidden | length
+    fail_msg: >-
+      minimal_desktop_xdg_autostart_hidden must list XDG autostart ids such as
+      nm-applet (the .desktop file name without its extension).
+
+- name: Ensure the XDG autostart directory exists
+  ansible.builtin.file:
+    path: "{{ dw_user.home }}/.config/autostart"
+    state: directory
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
+    mode: "0755"
+
+- name: Hide XDG autostart entries already handled by the Openbox autostart
+  ansible.builtin.copy:
+    dest: "{{ dw_user.home }}/.config/autostart/{{ item }}.desktop"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/developer_workstation, minimal desktop).
+      [Desktop Entry]
+      Type=Application
+      Name={{ item }} (started by the Openbox autostart)
+      Hidden=true
+  loop: "{{ minimal_desktop_xdg_autostart_hidden }}"

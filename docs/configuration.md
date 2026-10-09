@@ -209,6 +209,58 @@ when a listed output matched. LightDM runs it as `display-setup-script`, and the
 Openbox autostart runs it for startx sessions. It reports problems on stderr but
 never blocks a login. Disabling the option removes the helper and its hooks.
 
+### Panel layouts
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `minimal_desktop_tint2_layout` | `bottom` | tint2 layout deployed to each user's `~/.config/tint2/tint2rc`. |
+| `dev_users[].tint2_layout` | unset | Per-user override of the variable above. |
+
+```yaml
+minimal_desktop_tint2_layout: bottom
+dev_users:
+  - { name: user-a, home: /home/user-a }
+  - { name: user-b, home: /home/user-b, tint2_layout: top }
+```
+
+`bottom` is a dark 32px bar at the bottom of the screen with the desktop
+taskbar, system tray and clock. `top` is a 36px bar at the top with a launcher
+(file manager, Firefox, terminal, display settings, volume mixer), a
+multi-desktop task list, the tray, a PulseAudio volume item and the clock. The
+volume item runs `/usr/local/bin/tint2-volume-status`, installed by the role,
+and needs `pactl` (installed as `pulseaudio-utils`; PipeWire-pulse works too).
+Any other value fails the run before a config is written. The layouts are
+`roles/developer_workstation/files/minimal-desktop/tint2/<layout>.tint2rc`; each
+background block must be defined before an id refers to it, because tint2 17
+crashes on an undefined `panel_background_id`.
+
+### XDG autostart
+
+The role installs `python3-xdg`, so Openbox's `openbox-xdg-autostart` runs the
+entries in `/etc/xdg/autostart` and `~/.config/autostart` (for example the
+keyring and device tray helpers). The Openbox autostart already starts
+nm-applet, blueman, pasystray and picom itself, and XScreenSaver handles
+locking, so each `dev_users` account gets a managed
+`~/.config/autostart/<id>.desktop` with `Hidden=true` for every id in
+`minimal_desktop_xdg_autostart_hidden`:
+
+```yaml
+minimal_desktop_xdg_autostart_hidden:
+  - nm-applet
+  - blueman
+  - pasystray
+  - picom
+  - light-locker
+  - xfce4-screensaver
+  - solaar   # example host-specific addition: replaces the list, so repeat the defaults
+```
+
+The PolicyKit authentication agent for GUI privilege prompts is `lxpolkit`
+(`policykit-1-gnome` is not in Debian trixie). Its own autostart entry is not
+restricted to other desktops, so the XDG autostart starts it once under Openbox;
+the Openbox autostart does not launch it a second time. Sessions that were
+already running keep their current processes until they restart.
+
 The branded FocusPass screen-lock package is an optional local-PAM integration.
 It is installed only when all three variables below are supplied for a
 desktop or thin-client profile with the minimal desktop enabled:

@@ -692,6 +692,26 @@ minimal_desktop_pinned_vt_sessions: []
 minimal_desktop_display_setup_enabled: false
 minimal_desktop_display_outputs: []
 
+# tint2 panel layout deployed to ~/.config/tint2/tint2rc for each dev_users
+# entry: `bottom` (dark 32px bottom bar with taskbar, tray and clock) or `top`
+# (36px top bar with launcher, multi-desktop taskbar, tray, PulseAudio volume
+# and clock). A dev_users item may set `tint2_layout` to override this default.
+minimal_desktop_tint2_layout: bottom
+
+# XDG autostart ids (basename of /etc/xdg/autostart/<id>.desktop) that each
+# dev_users entry hides with a managed ~/.config/autostart/<id>.desktop
+# (Hidden=true). openbox-xdg-autostart runs every other entry, so this lists the
+# applets the Openbox autostart already starts itself (nm-applet, blueman,
+# pasystray, picom) and screen lockers that would compete with XScreenSaver.
+# Extend it per host; the list is replaced, not merged, when overridden.
+minimal_desktop_xdg_autostart_hidden:
+  - nm-applet
+  - blueman
+  - pasystray
+  - picom
+  - light-locker
+  - xfce4-screensaver
+
 # Optional FocusPass-branded XScreenSaver package. The package keeps the
 # role's local PAM contract; it does not connect to a network identity
 # provider. Supply the artifact URL and its trusted SHA-256 in host/group
