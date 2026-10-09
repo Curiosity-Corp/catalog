@@ -1,5 +1,6 @@
 """Regression checks for multi-user desktop convergence, LightDM, pinned VTs, and display setup."""
 
+import copy
 import os
 import re
 import subprocess
@@ -7,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 import jinja2
+import pytest
 import yaml
 
 
@@ -264,6 +266,194 @@ def test_pinned_vt_cleanup_keeps_current_dropins_and_removes_stale_ones() -> Non
     assert stale(7)
     assert stale(18)
     assert "'\\1'" not in cleanup["when"]
+
+
+PINNED_VT_KEYRING_TASKS = (
+    "Install the gnome-keyring PAM module",
+    "Read the console login PAM stack",
+    "Require the stock includes",
+    "Unlock gnome-keyring from the console login password (auth)",
+    "Start and unlock gnome-keyring for the console login session",
+)
+
+STOCK_LOGIN_PAM = """\
+#%PAM-1.0
+auth       requisite  pam_nologin.so
+@include common-auth
+auth       optional   pam_group.so
+session    required   pam_limits.so
+@include common-account
+@include common-session
+session    optional   pam_mail.so standard
+@include common-password
+"""
+
+
+def test_pinned_vt_console_login_unlocks_gnome_keyring_only_when_pinned() -> None:
+    tasks = _tasks("minimal-desktop-pinned-vt.yml")
+    pinned = "minimal_desktop_pinned_vt_sessions | length > 0"
+    unpinned = "minimal_desktop_pinned_vt_sessions | length == 0"
+
+    install = _named(tasks, "Install the gnome-keyring PAM module")
+    assert install["ansible.builtin.apt"]["name"] == "libpam-gnome-keyring"
+    assert install["when"] == pinned
+
+    auth = _named(tasks, "Unlock gnome-keyring from the console login password (auth)")
+    session = _named(tasks, "Start and unlock gnome-keyring for the console login")
+    for task, line, anchor in (
+        (auth, "auth optional pam_gnome_keyring.so\n", "common-auth"),
+        (session, "session optional pam_gnome_keyring.so auto_start\n", "common-session"),
+    ):
+        module = task["ansible.builtin.blockinfile"]
+        assert module["path"] == "/etc/pam.d/login"
+        # `optional`: a missing or failing keyring must never block a login.
+        assert module["block"] == line
+        assert module["insertafter"] == f"^@include +{anchor} *$"
+        assert "state" not in module
+        assert task["when"] == pinned
+
+    # Each stack has its own marker, so the two blocks never overwrite each other.
+    assert auth["ansible.builtin.blockinfile"]["marker"] != session[
+        "ansible.builtin.blockinfile"
+    ]["marker"]
+
+    removal = _named(tasks, "Remove the gnome-keyring console login PAM lines")
+    module = removal["ansible.builtin.blockinfile"]
+    assert module["state"] == "absent"
+    assert module["path"] == "/etc/pam.d/login"
+    assert removal["when"] == unpinned
+    assert removal["loop"] == ["auth", "session"]
+    for task in (auth, session):
+        marker = task["ansible.builtin.blockinfile"]["marker"]
+        kind = "auth" if task is auth else "session"
+        assert marker == module["marker"].replace("{{ item }}", kind)
+
+    # Only /etc/pam.d/login is touched, and only through the tasks above (the
+    # assert merely names the file in its message).
+    pam_writers = [
+        task for task in tasks if "/etc/pam.d" in yaml.safe_dump(task)
+    ]
+    assert {task["name"] for task in pam_writers} <= {
+        "Read the console login PAM stack",
+        "Require the stock includes that anchor the gnome-keyring PAM lines",
+        "Unlock gnome-keyring from the console login password (auth)",
+        "Start and unlock gnome-keyring for the console login session",
+        "Remove the gnome-keyring console login PAM lines when no VT is pinned",
+    }
+
+
+def test_pinned_vt_keyring_pam_refuses_an_unrecognised_login_stack() -> None:
+    from ansible.plugins.filter.core import FilterModule
+
+    env = jinja2.Environment()
+    env.filters.update(FilterModule().filters())
+    env.tests.update(
+        {"match": lambda value, pattern: re.match(pattern, value) is not None}
+    )
+    tasks = _tasks("minimal-desktop-pinned-vt.yml")
+    check = _named(tasks, "Require the stock includes")
+    conditions = [
+        env.compile_expression(condition)
+        for condition in check["ansible.builtin.assert"]["that"]
+    ]
+
+    def accepted(login_pam: str) -> bool:
+        import base64
+
+        registered = {"content": base64.b64encode(login_pam.encode()).decode()}
+        return all(
+            condition(_pinned_vt_login_pam=registered) for condition in conditions
+        )
+
+    assert accepted(STOCK_LOGIN_PAM)
+    assert not accepted(STOCK_LOGIN_PAM.replace("@include common-auth\n", ""))
+    assert not accepted(STOCK_LOGIN_PAM.replace("@include common-session\n", ""))
+    assert not accepted(STOCK_LOGIN_PAM + "@include common-auth\n")
+    assert not accepted(
+        STOCK_LOGIN_PAM.replace("@include common-auth", "# @include common-auth")
+    )
+
+
+def test_pinned_vt_keyring_pam_edit_is_idempotent_positioned_and_reversible() -> None:
+    import shutil
+
+    ansible_playbook = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
+    if not os.access(ansible_playbook, os.X_OK):
+        pytest.skip("ansible-playbook is not installed")
+
+    tasks = _tasks("minimal-desktop-pinned-vt.yml")
+    selected = [
+        copy.deepcopy(task)
+        for task in tasks
+        if task["name"].startswith(PINNED_VT_KEYRING_TASKS)
+        or task["name"].startswith("Remove the gnome-keyring console login PAM lines")
+    ]
+    assert len(selected) == 6
+    with tempfile.TemporaryDirectory(prefix="pinned-vt-pam-") as temp_dir:
+        root = Path(temp_dir)
+        login = root / "login"
+        login.write_text(STOCK_LOGIN_PAM)
+        # Run the real tasks against a scratch copy of the login stack. apt is
+        # dropped: only the PAM edits are exercised.
+        selected = [t for t in selected if "ansible.builtin.apt" not in t]
+        for task in selected:
+            if "ansible.builtin.slurp" in task:
+                task["ansible.builtin.slurp"]["src"] = str(login)
+            if "ansible.builtin.blockinfile" in task:
+                task["ansible.builtin.blockinfile"]["path"] = str(login)
+
+        def converge(sessions: list[dict]) -> str:
+            playbook = root / "play.yml"
+            playbook.write_text(
+                yaml.safe_dump(
+                    [
+                        {
+                            "hosts": "localhost",
+                            "connection": "local",
+                            "gather_facts": False,
+                            "vars": {"minimal_desktop_pinned_vt_sessions": sessions},
+                            "tasks": selected,
+                        }
+                    ]
+                )
+            )
+            result = subprocess.run(
+                [ansible_playbook, "-i", "localhost,", str(playbook)],
+                text=True,
+                capture_output=True,
+                cwd=root,
+                timeout=120,
+                env={**os.environ, "ANSIBLE_NOCOLOR": "1"},
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            return result.stdout
+
+        pinned = [{"user": "mrh", "vt": 8}]
+        converge(pinned)
+        lines = [
+            line
+            for line in login.read_text().splitlines()
+            if line and not line.startswith("#")
+        ]
+        auth_at = lines.index("auth optional pam_gnome_keyring.so")
+        session_at = lines.index("session optional pam_gnome_keyring.so auto_start")
+        assert lines[auth_at - 1] == "@include common-auth"
+        assert lines[session_at - 1] == "@include common-session"
+        assert lines.count("auth optional pam_gnome_keyring.so") == 1
+
+        # A second run changes nothing, and no stock line was altered.
+        converged = login.read_text()
+        assert "changed=0" in converge(pinned)
+        assert login.read_text() == converged
+        stock_lines = [
+            line for line in converged.splitlines() if "gnome_keyring" not in line
+            and "ANSIBLE MANAGED BLOCK" not in line
+        ]
+        assert stock_lines == STOCK_LOGIN_PAM.splitlines()
+
+        # With no pinned session the lines go away and the stock stack returns.
+        converge([])
+        assert login.read_text() == STOCK_LOGIN_PAM
 
 
 XRANDR_SAMPLE = """\

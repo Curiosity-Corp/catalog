@@ -194,6 +194,18 @@ therefore needs a POSIX or bash login shell. The getty is enabled but not
 started during the pull: reboot or run `systemctl start getty@ttyN` to use a
 VT that is currently idle. Removing an entry deletes its getty drop-in.
 
+While any VT is pinned the role also installs `libpam-gnome-keyring` and adds two
+`optional` lines to `/etc/pam.d/login`, placed as in Ubuntu's `/etc/pam.d/lightdm`:
+`auth optional pam_gnome_keyring.so` right after `@include common-auth`, and
+`session optional pam_gnome_keyring.so auto_start` right after
+`@include common-session`. This unlocks the user's gnome-keyring at console
+login so Secret Service clients such as Google Chrome do not hang. Auto-unlock
+only works when the keyring password matches the account password. The lines
+are removed again when no VT is pinned, and the run fails rather than edit a
+login stack that lacks the stock `@include` anchors. The Openbox autostart also
+exports `DISPLAY` and `XAUTHORITY` to systemd and the D-Bus activation
+environment, so the keyring prompt opens on the session's own display.
+
 ### Display setup
 
 ```yaml

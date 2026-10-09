@@ -36,8 +36,16 @@ def _run_autostart_harness(
     focuspass_exit_delay: bool = False,
     focuspass_exit_never: bool = False,
     focuspass_exit_refuses: bool = False,
+    activation_env: list[str] | None = None,
+    activation_env_fails: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], str, str]:
-    """Exercise the screen-lock handoff with fake process and X11 commands."""
+    """Exercise the screen-lock handoff with fake process and X11 commands.
+
+    The fake dbus-update-activation-environment records its arguments in a file
+    of its own, so the screen-lock `log` stays exactly as before. Pass a list as
+    `activation_env` to receive the recorded invocations.
+    """
 
     autostart = (ROLE / "files/minimal-desktop/autostart").read_text()
     with tempfile.TemporaryDirectory(prefix="focuspass-autostart-") as temp_dir:
@@ -167,6 +175,12 @@ printf '%s\n' stock-start >>"$HARNESS_ROOT/log"
 printf '%s' stock >"$HARNESS_ROOT/state"
 sleep 0.1
 ''',
+            "dbus-update-activation-environment": r'''#!/bin/sh
+printf '%s\n' "$*" >>"$HARNESS_ROOT/activation-env"
+if [ "$HARNESS_ACTIVATION_ENV_FAILS" = 1 ]; then
+  exit 1
+fi
+''',
             "process-alive": r'''#!/bin/sh
 pid=$1
 case "$(cat "$HARNESS_ROOT/state"):$pid" in
@@ -210,8 +224,13 @@ exit 1
                 "HARNESS_FOCUSPASS_EXIT_NEVER": "1" if focuspass_exit_never else "0",
                 "HARNESS_FOCUSPASS_EXIT_REFUSES": "1" if focuspass_exit_refuses else "0",
                 "HARNESS_ROLLBACK_STATUS": rollback_status or "",
+                "HARNESS_ACTIVATION_ENV_FAILS": "1" if activation_env_fails else "0",
             }
         )
+        # The developer's own session must not leak into the assertions.
+        for name in ("XAUTHORITY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE"):
+            environment.pop(name, None)
+        environment.update(extra_env or {})
         result = subprocess.run(
             ["sh", "-c", autostart],
             text=True,
@@ -219,6 +238,10 @@ exit 1
             env=environment,
             timeout=AUTOSTART_HARNESS_TIMEOUT,
         )
+        if activation_env is not None:
+            recorded = root / "activation-env"
+            if recorded.exists():
+                activation_env.extend(recorded.read_text().splitlines())
         return result, (root / "state").read_text(), (root / "log").read_text()
 
 
@@ -332,6 +355,69 @@ def test_minimal_desktop_keybindings_match_the_standard_workstation() -> None:
     for key, action in stock.items():
         node = xml_root.find(f".//ob:keybind[@key='{key}']/ob:action", ns)
         assert node is not None and node.get("name") == action, key
+
+
+def test_autostart_exports_the_session_display_to_systemd_and_dbus_first() -> None:
+    autostart = (ROLE / "files/minimal-desktop/autostart").read_text()
+    # Before the first command that could need the Secret Service or a prompt.
+    export = autostart.index("dbus-update-activation-environment --systemd")
+    assert export < autostart.index("xsetroot -cursor_name")
+    assert export < autostart.index("curiosity-display-setup ||")
+    assert export < autostart.index("nm-applet &")
+    assert export < autostart.index("flameshot &")
+
+    calls: list[str] = []
+    result, _, log = _run_autostart_harness(
+        initial_state="none",
+        initial_status="error",
+        focuspass_responsive=False,
+        rollback_status="error",
+        focuspass_registers=False,
+        activation_env=calls,
+        extra_env={"XAUTHORITY": "/home/test/.serverauth.x"},
+    )
+    assert result.returncode == 0, result.stderr
+    # Only variables set in the session are exported; the optional ones are
+    # left out when the session does not define them.
+    assert calls == ["--systemd DISPLAY XAUTHORITY"]
+    assert "dbus-update-activation-environment" not in result.stderr
+    assert log.splitlines() == ["focuspass-start", "stock-start"]
+
+    calls = []
+    result, _, _ = _run_autostart_harness(
+        initial_state="none",
+        initial_status="error",
+        focuspass_responsive=False,
+        rollback_status="error",
+        focuspass_registers=False,
+        activation_env=calls,
+        extra_env={"XDG_CURRENT_DESKTOP": "Openbox", "XDG_SESSION_TYPE": "x11"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert calls == [
+        "--systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE"
+    ]
+
+
+def test_autostart_continues_when_the_activation_environment_update_fails() -> None:
+    calls: list[str] = []
+    result, _, log = _run_autostart_harness(
+        initial_state="none",
+        initial_status="error",
+        focuspass_responsive=False,
+        rollback_status="error",
+        focuspass_registers=False,
+        activation_env=calls,
+        activation_env_fails=True,
+    )
+    assert calls == ["--systemd DISPLAY XAUTHORITY"]
+    assert result.returncode == 0, result.stderr
+    assert "dbus-update-activation-environment failed" in result.stderr
+    # The rest of the session, including the screen locker, still ran.
+    assert log.splitlines() == ["focuspass-start", "stock-start"]
+
+    autostart = (ROLE / "files/minimal-desktop/autostart").read_text()
+    assert "command -v dbus-update-activation-environment" in autostart
 
 
 def test_autostart_preserves_locked_stock_screen() -> None:
