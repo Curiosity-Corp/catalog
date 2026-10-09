@@ -77,6 +77,7 @@ def test_default_exclusions_are_x_rules_under_tmp_and_cover_live_sessions() -> N
         "/tmp/org.chromium.*",
         "/tmp/tsx-*",
         "/tmp/claude-*",
+        "/tmp/.ziti",
     ):
         assert required in paths
 

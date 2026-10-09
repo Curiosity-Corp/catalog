@@ -640,6 +640,8 @@ tmp_hygiene_exclusions:
   - X /tmp/.mount_*
   - X /tmp/tsx-*
   - X /tmp/claude-*
+  # ziti-edge-tunnel IPC and event sockets live here for the process lifetime.
+  - X /tmp/.ziti
 # Host-specific additions without replacing the list above.
 tmp_hygiene_extra_exclusions: []
 tmp_hygiene_tmpfiles_path: /etc/tmpfiles.d/00-curiosity-tmp.conf

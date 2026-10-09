@@ -129,6 +129,10 @@ All notable changes to this project are documented here. The format follows
   not load its bundled `libpython`, and the next pull failed the aws
   healthcheck. Symlinks are now recorded with `link_target`, skipped by the
   snapshot, and re-linked on rollback.
+- `/tmp` hygiene excludes `/tmp/.ziti`, where `ziti-edge-tunnel` keeps its IPC
+  and event sockets for the life of the process. A cleaner that removed old
+  sockets and then the empty directory left a running tunneler unreachable
+  over IPC, so tunnel health metrics failed on every run.
 - Vendor APT signing keys (GitHub CLI, Microsoft, Google Cloud, Google Chrome,
   1Password, Brave, MongoDB, NodeSource, OpenZiti, Mozilla) were fetched once
   behind `creates:` or a non-forcing download and never refreshed, so a vendor
