@@ -913,6 +913,8 @@ hardware_profiles:
       # Canon camera tethered shooting and file transfer
       - gphoto2
       - entangle
+      # Headers for Python gphoto2 bindings (canonctl webcam venv rebuilds)
+      - libgphoto2-dev
       # Virtual camera device for the tethered camera feed
       - linux-modules-v4l2loopback-generic
       - v4l2loopback-utils

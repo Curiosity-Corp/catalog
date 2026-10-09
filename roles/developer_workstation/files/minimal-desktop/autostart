@@ -31,6 +31,9 @@ nm-applet &
 pasystray &
 blueman-applet &
 
+# Screenshot tray applet
+flameshot &
+
 # XScreenSaver provides a PAM conversation window for password and optional
 # second-factor prompts. Prefer FocusPass when installed. Replace a stock
 # daemon only on this DISPLAY; never disturb another graphical session.
