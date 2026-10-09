@@ -1,5 +1,6 @@
 """Regression checks for hardware profiles and the hardware-drivers tasks."""
 
+import os
 import re
 import shutil
 import subprocess
@@ -182,11 +183,11 @@ def test_hardware_drivers_runs_with_a_profile_that_only_has_a_description(
         )
     )
     result = subprocess.run(
-        ["ansible-playbook", "-i", "localhost,", str(playbook)],
+        [shutil.which("ansible-playbook"), "-i", "localhost,", str(playbook)],
         capture_output=True,
         text=True,
         check=False,
-        env={"ANSIBLE_NOCOLOR": "1", "PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        env={**os.environ, "ANSIBLE_NOCOLOR": "1"},
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "failed=0" in result.stdout
