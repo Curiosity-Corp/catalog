@@ -64,6 +64,7 @@ policy:
       tests/test_user_systemd_policy.py tests/test_pipx_repair.py
       tests/test_science_venv_repair.py tests/test_m365_cli_entrypoints.py
       tests/test_sunshine_asset_selection.py tests/test_update_rollback_symlinks.py
+      tests/test_healthcheck_disabled_apps.py
 
 collection:
   extends: .python_setup

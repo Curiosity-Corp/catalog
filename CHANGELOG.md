@@ -154,6 +154,18 @@ All notable changes to this project are documented here. The format follows
   option Signed-By". The upstream-form line is now removed before the catalog
   entry is added, and the orphaned `openziti.gpg` keyring is deleted only when
   nothing in `/etc/apt` still references it.
+- Post-update healthchecks no longer roll the update back for applications
+  whose feature is disabled on the host. The checks are opportunistic (any
+  contract whose executable exists is run), so a stale, broken
+  `/usr/bin/sunshine` on a host with `sunshine_enabled: false` failed every
+  pull, rolled the whole transaction back, and wrote an hour-long quarantine
+  that blocked unrelated updates. Application contracts accept an optional
+  `enabled_when: <variable name>`; the Sunshine, Coder, aws, glab, and Codex
+  contracts name `sunshine_enabled`, `coder_cli_enabled`, `cloud_clis_enabled`,
+  and `codex_standalone_enabled`. A failing check for a disabled application is
+  logged as a warning and recorded as `healthcheck_warnings` in the run
+  manifest; contracts for enabled applications, or without a condition, still
+  fail hard.
 
 ## [0.1.0] - planned
 

@@ -50,7 +50,13 @@
       - item.value.verification is defined
       - item.value.healthcheck is defined
       - item.value.healthcheck | length > 0
-    fail_msg: "Application contract {{ item.key }} is incomplete"
+      - >-
+        item.value.enabled_when is not defined or
+        (item.value.enabled_when is string and
+         item.value.enabled_when is match('^[A-Za-z_][A-Za-z0-9_]*$'))
+    fail_msg: >-
+      Application contract {{ item.key }} is incomplete or its enabled_when is
+      not a bare variable name
   loop: "{{ workstation_all_application_contracts | dict2items }}"
   loop_control:
     label: "{{ item.key }}"

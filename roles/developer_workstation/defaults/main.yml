@@ -109,6 +109,13 @@ latest_github_repositories:
 # Every API-backed release source also has an explicit application contract.
 # The contract is inventory/provenance data, not a release pin: it says how an
 # application is obtained and how its installed result can be checked.
+# A contract may carry an optional `enabled_when: <variable name>` (a bare
+# variable name, not a Jinja expression) for applications installed only when a
+# feature flag is on. When that variable is false on this host, a failing
+# post-update healthcheck of the stale binary is reported as a warning
+# (`healthcheck_warnings` in the run manifest) instead of rolling the update
+# transaction back. A missing key, an undefined variable, or a true value keeps
+# the healthcheck a hard gate.
 latest_release_contracts:
   lazygit: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/lazygit, --version]}
   delta: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/delta, --version]}
@@ -131,7 +138,7 @@ latest_release_contracts:
   kubeseal: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/kubeseal, --version]}
   sops: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/sops, --version]}
   age: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/age, --version]}
-  sunshine: {installer: github-deb, verification: github-asset-digest, healthcheck: [/usr/bin/sunshine, --version]}
+  sunshine: {installer: github-deb, verification: github-asset-digest, enabled_when: sunshine_enabled, healthcheck: [/usr/bin/sunshine, --version]}
   deno: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/deno, --version]}
   bun: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/bun, --version]}
   starship: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/starship, --version]}
@@ -156,20 +163,20 @@ latest_release_contracts:
 # Applications whose native update channel is not a GitHub release API. They
 # still participate in the same health, provenance, and rollback contract.
 workstation_application_contracts:
-  coder: {installer: deployment-buildinfo, verification: deployment-version, healthcheck: [/usr/local/bin/coder, version, --output, json]}
+  coder: {installer: deployment-buildinfo, verification: deployment-version, enabled_when: coder_cli_enabled, healthcheck: [/usr/local/bin/coder, version, --output, json]}
   go: {installer: go-release, verification: go-sha256, healthcheck: [/usr/local/go/bin/go, version]}
   kubectl: {installer: kubectl-release, verification: kubectl-sha256, healthcheck: [/usr/local/bin/kubectl, version, --client=true]}
   composer: {installer: composer-installer, verification: composer-sha384, healthcheck: [/usr/local/bin/composer, --version]}
   grpcurl: {installer: go-module, verification: go-module-sumdb, healthcheck: [/usr/local/bin/grpcurl, -version]}
   mkcert: {installer: apt, verification: apt-signature, healthcheck: [/usr/bin/mkcert, -version]}
-  aws: {installer: aws-cli-pgp, verification: aws-cli-signing-key, healthcheck: [/usr/local/bin/aws, --version]}
-  glab: {installer: gitlab-release, verification: gitlab-checksum, healthcheck: [/usr/local/bin/glab, version]}
+  aws: {installer: aws-cli-pgp, verification: aws-cli-signing-key, enabled_when: cloud_clis_enabled, healthcheck: [/usr/local/bin/aws, --version]}
+  glab: {installer: gitlab-release, verification: gitlab-checksum, enabled_when: cloud_clis_enabled, healthcheck: [/usr/local/bin/glab, version]}
   rclone: {installer: rclone-release, verification: rclone-sha256, healthcheck: [/usr/local/bin/rclone, version]}
   terraform: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/terraform, version]}
   vault: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/vault, version]}
   packer: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/packer, version]}
   m365-cli: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/m365", --version]}
-  codex: {installer: codex-standalone, verification: official-installer, scope: user, healthcheck: [.local/bin/codex, --version]}
+  codex: {installer: codex-standalone, verification: official-installer, scope: user, enabled_when: codex_standalone_enabled, healthcheck: [.local/bin/codex, --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
 
 # Dynamic includes are entered only when their include task carries the
