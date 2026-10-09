@@ -23,7 +23,7 @@
       - xterm
       - pcmanfm
       # Wallpaper and appearance
-      - nitrogen
+      - feh
       - lxappearance
       - arc-theme
       - adwaita-icon-theme

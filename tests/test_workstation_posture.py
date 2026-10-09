@@ -173,7 +173,7 @@ exit 1
         }
         for name in (
             "xsetroot",
-            "nitrogen",
+            "feh",
             "picom",
             "tint2",
             "dunst",
