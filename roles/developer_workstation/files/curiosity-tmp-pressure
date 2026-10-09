@@ -1,0 +1,122 @@
+#!/bin/bash
+# Managed by curiosity.workstation. Relieve /tmp pressure with systemd-tmpfiles.
+#
+# Run hourly by curiosity-tmp-pressure.timer. When the filesystem holding /tmp
+# is at or above the threshold, it
+#   1. runs the standard age-based cleanup scoped to /tmp
+#      (`systemd-tmpfiles --clean --prefix=/tmp`), then
+#   2. if usage is still at or above the threshold and an aggressive config is
+#      supplied, runs one shorter-age pass scoped to /tmp. The config's static
+#      exclusions are merged at run time with every x/X rule under /tmp that
+#      installed packages ship, so live sockets and session directories keep
+#      their protection, and the merged file lives in the unit's runtime
+#      directory (never in /tmp and never in tmpfiles.d).
+# It never deletes by name pattern and never touches anything outside /tmp.
+# A pass that cannot reduce usage below the threshold logs a warning and the
+# service still exits 0; nothing here is fatal to the machine.
+#
+# Environment:
+#   TMP_PRESSURE_THRESHOLD  percent (1-100), default 85
+#   TMP_PRESSURE_CONFIG     tmpfiles.d-format file for the aggressive pass;
+#                           empty or unset disables the second pass
+#   TMP_PRESSURE_PATH       directory to watch, default /tmp
+#   RUNTIME_DIRECTORY       scratch directory (set by systemd)
+#
+# View activity: journalctl -u curiosity-tmp-pressure --since today
+set -euo pipefail
+
+TARGET="${TMP_PRESSURE_PATH:-/tmp}"
+THRESHOLD="${TMP_PRESSURE_THRESHOLD:-85}"
+CONFIG="${TMP_PRESSURE_CONFIG:-}"
+
+# Under systemd, stdout goes to the journal and a <N> prefix sets the priority.
+P_INFO='' P_WARN='' P_ERR=''
+if [ -n "${JOURNAL_STREAM:-}" ]; then
+    P_INFO='<6>' P_WARN='<4>' P_ERR='<3>'
+fi
+log() { printf '%s%s\n' "$P_INFO" "$*"; }
+warn() { printf '%s%s\n' "$P_WARN" "$*"; }
+die() {
+    printf '%s%s\n' "$P_ERR" "$1" >&2
+    exit "${2:-1}"
+}
+
+case "$THRESHOLD" in
+'' | *[!0-9]*) die "TMP_PRESSURE_THRESHOLD must be an integer, got '${THRESHOLD}'" 2 ;;
+esac
+if [ "$THRESHOLD" -lt 1 ] || [ "$THRESHOLD" -gt 100 ]; then
+    die "TMP_PRESSURE_THRESHOLD must be between 1 and 100, got '${THRESHOLD}'" 2
+fi
+
+usage_percent() {
+    local pct
+    pct=$(df -P -- "$TARGET" | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }') || return 1
+    case "$pct" in
+    '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "$pct"
+}
+
+# A nonzero exit (for example from an unrelated package config problem) must
+# not skip the remaining passes or the final report.
+run_tmpfiles() {
+    local rc=0
+    systemd-tmpfiles --clean --prefix="$TARGET" "$@" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        warn "systemd-tmpfiles --clean exited with status ${rc}; continuing"
+    fi
+    return 0
+}
+
+# Static exclusions from CONFIG first (they win a same-path conflict), then the
+# x/X rules under /tmp from every installed tmpfiles.d file.
+build_aggressive_config() {
+    local out="$1"
+    {
+        grep -Ev '^[[:space:]]*(#|$)' "$CONFIG" || true
+        systemd-tmpfiles --cat-config 2>/dev/null |
+            awk '$1 ~ /^[xX][-!=+~^]*$/ && $2 ~ /^\/tmp(\/|$)/ { print $1, $2 }' || true
+    } | awk '!seen[$0]++' >"$out"
+}
+
+aggressive_pass() {
+    local workdir="${RUNTIME_DIRECTORY:-}" own_workdir=0 merged
+    if [ -z "$workdir" ]; then
+        workdir=$(mktemp -d -p /run curiosity-tmp-pressure.XXXXXX)
+        own_workdir=1
+    fi
+    merged="${workdir%/}/aggressive-tmpfiles.conf"
+    build_aggressive_config "$merged"
+    run_tmpfiles "$merged"
+    rm -f -- "$merged"
+    if [ "$own_workdir" -eq 1 ]; then
+        rmdir -- "$workdir"
+    fi
+}
+
+before=$(usage_percent) || die "cannot determine usage of ${TARGET}"
+if [ "$before" -lt "$THRESHOLD" ]; then
+    exit 0
+fi
+
+log "${TARGET} at ${before}% (threshold ${THRESHOLD}%): running age-based cleanup"
+run_tmpfiles
+after=$(usage_percent) || die "cannot determine usage of ${TARGET} after cleanup"
+log "${TARGET} at ${after}% after the standard age-based pass"
+
+if [ "$after" -ge "$THRESHOLD" ]; then
+    if [ -z "$CONFIG" ]; then
+        warn "${TARGET} still at ${after}%: no aggressive pass configured"
+    elif [ ! -r "$CONFIG" ]; then
+        warn "${TARGET} still at ${after}%: aggressive config ${CONFIG} is not readable"
+    else
+        log "${TARGET} still at ${after}%: running shorter-age pass from ${CONFIG}"
+        aggressive_pass
+        after=$(usage_percent) || die "cannot determine usage of ${TARGET} after cleanup"
+    fi
+fi
+
+if [ "$after" -ge "$THRESHOLD" ]; then
+    warn "${TARGET} still at ${after}% (threshold ${THRESHOLD}%): nothing more can be removed safely; investigate large recent files"
+fi
+log "cleanup done: ${before}% -> ${after}%"

@@ -1,0 +1,14 @@
+# Managed by curiosity.workstation (tmp_hygiene_enabled). Do not edit.
+#
+# Age-based /tmp cleanup, executed by the native systemd-tmpfiles-clean.timer.
+# The 00- prefix makes this the first file that declares /tmp, so it takes
+# precedence over the vendor tmp.conf and any later local file; systemd logs the
+# losing lines as duplicates and ignores them.
+#
+# Type Path Mode User Group Age
+q /tmp 1777 root root {{ tmp_hygiene_max_age }}
+
+# Never age out these live-session paths (X excludes the path and its content).
+{% for rule in tmp_hygiene_exclusions + tmp_hygiene_extra_exclusions %}
+{{ rule }}
+{% endfor %}

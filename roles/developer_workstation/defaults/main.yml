@@ -585,6 +585,52 @@ console_tuning_script_path: /usr/local/sbin/curiosity-console-tuning
 console_tuning_status_path: /usr/local/bin/curiosity-console-status
 console_tuning_config_path: /etc/curiosity/console-tuning.conf
 
+# /tmp hygiene (opt-in): declarative age-based cleanup of /tmp plus an hourly
+# pressure relief for tmpfs /tmp. A drop-in in /etc/tmpfiles.d gives /tmp an
+# age so the native systemd-tmpfiles-clean.timer does the daily cleaning; the
+# curiosity-tmp-pressure timer runs the same cleanup early when /tmp is nearly
+# full. Nothing is deleted by name pattern and live-session paths (X11, tmux,
+# ssh-agent, systemd private directories, snap, AppImage mounts) are excluded.
+# Skipped on workspace profiles and in containers. See docs/tmp-hygiene.md.
+tmp_hygiene_enabled: false
+# Delete /tmp entries not accessed or modified for this long (systemd time
+# span: a number plus m, h, d or w).
+tmp_hygiene_max_age: 3d
+# Hourly pressure check. Set tmp_hygiene_pressure_enabled false to keep only
+# the daily age-based cleanup.
+tmp_hygiene_pressure_enabled: true
+# Act when the filesystem holding /tmp is at or above this percentage.
+tmp_hygiene_pressure_threshold: 85
+# When the standard pass leaves /tmp at or above the threshold, run one more
+# pass with this shorter age. Empty disables the second pass (warn only).
+tmp_hygiene_pressure_age: 1d
+tmp_hygiene_pressure_interval: 1h
+# Paths excluded from age-based cleanup, as tmpfiles.d x/X lines (X also
+# excludes the contents of a directory). The pressure pass additionally merges
+# every x/X rule under /tmp shipped by installed packages at run time.
+tmp_hygiene_exclusions:
+  - X /tmp/.X11-unix
+  - X /tmp/.ICE-unix
+  - X /tmp/.XIM-unix
+  - X /tmp/.font-unix
+  - X /tmp/.X[0-9]*-lock
+  - X /tmp/systemd-private-%b-*
+  - X /tmp/tmux-*
+  - X /tmp/ssh-*
+  - X /tmp/snap-private-tmp
+  - X /tmp/.org.chromium.*
+  - X /tmp/org.chromium.*
+  - X /tmp/.com.google.Chrome.*
+  - X /tmp/com.google.Chrome.*
+  - X /tmp/.mount_*
+  - X /tmp/tsx-*
+  - X /tmp/claude-*
+# Host-specific additions without replacing the list above.
+tmp_hygiene_extra_exclusions: []
+tmp_hygiene_tmpfiles_path: /etc/tmpfiles.d/00-curiosity-tmp.conf
+tmp_hygiene_pressure_script_path: /usr/local/sbin/curiosity-tmp-pressure
+tmp_hygiene_pressure_config_path: /etc/curiosity/tmp-pressure-tmpfiles.conf
+
 # Minimal desktop (Openbox + LightDM + Firefox)
 # Lightweight GUI for machines that only need a browser and terminal.
 # Mutually exclusive with display_config_enabled (GDM/GNOME).
