@@ -87,6 +87,7 @@
     loop_var: dw_user
     label: "{{ dw_user.name }}"
   tags: [minimal-desktop, openbox, xdg-autostart]
+  when: workstation_profile != 'byod-kiosk'
 
 - name: Deploy dunst notification config
   ansible.builtin.include_tasks: minimal-desktop-dunst.yml

@@ -21,6 +21,7 @@ All notable changes to this project are documented here. The format follows
   duplicate tray applets, the compositor or competing screen lockers.
 - `lxpolkit` (available on Ubuntu and Debian) provides the PolicyKit
   authentication agent for GUI privilege prompts; the XDG autostart starts it.
+  The `byod-kiosk` profile keeps XDG autostart off.
 - Multi-user desktop convergence: `dev_users` (default derived from
   `dev_user`) drives per-user home checks, user-systemd policy, Openbox,
   picom, tint2, dunst, rofi, GTK, Firefox and screen-lock settings;

@@ -237,8 +237,9 @@ crashes on an undefined `panel_background_id`.
 ### XDG autostart
 
 The role installs `python3-xdg`, so Openbox's `openbox-xdg-autostart` runs the
-entries in `/etc/xdg/autostart` and `~/.config/autostart` (for example the
-keyring and device tray helpers). The Openbox autostart already starts
+entries in `/etc/xdg/autostart` that are not restricted to other desktops, and
+those in `~/.config/autostart` (for example device helpers such as Solaar or a
+user's own entries). The `byod-kiosk` profile keeps XDG autostart off. The Openbox autostart already starts
 nm-applet, blueman, pasystray and picom itself, and XScreenSaver handles
 locking, so each `dev_users` account gets a managed
 `~/.config/autostart/<id>.desktop` with `Hidden=true` for every id in

@@ -31,11 +31,6 @@
       - pasystray
       - pavucontrol
       - network-manager-gnome
-      # XDG autostart (openbox-xdg-autostart needs PyXDG) and the PolicyKit
-      # authentication agent it starts. lxpolkit exists on Ubuntu and Debian;
-      # policykit-1-gnome was dropped from Debian trixie.
-      - python3-xdg
-      - lxpolkit
       # tint2 helpers: pactl for the volume executor, zenity for the clock
       # calendar, arandr for the top layout's launcher
       - pulseaudio-utils
@@ -50,6 +45,20 @@
       - libnss3-tools
     state: present
     update_cache: true
+
+# openbox-xdg-autostart needs PyXDG; once installed it runs every entry in
+# /etc/xdg/autostart and ~/.config/autostart, including lxpolkit (the PolicyKit
+# authentication agent; policykit-1-gnome was dropped from Debian trixie).
+# The byod-kiosk session replaces the Openbox autostart with one browser and
+# must not pick up desktop helpers, so it keeps XDG autostart disabled.
+- name: Install XDG autostart support and the PolicyKit authentication agent
+  ansible.builtin.apt:
+    name:
+      - python3-xdg
+      - lxpolkit
+    state: present
+    update_cache: false
+  when: workstation_profile != 'byod-kiosk'
 
 - name: Install the Ubuntu greeter wallpaper asset
   ansible.builtin.apt:

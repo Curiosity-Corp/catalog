@@ -145,12 +145,16 @@ def test_layout_shapes() -> None:
 
 
 def test_launcher_items_and_helpers_come_from_installed_packages() -> None:
-    packages = _named(_tasks("minimal-desktop-packages.yml"), "Install minimal desktop packages")[
-        "ansible.builtin.apt"
-    ]["name"]
-    assert {"python3-xdg", "lxpolkit", "pulseaudio-utils", "zenity", "arandr", "pcmanfm", "lxterminal", "pavucontrol"} <= set(packages)
+    tasks = _tasks("minimal-desktop-packages.yml")
+    packages = _named(tasks, "Install minimal desktop packages")["ansible.builtin.apt"]["name"]
+    assert {"pulseaudio-utils", "zenity", "arandr", "pcmanfm", "lxterminal", "pavucontrol"} <= set(packages)
     # policykit-1-gnome is absent from Debian trixie, so it must not be required.
     assert "policykit-1-gnome" not in packages
+    assert "python3-xdg" not in packages
+    # XDG autostart (and the agent it starts) stays off in the single-app kiosk.
+    xdg = _named(tasks, "Install XDG autostart support")
+    assert set(xdg["ansible.builtin.apt"]["name"]) == {"python3-xdg", "lxpolkit"}
+    assert xdg["when"] == "workstation_profile != 'byod-kiosk'"
     top = (LAYOUT_DIR / "top.tint2rc").read_text()
     for desktop_file in ("pcmanfm.desktop", "lxterminal.desktop", "arandr.desktop", "org.pulseaudio.pavucontrol.desktop"):
         assert f"/usr/share/applications/{desktop_file}" in top
@@ -287,6 +291,7 @@ def test_xdg_autostart_is_looped_over_dev_users_and_never_references_the_primary
     }
     task = includes["minimal-desktop-xdg-autostart.yml"]
     assert task["loop"] == "{{ dev_users }}"
+    assert task["when"] == "workstation_profile != 'byod-kiosk'"
     assert task["loop_control"]["loop_var"] == "dw_user"
 
 
