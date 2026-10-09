@@ -1,0 +1,44 @@
+---
+# Rebuild a user's pipx virtualenvs when their base interpreter disappeared.
+#
+# A distro Python upgrade (for example 3.13 -> 3.14) or a home directory copied
+# from another host leaves pipx venvs pointing at a missing /usr/bin/python3.X.
+# `pipx install`/`upgrade` then fails for every package with
+# "package <name> has invalid interpreter". `pipx reinstall-all` rebuilds each
+# venv on the current interpreter and keeps the installed package set.
+#
+# Inputs (set with `vars:` on the include):
+#   pipx_repair_user  account that owns the pipx home
+#   pipx_repair_home  that account's home directory
+- name: Check pipx virtualenv interpreters for {{ pipx_repair_user }}
+  ansible.builtin.command:
+    argv:
+      - pipx
+      - list
+      - --short
+  become: true
+  become_user: "{{ pipx_repair_user }}"
+  environment:
+    HOME: "{{ pipx_repair_home }}"
+    PATH: "/usr/local/bin:{{ pipx_repair_home }}/.local/bin:/usr/bin:/bin"
+  register: _pipx_repair_list
+  changed_when: false
+  failed_when: false
+
+- name: Rebuild pipx virtualenvs with a missing interpreter for {{ pipx_repair_user }}
+  ansible.builtin.command:
+    argv:
+      - pipx
+      - reinstall-all
+      - --python
+      - "{{ pipx_repair_python }}"
+  become: true
+  become_user: "{{ pipx_repair_user }}"
+  environment:
+    HOME: "{{ pipx_repair_home }}"
+    PATH: "/usr/local/bin:{{ pipx_repair_home }}/.local/bin:/usr/bin:/bin"
+  register: _pipx_repair_reinstall
+  changed_when: true
+  when: >-
+    'invalid interpreter' in (_pipx_repair_list.stdout | default(''))
+    or 'invalid interpreter' in (_pipx_repair_list.stderr | default(''))
