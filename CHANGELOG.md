@@ -133,6 +133,9 @@ All notable changes to this project are documented here. The format follows
   not load its bundled `libpython`, and the next pull failed the aws
   healthcheck. Symlinks are now recorded with `link_target`, skipped by the
   snapshot, and re-linked on rollback.
+- `curiosity-display-setup` only considers modes with the aspect ratio of the
+  output's preferred mode. UHD panels also list the larger DCI 4096x2160
+  (17:9) mode, and choosing by area alone switched a 16:9 display to it.
 - `/tmp` hygiene excludes `/tmp/.ziti`, where `ziti-edge-tunnel` keeps its IPC
   and event sockets for the life of the process. A cleaner that removed old
   sockets and then the empty directory left a running tunneler unreachable
