@@ -13,6 +13,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/developer_workstation"
 TASKS = ROLE / "tasks"
+# The autostart's own waits are bounded (two 20 x 0.25 s loops, ~11 s with the
+# fake process probes); this is only a hang guard, sized for a loaded CI runner.
+AUTOSTART_HARNESS_TIMEOUT = 60
 
 
 def _tasks(path: Path) -> list[dict]:
@@ -214,7 +217,7 @@ exit 1
             text=True,
             capture_output=True,
             env=environment,
-            timeout=15,
+            timeout=AUTOSTART_HARNESS_TIMEOUT,
         )
         return result, (root / "state").read_text(), (root / "log").read_text()
 

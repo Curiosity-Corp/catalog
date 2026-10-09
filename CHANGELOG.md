@@ -132,6 +132,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- The autostart screen-lock harness tests no longer time out under full-suite
+  load: the two worst-case handoff paths take ~11 s against a 15 s
+  `subprocess.run` timeout, so the timeout is now a 60 s hang guard (#80).
 - The minimal desktop's tint2 panel config set `panel_background_id = 1` before
   any background block existed and used options tint2 17 rejects
   (`taskbar_name_active_color`, `taskbar_name_color`, `task_icon_size`). tint2
