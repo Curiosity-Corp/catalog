@@ -22,7 +22,7 @@
     <action name="Execute"><command>lxappearance</command></action>
   </item>
   <item label="Wallpaper">
-    <action name="Execute"><command>nitrogen</command></action>
+    <action name="Execute"><command>sh -c 'feh --thumbnails --scale-down --title "Wallpaper: press 1 to apply" --action1 "feh --bg-fill %F" "$HOME/Pictures"'</command></action>
   </item>
   <item label="Reconfigure Openbox">
     <action name="Execute"><command>openbox --reconfigure</command></action>

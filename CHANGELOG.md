@@ -92,6 +92,15 @@ All notable changes to this project are documented here. The format follows
   and leaves kiosk sessions without screen locking by design. Ubuntu-only
   wallpaper assets are now distro-gated; LightDM indicators and rsyslog
   restart validation are corrected.
+- The minimal Openbox profile sets wallpapers with `feh` (restored from
+  `~/.fehbg`) and uses the PipeWire/Pulse `pasystray` volume applet (with
+  `pavucontrol`) because `nitrogen` and `volumeicon-alsa` are no longer
+  packaged in Ubuntu 26.04.
+
+### Fixed
+
+- User-systemd masking tolerates declared units that are absent on the host
+  ("Could not find the requested service").
 
 ## [0.1.0] - planned
 

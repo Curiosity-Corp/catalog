@@ -173,12 +173,12 @@ exit 1
         }
         for name in (
             "xsetroot",
-            "nitrogen",
+            "feh",
             "picom",
             "tint2",
             "dunst",
             "nm-applet",
-            "volumeicon",
+            "pasystray",
             "blueman-applet",
         ):
             scripts[name] = "#!/bin/sh\nexit 0\n"

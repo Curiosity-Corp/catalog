@@ -10,8 +10,12 @@ if command -v curiosity-display-setup >/dev/null 2>&1; then
     curiosity-display-setup || echo "curiosity-display-setup failed; keeping the current display layout." >&2
 fi
 
-# Wallpaper (solid dark fallback)
-nitrogen --restore 2>/dev/null || xsetroot -solid "#1a1a2e" &
+# Wallpaper: feh records the last choice in ~/.fehbg (solid dark fallback)
+if [ -x "$HOME/.fehbg" ]; then
+    "$HOME/.fehbg" &
+else
+    xsetroot -solid "#1a1a2e" &
+fi
 
 # Compositor
 picom --config ~/.config/picom/picom.conf &
@@ -24,7 +28,7 @@ dunst &
 
 # System tray applets
 nm-applet &
-volumeicon &
+pasystray &
 blueman-applet &
 
 # XScreenSaver provides a PAM conversation window for password and optional

@@ -23,12 +23,13 @@
       - xterm
       - pcmanfm
       # Wallpaper and appearance
-      - nitrogen
+      - feh
       - lxappearance
       - arc-theme
       - adwaita-icon-theme
       # System tray applets
-      - volumeicon-alsa
+      - pasystray
+      - pavucontrol
       - network-manager-gnome
       # X11 utilities
       - x11-xserver-utils
