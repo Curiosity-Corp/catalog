@@ -2,7 +2,8 @@
 # =============================================================================
 # Hardware-Specific Drivers and Packages
 # =============================================================================
-# Installs packages, udev rules, and userspace tools based on hardware_profile.
+# Installs packages, udev rules, kernel module options, and userspace tools
+# based on hardware_profile.
 # Profiles defined in defaults/main.yml. Select via -e hardware_profile=z590
 # =============================================================================
 
@@ -12,17 +13,16 @@
 
 - name: Install hardware-specific packages ({{ hardware_profile }})
   ansible.builtin.apt:
-    name: "{{ hardware_profiles[hardware_profile].packages }}"
+    name: "{{ hardware_profiles[hardware_profile].packages | default([]) }}"
     state: present
-  when: hardware_profiles[hardware_profile].packages | length > 0
+  when: hardware_profiles[hardware_profile].packages | default([]) | length > 0
 
 - name: Enable hardware-specific services ({{ hardware_profile }})
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
     state: started
-  loop: "{{ hardware_profiles[hardware_profile].services }}"
-  when: hardware_profiles[hardware_profile].services | length > 0
+  loop: "{{ hardware_profiles[hardware_profile].services | default([]) }}"
 
 # ---- udev rules ----
 
@@ -30,14 +30,85 @@
   ansible.builtin.copy:
     dest: "/etc/udev/rules.d/{{ item.name }}.rules"
     content: "{{ item.content }}"
+    owner: root
+    group: root
     mode: "0644"
   loop: "{{ hardware_profiles[hardware_profile].udev_rules | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
   register: _udev_rules_result
 
+# Reload alone only affects future events; trigger re-evaluates devices that
+# are already plugged in so permissions apply without a replug or reboot.
 - name: Reload udev rules  # noqa: no-handler
-  ansible.builtin.command: udevadm control --reload-rules
+  ansible.builtin.command: udevadm control --reload
   when: _udev_rules_result is changed
   changed_when: true
+
+- name: Re-apply udev rules to present devices  # noqa: no-handler
+  ansible.builtin.command: udevadm trigger
+  when: _udev_rules_result is changed
+  changed_when: true
+
+# ---- kernel module options and loading ----
+
+- name: Install hardware-specific modprobe options ({{ hardware_profile }})
+  ansible.builtin.copy:
+    dest: "/etc/modprobe.d/{{ item.name }}.conf"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ hardware_profiles[hardware_profile].modprobe_options | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _modprobe_options_result
+
+- name: Load hardware-specific kernel modules at boot ({{ hardware_profile }})
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/curiosity-hardware.conf
+    content: |
+      # Managed by the curiosity workstation role (hardware profile: {{ hardware_profile }})
+      {{ hardware_profiles[hardware_profile].kernel_modules | default([]) | join('\n') }}
+    owner: root
+    group: root
+    mode: "0644"
+  when: hardware_profiles[hardware_profile].kernel_modules | default([]) | length > 0
+
+# A module that fails to load (for example, the running kernel is older than
+# the just-installed module package) must not abort the rest of the converge,
+# but it must be reported loudly rather than skipped silently.
+- name: Load hardware-specific kernel modules now ({{ hardware_profile }})
+  block:
+    - name: Load kernel modules
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ hardware_profiles[hardware_profile].kernel_modules | default([]) }}"
+      register: _kernel_modules_result
+  rescue:
+    - name: Report kernel modules that could not be loaded
+      ansible.builtin.debug:
+        msg: >-
+          ATTENTION: could not load kernel modules for hardware profile
+          {{ hardware_profile }}: {{
+          ansible_failed_result.results | default([]) | selectattr('failed')
+          | map(attribute='msg') | join('; ') | default(ansible_failed_result.msg | default('unknown error'), true)
+          }}.
+          A reboot into the newest installed kernel is likely required.
+
+# modprobe.d options only apply when a module loads. A module that was
+# already loaded keeps its old parameters until it is reloaded or the host
+# reboots, so say so instead of silently reporting convergence.
+- name: Report modules still running with stale options  # noqa: no-handler
+  ansible.builtin.debug:
+    msg: >-
+      ATTENTION: modprobe options changed but {{ item.item }} was already
+      loaded; reload the module or reboot to apply the new parameters.
+  loop: "{{ _kernel_modules_result.results | default([]) | rejectattr('changed') | rejectattr('failed') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: _modprobe_options_result is changed
 
 # ---- pipx packages (installed as dev_user) ----
 
@@ -49,8 +120,8 @@
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+    PATH: "/usr/local/bin:{{ dev_user_home }}/.local/bin:/usr/bin:/bin"
   loop: "{{ hardware_profiles[hardware_profile].pipx_packages | default([]) }}"
-  failed_when: false
 
 # ---- Private Internet Access VPN ----
 # PIA publishes versioned installers from its download page, so resolve the
