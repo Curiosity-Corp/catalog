@@ -9,17 +9,17 @@
 
 - name: Ensure Firefox profile directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.mozilla/firefox/default"
+    path: "{{ dw_user.home }}/.mozilla/firefox/default"
     state: directory
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0755"
 
 - name: Deploy Firefox profiles.ini
   ansible.builtin.copy:
-    dest: "{{ dev_user_home }}/.mozilla/firefox/profiles.ini"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.mozilla/firefox/profiles.ini"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
     content: |
       [General]
@@ -35,9 +35,9 @@
 - name: Deploy Firefox user.js (performance + dark theme + no telemetry)
   ansible.builtin.copy:
     src: minimal-desktop/firefox-user.js
-    dest: "{{ dev_user_home }}/.mozilla/firefox/default/user.js"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.mozilla/firefox/default/user.js"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
 
 # --- Enable system certificate trust ---
@@ -46,12 +46,12 @@
 
 - name: Ensure Firefox uses system certificate store
   ansible.builtin.lineinfile:
-    path: "{{ dev_user_home }}/.mozilla/firefox/default/user.js"
+    path: "{{ dw_user.home }}/.mozilla/firefox/default/user.js"
     regexp: 'security\.enterprise_roots\.enabled'
     line: 'user_pref("security.enterprise_roots.enabled", true);'
     create: true
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
 
 # --- Explicitly import internal CAs into every Firefox profile's NSS DB ---
@@ -68,7 +68,7 @@
 
 - name: Enumerate Firefox profile directories with an NSS cert DB
   ansible.builtin.find:
-    paths: "{{ dev_user_home }}/.mozilla/firefox"
+    paths: "{{ dw_user.home }}/.mozilla/firefox"
     file_type: directory
     recurse: false
   register: _firefox_profile_dirs
@@ -103,4 +103,4 @@
   changed_when: _certutil_result.rc == 0
   failed_when: false
   become: true
-  become_user: "{{ dev_user }}"
+  become_user: "{{ dw_user.name }}"

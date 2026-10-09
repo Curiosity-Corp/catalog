@@ -7,6 +7,7 @@
 # persistent mask representation; it is safer than merely deleting a unit,
 # because a package or helper cannot start the unit again until an operator
 # deliberately removes the declared mask. The public defaults remain empty.
+# Included once per item of dev_users with loop_var dw_user (see main.yml).
 
 - name: Validate user systemd mask declarations
   ansible.builtin.assert:
@@ -21,17 +22,26 @@
   loop_control:
     label: "{{ item }}"
 
+- name: Look up the managed user's account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ dw_user.name }}"
+
+- name: Record the managed user's numeric id
+  ansible.builtin.set_fact:
+    _dw_user_uid: "{{ getent_passwd[dw_user.name][1] }}"
+
 - name: Ensure the managed user's systemd unit directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.config/systemd/user"
+    path: "{{ dw_user.home }}/.config/systemd/user"
     state: directory
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0755"
 
 - name: Discover the managed user's runtime directory
   ansible.builtin.stat:
-    path: "/run/user/{{ getent_passwd[dev_user][1] }}"
+    path: "/run/user/{{ _dw_user_uid }}"
   register: _user_systemd_runtime_dir
 
 - name: Probe the managed user's systemd manager
@@ -41,13 +51,13 @@
       - --user
       - show-environment
   become: true
-  become_user: "{{ dev_user }}"
+  become_user: "{{ dw_user.name }}"
   environment:
-    HOME: "{{ dev_user_home }}"
-    USER: "{{ dev_user }}"
-    LOGNAME: "{{ dev_user }}"
-    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+    HOME: "{{ dw_user.home }}"
+    USER: "{{ dw_user.name }}"
+    LOGNAME: "{{ dw_user.name }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ _dw_user_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ _dw_user_uid }}/bus"
   register: _user_systemd_manager
   changed_when: false
   failed_when: false
@@ -61,13 +71,13 @@
     state: stopped
     enabled: false
   become: true
-  become_user: "{{ dev_user }}"
+  become_user: "{{ dw_user.name }}"
   environment:
-    HOME: "{{ dev_user_home }}"
-    USER: "{{ dev_user }}"
-    LOGNAME: "{{ dev_user }}"
-    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+    HOME: "{{ dw_user.home }}"
+    USER: "{{ dw_user.name }}"
+    LOGNAME: "{{ dw_user.name }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ _dw_user_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ _dw_user_uid }}/bus"
   register: _user_systemd_stop
   failed_when: >-
     _user_systemd_stop is failed and
@@ -94,13 +104,13 @@
       - --property=Result
       - "{{ item }}"
   become: true
-  become_user: "{{ dev_user }}"
+  become_user: "{{ dw_user.name }}"
   environment:
-    HOME: "{{ dev_user_home }}"
-    USER: "{{ dev_user }}"
-    LOGNAME: "{{ dev_user }}"
-    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+    HOME: "{{ dw_user.home }}"
+    USER: "{{ dw_user.name }}"
+    LOGNAME: "{{ dw_user.name }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ _dw_user_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ _dw_user_uid }}/bus"
   register: _user_systemd_failure_states
   changed_when: false
   failed_when: false
@@ -120,13 +130,13 @@
       - reset-failed
       - "{{ item.item }}"
   become: true
-  become_user: "{{ dev_user }}"
+  become_user: "{{ dw_user.name }}"
   environment:
-    HOME: "{{ dev_user_home }}"
-    USER: "{{ dev_user }}"
-    LOGNAME: "{{ dev_user }}"
-    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+    HOME: "{{ dw_user.home }}"
+    USER: "{{ dw_user.name }}"
+    LOGNAME: "{{ dw_user.name }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ _dw_user_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ _dw_user_uid }}/bus"
   register: _user_systemd_reset_failed
   changed_when: >-
     item.stdout is search('(?m)^ActiveState=failed$') or
@@ -146,7 +156,7 @@
 
 - name: Remove stale default-target enablement links
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.config/systemd/user/default.target.wants/{{ item }}"
+    path: "{{ dw_user.home }}/.config/systemd/user/default.target.wants/{{ item }}"
     state: absent
   loop: "{{ workstation_user_systemd_masked_units }}"
   loop_control:
@@ -154,7 +164,7 @@
 
 - name: Remove stale timer-target enablement links
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.config/systemd/user/timers.target.wants/{{ item }}"
+    path: "{{ dw_user.home }}/.config/systemd/user/timers.target.wants/{{ item }}"
     state: absent
   loop: "{{ workstation_user_systemd_masked_units }}"
   loop_control:
@@ -163,11 +173,11 @@
 - name: Enforce native systemd masks for declared user units
   ansible.builtin.file:
     src: /dev/null
-    dest: "{{ dev_user_home }}/.config/systemd/user/{{ item }}"
+    dest: "{{ dw_user.home }}/.config/systemd/user/{{ item }}"
     state: link
     force: true
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
   loop: "{{ workstation_user_systemd_masked_units }}"
   loop_control:
     label: "{{ item }}"
@@ -177,13 +187,13 @@
     daemon_reload: true
     scope: user
   become: true
-  become_user: "{{ dev_user }}"
+  become_user: "{{ dw_user.name }}"
   environment:
-    HOME: "{{ dev_user_home }}"
-    USER: "{{ dev_user }}"
-    LOGNAME: "{{ dev_user }}"
-    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[dev_user][1] }}"
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ getent_passwd[dev_user][1] }}/bus"
+    HOME: "{{ dw_user.home }}"
+    USER: "{{ dw_user.name }}"
+    LOGNAME: "{{ dw_user.name }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ _dw_user_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ _dw_user_uid }}/bus"
   changed_when: false
   failed_when: false
   no_log: true

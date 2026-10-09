@@ -337,7 +337,7 @@ def main() -> None:
             "Ensure the user pipx binary directory exists",
         ),
         "tasks/science-tools.yml": ("state: latest",),
-        "tasks/hardware-drivers.yml": ("state: latest",),
+        "tasks/hardware-pipx.yml": ("state: latest",),
         "tasks/languages.yml": (
             "https://go.dev/dl/?mode=json",
             "sha256:{{ _go_latest_asset.sha256 }}",

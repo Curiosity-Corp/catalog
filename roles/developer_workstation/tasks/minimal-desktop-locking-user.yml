@@ -1,0 +1,48 @@
+---
+# Per-user screen-lock settings. Included once per item of dev_users with
+# loop_var dw_user (see minimal-desktop-locking.yml).
+# XScreenSaver's PAM conversation window displays each authentication prompt
+# supplied by the host login stack, including a second factor when configured.
+- name: Read the graphical session user's shadow entry
+  ansible.builtin.command:
+    argv:
+      - getent
+      - shadow
+      - "{{ dw_user.name }}"
+  register: _minimal_desktop_shadow_entry
+  changed_when: false
+  no_log: true
+
+- name: Determine whether the graphical session user has an unlockable password
+  ansible.builtin.set_fact:
+    _minimal_desktop_user_has_password: >-
+      {{ (_minimal_desktop_shadow_entry.stdout.split(':')[1] | default('')) not in ['', '!', '*'] and
+         (_minimal_desktop_shadow_entry.stdout.split(':')[1] | default('') | regex_search('^[!*]')) is none }}
+  no_log: true
+
+- name: Require an unlockable account credential before enabling automatic locking
+  ansible.builtin.assert:
+    that:
+      - _minimal_desktop_user_has_password | bool
+      - minimal_desktop_idle_lock_minutes | int > 0
+      - minimal_desktop_idle_lock_minutes | int <= 1440
+    fail_msg: >-
+      Automatic screen locking requires an unlockable account credential for
+      {{ dw_user.name }} and minimal_desktop_idle_lock_minutes between 1 and 1440.
+      Configure a working host PAM credential before enabling this profile.
+      This role will not change account passwords.
+
+- name: Configure XScreenSaver to blank and lock after the configured idle period
+  ansible.builtin.blockinfile:
+    path: "{{ dw_user.home }}/.xscreensaver"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
+    mode: "0644"
+    create: true
+    marker: "! {mark} ANSIBLE MANAGED OPENBOX LOCK SETTINGS"
+    block: |
+      timeout: {{ (minimal_desktop_idle_lock_minutes | int) // 60 }}:{{ '%02d' | format((minimal_desktop_idle_lock_minutes | int) % 60) }}:00
+      lock: True
+      lockTimeout: 0:00:00
+      mode: blank
+      splash: False

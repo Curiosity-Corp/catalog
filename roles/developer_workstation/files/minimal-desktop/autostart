@@ -3,6 +3,13 @@
 # Set cursor immediately
 xsetroot -cursor_name left_ptr &
 
+# Preferred display layout. LightDM runs the same helper for its own X server;
+# startx sessions (pinned VTs) have no such hook. The helper is only installed
+# when minimal_desktop_display_setup_enabled is true.
+if command -v curiosity-display-setup >/dev/null 2>&1; then
+    curiosity-display-setup || echo "curiosity-display-setup failed; keeping the current display layout." >&2
+fi
+
 # Wallpaper (solid dark fallback)
 nitrogen --restore 2>/dev/null || xsetroot -solid "#1a1a2e" &
 

@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# Per-user pre-flight validation
+# =============================================================================
+# Included once per item of dev_users with loop_var dw_user. Never reference
+
+# every iteration onto the primary account.
+
+- name: Verify the managed user exists
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ dw_user.name }}"
+
+- name: Verify the managed user's home directory exists
+  ansible.builtin.stat:
+    path: "{{ dw_user.home }}"
+  register: _dw_user_home_stat
+
+- name: Fail if the managed user's home directory is missing
+  ansible.builtin.assert:
+    that:
+      - _dw_user_home_stat.stat.exists
+      - _dw_user_home_stat.stat.isdir
+    fail_msg: >-
+      Home directory {{ dw_user.home }} does not exist for user {{ dw_user.name }}

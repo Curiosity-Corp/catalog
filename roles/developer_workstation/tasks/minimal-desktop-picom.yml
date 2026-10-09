@@ -5,16 +5,16 @@
 
 - name: Ensure picom config directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.config/picom"
+    path: "{{ dw_user.home }}/.config/picom"
     state: directory
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0755"
 
 - name: Deploy picom config (GLX, Intel-optimized, no shadows/blur)
   ansible.builtin.copy:
     src: minimal-desktop/picom.conf
-    dest: "{{ dev_user_home }}/.config/picom/picom.conf"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.config/picom/picom.conf"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"

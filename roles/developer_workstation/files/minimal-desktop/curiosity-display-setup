@@ -1,0 +1,110 @@
+#!/bin/sh
+# Pick one output, drive it at its best mode, and make it primary.
+# Managed by Ansible.
+#
+# Preferences come from /etc/curiosity/display-outputs (override with
+# CURIOSITY_DISPLAY_OUTPUTS): one xrandr output name per line, blank lines and
+# '#' comments ignored. The first preferred output that is connected wins;
+# otherwise the first connected output is used. Its largest mode is applied at
+# the highest refresh rate that mode offers, and the output becomes primary.
+# Every other connected output is switched off only when a preferred output
+# was found, so an empty or unmatched list never blanks a working screen.
+#
+# Runs as the LightDM display-setup-script (as root, before the greeter) and
+# from the Openbox autostart (startx sessions have no display-setup hook).
+# Nothing here may block a login: LightDM stops the display when its
+# display-setup-script fails, so the script always exits 0 and reports anything
+# it could not do on stderr.
+
+config=${CURIOSITY_DISPLAY_OUTPUTS:-/etc/curiosity/display-outputs}
+prog=curiosity-display-setup
+
+warn() {
+    printf '%s: %s\n' "$prog" "$*" >&2
+}
+
+if ! query=$(xrandr --query 2>&1); then
+    warn "cannot query the display: $query"
+    exit 0
+fi
+
+# One record per line: "C <output>" for a connected output and
+# "M <output> <width> <height> <rate>" for each progressive mode refresh rate.
+records=$(printf '%s\n' "$query" | awk '
+    $2 == "connected" || $2 == "disconnected" {
+        output = $1
+        if ($2 == "connected") print "C", output
+        next
+    }
+    output != "" && $1 ~ /^[0-9]+x[0-9]+$/ {
+        split($1, size, "x")
+        for (i = 2; i <= NF; i++) {
+            rate = $i
+            gsub(/[*+]/, "", rate)
+            if (rate ~ /^[0-9]+(\.[0-9]+)?$/) print "M", output, size[1], size[2], rate
+        }
+    }')
+
+connected=$(printf '%s\n' "$records" | awk '$1 == "C" { print $2 }')
+if [ -z "$connected" ]; then
+    warn "no connected output; leaving the display unchanged"
+    exit 0
+fi
+
+target=
+found_preferred=0
+if [ -r "$config" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        name=$(printf '%s\n' "${line%%#*}" | tr -d '[:space:]')
+        [ -n "$name" ] || continue
+        case "$name" in
+            *[!A-Za-z0-9_.:-]*)
+                warn "ignoring invalid output name in $config: $name"
+                continue
+                ;;
+        esac
+        if printf '%s\n' "$connected" | grep -qx -- "$name"; then
+            target=$name
+            found_preferred=1
+            break
+        fi
+    done <"$config"
+elif [ -e "$config" ]; then
+    warn "cannot read $config; using the first connected output"
+fi
+
+if [ -z "$target" ]; then
+    target=$(printf '%s\n' "$connected" | head -n 1)
+fi
+
+best=$(printf '%s\n' "$records" | awk -v out="$target" '
+    $1 == "M" && $2 == out {
+        area = $3 * $4
+        if (area > best_area || (area == best_area && $5 + 0 > best_rate + 0)) {
+            best_area = area
+            best_width = $3
+            best_height = $4
+            best_rate = $5
+        }
+    }
+    END { if (best_area > 0) print best_width "x" best_height, best_rate }')
+
+if [ -n "$best" ]; then
+    mode=${best% *}
+    rate=${best#* }
+    set -- --output "$target" --mode "$mode" --rate "$rate" --primary
+else
+    warn "no usable mode listed for $target; using its preferred mode"
+    set -- --output "$target" --auto --primary
+fi
+
+if [ "$found_preferred" -eq 1 ]; then
+    for other in $connected; do
+        [ "$other" = "$target" ] || set -- "$@" --output "$other" --off
+    done
+fi
+
+if ! result=$(xrandr "$@" 2>&1); then
+    warn "xrandr failed for $target: $result"
+    exit 0
+fi

@@ -1,0 +1,19 @@
+# shellcheck shell=sh
+# Managed by Ansible. Starts a user's graphical session on the virtual terminal
+# pinned to that user. The shell is replaced by startx, so ending the X session
+# ends the login. Nothing happens on any other terminal, for any other user,
+# over SSH, or inside an existing graphical session.
+if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${SSH_CONNECTION:-}" ] \
+    && command -v startx >/dev/null 2>&1; then
+    curiosity_pinned_tty=$(tty 2>/dev/null) || curiosity_pinned_tty=
+    curiosity_pinned_user=$(id -un 2>/dev/null) || curiosity_pinned_user=
+    case "${curiosity_pinned_user}:${curiosity_pinned_tty}" in
+{% for session in minimal_desktop_pinned_vt_sessions %}
+    {{ session.user }}:/dev/tty{{ session.vt | int }})
+        unset curiosity_pinned_tty curiosity_pinned_user
+        exec startx /usr/bin/openbox-session -- vt{{ session.vt | int }} -keeptty
+        ;;
+{% endfor %}
+    esac
+    unset curiosity_pinned_tty curiosity_pinned_user
+fi

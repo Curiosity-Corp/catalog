@@ -1,0 +1,107 @@
+---
+# =============================================================================
+# Minimal Desktop — Per-user graphical sessions pinned to a virtual terminal
+# =============================================================================
+# Each pinned user gets a getty on their VT that prefills the account name (the
+# password is still required) and a login-shell hook that starts Openbox under
+# startx on that VT only. LightDM keeps the VTs from minimal_desktop_lightdm_
+# minimum_vt upward, so pinned VTs must sit below it. The per-user Openbox
+# autostart deployed for every dev_users entry starts the PAM screen locker in
+# these sessions too.
+
+- name: Validate pinned VT sessions
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_pinned_vt_sessions is sequence
+      - minimal_desktop_pinned_vt_sessions is not string
+      - minimal_desktop_pinned_vt_sessions | selectattr('user', 'defined') | selectattr('vt', 'defined') | list | length == minimal_desktop_pinned_vt_sessions | length
+      - minimal_desktop_pinned_vt_sessions | map(attribute='user') | select('match', '^[A-Za-z0-9_][A-Za-z0-9_.@-]*$') | list | length == minimal_desktop_pinned_vt_sessions | length
+      - minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('string') | select('match', '^[1-9][0-9]?$') | list | length == minimal_desktop_pinned_vt_sessions | length
+      - minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('int') | select('lt', minimal_desktop_lightdm_minimum_vt | int) | list | length == minimal_desktop_pinned_vt_sessions | length
+      - minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('int') | unique | list | length == minimal_desktop_pinned_vt_sessions | length
+      - minimal_desktop_pinned_vt_sessions | map(attribute='user') | unique | list | length == minimal_desktop_pinned_vt_sessions | length
+      - minimal_desktop_pinned_vt_sessions | map(attribute='user') | difference(dev_users | map(attribute='name') | list) | length == 0
+      - workstation_profile != 'byod-kiosk' or minimal_desktop_pinned_vt_sessions | length == 0
+    fail_msg: >-
+      minimal_desktop_pinned_vt_sessions must be a list of {user, vt} items with
+      unique users and unique VTs, every VT between 1 and 63 and below
+      minimal_desktop_lightdm_minimum_vt ({{ minimal_desktop_lightdm_minimum_vt }}),
+      and every user listed in dev_users so the per-user Openbox and screen-lock
+      configuration exists. The byod-kiosk profile does not support pinned sessions.
+
+- name: Install xinit for pinned graphical sessions
+  ansible.builtin.apt:
+    name: xinit
+    state: present
+    update_cache: false
+  when: minimal_desktop_pinned_vt_sessions | length > 0
+
+- name: Ensure getty drop-in directories exist for pinned VTs
+  ansible.builtin.file:
+    path: "/etc/systemd/system/getty@tty{{ item.vt | int }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ minimal_desktop_pinned_vt_sessions }}"
+  loop_control:
+    label: "tty{{ item.vt | int }}"
+
+- name: Prefill the pinned user name on the VT login prompt
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/getty@tty{{ item.vt | int }}.service.d/curiosity-pinned-user.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible. The login prompt is skipped and login(1) is started
+      # for the pinned account, which still asks for the password.
+      [Service]
+      ExecStart=
+      ExecStart=-/usr/sbin/agetty --noreset --noclear --skip-login --login-options '-p -- {{ item.user }}' --issue-file=/etc/issue:/etc/issue.d:/run/issue.d:/usr/lib/issue.d - ${TERM}
+  loop: "{{ minimal_desktop_pinned_vt_sessions }}"
+  loop_control:
+    label: "tty{{ item.vt | int }} -> {{ item.user }}"
+  notify: Reload systemd
+
+- name: Find previously managed getty drop-ins
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: curiosity-pinned-user.conf
+    recurse: true
+  register: _pinned_vt_existing_dropins
+
+- name: Remove getty drop-ins for VTs that are no longer pinned
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _pinned_vt_existing_dropins.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  notify: Reload systemd
+  when: >-
+    (item.path | regex_replace('^.*/getty@(tty[0-9]+)[.]service[.]d/[^/]+$', '\1'))
+    not in (minimal_desktop_pinned_vt_sessions | map(attribute='vt') | map('int') | map('regex_replace', '^', 'tty') | list)
+
+- name: Enable getty on the pinned VTs
+  ansible.builtin.systemd_service:
+    name: "getty@tty{{ item.vt | int }}.service"
+    enabled: true
+  loop: "{{ minimal_desktop_pinned_vt_sessions }}"
+  loop_control:
+    label: "tty{{ item.vt | int }}"
+
+- name: Start each pinned user's graphical session from their VT login shell
+  ansible.builtin.template:
+    src: curiosity-pinned-x.sh.j2
+    dest: /etc/profile.d/curiosity-pinned-x.sh
+    owner: root
+    group: root
+    mode: "0644"
+  when: minimal_desktop_pinned_vt_sessions | length > 0
+
+- name: Remove the pinned session login hook when no VT is pinned
+  ansible.builtin.file:
+    path: /etc/profile.d/curiosity-pinned-x.sh
+    state: absent
+  when: minimal_desktop_pinned_vt_sessions | length == 0

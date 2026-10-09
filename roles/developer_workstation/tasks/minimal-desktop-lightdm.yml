@@ -3,6 +3,33 @@
 # Minimal Desktop — LightDM Greeter Configuration
 # =============================================================================
 
+- name: Validate LightDM settings
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_greeter in ['gtk', 'slick']
+      - minimal_desktop_lightdm_minimum_vt | string is match('^[0-9]+$')
+      - minimal_desktop_lightdm_minimum_vt | int >= 1
+      - minimal_desktop_lightdm_minimum_vt | int <= 63
+      - minimal_desktop_lightdm_remove_dropins is sequence
+      - minimal_desktop_lightdm_remove_dropins is not string
+      - minimal_desktop_lightdm_remove_dropins | map('string') | select('match', '^[A-Za-z0-9_.-]+[.]conf$') | list | length == minimal_desktop_lightdm_remove_dropins | length
+      - >-
+        minimal_desktop_lightdm_remove_dropins
+        | intersect(['10-virtual-terminal.conf', '20-openbox-session.conf', '30-greeter.conf', '40-xserver-wrapper.conf', '50-autologin.conf', '60-display-setup.conf'])
+        | length == 0
+    fail_msg: >-
+      minimal_desktop_greeter must be gtk or slick,
+      minimal_desktop_lightdm_minimum_vt must be a VT number from 1 to 63, and
+      minimal_desktop_lightdm_remove_dropins must list plain *.conf file names
+      that this role does not manage itself.
+
+- name: Install the slick greeter
+  ansible.builtin.apt:
+    name: slick-greeter
+    state: present
+    update_cache: false
+  when: minimal_desktop_greeter == 'slick'
+
 - name: Configure LightDM GTK greeter (dark, minimal, no animations)
   ansible.builtin.copy:
     dest: /etc/lightdm/lightdm-gtk-greeter.conf
@@ -27,6 +54,26 @@
       clock-format = %H:%M
       panel-position = top
       position = 50% 50%
+  when: minimal_desktop_greeter == 'gtk'
+
+- name: Configure LightDM slick greeter (dark, minimal)
+  ansible.builtin.copy:
+    dest: /etc/lightdm/slick-greeter.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Greeter]
+      theme-name=Arc-Dark
+      icon-theme-name=Adwaita
+      font-name=Sans 10
+      background=#1a1a2e
+      draw-user-backgrounds=false
+      draw-grid=false
+      show-hostname=true
+      show-clock=true
+      clock-format=%H:%M
+  when: minimal_desktop_greeter == 'slick'
 
 - name: Ensure /etc/lightdm/lightdm.conf.d exists
   ansible.builtin.file:
@@ -36,7 +83,27 @@
     group: root
     mode: "0755"
 
-- name: Keep the LightDM X session on VT8, leaving lower VTs for TTYs
+- name: Select the LightDM greeter
+  ansible.builtin.copy:
+    dest: /etc/lightdm/lightdm.conf.d/30-greeter.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Seat:*]
+      greeter-session={{ 'slick-greeter' if minimal_desktop_greeter == 'slick' else 'lightdm-gtk-greeter' }}
+
+- name: Start the Openbox session for users who log in through LightDM
+  ansible.builtin.copy:
+    dest: /etc/lightdm/lightdm.conf.d/20-openbox-session.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Seat:*]
+      user-session=openbox
+
+- name: Keep the LightDM X session at or above the configured VT, leaving lower VTs for TTYs
   ansible.builtin.copy:
     dest: /etc/lightdm/lightdm.conf.d/10-virtual-terminal.conf
     owner: root
@@ -44,7 +111,58 @@
     mode: "0644"
     content: |
       [LightDM]
-      minimum-vt=8
+      minimum-vt={{ minimal_desktop_lightdm_minimum_vt | int }}
+
+- name: Install the LightDM X server wrapper that keeps VT switching enabled
+  ansible.builtin.copy:
+    src: minimal-desktop/lightdm-xserver-wrapper
+    dest: /usr/local/bin/lightdm-xserver-wrapper
+    owner: root
+    group: root
+    mode: "0755"
+  when: minimal_desktop_lightdm_vtswitch_wrapper | bool
+
+- name: Point LightDM at the X server wrapper
+  ansible.builtin.copy:
+    dest: /etc/lightdm/lightdm.conf.d/40-xserver-wrapper.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Seat:*]
+      xserver-command=/usr/local/bin/lightdm-xserver-wrapper -core
+  when: minimal_desktop_lightdm_vtswitch_wrapper | bool
+
+- name: Remove the LightDM X server wrapper drop-in when the wrapper is disabled
+  ansible.builtin.file:
+    path: /etc/lightdm/lightdm.conf.d/40-xserver-wrapper.conf
+    state: absent
+  when: not (minimal_desktop_lightdm_vtswitch_wrapper | bool)
+
+# A wrapper installed by hand at the same path is left alone: only a file
+# carrying this role's marker is removed.
+- name: Find a role-managed LightDM X server wrapper
+  ansible.builtin.find:
+    paths: /usr/local/bin
+    patterns: lightdm-xserver-wrapper
+    contains: 'Managed by Ansible'
+  register: _lightdm_managed_wrapper
+  when: not (minimal_desktop_lightdm_vtswitch_wrapper | bool)
+
+- name: Remove the role-managed LightDM X server wrapper when it is disabled
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _lightdm_managed_wrapper.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: not (minimal_desktop_lightdm_vtswitch_wrapper | bool)
+
+- name: Remove LightDM drop-ins that conflict with this configuration
+  ansible.builtin.file:
+    path: "/etc/lightdm/lightdm.conf.d/{{ item }}"
+    state: absent
+  loop: "{{ minimal_desktop_lightdm_remove_dropins }}"
 
 - name: Configure LightDM auto-login
   ansible.builtin.copy:
@@ -76,3 +194,9 @@
     cmd: systemctl set-default graphical.target
   when: _systemd_default_target.stdout | trim != 'graphical.target'
   changed_when: true
+
+- name: Enable and start LightDM
+  ansible.builtin.systemd_service:
+    name: lightdm
+    enabled: true
+    state: started

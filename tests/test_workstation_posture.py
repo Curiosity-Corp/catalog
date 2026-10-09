@@ -224,7 +224,9 @@ def test_openbox_uses_pam_aware_locker_and_keeps_tty_locking() -> None:
     remove_i3lock = _named(packages, "Remove the single-prompt i3lock")
     assert set(remove_i3lock["ansible.builtin.apt"]["name"]) == {"i3lock", "xss-lock"}
 
-    lock_tasks = _tasks(TASKS / "minimal-desktop-locking.yml")
+    lock_tasks = _tasks(TASKS / "minimal-desktop-locking.yml") + _tasks(
+        TASKS / "minimal-desktop-locking-user.yml"
+    )
     config = _named(lock_tasks, "Configure XScreenSaver to blank")[
         "ansible.builtin.blockinfile"
     ]["block"]

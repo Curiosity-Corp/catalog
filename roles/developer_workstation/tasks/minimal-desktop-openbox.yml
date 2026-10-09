@@ -5,48 +5,48 @@
 
 - name: Ensure Openbox config directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.config/openbox"
+    path: "{{ dw_user.home }}/.config/openbox"
     state: directory
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0755"
 
 - name: Deploy Openbox rc.xml (keybindings, theme, window rules)
   ansible.builtin.copy:
     src: minimal-desktop/rc.xml
-    dest: "{{ dev_user_home }}/.config/openbox/rc.xml"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.config/openbox/rc.xml"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
 
 - name: Deploy Openbox menu.xml
   ansible.builtin.copy:
     src: minimal-desktop/menu.xml
-    dest: "{{ dev_user_home }}/.config/openbox/menu.xml"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.config/openbox/menu.xml"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
 
 - name: Deploy Openbox autostart
   ansible.builtin.copy:
     src: minimal-desktop/autostart
-    dest: "{{ dev_user_home }}/.config/openbox/autostart"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.config/openbox/autostart"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0755"
 
 - name: Ensure Onyx-Large theme directory exists
   ansible.builtin.file:
-    path: "{{ dev_user_home }}/.themes/Onyx-Large/openbox-3"
+    path: "{{ dw_user.home }}/.themes/Onyx-Large/openbox-3"
     state: directory
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0755"
 
 - name: Deploy Onyx-Large theme (bigger titlebars)
   ansible.builtin.copy:
     src: minimal-desktop/onyx-large-themerc
-    dest: "{{ dev_user_home }}/.themes/Onyx-Large/openbox-3/themerc"
-    owner: "{{ dev_user }}"
-    group: "{{ dev_user }}"
+    dest: "{{ dw_user.home }}/.themes/Onyx-Large/openbox-3/themerc"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
     mode: "0644"
