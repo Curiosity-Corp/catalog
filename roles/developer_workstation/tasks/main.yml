@@ -341,6 +341,19 @@
     - ansible_system == 'Linux'
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
+- name: Include GRUB autoboot (never wait at the boot menu)
+  ansible.builtin.include_tasks: grub-autoboot.yml
+  tags: [grub, boot, system]
+  # Machine-level bootloader policy: skip containers, non-x86_64 hosts and the
+  # container-safe workspace profile. The task file also skips hosts that have
+  # no /etc/default/grub.
+  when:
+    - grub_autoboot_enabled | default(true) | bool
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_system == 'Linux'
+    - ansible_architecture == 'x86_64'
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include /tmp hygiene (age-based cleanup and pressure relief)
   ansible.builtin.include_tasks: tmp-hygiene.yml
   tags: [tmp-hygiene, system]

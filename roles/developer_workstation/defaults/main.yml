@@ -1035,3 +1035,14 @@ hardware_profiles:
     udev_rules: []
     pia_vpn: false
     console_diagnostics: true
+
+# -----------------------------------------------------------------------------
+# GRUB autoboot
+# -----------------------------------------------------------------------------
+# Boot the default GRUB entry without waiting at the menu. Ubuntu keeps the menu
+# open after a boot it considers failed because GRUB_RECORDFAIL_TIMEOUT is
+# unset. Installs a drop-in under /etc/default/grub.d (never edits
+# /etc/default/grub) and runs update-grub when it changes. x86_64 Linux only,
+# skipped in containers and on hosts without /etc/default/grub.
+grub_autoboot_enabled: true
+grub_autoboot_dropin_path: /etc/default/grub.d/90-curiosity-autoboot.cfg

@@ -1,0 +1,97 @@
+---
+# =============================================================================
+# GRUB autoboot: always boot the default entry without waiting at the menu
+# =============================================================================
+# Included from main.yml only when grub_autoboot_enabled is true, on x86_64
+# Linux hosts outside containers, on the desktop/thin-client/byod-kiosk
+# profiles.
+#
+# Ubuntu keeps the GRUB menu open after any boot it considers failed
+# (recordfail) because GRUB_RECORDFAIL_TIMEOUT is unset, so an unattended
+# workstation can sit at the menu indefinitely. A drop-in under
+# /etc/default/grub.d (sourced by grub-mkconfig after /etc/default/grub) pins a
+# short timeout instead. /etc/default/grub itself is never modified.
+# =============================================================================
+
+- name: Check for the GRUB defaults file
+  ansible.builtin.stat:
+    path: /etc/default/grub
+  register: _grub_autoboot_defaults
+
+- name: Install GRUB autoboot drop-in
+  when: _grub_autoboot_defaults.stat.exists
+  block:
+    - name: Ensure the GRUB defaults drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/default/grub.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the GRUB autoboot drop-in
+      ansible.builtin.copy:
+        dest: "{{ grub_autoboot_dropin_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (curiosity catalog): boot the default entry without waiting at the menu.
+          GRUB_TIMEOUT_STYLE=hidden
+          GRUB_TIMEOUT=2
+          GRUB_RECORDFAIL_TIMEOUT=2
+      register: _grub_autoboot_dropin
+
+    - name: Locate update-grub
+      ansible.builtin.stat:
+        path: /usr/sbin/update-grub
+      register: _grub_autoboot_update_grub
+
+    - name: Locate grub-mkconfig
+      ansible.builtin.stat:
+        path: /usr/sbin/grub-mkconfig
+      register: _grub_autoboot_mkconfig
+
+    - name: Regenerate the GRUB configuration with update-grub
+      ansible.builtin.command: /usr/sbin/update-grub
+      changed_when: true
+      when:
+        - _grub_autoboot_dropin is changed
+        - _grub_autoboot_update_grub.stat.exists | default(false)
+
+    - name: Regenerate the GRUB configuration with grub-mkconfig
+      ansible.builtin.command: /usr/sbin/grub-mkconfig -o /boot/grub/grub.cfg
+      changed_when: true
+      when:
+        - _grub_autoboot_dropin is changed
+        - not (_grub_autoboot_update_grub.stat.exists | default(false))
+        - _grub_autoboot_mkconfig.stat.exists | default(false)
+
+    - name: Note that no GRUB regeneration tool is installed
+      ansible.builtin.debug:
+        msg: >-
+          Neither update-grub nor grub-mkconfig is installed; the autoboot
+          drop-in takes effect the next time the GRUB configuration is generated.
+      when:
+        - _grub_autoboot_dropin is changed
+        - not (_grub_autoboot_update_grub.stat.exists | default(false))
+        - not (_grub_autoboot_mkconfig.stat.exists | default(false))
+
+    - name: Check the generated GRUB configuration
+      ansible.builtin.stat:
+        path: /boot/grub/grub.cfg
+      register: _grub_autoboot_cfg
+      when:
+        - _grub_autoboot_dropin is changed
+        - (_grub_autoboot_update_grub.stat.exists | default(false)) or (_grub_autoboot_mkconfig.stat.exists | default(false))
+        - not ansible_check_mode
+
+    - name: Verify /boot/grub/grub.cfg exists after regeneration
+      ansible.builtin.assert:
+        that:
+          - _grub_autoboot_cfg.stat.exists
+        fail_msg: /boot/grub/grub.cfg is missing after regenerating the GRUB configuration.
+      when:
+        - _grub_autoboot_dropin is changed
+        - (_grub_autoboot_update_grub.stat.exists | default(false)) or (_grub_autoboot_mkconfig.stat.exists | default(false))
+        - not ansible_check_mode
