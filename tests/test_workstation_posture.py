@@ -911,3 +911,90 @@ def test_openbox_zone_work_area_uses_ewmh_and_falls_back() -> None:
 
     module.run = failing
     assert module.work_area() == (0, 0, 3840, 2160)
+
+
+# ---------------------------------------------------------------------------
+# GRUB autoboot drop-in
+# ---------------------------------------------------------------------------
+
+GRUB_AUTOBOOT_EXPECTED = (
+    "# Managed by Ansible (curiosity catalog): boot the default entry without "
+    "waiting at the menu.\n"
+    "GRUB_TIMEOUT_STYLE=hidden\n"
+    "GRUB_TIMEOUT=2\n"
+    "GRUB_RECORDFAIL_TIMEOUT=2\n"
+)
+
+
+def _grub_block() -> list[dict]:
+    tasks = _tasks(TASKS / "grub-autoboot.yml")
+    return _named(tasks, "Install GRUB autoboot drop-in")["block"]
+
+
+def test_grub_autoboot_dropin_content_mode_and_owner():
+    dropin = _named(_grub_block(), "Install the GRUB autoboot drop-in")
+    copy = dropin["ansible.builtin.copy"]
+    assert copy["content"] == GRUB_AUTOBOOT_EXPECTED
+    assert copy["owner"] == "root"
+    assert copy["group"] == "root"
+    assert copy["mode"] == "0644"
+    assert copy["dest"] == "{{ grub_autoboot_dropin_path }}"
+    assert dropin["register"] == "_grub_autoboot_dropin"
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["grub_autoboot_dropin_path"] == (
+        "/etc/default/grub.d/90-curiosity-autoboot.cfg"
+    )
+    assert defaults["grub_autoboot_enabled"] is True
+
+
+def test_grub_autoboot_is_gated_on_grub_defaults_and_never_edits_them():
+    top = _tasks(TASKS / "grub-autoboot.yml")
+    stat = top[0]["ansible.builtin.stat"]
+    assert stat["path"] == "/etc/default/grub"
+    block_task = _named(top, "Install GRUB autoboot drop-in")
+    assert block_task["when"] == "_grub_autoboot_defaults.stat.exists"
+    text = (TASKS / "grub-autoboot.yml").read_text()
+    assert "lineinfile" not in text
+    assert "path: /etc/default/grub\n" in text  # only the stat above
+
+
+def test_grub_autoboot_include_gating():
+    main = _tasks(TASKS / "main.yml")
+    include = _named(main, "Include GRUB autoboot")
+    assert include["ansible.builtin.include_tasks"] == "grub-autoboot.yml"
+    conditions = include["when"]
+    assert "grub_autoboot_enabled | default(true) | bool" in conditions
+    assert "workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']" in conditions
+    assert "ansible_system == 'Linux'" in conditions
+    assert "ansible_architecture == 'x86_64'" in conditions
+    assert any(
+        "ansible_virtualization_type" in c and "'container'" in c for c in conditions
+    )
+
+
+def test_grub_autoboot_regenerates_grub_once_and_verifies_grub_cfg():
+    block = _grub_block()
+    update = _named(block, "with update-grub")
+    mkconfig = _named(block, "with grub-mkconfig")
+    assert update["ansible.builtin.command"] == "/usr/sbin/update-grub"
+    assert mkconfig["ansible.builtin.command"] == (
+        "/usr/sbin/grub-mkconfig -o /boot/grub/grub.cfg"
+    )
+    for task in (update, mkconfig):
+        assert "_grub_autoboot_dropin is changed" in task["when"]
+        # Fails loudly: no ignore_errors / failed_when masking.
+        assert "ignore_errors" not in task
+        assert "failed_when" not in task
+    # grub-mkconfig is only the fallback when update-grub is absent.
+    assert any("not (_grub_autoboot_update_grub" in c for c in mkconfig["when"])
+    # Only a missing binary is non-fatal (a debug note, not a swallowed error).
+    note = _named(block, "no GRUB regeneration tool")
+    assert "ansible.builtin.debug" in note
+
+    order = [t["name"] for t in block]
+    verify = _named(block, "Verify /boot/grub/grub.cfg exists")
+    assert order.index(verify["name"]) > order.index(update["name"])
+    assert order.index(verify["name"]) > order.index(mkconfig["name"])
+    assert verify["ansible.builtin.assert"]["that"] == ["_grub_autoboot_cfg.stat.exists"]
+    cfg_stat = _named(block, "Check the generated GRUB configuration")
+    assert cfg_stat["ansible.builtin.stat"]["path"] == "/boot/grub/grub.cfg"

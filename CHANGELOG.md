@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- GRUB autoboot on x86_64 `desktop`, `thin-client` and `byod-kiosk` hosts that
+  have `/etc/default/grub`: the role installs
+  `/etc/default/grub.d/90-curiosity-autoboot.cfg` (`GRUB_TIMEOUT_STYLE=hidden`,
+  `GRUB_TIMEOUT=2`, `GRUB_RECORDFAIL_TIMEOUT=2`) and runs `update-grub` when it
+  changes, so a boot Ubuntu considers failed no longer waits at the menu.
+  Disable with `grub_autoboot_enabled: false`.
 - Six-zone Openbox window snapping on every managed minimal desktop (laptop and
   DeskMeet1, all users): `/usr/local/bin/openbox-zone` (ported from the
   seantech workstation) and managed `rc.xml` bindings Super+Alt+1..6 for
