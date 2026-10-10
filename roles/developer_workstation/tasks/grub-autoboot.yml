@@ -46,13 +46,11 @@
       ansible.builtin.stat:
         path: /usr/sbin/update-grub
       register: _grub_autoboot_update_grub
-      when: _grub_autoboot_dropin is changed
 
     - name: Locate grub-mkconfig
       ansible.builtin.stat:
         path: /usr/sbin/grub-mkconfig
       register: _grub_autoboot_mkconfig
-      when: _grub_autoboot_dropin is changed
 
     - name: Regenerate the GRUB configuration with update-grub
       ansible.builtin.command: /usr/sbin/update-grub
