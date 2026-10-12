@@ -49,6 +49,8 @@ user_pref("browser.newtabpage.activity-stream.feeds.section.highlights", false);
 
 // Dark theme preference (matches Openbox dark setup)
 user_pref("ui.systemUsesDarkTheme", 1);
+user_pref("extensions.activeThemeID", "firefox-compact-dark@mozilla.org");
+user_pref("layout.css.prefers-color-scheme.content-override", 0);
 user_pref("browser.theme.content-theme", 0);
 user_pref("browser.theme.toolbar-theme", 0);
 

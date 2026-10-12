@@ -6,7 +6,8 @@
 # terminal. Replaces GNOME/GDM with Openbox/LightDM, picom compositor,
 # tint2 panel, dunst notifications, and rofi launcher.
 #
-# Enable with: -e minimal_desktop_enabled=true
+# On by default for the desktop profile; opt out with
+# -e minimal_desktop_enabled=false.
 # Mutually exclusive with display_config_enabled (GDM/GNOME).
 # =============================================================================
 
@@ -108,6 +109,10 @@
 - name: Deploy touchpad configuration (tap-to-click, natural scroll)
   ansible.builtin.include_tasks: minimal-desktop-touchpad.yml
   tags: [minimal-desktop, touchpad]
+
+- name: Configure system-wide dark appearance defaults
+  ansible.builtin.include_tasks: minimal-desktop-dark-defaults.yml
+  tags: [minimal-desktop, gtk, dark-theme]
 
 - name: Configure GTK dark theme
   ansible.builtin.include_tasks: minimal-desktop-gtk-theme.yml

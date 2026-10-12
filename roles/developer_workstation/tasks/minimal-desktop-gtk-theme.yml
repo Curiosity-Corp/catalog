@@ -11,6 +11,14 @@
     group: "{{ dw_user.name }}"
     mode: "0755"
 
+- name: Ensure GTK4 config directory exists
+  ansible.builtin.file:
+    path: "{{ dw_user.home }}/.config/gtk-4.0"
+    state: directory
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
+    mode: "0755"
+
 - name: Deploy GTK2 theme config (Arc-Dark)
   ansible.builtin.copy:
     dest: "{{ dw_user.home }}/.gtkrc-2.0"
@@ -28,6 +36,20 @@
 - name: Deploy GTK3 theme config (Arc-Dark)
   ansible.builtin.copy:
     dest: "{{ dw_user.home }}/.config/gtk-3.0/settings.ini"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
+    mode: "0644"
+    content: |
+      [Settings]
+      gtk-theme-name=Arc-Dark
+      gtk-icon-theme-name=Adwaita
+      gtk-font-name=Sans 10
+      gtk-cursor-theme-name=Adwaita
+      gtk-application-prefer-dark-theme=true
+
+- name: Deploy GTK4 theme config (prefer dark)
+  ansible.builtin.copy:
+    dest: "{{ dw_user.home }}/.config/gtk-4.0/settings.ini"
     owner: "{{ dw_user.name }}"
     group: "{{ dw_user.name }}"
     mode: "0644"

@@ -679,9 +679,11 @@ tmp_hygiene_pressure_script_path: /usr/local/sbin/curiosity-tmp-pressure
 tmp_hygiene_pressure_config_path: /etc/curiosity/tmp-pressure-tmpfiles.conf
 
 # Minimal desktop (Openbox + LightDM + Firefox)
-# Lightweight GUI for machines that only need a browser and terminal.
+# The default graphical session for every desktop-profile workstation: LightDM
+# on VT8 (minimal_desktop_lightdm_minimum_vt) starting a dark-themed Openbox
+# session instead of GDM/GNOME. Set false to keep the stock GNOME desktop.
 # Mutually exclusive with display_config_enabled (GDM/GNOME).
-minimal_desktop_enabled: false
+minimal_desktop_enabled: true
 minimal_desktop_autologin: true
 minimal_desktop_firefox_tweaks: true
 minimal_desktop_idle_lock_minutes: 10

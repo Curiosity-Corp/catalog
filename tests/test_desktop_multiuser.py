@@ -638,3 +638,32 @@ def test_hardware_pipx_is_per_user_and_keeps_path_and_error_behaviour() -> None:
         "/usr/local/bin:{{ dw_user.home }}/.local/bin:/usr/bin:/bin"
     )
     assert "failed_when" not in install and "ignore_errors" not in install
+
+
+def test_openbox_on_vt8_is_the_default_desktop() -> None:
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["minimal_desktop_enabled"] is True
+    assert defaults["minimal_desktop_lightdm_minimum_vt"] == 8
+    include = _includes(_tasks("main.yml"))["minimal-desktop.yml"]
+    assert "minimal_desktop_enabled | default(false)" in str(include["when"])
+
+
+def test_dark_appearance_defaults_cover_every_toolkit() -> None:
+    _includes(_tasks("minimal-desktop.yml"))["minimal-desktop-dark-defaults.yml"]
+    tasks = _tasks("minimal-desktop-dark-defaults.yml")
+    dconf = _named(tasks, "dark appearance defaults")["ansible.builtin.copy"]["content"]
+    assert "color-scheme='prefer-dark'" in dconf
+    assert "theme-variant='dark'" in dconf
+    xterm = _named(tasks, "XTerm and UXTerm")["ansible.builtin.copy"]
+    assert xterm["dest"].startswith("/etc/X11/Xresources/")
+    assert "UXTerm*background" in xterm["content"]
+
+    gtk = _tasks("minimal-desktop-gtk-theme.yml")
+    gtk4 = _named(gtk, "GTK4 theme config")["ansible.builtin.copy"]
+    assert gtk4["dest"].endswith("/.config/gtk-4.0/settings.ini")
+    assert "gtk-application-prefer-dark-theme=true" in gtk4["content"]
+
+    firefox = (FILES / "firefox-user.js").read_text()
+    assert "firefox-compact-dark@mozilla.org" in firefox
+    assert '"ui.systemUsesDarkTheme", 1' in firefox
+    assert "<name>Onyx-Large</name>" in (FILES / "rc.xml").read_text()

@@ -121,10 +121,15 @@ unless you intentionally want to disable VT switching. The role checks that
 the graphical account has a usable password hash before enabling automatic
 locking and never changes account passwords.
 
-For the `desktop` profile, this Openbox setup is opt-in:
+For the `desktop` profile, this Openbox setup is the default: LightDM starts
+an Openbox session on VT8 instead of GDM/GNOME, with a dark theme throughout
+(Onyx window decorations, Arc-Dark GTK 2/3/4, the system `color-scheme`
+set to `prefer-dark` for Chrome/Chromium, GNOME Terminal and libadwaita apps,
+dark XTerm/UXTerm colours, Firefox's dark theme and a dark desktop
+background). To keep the stock GNOME desktop instead:
 
 ```yaml
-minimal_desktop_enabled: true
+minimal_desktop_enabled: false
 ```
 
 The `thin-client` profile includes the minimal desktop automatically. The

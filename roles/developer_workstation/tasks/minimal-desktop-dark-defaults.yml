@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# Minimal Desktop — System-wide Dark Appearance Defaults
+# =============================================================================
+# The per-user GTK files cover GTK 2/3/4 toolkits. These system defaults cover
+# what reads GSettings instead: Chrome/Chromium ("Device" mode), GNOME Terminal
+# and libadwaita apps via org.gnome.desktop.interface color-scheme, plus the
+# XTerm/UXTerm colours that Xsession merges from /etc/X11/Xresources. Users
+# can still override any key in their own dconf database or ~/.Xresources.
+
+- name: Create dconf profile
+  ansible.builtin.copy:
+    dest: /etc/dconf/profile/user
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      user-db:user
+      system-db:local
+
+- name: Ensure dconf local database directory exists
+  ansible.builtin.file:
+    path: /etc/dconf/db/local.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure dark appearance defaults in the system dconf database
+  ansible.builtin.copy:
+    dest: /etc/dconf/db/local.d/00-curiosity-dark-theme
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [org/gnome/desktop/interface]
+      color-scheme='prefer-dark'
+      gtk-theme='Arc-Dark'
+
+      [org/gnome/terminal/legacy]
+      theme-variant='dark'
+  register: _dark_dconf_settings
+
+- name: Update dconf database  # noqa: no-handler
+  ansible.builtin.command: dconf update
+  when: _dark_dconf_settings is changed
+  changed_when: true
+
+- name: Deploy dark XTerm and UXTerm colours
+  ansible.builtin.copy:
+    dest: /etc/X11/Xresources/curiosity-dark-xterm
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      ! Managed by developer_workstation: dark XTerm/UXTerm defaults.
+      XTerm*background: #1e1e1e
+      XTerm*foreground: #d4d4d4
+      XTerm*cursorColor: #d4d4d4
+      UXTerm*background: #1e1e1e
+      UXTerm*foreground: #d4d4d4
+      UXTerm*cursorColor: #d4d4d4

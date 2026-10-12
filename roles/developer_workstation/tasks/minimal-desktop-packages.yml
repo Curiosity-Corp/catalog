@@ -27,6 +27,8 @@
       - lxappearance
       - arc-theme
       - adwaita-icon-theme
+      # dconf update compiles the system dark-appearance defaults
+      - dconf-cli
       # System tray applets
       - pasystray
       - pavucontrol

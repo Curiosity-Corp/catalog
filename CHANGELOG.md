@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Dark appearance everywhere on the minimal desktop: a system dconf default
+  (`/etc/dconf/db/local.d/00-curiosity-dark-theme`) sets `color-scheme` to
+  `prefer-dark`, `gtk-theme` to `Arc-Dark` and GNOME Terminal's theme variant
+  to dark, so Chrome/Chromium, GNOME Terminal and libadwaita apps follow the
+  Openbox theme; GTK4 gets a managed `settings.ini`; XTerm/UXTerm get dark
+  colours from `/etc/X11/Xresources/curiosity-dark-xterm`; Firefox enables its
+  built-in dark theme. `dconf-cli` is now installed with the minimal desktop.
+
 - GRUB autoboot on x86_64 `desktop`, `thin-client` and `byod-kiosk` hosts that
   have `/etc/default/grub`: the role installs
   `/etc/default/grub.d/90-curiosity-autoboot.cfg` (`GRUB_TIMEOUT_STYLE=hidden`,
@@ -122,6 +130,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The minimal desktop (LightDM on VT8 starting Openbox) is now the default
+  graphical session for `desktop`-profile workstations instead of GDM/GNOME:
+  `minimal_desktop_enabled` defaults to `true`. Set it to `false` to keep
+  GNOME. Existing GNOME sessions keep running; reboot once after the pull so
+  LightDM takes over the display.
 - Organization-specific hostnames, CA bundles, and deployment assumptions were
   removed from the tracked baseline.
 - Workspace package-tag runs now initialize release discovery and the update
