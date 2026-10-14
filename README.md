@@ -112,6 +112,9 @@ The most important variables are:
 | `sunshine_enabled` | `false` | Opt into remote desktop streaming |
 | `bitwarden_desktop_enabled` | `true` | Install the official Bitwarden desktop `.deb` system-wide on x86_64 `desktop` workstations (users sign in themselves) |
 | `litra_cli_enabled` | from hardware profile (`false` unless the profile sets `litra_cli: true`, as `deskmeet-b760` does) | Install the `litra` CLI to control Logitech Litra lightbars |
+| `i915_pcon_frl_444_enabled` | from hardware profile (`false` unless the profile sets `i915_pcon_frl_444: true`, as `deskmeet-b760` does) | Build a patched Intel i915 module for each installed kernel so an HDMI 2.1 PCON keeps RGB 4:4:4 (see `docs/configuration.md`) |
+| `minimal_desktop_display_scale` | from hardware profile (`1` unless the profile sets `display_scale`, as `deskmeet-b760` does with `2`) | Render `~/.Xresources` and scale the tint2 panel for a high-DPI display |
+| `minimal_desktop_display_broadcast_rgb` | from hardware profile (empty unless the profile sets `broadcast_rgb`, as `deskmeet-b760` does with `Full`) | xrandr `Broadcast RGB` value `curiosity-display-setup` applies to its output |
 | `profile_cleanup_enabled` | `false` | Opt into shared-machine profile cleanup |
 | `focuspass_screenlock_enabled` | `false` | Opt into the locally authenticated FocusPass-branded XScreenSaver package (requires a supplied `.deb` URL and SHA-256) |
 | `t460_console_diagnostics_enabled` | `true` | Install the read-only T460 DRM/fbcon status helper when a T460 hardware profile is selected |

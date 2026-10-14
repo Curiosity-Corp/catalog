@@ -33,3 +33,34 @@
     owner: "{{ dw_user.name }}"
     group: "{{ dw_user.name }}"
     mode: "0644"
+  when: minimal_desktop_display_scale | int == 1
+
+# At a display scale above 1 the layout's panel height and launcher icon size
+# are multiplied by the scale (36 -> 72 and 25 -> 50 at 2x for the top layout).
+# Rendering the content keeps the task idempotent.
+- name: Read the selected tint2 panel layout and scale its sizes
+  ansible.builtin.set_fact:
+    _minimal_desktop_tint2_source: "{{ lookup('ansible.builtin.file', 'minimal-desktop/tint2/' ~ _minimal_desktop_tint2_layout ~ '.tint2rc') }}"
+    _minimal_desktop_tint2_panel_height: >-
+      {{ (lookup('ansible.builtin.file', 'minimal-desktop/tint2/' ~ _minimal_desktop_tint2_layout ~ '.tint2rc')
+      | regex_findall('(?m)^panel_size = 100% ([0-9]+)$') | first | int)
+      * (minimal_desktop_display_scale | int) }}
+    _minimal_desktop_tint2_launcher_size: >-
+      {{ (lookup('ansible.builtin.file', 'minimal-desktop/tint2/' ~ _minimal_desktop_tint2_layout ~ '.tint2rc')
+      | regex_findall('(?m)^launcher_icon_size = ([0-9]+)$') | first | default(0) | int)
+      * (minimal_desktop_display_scale | int) }}
+  when: minimal_desktop_display_scale | int > 1
+
+- name: Deploy the selected tint2 panel layout scaled for the display
+  ansible.builtin.copy:
+    dest: "{{ dw_user.home }}/.config/tint2/tint2rc"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
+    mode: "0644"
+    # The layout has no launcher on the bottom bar; the second substitution then
+    # matches nothing.
+    content: |
+      {{ _minimal_desktop_tint2_source
+      | regex_replace('(?m)^panel_size = 100% [0-9]+$', 'panel_size = 100% ' ~ _minimal_desktop_tint2_panel_height)
+      | regex_replace('(?m)^launcher_icon_size = [0-9]+$', 'launcher_icon_size = ' ~ _minimal_desktop_tint2_launcher_size) }}
+  when: minimal_desktop_display_scale | int > 1

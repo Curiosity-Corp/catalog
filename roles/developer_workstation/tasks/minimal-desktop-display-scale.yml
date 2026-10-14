@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# Minimal Desktop — Display scale (X resources)
+# =============================================================================
+# Included once per item of dev_users with loop_var dw_user. At a scale above 1
+# (the hardware profile's display_scale) it renders ~/.Xresources so fonts and
+# cursors scale with the panel; tasks/minimal-desktop-tint2.yml scales the tint2
+# panel. At 1 nothing is written, so an existing hand-made ~/.Xresources stays.
+# The Openbox autostart merges the file with xrdb at login.
+
+- name: Validate the display scale
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_display_scale | int in [1, 2, 3, 4]
+    fail_msg: >-
+      minimal_desktop_display_scale must be a whole number from 1 to 4
+      (hardware profile key display_scale).
+
+- name: Render X resources for the display scale
+  ansible.builtin.copy:
+    dest: "{{ dw_user.home }}/.Xresources"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
+    mode: "0644"
+    content: |
+      ! Managed by Ansible: {{ minimal_desktop_display_scale | int }}x UI scale (hardware profile display_scale).
+      Xft.dpi: {{ 96 * (minimal_desktop_display_scale | int) }}
+      Xcursor.size: {{ 24 * (minimal_desktop_display_scale | int) }}
+      Xft.antialias: 1
+      Xft.hinting: 1
+      Xft.hintstyle: hintslight
+      Xft.rgba: none
+      Xft.lcdfilter: lcddefault
+  when: minimal_desktop_display_scale | int > 1

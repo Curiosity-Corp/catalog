@@ -66,6 +66,7 @@ policy:
       tests/test_sunshine_asset_selection.py tests/test_update_rollback_symlinks.py
       tests/test_healthcheck_disabled_apps.py tests/test_litra_cli.py
       tests/test_minimal_desktop_panel.py tests/test_bitwarden_desktop.py
+      tests/test_deskmeet_8k_display.py
 
 collection:
   extends: .python_setup

@@ -479,6 +479,11 @@
   tags: [hardware]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
+- name: Include the patched i915 module for an HDMI 2.1 PCON
+  ansible.builtin.include_tasks: i915-pcon-frl-444.yml
+  tags: [hardware, i915]
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+
 - name: Include fonts
   ansible.builtin.include_tasks: fonts.yml
   tags: [fonts]

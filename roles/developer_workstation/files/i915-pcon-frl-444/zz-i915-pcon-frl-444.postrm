@@ -1,0 +1,14 @@
+#!/bin/sh
+# Kernel postrm hook: drop the patched i915 module built for a removed kernel.
+# Managed by Ansible.
+kver=$1
+[ -n "$kver" ] || exit 0
+case "$kver" in
+    *[!A-Za-z0-9._+-]*) exit 0 ;;
+esac
+updates=/lib/modules/$kver/updates
+rm -f "$updates/i915.ko" "$updates/i915.ko.pcon-frl-444" "$updates/.i915.ko.new"
+rmdir "$updates" 2>/dev/null || true
+rm -rf "/var/lib/i915-pcon-frl-444/work/$kver"
+rm -f "/var/lib/i915-pcon-frl-444/$kver.failed"
+exit 0

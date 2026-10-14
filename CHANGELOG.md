@@ -8,6 +8,23 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- DeskMeet1 (`deskmeet-b760`) 8K display: the profile now sets
+  `i915_pcon_frl_444`, `broadcast_rgb: Full` and `display_scale: 2`.
+  `i915_pcon_frl_444_enabled` installs a patch for Intel i915 that keeps RGB
+  4:4:4 behind a DisplayPort to HDMI 2.1 PCON cable (stock i915 sends YCbCr
+  4:2:0), plus `/usr/local/sbin/i915-pcon-frl-444-build`, which fetches the
+  matching Ubuntu kernel source, builds only i915, checks vermagic and
+  modversions against the stock module and installs it to
+  `/lib/modules/<kver>/updates`. Kernel postinst and postrm hooks rebuild and
+  remove it with each kernel; a failed build is loud, never fatal to the kernel
+  upgrade or the pull, and leaves the stock module. A reboot (or the manual
+  `i915-reload` helper) activates a new module. `curiosity-display-setup` sets
+  the xrandr `Broadcast RGB` property from `minimal_desktop_display_broadcast_rgb`
+  (`/etc/curiosity/display-broadcast-rgb`) when the output has it, and
+  `minimal_desktop_display_scale` renders `~/.Xresources` (`Xft.dpi`,
+  `Xcursor.size`) and scales the tint2 panel height and launcher icons, so the
+  2x desktop is no longer a hand edit that a pull could revert. The Openbox
+  autostart now merges `~/.Xresources` with `xrdb` for startx sessions.
 - GRUB autoboot on x86_64 `desktop`, `thin-client` and `byod-kiosk` hosts that
   have `/etc/default/grub`: the role installs
   `/etc/default/grub.d/90-curiosity-autoboot.cfg` (`GRUB_TIMEOUT_STYLE=hidden`,

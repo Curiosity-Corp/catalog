@@ -1,0 +1,86 @@
+#!/bin/bash
+# Reload the i915 driver live (for example onto an updated module in
+# /lib/modules/$(uname -r)/updates). Run as root from a console or SSH session:
+# it ends every graphical session on the host, then starts LightDM again.
+# If the new module fails to load, it is moved aside and the stock module is
+# loaded instead, so the host always comes back with a working display.
+log() { echo "$(date +%T) $*"; }
+KV=$(uname -r)
+
+log "stop lightdm"
+systemctl stop lightdm
+
+log "end startx sessions"
+pkill -TERM -f 'xinit /usr/bin/openbox-session'
+sleep 3
+for _ in $(seq 1 15); do pgrep -x Xorg >/dev/null || break; sleep 1; done
+if pgrep -x Xorg >/dev/null; then log "Xorg still up, SIGKILL"; pkill -KILL -x Xorg; sleep 2; fi
+if pgrep -a -x Xorg; then log "ABORT: Xorg survived"; exit 1; fi
+
+log "processes holding dri nodes: $(fuser /dev/dri/* 2>/dev/null | tr -s ' ')"
+
+for v in /sys/class/vtconsole/vtcon*; do
+    if grep -q 'frame buffer' "$v/name"; then echo 0 > "$v/bind"; log "unbound $(basename "$v"): $(cat "$v/name")"; fi
+done
+
+# Users of i915 that keep its refcount up: the MEI GSC driver bound to the
+# i915 auxiliary devices (DG2), and HDA audio on the iGPU and Arc functions.
+rm -f /run/i915-reload-unbound /run/i915-reload-mei
+log "release mei_gsc and HDA audio"
+for m in mei_pxp mei_hdcp; do
+    if lsmod | grep -q "^$m "; then rmmod "$m" && echo "$m" >> /run/i915-reload-mei; fi
+done
+for d in /sys/bus/auxiliary/drivers/mei_gsc/i915.*; do
+    [ -e "$d" ] && basename "$d" > /sys/bus/auxiliary/drivers/mei_gsc/unbind
+done
+for d in /sys/bus/pci/drivers/snd_hda_intel/0000:*; do
+    [ -e "$d" ] || continue
+    f=$(basename "$d")
+    # Intel HDA controllers (PCH and Arc) bind to i915 for HDMI/DP audio.
+    if [ "$(cat "$d/vendor")" = 0x8086 ]; then
+        echo "$f" > /sys/bus/pci/drivers/snd_hda_intel/unbind && echo "$f" >> /run/i915-reload-unbound
+    fi
+done
+sleep 1
+
+log "rmmod i915 (refcnt $(cat /sys/module/i915/refcnt))"
+if ! rmmod i915; then
+    log "ABORT: rmmod failing; holders: $(ls /sys/module/i915/holders)"
+    lsmod | grep -E '^i915|snd_hda|mei'
+    log "restoring: starting lightdm on the current module"
+    [ -f /run/i915-reload-unbound ] && while read -r f; do echo "$f" > /sys/bus/pci/drivers/snd_hda_intel/bind; done < /run/i915-reload-unbound
+    [ -f /run/i915-reload-mei ] && while read -r m; do modprobe "$m"; done < /run/i915-reload-mei
+    for v in /sys/class/vtconsole/vtcon*; do grep -q 'frame buffer' "$v/name" && echo 1 > "$v/bind"; done
+    systemctl start lightdm
+    exit 1
+fi
+
+log "modprobe i915 ($(modinfo -n i915))"
+if ! modprobe i915; then
+    log "new module failed to load; restoring stock"
+    mv "/lib/modules/$KV/updates/i915.ko" "/lib/modules/$KV/updates/i915.ko.failed"
+    depmod -a
+    modprobe i915
+fi
+sleep 3
+
+for v in /sys/class/vtconsole/vtcon*; do
+    if grep -q 'frame buffer' "$v/name"; then echo 1 > "$v/bind"; fi
+done
+if [ -f /run/i915-reload-unbound ]; then
+    while read -r f; do echo "$f" > /sys/bus/pci/drivers/snd_hda_intel/bind; done < /run/i915-reload-unbound
+    rm -f /run/i915-reload-unbound
+    log "audio rebound"
+fi
+# Reloading i915 re-creates its auxiliary devices, which mei_gsc picks up again;
+# mei_pxp and mei_hdcp have to be loaded back by hand.
+if [ -f /run/i915-reload-mei ]; then
+    while read -r m; do modprobe "$m"; done < /run/i915-reload-mei
+    rm -f /run/i915-reload-mei
+    log "mei modules reloaded"
+fi
+
+log "i915 srcversion=$(cat /sys/module/i915/srcversion) pcon_frl_444=$(cat /sys/module/i915/parameters/pcon_frl_444 2>/dev/null || echo n/a)"
+log "start lightdm"
+systemctl start lightdm
+log "done"

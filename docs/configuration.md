@@ -38,6 +38,50 @@ of the update rollback inventory, and the `litra --version` healthcheck only
 warns on hosts where the flag is off. The profile's udev rule must still grant
 the user hidraw access to the lightbar.
 
+A profile may also set `display_scale` (an integer, default `1`) and
+`broadcast_rgb` (`Full`, `Limited 16:235` or `Automatic`, default unset), which
+feed `minimal_desktop_display_scale` and `minimal_desktop_display_broadcast_rgb`.
+At a scale above 1 the role renders each managed user's `~/.Xresources`
+(`Xft.dpi` of 96 times the scale, `Xcursor.size` of 24 times the scale, plus
+the font rendering keys), the Openbox autostart merges it with `xrdb`, and the
+tint2 panel height and launcher icon size are multiplied by the scale (for
+example the `top` layout becomes a 72px bar with 50px icons at 2x). At 1 an
+existing hand-made `~/.Xresources` and tint2 config are not touched.
+`broadcast_rgb` is written to `/etc/curiosity/display-broadcast-rgb` and
+applied by `curiosity-display-setup` to its chosen output through
+`xrandr --set "Broadcast RGB"`, only when that output has the property (Intel
+i915). i915 chooses limited range for HDMI/CEA modes by default, which washes
+out a PC desktop on a TV; `Full` fixes that. `deskmeet-b760` sets
+`display_scale: 2` and `broadcast_rgb: Full`.
+
+### Patched i915 for an HDMI 2.1 PCON
+
+A profile that sets `i915_pcon_frl_444: true` (`deskmeet-b760`; derived variable
+`i915_pcon_frl_444_enabled`) keeps RGB 4:4:4 on a DisplayPort to HDMI 2.1 PCON
+cable. Stock i915 falls back to YCbCr 4:2:0 once the mode exceeds the legacy
+TMDS limit, which makes text on an 8K TV soft. The role installs
+`/usr/local/share/i915-pcon-frl-444/i915-pcon-frl-444.patch` (only
+`drivers/gpu/drm/i915/display/intel_dp.c`) and
+`/usr/local/sbin/i915-pcon-frl-444-build <kver>`. The build script fetches the
+Ubuntu kernel source that matches the installed `linux-modules-<kver>` with
+`apt-get source` against a private `deb-src` list derived from the host's Ubuntu
+archive entries (no system apt change, no extra repository), applies the patch
+(dry run first), builds only i915 against `/lib/modules/<kver>/build`, requires
+the same vermagic and the same imported modversion CRCs as the stock module,
+strips it and installs it to `/lib/modules/<kver>/updates/i915.ko` (depmod
+searches `updates/` first) with a marker holding the patch SHA-256. Any failure
+exits non-zero, logs at error level to the journal (tag `i915-pcon-frl-444`),
+writes `/var/lib/i915-pcon-frl-444/<kver>.failed` and leaves the stock module in
+place. `/etc/kernel/postinst.d/zz-i915-pcon-frl-444` starts the build for every
+newly installed kernel as a transient systemd unit and always exits 0 so it
+cannot fail a kernel upgrade; `/etc/kernel/postrm.d/zz-i915-pcon-frl-444` removes
+the module with its kernel. The role builds for the running kernel when the
+marker is missing or the patch changed, and reports a failed build without
+failing the pull. It never reloads i915: reboot to use a new module, or run
+`/usr/local/sbin/i915-reload` from a console (it ends every graphical
+session). `i915-pcon-frl-444-build --check <kver>` reports whether a build is
+needed, and `--destdir DIR` builds and verifies without touching `/lib/modules`.
+
 ## Optional private services
 
 Keep these values out of the repository:

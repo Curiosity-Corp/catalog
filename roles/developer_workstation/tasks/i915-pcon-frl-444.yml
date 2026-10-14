@@ -1,0 +1,130 @@
+---
+# =============================================================================
+# Intel i915: RGB 4:4:4 behind a DP -> HDMI 2.1 PCON (kernel-update-proof)
+# =============================================================================
+# Stock i915 sends YCbCr 4:2:0 to an 8K TV on a DP -> HDMI 2.1 PCON cable, so
+# text is soft. The role installs a one-file patch to intel_dp.c and a build
+# script that, for each installed kernel, fetches the matching Ubuntu kernel
+# source, applies the patch, builds only i915, checks vermagic and modversions
+# against the stock module and installs it to /lib/modules/<kver>/updates
+# (depmod puts updates/ before the stock module). A kernel postinst hook builds
+# it for every new kernel; a postrm hook removes it with the kernel.
+#
+# Enabled by the hardware profile's i915_pcon_frl_444 flag
+# (i915_pcon_frl_444_enabled). The role never reloads i915: a reboot picks the
+# module up, and files/i915-pcon-frl-444/i915-reload does it live by hand.
+# A failed build is reported and leaves the stock module in place.
+# =============================================================================
+
+- name: Install the i915 PCON 4:4:4 patch, build script and kernel hooks
+  when: i915_pcon_frl_444_enabled | bool
+  block:
+    - name: Create the i915 PCON 4:4:4 patch directory
+      ansible.builtin.file:
+        path: /usr/local/share/i915-pcon-frl-444
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the i915 PCON 4:4:4 patch
+      ansible.builtin.copy:
+        src: i915-pcon-frl-444/i915-pcon-frl-444.patch
+        dest: /usr/local/share/i915-pcon-frl-444/i915-pcon-frl-444.patch
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install the i915 PCON 4:4:4 build script and live reload helper
+      ansible.builtin.copy:
+        src: "i915-pcon-frl-444/{{ item.src }}"
+        dest: "/usr/local/sbin/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - { src: i915-pcon-frl-444-build, dest: i915-pcon-frl-444-build }
+        - { src: i915-reload, dest: i915-reload }
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Build the patched i915 for each new kernel after it is installed
+      ansible.builtin.copy:
+        src: i915-pcon-frl-444/zz-i915-pcon-frl-444
+        dest: /etc/kernel/postinst.d/zz-i915-pcon-frl-444
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Remove the patched i915 when its kernel is removed
+      ansible.builtin.copy:
+        src: i915-pcon-frl-444/zz-i915-pcon-frl-444.postrm
+        dest: /etc/kernel/postrm.d/zz-i915-pcon-frl-444
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Build tools for the i915 module are installed
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - dpkg-dev
+          - zstd
+          - psmisc
+          - "linux-headers-{{ ansible_kernel }}"
+        state: present
+
+    - name: Check whether the patched i915 is current for the running kernel
+      ansible.builtin.command:
+        cmd: "/usr/local/sbin/i915-pcon-frl-444-build --check {{ ansible_kernel }}"
+      register: _i915_pcon_frl_444_check
+      changed_when: false
+      failed_when: _i915_pcon_frl_444_check.rc not in [0, 3]
+      # The script is not installed yet in check mode.
+      check_mode: false
+      when: not ansible_check_mode
+
+    # A build takes several minutes, so it runs asynchronously. A failure is
+    # reported, never fatal: the stock module keeps working and the pull must
+    # keep converging the rest of the host.
+    - name: Build the patched i915 for the running kernel
+      when:
+        - not ansible_check_mode
+        - _i915_pcon_frl_444_check.rc == 3
+      block:
+        - name: Run the i915 PCON 4:4:4 build
+          ansible.builtin.command:
+            cmd: "/usr/local/sbin/i915-pcon-frl-444-build {{ ansible_kernel }}"
+          register: _i915_pcon_frl_444_build
+          async: 3600
+          poll: 30
+          changed_when: true
+      rescue:
+        - name: Report that the patched i915 could not be built
+          ansible.builtin.debug:
+            msg: >-
+              ATTENTION: the patched i915 (RGB 4:4:4 over the HDMI 2.1 PCON)
+              could not be built for {{ ansible_kernel }}; the stock module stays
+              in use and the display falls back to YCbCr 4:2:0. Reason:
+              {{ ansible_failed_result.stderr | default(ansible_failed_result.msg | default('unknown error')) | trim | regex_replace('(?s).*\n', '') }}.
+              Fix it and rerun /usr/local/sbin/i915-pcon-frl-444-build {{ ansible_kernel }}.
+
+    - name: Say that a reboot activates a newly built i915
+      ansible.builtin.debug:
+        msg: >-
+          The patched i915 for {{ ansible_kernel }} is installed; it is used from
+          the next boot (or live with /usr/local/sbin/i915-reload from a console).
+      when:
+        - _i915_pcon_frl_444_build is defined
+        - _i915_pcon_frl_444_build is changed
+
+- name: Remove the i915 PCON 4:4:4 hooks and build script when it is disabled
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/kernel/postinst.d/zz-i915-pcon-frl-444
+    - /etc/kernel/postrm.d/zz-i915-pcon-frl-444
+    - /usr/local/sbin/i915-pcon-frl-444-build
+    - /usr/local/share/i915-pcon-frl-444
+  when: not (i915_pcon_frl_444_enabled | bool)

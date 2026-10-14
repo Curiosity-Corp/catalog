@@ -1,0 +1,368 @@
+#!/bin/bash
+# Build the patched i915 module for one installed kernel and install it to
+# /lib/modules/<kver>/updates/i915.ko. Managed by Ansible.
+#
+# Usage: i915-pcon-frl-444-build [--check | --force | --destdir DIR] <kver>
+#
+# The patch (i915-pcon-frl-444.patch) lets i915 keep RGB 4:4:4 behind a
+# DP -> HDMI 2.1 PCON. The stock module only does that below the legacy TMDS
+# limit, so an 8K TV on such a cable gets YCbCr 4:2:0.
+#
+# What it does, in order:
+#   1. fetch the Ubuntu kernel source package that matches the installed
+#      linux-modules-<kver> (apt-get source against a private deb-src list
+#      derived from the host's Ubuntu archive entries, so no system apt
+#      configuration changes and no extra repository is needed);
+#   2. apply the patch (dry run first);
+#   3. build only drivers/gpu/drm/i915 against /lib/modules/<kver>/build;
+#   4. compare vermagic and every imported modversion CRC with the stock module;
+#   5. strip debug info, install atomically to updates/ (depmod search order
+#      puts updates/ before the stock module), run depmod, write a marker.
+# i915 is not in the initramfs here, so the next boot loads the new module. The
+# script never reloads i915, restarts a display manager or changes a mode.
+#
+# Failure is loud and safe: any error exits non-zero, is logged at err level to
+# the journal (tag i915-pcon-frl-444), and is recorded in
+# /var/lib/i915-pcon-frl-444/<kver>.failed. Nothing is installed until every
+# check has passed, so the stock module stays in place on a patch conflict, an
+# ABI difference or a missing source.
+#
+# --check    exit 0 when updates/i915.ko is current for the patch, 3 when a
+#            build is needed (used by Ansible for idempotence).
+# --force    rebuild even when the marker is current.
+# --destdir  build and verify, then write i915.ko and its marker into DIR and
+#            touch nothing under /lib/modules (compare-only; no root needed
+#            when DIR is writable and the kernel headers are readable).
+#
+# Environment overrides: I915_PCON_PATCH, I915_PCON_WORKDIR, I915_PCON_MODULES_ROOT
+# (default /lib/modules; for tests),
+# I915_PCON_SOURCES (deb-src sources file to use instead of the derived one),
+# I915_PCON_WAIT_SECONDS (how long to wait for kernel headers and the dpkg
+# lock when started from a kernel postinst; default 900).
+
+set -Eeuo pipefail
+
+readonly PROG=i915-pcon-frl-444-build
+readonly STATE_DIR=/var/lib/i915-pcon-frl-444
+readonly LOCK_FILE=/run/i915-pcon-frl-444-build.lock
+readonly MODULE_SUBDIR=kernel/drivers/gpu/drm/i915
+PATCH=${I915_PCON_PATCH:-/usr/local/share/i915-pcon-frl-444/i915-pcon-frl-444.patch}
+WORKDIR=${I915_PCON_WORKDIR:-/var/lib/i915-pcon-frl-444/work}
+WAIT_SECONDS=${I915_PCON_WAIT_SECONDS:-900}
+
+mode=build
+destdir=
+kver=
+force=0
+failed_recorded=0
+
+log() {
+    echo "$PROG: $*"
+}
+
+fail() {
+    local message="$*"
+    echo "$PROG: ERROR: $message" >&2
+    logger -t i915-pcon-frl-444 -p user.err -- "build for ${kver:-unknown kernel} failed: $message; the stock i915 module stays in use" || true
+    if [ -n "$kver" ] && [ "$mode" = build ] && [ "$failed_recorded" -eq 0 ]; then
+        failed_recorded=1
+        if mkdir -p "$STATE_DIR" 2>/dev/null; then
+            printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$message" >"$STATE_DIR/$kver.failed" 2>/dev/null || true
+        fi
+    fi
+    exit 1
+}
+
+on_error() {
+    local status=$1 line=$2
+    fail "unexpected failure (exit $status) at line $line"
+}
+trap 'on_error $? $LINENO' ERR
+
+cleanup() {
+    if [ -n "${work:-}" ] && [ -d "$work" ] && [ "${keep_work:-0}" -eq 0 ]; then
+        rm -rf -- "$work"
+    fi
+}
+trap cleanup EXIT
+
+usage() {
+    sed -n '/^# Usage:/,/^# Environment overrides/p' "$0" | sed 's/^# \{0,1\}//' >&2
+    exit 2
+}
+
+keep_work=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --check) mode=check ;;
+        --force) force=1 ;;
+        --keep-work) keep_work=1 ;;
+        --destdir)
+            [ $# -ge 2 ] || usage
+            destdir=$2
+            mode=destdir
+            shift
+            ;;
+        -h | --help) usage ;;
+        -*) usage ;;
+        *)
+            [ -z "$kver" ] || usage
+            kver=$1
+            ;;
+    esac
+    shift
+done
+[ -n "$kver" ] || usage
+case "$kver" in
+    *[!A-Za-z0-9._+-]* | "") fail "invalid kernel release: $kver" ;;
+esac
+
+modules_dir=${I915_PCON_MODULES_ROOT:-/lib/modules}/$kver
+updates_dir=$modules_dir/updates
+installed_module=$updates_dir/i915.ko
+marker=$updates_dir/i915.ko.pcon-frl-444
+
+[ -r "$PATCH" ] || fail "patch not found: $PATCH"
+patch_sha256=$(sha256sum "$PATCH" | cut -d' ' -f1)
+
+marker_is_current() {
+    [ -f "$installed_module" ] && [ -f "$marker" ] \
+        && grep -qx "patch_sha256=$patch_sha256" "$marker" \
+        && grep -qx "kernel=$kver" "$marker"
+}
+
+if [ "$mode" = check ]; then
+    if marker_is_current; then
+        log "updates/i915.ko for $kver is current (patch $patch_sha256)"
+        exit 0
+    fi
+    log "updates/i915.ko for $kver is missing or built from a different patch"
+    exit 3
+fi
+
+if [ "$mode" = build ] && [ "$(id -u)" -ne 0 ]; then
+    fail "must run as root"
+fi
+[ -d "$modules_dir" ] || fail "kernel $kver is not installed ($modules_dir is missing)"
+
+if [ "$mode" = build ] && [ "$force" -eq 0 ] && marker_is_current; then
+    log "updates/i915.ko for $kver is already current; nothing to do (use --force to rebuild)"
+    exit 0
+fi
+
+for tool in apt-get dpkg-query dpkg-source patch make gcc strip modinfo modprobe depmod sha256sum flock logger; do
+    command -v "$tool" >/dev/null 2>&1 || [ -x "/sbin/$tool" ] || fail "required tool missing: $tool"
+done
+
+stock_module=
+for candidate in "$modules_dir/$MODULE_SUBDIR/i915.ko.zst" "$modules_dir/$MODULE_SUBDIR/i915.ko.xz" "$modules_dir/$MODULE_SUBDIR/i915.ko"; do
+    if [ -f "$candidate" ]; then
+        stock_module=$candidate
+        break
+    fi
+done
+[ -n "$stock_module" ] || fail "stock i915 module not found under $modules_dir/$MODULE_SUBDIR"
+
+if [ "$mode" = build ]; then
+    mkdir -p "$STATE_DIR"
+    exec 9>"$LOCK_FILE"
+    flock -n 9 || fail "another build is running (lock $LOCK_FILE)"
+fi
+
+# Started from a kernel postinst, the headers package and the dpkg run itself
+# may still be settling. Wait for both rather than failing a race.
+build_dir=$modules_dir/build
+deadline=$((SECONDS + WAIT_SECONDS))
+while [ ! -f "$build_dir/Makefile" ] || [ ! -f "$build_dir/Module.symvers" ] || [ ! -f "$build_dir/include/generated/autoconf.h" ]; do
+    [ "$SECONDS" -lt "$deadline" ] || fail "kernel headers for $kver are not installed ($build_dir is incomplete); install linux-headers-$kver"
+    sleep 10
+done
+if [ "$mode" = build ]; then
+    while command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
+        [ "$SECONDS" -lt "$deadline" ] || fail "dpkg stayed locked for ${WAIT_SECONDS}s; rerun $PROG $kver once the package operation finishes"
+        sleep 10
+    done
+fi
+
+# --- source package matching the installed kernel -----------------------------
+source_name=''
+source_version=''
+for package in "linux-modules-$kver" "linux-image-unsigned-$kver" "linux-image-$kver"; do
+    if info=$(dpkg-query -W -f='${db:Status-Status} ${source:Package} ${source:Version}\n' "$package" 2>/dev/null); then
+        # shellcheck disable=SC2086
+        set -- $info
+        if [ "$1" = installed ] && [ -n "${2:-}" ] && [ -n "${3:-}" ]; then
+            source_name=$2
+            source_version=$3
+            break
+        fi
+    fi
+done
+[ -n "$source_name" ] || fail "no installed linux-modules-$kver package to take the source version from"
+log "kernel $kver is built from $source_name $source_version"
+
+if [ "$mode" = build ]; then
+    work=$WORKDIR/$kver
+else
+    work=$(mktemp -d "${TMPDIR:-/var/tmp}/i915-pcon-frl-444.XXXXXX")
+fi
+rm -rf -- "$work"
+mkdir -p "$work/apt/lists/partial" "$work/apt/cache/archives/partial" "$work/apt/sources.list.d" "$work/dl"
+
+if [ -n "${I915_PCON_SOURCES:-}" ]; then
+    [ -r "$I915_PCON_SOURCES" ] || fail "I915_PCON_SOURCES is not readable: $I915_PCON_SOURCES"
+    cp -- "$I915_PCON_SOURCES" "$work/apt/sources.list.d/src.sources"
+else
+    # Derive deb-src entries from the host's own Ubuntu archive entries.
+    {
+        for f in /etc/apt/sources.list.d/*.sources; do
+            [ -r "$f" ] || continue
+            awk -v RS= -v ORS='\n\n' '
+                /(^|\n)Types:[^\n]*deb/ && (/(^|\n)URIs:[^\n]*(archive|security|ports)\.ubuntu\.com/ || /ubuntu-archive-keyring/) {
+                    gsub(/(^|\n)Types:[^\n]*/, "\nTypes: deb-src")
+                    sub(/^\n/, "")
+                    print
+                }' "$f"
+        done
+        for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+            [ -r "$f" ] || continue
+            awk '$1 == "deb" && /(archive|security|ports)\.ubuntu\.com/ {
+                i = 2
+                if ($i ~ /^\[/) { while ($i !~ /\]$/) i++; i++ }
+                comps = ""
+                for (j = i + 2; j <= NF; j++) comps = comps (comps == "" ? "" : " ") $j
+                print "Types: deb-src\nURIs: " $i "\nSuites: " $(i + 1) "\nComponents: " comps "\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+            }' "$f"
+        done
+    } >"$work/apt/sources.list.d/src.sources"
+fi
+[ -s "$work/apt/sources.list.d/src.sources" ] || fail "no Ubuntu archive entry found in /etc/apt to derive deb-src from; set I915_PCON_SOURCES"
+
+cat >"$work/apt/apt.conf" <<EOF
+Dir::Etc::sourcelist "/dev/null";
+Dir::Etc::sourceparts "$work/apt/sources.list.d";
+Dir::State "$work/apt";
+Dir::State::lists "$work/apt/lists";
+Dir::State::status "/var/lib/dpkg/status";
+Dir::Cache "$work/apt/cache";
+APT::Sandbox::User "root";
+Acquire::Languages "none";
+EOF
+export APT_CONFIG=$work/apt/apt.conf
+
+log "refreshing the source package lists"
+apt-get -q update >"$work/apt-update.log" 2>&1 || {
+    tail -n 5 "$work/apt-update.log" >&2
+    fail "apt-get update for the deb-src lists failed (no network, or the archive is unreachable)"
+}
+
+log "downloading $source_name $source_version"
+if ! (cd "$work/dl" && apt-get -q source --download-only "$source_name=$source_version" >"$work/apt-source.log" 2>&1); then
+    tail -n 5 "$work/apt-source.log" >&2
+    fail "$source_name $source_version is not available from the archive (superseded kernel source?)"
+fi
+dsc=$(find "$work/dl" -maxdepth 1 -name '*.dsc' -print -quit)
+[ -n "$dsc" ] || fail "no .dsc was downloaded for $source_name $source_version"
+
+log "unpacking the source (applies Ubuntu's patches)"
+(cd "$work/dl" && dpkg-source --no-check -x "$dsc" "$work/src" >"$work/dpkg-source.log" 2>&1) || {
+    tail -n 5 "$work/dpkg-source.log" >&2
+    fail "dpkg-source could not unpack $dsc"
+}
+src=$work/src
+[ -f "$src/drivers/gpu/drm/i915/Makefile" ] || fail "the unpacked source has no drivers/gpu/drm/i915"
+
+# --- patch ---------------------------------------------------------------------
+log "checking that the patch applies"
+if ! patch -p1 -d "$src" --dry-run --forward --no-backup-if-mismatch <"$PATCH" >"$work/patch-dry.log" 2>&1; then
+    cat "$work/patch-dry.log" >&2
+    fail "the patch does not apply to $source_name $source_version; it needs a refresh for this kernel"
+fi
+patch -p1 -d "$src" --forward --no-backup-if-mismatch <"$PATCH" >"$work/patch.log" 2>&1 \
+    || fail "applying the patch failed after a clean dry run: $(tail -n 3 "$work/patch.log")"
+
+# --- build ---------------------------------------------------------------------
+log "building i915 against $build_dir (this takes a few minutes)"
+jobs=$(nproc)
+if ! nice -n 19 make -C "$build_dir" M="$src/drivers/gpu/drm/i915" KCFLAGS="-I$src/include/trace" -j"$jobs" modules >"$work/build.log" 2>&1; then
+    tail -n 25 "$work/build.log" >&2
+    fail "the i915 build failed (log kept only in the journal output above)"
+fi
+built=$src/drivers/gpu/drm/i915/i915.ko
+[ -f "$built" ] || fail "the build produced no i915.ko"
+
+# --- ABI checks against the stock module ---------------------------------------
+case "$stock_module" in
+    *.zst) command -v zstd >/dev/null 2>&1 || fail "zstd is required to read $stock_module"; zstd -dqc "$stock_module" >"$work/stock-i915.ko" ;;
+    *.xz) xz -dc "$stock_module" >"$work/stock-i915.ko" ;;
+    *) cp -- "$stock_module" "$work/stock-i915.ko" ;;
+esac
+
+built_vermagic=$(modinfo -F vermagic "$built")
+stock_vermagic=$(modinfo -F vermagic "$work/stock-i915.ko")
+[ "$built_vermagic" = "$stock_vermagic" ] \
+    || fail "vermagic differs (built '$built_vermagic', stock '$stock_vermagic'); not installing"
+
+modprobe_bin=$(command -v modprobe || echo /sbin/modprobe)
+"$modprobe_bin" --dump-modversions "$built" | sort >"$work/built.modversions"
+"$modprobe_bin" --dump-modversions "$work/stock-i915.ko" | sort >"$work/stock.modversions"
+[ -s "$work/stock.modversions" ] || fail "could not read the stock module's modversions"
+if ! cmp -s "$work/built.modversions" "$work/stock.modversions"; then
+    diff "$work/stock.modversions" "$work/built.modversions" | head -n 10 >&2 || true
+    fail "modversions differ from the stock module (ABI mismatch); not installing"
+fi
+log "vermagic and $(wc -l <"$work/built.modversions") imported modversion CRCs match the stock module"
+
+strip --strip-debug "$built"
+built_srcversion=$(modinfo -F srcversion "$built")
+built_sha256=$(sha256sum "$built" | cut -d' ' -f1)
+
+write_marker() {
+    printf 'patch_sha256=%s\nkernel=%s\nsource=%s %s\nsrcversion=%s\nmodule_sha256=%s\nbuilt=%s\n' \
+        "$patch_sha256" "$kver" "$source_name" "$source_version" "$built_srcversion" "$built_sha256" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$1"
+}
+
+# --- install -------------------------------------------------------------------
+if [ "$mode" = destdir ]; then
+    mkdir -p "$destdir"
+    install -m 0644 "$built" "$destdir/i915.ko"
+    write_marker "$destdir/i915.ko.pcon-frl-444"
+    log "destdir mode: wrote $destdir/i915.ko (srcversion $built_srcversion, sha256 $built_sha256)"
+    if [ -f "$installed_module" ]; then
+        log "installed updates/i915.ko srcversion: $(modinfo -F srcversion "$installed_module")"
+    fi
+    exit 0
+fi
+
+mkdir -p "$updates_dir"
+# A module built earlier from the same sources (for example by hand before this
+# script existed) is kept as is and only gets the marker.
+if [ -f "$installed_module" ] && [ "$(modinfo -F srcversion "$installed_module")" = "$built_srcversion" ]; then
+    write_marker "$marker"
+    rm -f -- "$STATE_DIR/$kver.failed"
+    log "$installed_module already has srcversion $built_srcversion; recorded the marker and left the module untouched"
+    exit 0
+fi
+previous_module=
+if [ -f "$installed_module" ]; then
+    previous_module=$work/previous-i915.ko
+    cp -p -- "$installed_module" "$previous_module"
+fi
+install -m 0644 -o root -g root "$built" "$updates_dir/.i915.ko.new"
+mv -f -- "$updates_dir/.i915.ko.new" "$installed_module"
+if ! depmod -a "$kver"; then
+    # Put the previous state back so depmod never indexes a half-installed module.
+    if [ -n "$previous_module" ]; then
+        install -m 0644 -o root -g root "$previous_module" "$installed_module"
+    else
+        rm -f -- "$installed_module"
+    fi
+    depmod -a "$kver" || true
+    fail "depmod failed after installing the module; reverted"
+fi
+write_marker "$marker"
+rm -f -- "$STATE_DIR/$kver.failed"
+
+logger -t i915-pcon-frl-444 -p user.notice -- "installed patched i915 for $kver (srcversion $built_srcversion, patch $patch_sha256); active after the next boot"
+log "installed $installed_module (srcversion $built_srcversion); it is used from the next boot"

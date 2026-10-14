@@ -17,6 +17,14 @@
       minimal_desktop_display_outputs must list xrandr output names such as
       DP-1 or HDMI-A-1, in order of preference.
 
+- name: Validate the display range setting
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_display_broadcast_rgb in ['', 'Full', 'Limited 16:235', 'Automatic']
+    fail_msg: >-
+      minimal_desktop_display_broadcast_rgb must be empty, Full,
+      Limited 16:235 or Automatic.
+
 - name: Ensure the Curiosity configuration directory exists
   ansible.builtin.file:
     path: /etc/curiosity
@@ -49,6 +57,30 @@
       {% endfor %}
   when: minimal_desktop_display_setup_enabled | bool
 
+# The helper sets the xrandr "Broadcast RGB" property only when this file
+# exists, so an empty setting removes it and leaves the driver's choice.
+- name: Record the output range (Broadcast RGB)
+  ansible.builtin.copy:
+    dest: /etc/curiosity/display-broadcast-rgb
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible. xrandr "Broadcast RGB" value for the chosen output:
+      # Full, Limited 16:235 or Automatic.
+      {{ minimal_desktop_display_broadcast_rgb }}
+  when:
+    - minimal_desktop_display_setup_enabled | bool
+    - minimal_desktop_display_broadcast_rgb | length > 0
+
+- name: Remove the output range setting when it is empty
+  ansible.builtin.file:
+    path: /etc/curiosity/display-broadcast-rgb
+    state: absent
+  when:
+    - minimal_desktop_display_setup_enabled | bool
+    - minimal_desktop_display_broadcast_rgb | length == 0
+
 - name: Run the display setup helper before the LightDM greeter
   ansible.builtin.copy:
     dest: /etc/lightdm/lightdm.conf.d/60-display-setup.conf
@@ -76,6 +108,7 @@
     patterns:
       - curiosity-display-setup
       - display-outputs
+      - display-broadcast-rgb
     contains: 'Managed by Ansible'
   register: _display_setup_managed_files
   when: not (minimal_desktop_display_setup_enabled | bool)
