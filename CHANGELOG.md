@@ -20,8 +20,8 @@ All notable changes to this project are documented here. The format follows
   default 500, `200` on `deskmeet-b760`) sets Openbox `doubleClickTime` and
   `gtk-double-click-time`, so a pull no longer reverts a hand-tuned interval.
   The two top buttons (stock DPI up/down) are reassigned in the mouse's onboard
-  profile (libratbag/`ratbagd`) to F13/F14 and switch to the previous/next
-  virtual terminal in use via the new `/usr/local/bin/curiosity-vt`.
+  profile (libratbag/`ratbagd`) to F13/F14 and rotate through the
+  Openbox desktops via the new `/usr/local/bin/curiosity-desktop`.
   Rollback: drop the `curiosity-g604` autostart line and `pkill xbindkeys`;
   `ratbagctl <dev> profile 0 button 9 action set resolution-down` (and `10`
   `resolution-up`) restores the DPI buttons.

@@ -10,16 +10,16 @@
 #     role) arrive as key presses from its separate keyboard device, so that
 #     device is floated (its keys no longer reach applications) and watched:
 #     the lightbar keycode runs the lightbar command and the top buttons run
-#     curiosity-vt prev/next.
+#     curiosity-desktop prev/next (Openbox desktops).
 # Both are stopped when the mouse disappears, so a machine without a G604 pays
 # only a cheap poll and a replugged or re-paired mouse picks the mapping up again.
 # One instance runs per X display; starting a second one is a no-op.
 #
 # Environment overrides: CURIOSITY_G604_LIGHTBAR_KEYCODE (default 12, thumb
 # button 3), CURIOSITY_G604_LIGHTBAR_COMMAND (default "litra toggle"),
-# CURIOSITY_G604_VT_PREV_KEYCODE (191) and CURIOSITY_G604_VT_NEXT_KEYCODE (192),
+# CURIOSITY_G604_DESKTOP_PREV_KEYCODE (191) and CURIOSITY_G604_DESKTOP_NEXT_KEYCODE (192),
 # and for tests CURIOSITY_G604_CONF, CURIOSITY_G604_NAME,
-# CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK, CURIOSITY_G604_VT_COMMAND. The
+# CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK, CURIOSITY_G604_DESKTOP_COMMAND. The
 # role writes the keycodes and the lightbar command to
 # /etc/curiosity/g604.env (override the path with CURIOSITY_G604_ENV).
 
@@ -27,9 +27,9 @@ env_file=${CURIOSITY_G604_ENV:-/etc/curiosity/g604.env}
 [ -r "$env_file" ] && . "$env_file"
 lightbar_keycode=${CURIOSITY_G604_LIGHTBAR_KEYCODE:-12}
 lightbar_command=${CURIOSITY_G604_LIGHTBAR_COMMAND:-litra toggle}
-vt_prev_keycode=${CURIOSITY_G604_VT_PREV_KEYCODE:-191}
-vt_next_keycode=${CURIOSITY_G604_VT_NEXT_KEYCODE:-192}
-vt_command=${CURIOSITY_G604_VT_COMMAND:-curiosity-vt}
+desktop_prev_keycode=${CURIOSITY_G604_DESKTOP_PREV_KEYCODE:-191}
+desktop_next_keycode=${CURIOSITY_G604_DESKTOP_NEXT_KEYCODE:-192}
+desktop_command=${CURIOSITY_G604_DESKTOP_COMMAND:-curiosity-desktop}
 conf=${CURIOSITY_G604_CONF:-/etc/curiosity/g604-xbindkeys.rc}
 device_name=${CURIOSITY_G604_NAME:-Logitech G604}
 interval=${CURIOSITY_G604_INTERVAL:-5}
@@ -69,8 +69,8 @@ watch_thumb_buttons() {
         [ "$kind $state" = "key press" ] || continue
         case "$code" in
             "$lightbar_keycode") sh -c "$lightbar_command" >/dev/null 2>&1 & ;;
-            "$vt_prev_keycode") $vt_command prev >/dev/null 2>&1 & ;;
-            "$vt_next_keycode") $vt_command next >/dev/null 2>&1 & ;;
+            "$desktop_prev_keycode") $desktop_command prev >/dev/null 2>&1 & ;;
+            "$desktop_next_keycode") $desktop_command next >/dev/null 2>&1 & ;;
         esac
     done
 }

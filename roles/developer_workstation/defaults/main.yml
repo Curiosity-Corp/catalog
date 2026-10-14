@@ -899,9 +899,9 @@ logitech_g604_paste_button: 7
 logitech_g604_lightbar_keycode: 12
 # The two buttons on top by the left click (DPI up/down in the stock profile)
 # are reassigned in the mouse's onboard profile to F13/F14 (X keycodes 191/192)
-# and switch to the previous/next virtual terminal in use (curiosity-vt).
-logitech_g604_vt_prev_keycode: 191
-logitech_g604_vt_next_keycode: 192
+# and rotate through the Openbox desktops (curiosity-desktop prev/next).
+logitech_g604_desktop_prev_keycode: 191
+logitech_g604_desktop_next_keycode: 192
 logitech_g604_lightbar_command: litra toggle
 
 # Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps.

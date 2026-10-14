@@ -1,0 +1,27 @@
+#!/bin/sh
+# curiosity-desktop: switch to the previous or next Openbox desktop, wrapping
+# around (1 -> 2 -> 3 -> 4 -> 1). Managed by the curiosity workstation role.
+#
+# usage: curiosity-desktop prev|next
+
+direction=$1
+case "$direction" in
+    prev | next) ;;
+    *) echo "usage: curiosity-desktop prev|next" >&2; exit 2 ;;
+esac
+
+command -v xdotool >/dev/null 2>&1 || { echo "curiosity-desktop: xdotool is not installed" >&2; exit 1; }
+
+count=$(xdotool get_num_desktops 2>/dev/null)
+current=$(xdotool get_desktop 2>/dev/null)
+case "$count$current" in
+    '' | *[!0-9]*) echo "curiosity-desktop: cannot read the desktops from the window manager" >&2; exit 1 ;;
+esac
+[ "$count" -gt 1 ] || exit 0
+
+if [ "$direction" = next ]; then
+    target=$(( (current + 1) % count ))
+else
+    target=$(( (current + count - 1) % count ))
+fi
+exec xdotool set_desktop "$target"

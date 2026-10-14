@@ -15,8 +15,8 @@
       - logitech_g604_copy_button | string is match('^[0-9]+$')
       - logitech_g604_paste_button | string is match('^[0-9]+$')
       - logitech_g604_lightbar_keycode | string is match('^[0-9]+$')
-      - logitech_g604_vt_prev_keycode | string is match('^[0-9]+$')
-      - logitech_g604_vt_next_keycode | string is match('^[0-9]+$')
+      - logitech_g604_desktop_prev_keycode | string is match('^[0-9]+$')
+      - logitech_g604_desktop_next_keycode | string is match('^[0-9]+$')
       - logitech_g604_lightbar_command | length > 0
       - logitech_g604_lightbar_command is not search('["\']')
       - logitech_g604_copy_button | int != logitech_g604_paste_button | int
@@ -60,8 +60,8 @@
       # Managed by the curiosity workstation role (Logitech G604 button profile).
       CURIOSITY_G604_LIGHTBAR_KEYCODE={{ logitech_g604_lightbar_keycode | int }}
       CURIOSITY_G604_LIGHTBAR_COMMAND='{{ logitech_g604_lightbar_command }}'
-      CURIOSITY_G604_VT_PREV_KEYCODE={{ logitech_g604_vt_prev_keycode | int }}
-      CURIOSITY_G604_VT_NEXT_KEYCODE={{ logitech_g604_vt_next_keycode | int }}
+      CURIOSITY_G604_DESKTOP_PREV_KEYCODE={{ logitech_g604_desktop_prev_keycode | int }}
+      CURIOSITY_G604_DESKTOP_NEXT_KEYCODE={{ logitech_g604_desktop_next_keycode | int }}
 
 - name: Install the G604 profile launcher
   ansible.builtin.copy:
@@ -71,10 +71,10 @@
     group: root
     mode: "0755"
 
-- name: Install the previous/next virtual terminal switcher
+- name: Install the previous/next desktop switcher
   ansible.builtin.copy:
-    src: curiosity-vt
-    dest: /usr/local/bin/curiosity-vt
+    src: curiosity-desktop
+    dest: /usr/local/bin/curiosity-desktop
     owner: root
     group: root
     mode: "0755"

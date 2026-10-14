@@ -61,10 +61,9 @@ and `pkill -f curiosity-g604; pkill xbindkeys`.
 The two buttons on top by the left click are DPI down/up inside the mouse and
 send nothing to the computer, so the role reassigns them in the onboard profile
 with `ratbagctl` (package `ratbagd`) to F13/F14. `curiosity-g604` turns those
-keys into `curiosity-vt prev` / `curiosity-vt next`, which switch to the
-previous/next virtual terminal that has a login, shell or X server attached
-(wrapping around; no root needed inside X). In a plain TTY use the console's
-built-in `Alt+Left` / `Alt+Right`. To give the buttons back their DPI function:
+keys into `curiosity-desktop prev` / `curiosity-desktop next`, which rotate
+through the Openbox desktops (1 to 4, wrapping around). They never switch
+virtual terminals. To give the buttons back their DPI function:
 `ratbagctl <device> profile 0 button 9 action set resolution-down` and
 `... button 10 action set resolution-up`.
 

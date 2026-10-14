@@ -187,64 +187,66 @@ def _wait_for(path: Path, timeout: float = 5.0) -> None:
     raise AssertionError(f"{path.name} was never created")
 
 
-VT_SCRIPT = ROLE / "files/curiosity-vt"
+DESKTOP_SCRIPT = ROLE / "files/curiosity-desktop"
 
 
-def _run_vt(tmp_path: Path, active: str, ttys: list[str], direction: str) -> str:
+def _run_desktop(tmp_path: Path, count: int, current: int, direction: str) -> str:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     out = tmp_path / "switched"
-    (bin_dir / "ps").write_text("#!/bin/sh\nprintf '%s\\n' " + " ".join(ttys) + "\n")
-    (bin_dir / "xdotool").write_text(f'#!/bin/sh\necho "$@" > {out}\n')
-    for tool in ("ps", "xdotool"):
-        (bin_dir / tool).chmod(0o755)
-    active_file = tmp_path / "active"
-    active_file.write_text(active + "\n")
+    (bin_dir / "xdotool").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            case "$1" in
+              get_num_desktops) echo {count};;
+              get_desktop) echo {current};;
+              set_desktop) echo "$2" > {out};;
+            esac
+            """
+        )
+    )
+    (bin_dir / "xdotool").chmod(0o755)
     out.unlink(missing_ok=True)
     subprocess.run(
-        ["sh", str(VT_SCRIPT), direction],
-        env={
-            **os.environ,
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "DISPLAY": ":0",
-            "CURIOSITY_VT_ACTIVE": str(active_file),
-        },
+        ["sh", str(DESKTOP_SCRIPT), direction],
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
         check=True,
     )
     return out.read_text().strip() if out.exists() else ""
 
 
 @pytest.mark.parametrize(
-    ("active", "direction", "target"),
+    ("current", "direction", "target"),
     [
-        ("tty10", "prev", "9"),
-        ("tty9", "prev", "8"),
-        ("tty8", "prev", "1"),
-        ("tty1", "prev", "10"),
-        ("tty10", "next", "1"),
-        ("tty1", "next", "8"),
+        (0, "next", "1"),
+        (2, "next", "3"),
+        (3, "next", "0"),
+        (3, "prev", "2"),
+        (1, "prev", "0"),
+        (0, "prev", "3"),
     ],
 )
-def test_vt_switcher_skips_unused_vts_and_wraps(tmp_path: Path, active: str, direction: str, target: str) -> None:
-    ttys = ["tty1", "tty10", "tty8", "tty9", "pts/3", "?"]
-    assert _run_vt(tmp_path, active, ttys, direction) == f"key --clearmodifiers XF86Switch_VT_{target}"
+def test_desktop_switcher_rotates_through_four_desktops(tmp_path: Path, current: int, direction: str, target: str) -> None:
+    assert _run_desktop(tmp_path, 4, current, direction) == target
 
 
-def test_vt_switcher_does_nothing_with_a_single_vt(tmp_path: Path) -> None:
-    assert _run_vt(tmp_path, "tty3", [], "next") == ""
+def test_desktop_switcher_does_nothing_with_a_single_desktop(tmp_path: Path) -> None:
+    assert _run_desktop(tmp_path, 1, 0, "next") == ""
 
 
-def test_vt_switcher_rejects_bad_usage() -> None:
-    assert subprocess.run(["sh", str(VT_SCRIPT), "sideways"], capture_output=True).returncode == 2
+def test_desktop_switcher_rejects_bad_usage() -> None:
+    assert subprocess.run(["sh", str(DESKTOP_SCRIPT), "sideways"], capture_output=True).returncode == 2
 
 
-def test_top_buttons_run_the_vt_switcher() -> None:
-    assert DEFAULTS["logitech_g604_vt_prev_keycode"] == 191  # F13
-    assert DEFAULTS["logitech_g604_vt_next_keycode"] == 192  # F14
+def test_top_buttons_rotate_the_openbox_desktops() -> None:
+    assert DEFAULTS["logitech_g604_desktop_prev_keycode"] == 191  # F13
+    assert DEFAULTS["logitech_g604_desktop_next_keycode"] == 192  # F14
     tasks = yaml.safe_load((ROLE / "tasks/logitech-g604.yml").read_text())
     names = [task["name"] for task in tasks]
-    assert "Install the previous/next virtual terminal switcher" in names
+    assert "Install the previous/next desktop switcher" in names
     assert "Reassign the G604 top buttons to F13/F14 in the onboard profile" in names
     script = SCRIPT.read_text()
-    assert '"$vt_prev_keycode") $vt_command prev' in script
-    assert '"$vt_next_keycode") $vt_command next' in script
+    assert '"$desktop_prev_keycode") $desktop_command prev' in script
+    assert '"$desktop_next_keycode") $desktop_command next' in script
+    assert not (ROLE / "files/curiosity-vt").exists()
