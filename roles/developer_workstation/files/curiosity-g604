@@ -24,7 +24,7 @@
 # CURIOSITY_G604_DESKTOP_PREV_KEYCODE (191), CURIOSITY_G604_DESKTOP_NEXT_KEYCODE (192),
 # CURIOSITY_G604_BACK_KEYCODE (15), CURIOSITY_G604_FORWARD_KEYCODE (10),
 # CURIOSITY_G604_BACK_COMMAND and CURIOSITY_G604_FORWARD_COMMAND,
-# CURIOSITY_G604_MIC_KEYCODE (13), CURIOSITY_G604_ZONE_KEYCODE (14) and their
+# CURIOSITY_G604_MIC_KEYCODE (13), CURIOSITY_G604_ZONE_KEYCODE (14), CURIOSITY_G604_SCREENSHOT_KEYCODE (11) and their
 # _COMMAND counterparts,
 # and for tests CURIOSITY_G604_CONF, CURIOSITY_G604_NAME,
 # CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK, CURIOSITY_G604_DESKTOP_COMMAND. The
@@ -44,6 +44,8 @@ back_command=${CURIOSITY_G604_BACK_COMMAND:-xdotool key --clearmodifiers alt+Lef
 forward_command=${CURIOSITY_G604_FORWARD_COMMAND:-xdotool key --clearmodifiers alt+Right}
 mic_keycode=${CURIOSITY_G604_MIC_KEYCODE:-13}
 zone_keycode=${CURIOSITY_G604_ZONE_KEYCODE:-14}
+shot_keycode=${CURIOSITY_G604_SCREENSHOT_KEYCODE:-11}
+shot_command=${CURIOSITY_G604_SCREENSHOT_COMMAND:-flameshot gui}
 mic_command=${CURIOSITY_G604_MIC_COMMAND:-curiosity-mic-mute}
 zone_command=${CURIOSITY_G604_ZONE_COMMAND:-openbox-zone toggle browser}
 conf=${CURIOSITY_G604_CONF:-/etc/curiosity/g604-xbindkeys.rc}
@@ -91,6 +93,7 @@ watch_thumb_buttons() {
             "$forward_keycode") sh -c "$forward_command" >/dev/null 2>&1 & ;;
             "$mic_keycode") sh -c "$mic_command" >/dev/null 2>&1 & ;;
             "$zone_keycode") sh -c "$zone_command" >/dev/null 2>&1 & ;;
+            "$shot_keycode") sh -c "$shot_command" >/dev/null 2>&1 & ;;
         esac
     done
 }

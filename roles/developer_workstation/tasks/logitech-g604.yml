@@ -21,6 +21,7 @@
       - logitech_g604_forward_keycode | string is match('^[0-9]+$')
       - logitech_g604_mic_keycode | string is match('^[0-9]+$')
       - logitech_g604_zone_keycode | string is match('^[0-9]+$')
+      - logitech_g604_screenshot_keycode | string is match('^[0-9]+$')
       - logitech_g604_lightbar_command | length > 0
       - logitech_g604_lightbar_command is not search('["\']')
       - logitech_g604_copy_button | int != logitech_g604_paste_button | int
@@ -70,6 +71,8 @@
       CURIOSITY_G604_FORWARD_KEYCODE={{ logitech_g604_forward_keycode | int }}
       CURIOSITY_G604_MIC_KEYCODE={{ logitech_g604_mic_keycode | int }}
       CURIOSITY_G604_ZONE_KEYCODE={{ logitech_g604_zone_keycode | int }}
+      CURIOSITY_G604_SCREENSHOT_KEYCODE={{ logitech_g604_screenshot_keycode | int }}
+      CURIOSITY_G604_SCREENSHOT_COMMAND='{{ logitech_g604_screenshot_command }}'
 
 - name: Install the G604 profile launcher
   ansible.builtin.copy:

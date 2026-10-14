@@ -251,6 +251,8 @@ def test_top_buttons_rotate_the_openbox_desktops() -> None:
     assert DEFAULTS["logitech_g604_mic_keycode"] == 13  # KEY_4
     assert DEFAULTS["logitech_g604_zone_keycode"] == 14  # KEY_5
     assert "Install the microphone mute toggle" in names
+    assert DEFAULTS["logitech_g604_screenshot_keycode"] == 11
+    assert DEFAULTS["logitech_g604_screenshot_command"] == "flameshot gui"
     script = SCRIPT.read_text()
     assert "curiosity-mic-mute" in script and "openbox-zone toggle browser" in script
     assert "alt+Left" in script and "alt+Right" in script
