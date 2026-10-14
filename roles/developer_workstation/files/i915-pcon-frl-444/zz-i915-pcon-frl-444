@@ -1,0 +1,25 @@
+#!/bin/sh
+# Kernel postinst hook: build the patched i915 module for the kernel that was
+# just installed. Managed by Ansible.
+#
+# The build takes minutes and needs the network, so it runs as a transient
+# systemd unit instead of inside the dpkg transaction, and this hook always
+# exits 0: a failing postinst.d script would abort the kernel package's
+# configuration. Failures are reported by the build script (journal tag
+# i915-pcon-frl-444, /var/lib/i915-pcon-frl-444/<kver>.failed) and leave the
+# stock module in place.
+kver=$1
+[ -n "$kver" ] || exit 0
+[ -x /usr/local/sbin/i915-pcon-frl-444-build ] || exit 0
+
+if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemd-run --quiet --no-block --collect \
+        --unit="i915-pcon-frl-444-build-$kver" \
+        --description="Build patched i915 for $kver" \
+        --property=Nice=19 --property=IOSchedulingClass=idle \
+        /usr/local/sbin/i915-pcon-frl-444-build "$kver" \
+        || logger -t i915-pcon-frl-444 -p user.err -- "could not start the i915 build for $kver; run: i915-pcon-frl-444-build $kver"
+else
+    logger -t i915-pcon-frl-444 -p user.warning -- "systemd is not running; build the patched i915 for $kver with: i915-pcon-frl-444-build $kver"
+fi
+exit 0

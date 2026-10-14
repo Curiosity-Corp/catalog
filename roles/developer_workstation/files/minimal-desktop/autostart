@@ -23,6 +23,12 @@ if command -v dbus-update-activation-environment >/dev/null 2>&1; then
 fi
 unset activation_env_vars activation_env_var activation_env_value activation_env_timeout
 
+# X resources (Xft.dpi, Xcursor.size): LightDM sessions merge ~/.Xresources
+# themselves, startx sessions do not. Merging twice is harmless.
+if [ -r "$HOME/.Xresources" ] && command -v xrdb >/dev/null 2>&1; then
+    xrdb -merge "$HOME/.Xresources" || echo "xrdb could not merge ~/.Xresources; the display scale may be missing." >&2
+fi
+
 # Set cursor immediately
 xsetroot -cursor_name left_ptr &
 

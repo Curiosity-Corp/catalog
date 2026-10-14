@@ -132,3 +132,39 @@ if ! result=$(xrandr "$@" 2>&1); then
     warn "xrandr failed for $target: $result"
     exit 0
 fi
+
+# Optional output range. /etc/curiosity/display-broadcast-rgb (override with
+# CURIOSITY_DISPLAY_BROADCAST_RGB) holds one value for the xrandr "Broadcast RGB"
+# property: Full, Limited 16:235 or Automatic. Intel i915 picks limited range
+# for HDMI/CEA modes by default, which washes out a PC desktop on a TV. The
+# property is only set when the file exists and the output has it. A failure is
+# reported and never stops the login.
+broadcast_config=${CURIOSITY_DISPLAY_BROADCAST_RGB:-/etc/curiosity/display-broadcast-rgb}
+if [ -r "$broadcast_config" ]; then
+    broadcast_value=$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$broadcast_config" | head -n 1)
+    case "$broadcast_value" in
+        "" | Automatic | Full | "Limited 16:235") ;;
+        *)
+            warn "ignoring invalid Broadcast RGB value in $broadcast_config: $broadcast_value"
+            broadcast_value=
+            ;;
+    esac
+    if [ -n "$broadcast_value" ]; then
+        if properties=$(xrandr --prop 2>&1); then
+            has_broadcast=$(printf '%s\n' "$properties" | awk -v out="$target" '
+                $1 == out && ($2 == "connected" || $2 == "disconnected") { in_output = 1; next }
+                /^[^[:space:]]/ { in_output = 0 }
+                in_output && $1 == "Broadcast" && $2 == "RGB:" { found = 1 }
+                END { print found ? "yes" : "no" }')
+            if [ "$has_broadcast" = yes ]; then
+                if ! result=$(xrandr --output "$target" --set "Broadcast RGB" "$broadcast_value" 2>&1); then
+                    warn "cannot set Broadcast RGB on $target: $result"
+                fi
+            fi
+        else
+            warn "cannot query the properties of $target: $properties"
+        fi
+    fi
+elif [ -e "$broadcast_config" ]; then
+    warn "cannot read $broadcast_config; leaving Broadcast RGB alone"
+fi

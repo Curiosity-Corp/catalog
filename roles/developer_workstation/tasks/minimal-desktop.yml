@@ -72,6 +72,14 @@
     mode: "0755"
   tags: [minimal-desktop, tint2]
 
+- name: Render the display scale X resources
+  ansible.builtin.include_tasks: minimal-desktop-display-scale.yml
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
+  tags: [minimal-desktop, display]
+
 - name: Deploy tint2 panel config
   ansible.builtin.include_tasks: minimal-desktop-tint2.yml
   loop: "{{ dev_users }}"

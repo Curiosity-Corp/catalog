@@ -710,6 +710,9 @@ minimal_desktop_pinned_vt_sessions: []
 # made primary. Other outputs are turned off only when a listed output matched.
 minimal_desktop_display_setup_enabled: false
 minimal_desktop_display_outputs: []
+# minimal_desktop_display_broadcast_rgb (derived from the hardware profile
+# further down) sets the output's xrandr `Broadcast RGB` property: Full,
+# Limited 16:235 or Automatic; empty leaves the driver's choice.
 
 # tint2 panel layout deployed to ~/.config/tint2/tint2rc for each dev_users
 # entry: `bottom` (dark 32px bottom bar with taskbar, tray and clock) or `top`
@@ -856,7 +859,13 @@ pro_mimic_motd_news_enabled: false
 # modprobe_options ({name, content} -> /etc/modprobe.d/<name>.conf) and
 # kernel_modules (loaded now and at boot via /etc/modules-load.d), and
 # litra_cli (boolean, default false: install the Litra CLI to
-# /usr/local/bin/litra via the latest-release contract; see litra_cli_enabled).
+# /usr/local/bin/litra via the latest-release contract; see litra_cli_enabled),
+# i915_pcon_frl_444 (boolean, default false: build the patched i915 that keeps
+# RGB 4:4:4 behind a DP -> HDMI 2.1 PCON; see i915_pcon_frl_444_enabled),
+# display_scale (integer, default 1: whole-number desktop scale for a
+# high-DPI display; see minimal_desktop_display_scale) and broadcast_rgb
+# (Full, Limited 16:235 or Automatic, default unset: the output's xrandr
+# `Broadcast RGB` property; see minimal_desktop_display_broadcast_rgb).
 # =============================================================================
 hardware_profile: generic
 
@@ -865,6 +874,24 @@ hardware_profile: generic
 # only profiles that opt in (and hosts that override this variable) download or
 # install it. Referenced by the litra contract's `enabled_when`.
 litra_cli_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('litra_cli', false) | bool }}"
+
+# Patched i915 module (RGB 4:4:4 over a DP -> HDMI 2.1 PCON), rebuilt for every
+# installed kernel by tasks/i915-pcon-frl-444.yml. Derived from the selected
+# hardware profile's optional `i915_pcon_frl_444` flag; only deskmeet-b760 opts
+# in. A reboot activates a newly built module; the role never reloads i915.
+i915_pcon_frl_444_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('i915_pcon_frl_444', false) | bool }}"
+
+# Whole-number desktop scale of the minimal desktop, from the hardware profile's
+# `display_scale` (1 leaves every user's X resources and tint2 panel alone). At
+# 2 the role renders ~/.Xresources (Xft.dpi 192, Xcursor.size 48) and doubles the
+# tint2 panel height and launcher icon size.
+minimal_desktop_display_scale: "{{ (hardware_profiles.get(hardware_profile, {})).get('display_scale', 1) | int }}"
+
+# xrandr `Broadcast RGB` value that curiosity-display-setup applies to its
+# output when the output has that property (Intel i915). Empty leaves the
+# driver's automatic choice, which is limited range for HDMI/CEA modes. Derived
+# from the hardware profile's `broadcast_rgb`.
+minimal_desktop_display_broadcast_rgb: "{{ (hardware_profiles.get(hardware_profile, {})).get('broadcast_rgb', '') }}"
 
 hardware_profiles:
   generic:
@@ -977,6 +1004,14 @@ hardware_profiles:
     # Litra Beam lightbar (046d:c901): install the `litra` CLI; the hidraw
     # access it needs is granted by the 60-logitech-litra udev rule below.
     litra_cli: true
+    # Samsung 8K TV on the Arc A380 over a DP -> HDMI 2.1 PCON cable: stock i915
+    # sends YCbCr 4:2:0; the patched module keeps RGB 4:4:4 (DSC over FRL).
+    i915_pcon_frl_444: true
+    # PC/desktop use wants full-range RGB, not the limited range i915 picks
+    # automatically for HDMI/CEA modes.
+    broadcast_rgb: Full
+    # Windows-style 200% scaling for the 8K panel.
+    display_scale: 2
     pipx_packages:
       - streamdeck-linux-gui
     # Rule names must sort before 73-seat-late so uaccess ACLs are applied;
