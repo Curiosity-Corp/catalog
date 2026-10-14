@@ -19,6 +19,8 @@
       - logitech_g604_desktop_next_keycode | string is match('^[0-9]+$')
       - logitech_g604_back_keycode | string is match('^[0-9]+$')
       - logitech_g604_forward_keycode | string is match('^[0-9]+$')
+      - logitech_g604_mic_keycode | string is match('^[0-9]+$')
+      - logitech_g604_zone_keycode | string is match('^[0-9]+$')
       - logitech_g604_lightbar_command | length > 0
       - logitech_g604_lightbar_command is not search('["\']')
       - logitech_g604_copy_button | int != logitech_g604_paste_button | int
@@ -66,11 +68,21 @@
       CURIOSITY_G604_DESKTOP_NEXT_KEYCODE={{ logitech_g604_desktop_next_keycode | int }}
       CURIOSITY_G604_BACK_KEYCODE={{ logitech_g604_back_keycode | int }}
       CURIOSITY_G604_FORWARD_KEYCODE={{ logitech_g604_forward_keycode | int }}
+      CURIOSITY_G604_MIC_KEYCODE={{ logitech_g604_mic_keycode | int }}
+      CURIOSITY_G604_ZONE_KEYCODE={{ logitech_g604_zone_keycode | int }}
 
 - name: Install the G604 profile launcher
   ansible.builtin.copy:
     src: curiosity-g604
     dest: /usr/local/bin/curiosity-g604
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the microphone mute toggle
+  ansible.builtin.copy:
+    src: curiosity-mic-mute
+    dest: /usr/local/bin/curiosity-mic-mute
     owner: root
     group: root
     mode: "0755"
@@ -87,14 +99,14 @@
 # computer until the onboard profile reassigns them. libratbag (ratbagd)
 # writes that profile; the settings live in the mouse, so this only runs when a
 # G604 is attached and only writes a button that differs.
-- name: Reassign the G604 top and back buttons to F13/F14/KEY_6 in the onboard profile
+- name: Reassign the G604 top and back buttons to F13/F14/KEY_4/KEY_5/KEY_6 in the onboard profile
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
       dev=$(ratbagctl list | awk '/Logitech G604/ { sub(":", "", $1); print $1; exit }')
       [ -n "$dev" ] || { echo "no G604 attached"; exit 0; }
       changed=
-      for pair in "9 KEY_F13" "10 KEY_F14" "5 KEY_6"; do
+      for pair in "9 KEY_F13" "10 KEY_F14" "5 KEY_6" "3 KEY_4" "4 KEY_5"; do
         set -- $pair
         current=$(ratbagctl "$dev" profile 0 button "$1" get)
         if [[ "$current" != *"$2'" ]]; then

@@ -55,6 +55,8 @@ command on `logitech_g604_lightbar_keycode` (12). Change
 `logitech_g604_copy_button`, `logitech_g604_paste_button`,
 `logitech_g604_lightbar_keycode` or `logitech_g604_lightbar_command` to remap;
 `xinput test <id>` on the G604 keyboard device shows a button's keycode.
+
+The lower right thumb button (keycode 13) toggles the microphone (`logitech_g604_mic_keycode`) and the button that sends KEY_5 (keycode 14) toggles the focused window between its place and the middle zone (`logitech_g604_zone_keycode`, `openbox-zone toggle`).
 Rollback: remove the `curiosity-g604` line from `~/.config/openbox/autostart`
 and `pkill -f curiosity-g604; pkill xbindkeys`.
 

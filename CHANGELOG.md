@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- G604 thumb buttons: the lower right button (onboard KEY_4, keycode 13) runs `curiosity-mic-mute` (toggles the default microphone, shows a notice); the one sending KEY_5 (keycode 14) runs `openbox-zone toggle browser` (snap the focused window to the middle zone, press again to restore its exact previous geometry and maximized state). `openbox-zone` now uses `wmctrl` for maximize states. Variables: `logitech_g604_mic_keycode`, `logitech_g604_zone_keycode`.
 - Logitech G604 button profile: new hardware-profile key `logitech_g604`
   (derived `logitech_g604_enabled`, on for `deskmeet-b760`) installs
   `xbindkeys`, `/etc/curiosity/g604-xbindkeys.rc` and

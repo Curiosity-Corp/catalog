@@ -41,6 +41,8 @@
       # X11 utilities
       - x11-xserver-utils
       - xdotool
+      # wmctrl, used by openbox-zone to (un)maximize windows while snapping
+      - wmctrl
       # xprop, used by openbox-zone to read the EWMH work area
       - x11-utils
       # NSS cert tools (import internal CAs into Firefox snap cert store)

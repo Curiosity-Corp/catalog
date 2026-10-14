@@ -907,6 +907,11 @@ logitech_g604_desktop_next_keycode: 192
 # is back. Both send Alt+Left / Alt+Right.
 logitech_g604_back_keycode: 15
 logitech_g604_forward_keycode: 10
+# Lower right thumb button (onboard KEY_4, keycode 13): toggle the microphone.
+# The button that sends KEY_5 (keycode 14): snap the focused window to the
+# middle `browser` zone and, pressed again, put it back where it was.
+logitech_g604_mic_keycode: 13
+logitech_g604_zone_keycode: 14
 logitech_g604_lightbar_command: litra toggle
 
 # Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps.
