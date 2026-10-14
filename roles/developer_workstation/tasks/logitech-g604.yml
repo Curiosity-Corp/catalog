@@ -19,6 +19,7 @@
       - logitech_g604_desktop_next_keycode | string is match('^[0-9]+$')
       - logitech_g604_back_keycode | string is match('^[0-9]+$')
       - logitech_g604_forward_keycode | string is match('^[0-9]+$')
+      - logitech_g604_dpi | string is match('^[0-9]+$')
       - logitech_g604_mic_keycode | string is match('^[0-9]+$')
       - logitech_g604_zone_keycode | string is match('^[0-9]+$')
       - logitech_g604_screenshot_keycode | string is match('^[0-9]+$')
@@ -117,6 +118,15 @@
           changed=yes
         fi
       done
+      # Pointer speed: make the onboard resolution the one with this DPI.
+      want={{ logitech_g604_dpi | int }}
+      idx=$(ratbagctl "$dev" profile 0 get | awk -v dpi="${want}dpi" '$2 == dpi || $2 == dpi":" || $3 == dpi { sub(":", "", $1); print $1; exit }')
+      if [ -n "$idx" ]; then
+        if ! ratbagctl "$dev" profile 0 resolution "$idx" get | grep -q "(active)"; then
+          ratbagctl "$dev" profile 0 resolution active set "$idx"
+          changed=yes
+        fi
+      fi
       [ -z "$changed" ] || echo CHANGED
     executable: /bin/bash
   register: _g604_onboard
