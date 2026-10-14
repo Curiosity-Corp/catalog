@@ -1128,14 +1128,21 @@ hardware_profiles:
       # signal about once a minute while the PCON still reported the link up
       # with zero FRL errors (2026-10-14). Off, i915 sends 8K30 the stock way
       # (RGB 6 bpc dithered, HBR3, no DSC), the path that ran without drops
-      # before the patch. Both paths train the PCON at FRL 40G, so the link
-      # rate itself is not the cause.
-      # To try 4:4:4 again (certified 48G cable, Input Signal Plus), set this
-      # to 1 and reboot, or write 1 to /sys/module/i915/parameters/pcon_frl_444
-      # and modeset.
+      # before the patch.
+      # pcon_max_frl_gbps=32 caps the HDMI FRL rate (#88): both paths trained
+      # the VL605 PCON at FRL 40G (the TV's EDID max), and the TV still blanked
+      # about every 20 minutes on the stock path. 8K30 HDMI is 8 bpc RGB
+      # (~28.5 Gbps incl. blanking, ~23.9 Gbps active), which fits FRL 32G
+      # (8G x 4 lanes) with more per-lane margin. Live-verified 2026-10-14
+      # (PCON DPCD 0x3036=0x91, zero FRL errors).
+      # To try 4:4:4 again (certified 48G cable, Input Signal Plus), set
+      # pcon_frl_444=1 and reboot, or write 1 to
+      # /sys/module/i915/parameters/pcon_frl_444 and modeset. Both parameters
+      # are read at the next modeset/FRL training; a changed file needs a
+      # reboot (or i915-reload).
       - name: curiosity-i915-pcon-frl-444
         content: |
-          options i915 pcon_frl_444=0
+          options i915 pcon_frl_444=0 pcon_max_frl_gbps=32
     # Loaded now and at boot via /etc/modules-load.d/curiosity-hardware.conf
     kernel_modules:
       - v4l2loopback

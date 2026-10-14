@@ -132,6 +132,25 @@ resolution. To test 4:4:4 live, write `1` to
 `xrandr --output DP-3 --mode 7680x4320 --rate 25`, then `--rate 30`); write `0`
 and modeset again to go back.
 
+The module parameter `i915.pcon_max_frl_gbps` (int, default `0` = no cap)
+caps the HDMI FRL rate the PCON is asked to train at, below the lower of the
+PCON's and the sink's (EDID) maximum. It only changes FRL link training in
+`intel_dp_pcon_start_frl_training()`, not mode validation, and is independent of
+`pcon_frl_444`. FRL only has the rates 9, 18, 24, 32, 40 and 48 Gbps, so any other
+value is rounded down to the next of these (`35` trains at 32G; `1` to `8` train
+at 9G); `dmesg` with `drm.debug=0x4` (KMS) logs the cap and the rate used.
+`deskmeet-b760` sets `pcon_max_frl_gbps=32` in the same modprobe option
+(`options i915 pcon_frl_444=0 pcon_max_frl_gbps=32`): both paths trained its
+VL605 PCON at FRL 40G (the TV's EDID maximum) and the TV still blanked about every
+20 minutes on the stock path. 8K30 over HDMI is 8 bpc RGB (~28.5 Gbps including
+blanking, ~23.9 Gbps active), which fits FRL 32G (8G x 4 lanes) with more per-lane
+margin; live-verified on 2026-10-14 (PCON DPCD `0x3036` = `0x91`, zero FRL
+errors). The parameter arrived with a new patch, so the next pull rebuilds the
+module (the marker's patch SHA-256 changes) and a reboot is needed before
+`/sys/module/i915/parameters/pcon_max_frl_gbps` exists. After that it can be
+written at runtime (root, mode `0600`) and applies at the next FRL training,
+i.e. the next modeset or hotplug.
+
 ## Optional private services
 
 Keep these values out of the repository:

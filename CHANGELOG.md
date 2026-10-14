@@ -9,6 +9,17 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - Fix: write the authd-oidc and authd-msentraid `broker.conf` as 0600; authd-oidc 0.5+ refuses to start with 0644, which left OIDC sign-in down after a broker restart.
+- DeskMeet1 (`deskmeet-b760`) 8K TV still blanked about every 20 minutes on the
+  stock (`pcon_frl_444=0`) path: both paths trained the VL605 PCON at FRL 40G,
+  the TV's EDID maximum (#88). The i915 patch adds the module parameter
+  `pcon_max_frl_gbps` (int, default 0 = no cap; rounded down to an FRL rate, so
+  35 trains at 32G) that caps the rate in `intel_dp_pcon_start_frl_training()`,
+  and the profile's modprobe option is now `options i915 pcon_frl_444=0
+  pcon_max_frl_gbps=32`. 8K30 HDMI is 8 bpc RGB (~28.5 Gbps incl. blanking,
+  ~23.9 Gbps active), which fits FRL 32G (8G x 4) with more per-lane margin;
+  live-verified 2026-10-14 (PCON 0x3036=0x91, zero FRL errors). The changed
+  patch SHA makes the next pull rebuild the module; it takes effect after a
+  reboot.
 - DeskMeet1 (`deskmeet-b760`) 8K TV blacked out about once a minute with the
   patched i915's RGB 4:4:4 path on (8K30 DSC 14 bpp over HBR2 to the PCON,
   ~28.5 Gbps uncompressed on FRL 40G, the TV's maximum). The PCON's DPCD kept
