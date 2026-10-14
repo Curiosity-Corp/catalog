@@ -183,7 +183,7 @@ names, and topology can still disclose sensitive infrastructure.
 The standard minimal Openbox desktop installs XScreenSaver and `vlock`, and
 removes Light Locker, `i3lock`, and `xss-lock`. LightDM starts the graphical
 session no earlier than VT8, leaving the lower virtual terminals available for
-text consoles. Openbox starts XScreenSaver with a 10-minute idle timeout and
+text consoles. Openbox starts XScreenSaver with a 10-minute idle timeout (a hardware profile can set `idle_lock_minutes`; `deskmeet-b760` uses 60) and
 blank-only mode. It uses the host's login PAM policy and displays its prompts in
 the unlock dialog, so a machine that requires a password and a second factor
 asks for them separately. The lock uses the current account; no username or

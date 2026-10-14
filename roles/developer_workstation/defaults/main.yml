@@ -687,7 +687,8 @@ tmp_hygiene_pressure_config_path: /etc/curiosity/tmp-pressure-tmpfiles.conf
 minimal_desktop_enabled: false
 minimal_desktop_autologin: true
 minimal_desktop_firefox_tweaks: true
-minimal_desktop_idle_lock_minutes: 10
+# Derived from the hardware profile's optional `idle_lock_minutes` (default 10).
+minimal_desktop_idle_lock_minutes: "{{ (hardware_profiles.get(hardware_profile, {})).get('idle_lock_minutes', 10) | int }}"
 
 # LightDM. The greeter is `gtk` (lightdm-gtk-greeter) or `slick`
 # (slick-greeter). Graphical sessions start no earlier than
@@ -875,7 +876,8 @@ pro_mimic_motd_news_enabled: false
 # `Broadcast RGB` property; see minimal_desktop_display_broadcast_rgb),
 # logitech_g604 (boolean, default false: install the Logitech G604 button
 # profile; see logitech_g604_enabled) and double_click_ms (integer, default
-# 500: Openbox and GTK double-click interval; see minimal_desktop_double_click_ms).
+# 500: Openbox and GTK double-click interval; see minimal_desktop_double_click_ms)
+# and idle_lock_minutes (integer, default 10: XScreenSaver blank/lock timeout).
 # =============================================================================
 hardware_profile: generic
 
@@ -1066,6 +1068,8 @@ hardware_profiles:
     # The G604's left switch chatters (spurious double-clicks): require a
     # quick, deliberate double-click instead of the 500 ms default.
     double_click_ms: 200
+    # Lock after 60 idle minutes instead of the 10 minute default.
+    idle_lock_minutes: 60
     # Samsung 8K TV on the Arc A380 over a DP -> HDMI 2.1 PCON cable: stock i915
     # sends YCbCr 4:2:0; the patched module keeps RGB 4:4:4 (DSC over FRL).
     i915_pcon_frl_444: true

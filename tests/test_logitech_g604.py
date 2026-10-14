@@ -48,6 +48,8 @@ def test_only_deskmeet_opts_in_to_the_g604_profile() -> None:
 def test_double_click_defaults_and_deskmeet_override() -> None:
     assert _derived("minimal_desktop_double_click_ms", "generic") == "500"
     assert _derived("minimal_desktop_double_click_ms", "deskmeet-b760") == "200"
+    assert _derived("minimal_desktop_idle_lock_minutes", "generic") == "10"
+    assert _derived("minimal_desktop_idle_lock_minutes", "deskmeet-b760") == "60"
 
 
 def test_default_buttons() -> None:
