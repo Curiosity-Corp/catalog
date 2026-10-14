@@ -70,8 +70,9 @@ def test_only_the_deskmeet_b760_profile_opts_in() -> None:
 
 
 def test_deskmeet_keeps_the_4_4_4_path_off_by_modprobe_option() -> None:
-    # 8K30 RGB 4:4:4 at FRL 40G made the TV drop the signal about once a
-    # minute; the profile must load the patched module with the path off.
+    # 8K30 RGB 4:4:4 (8 bpc, DSC over the PCON) made the TV drop the signal
+    # about once a minute; the profile must load the patched module with the
+    # path off.
     options = {o["name"]: o["content"] for o in PROFILES["deskmeet-b760"]["modprobe_options"]}
     assert options["curiosity-i915-pcon-frl-444"].strip() == "options i915 pcon_frl_444=0"
     # The option must name a parameter the patch really defines.

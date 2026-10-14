@@ -97,8 +97,8 @@ out a PC desktop on a TV; `Full` fixes that. `deskmeet-b760` sets
 
 A profile that sets `i915_pcon_frl_444: true` (`deskmeet-b760`; derived variable
 `i915_pcon_frl_444_enabled`) keeps RGB 4:4:4 on a DisplayPort to HDMI 2.1 PCON
-cable. Stock i915 falls back to YCbCr 4:2:0 once the mode exceeds the legacy
-TMDS limit, which makes text on an 8K TV soft. The role installs
+cable at 8 bpc. At 8K30 stock i915 fits the mode into HBR3 without DSC by
+dropping to 6 bpc RGB with dithering. The role installs
 `/usr/local/share/i915-pcon-frl-444/i915-pcon-frl-444.patch` (only
 `drivers/gpu/drm/i915/display/intel_dp.c`) and
 `/usr/local/sbin/i915-pcon-frl-444-build <kver>`. The build script fetches the
