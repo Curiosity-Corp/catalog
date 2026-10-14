@@ -902,6 +902,11 @@ logitech_g604_lightbar_keycode: 12
 # and rotate through the Openbox desktops (curiosity-desktop prev/next).
 logitech_g604_desktop_prev_keycode: 191
 logitech_g604_desktop_next_keycode: 192
+# Browser back/forward on two thumb buttons: thumb button 1 (keycode 10) is
+# forward; the lower thumb button the onboard profile sets to KEY_6 (keycode 15)
+# is back. Both send Alt+Left / Alt+Right.
+logitech_g604_back_keycode: 15
+logitech_g604_forward_keycode: 10
 logitech_g604_lightbar_command: litra toggle
 
 # Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps.

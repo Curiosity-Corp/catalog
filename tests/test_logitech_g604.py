@@ -245,8 +245,11 @@ def test_top_buttons_rotate_the_openbox_desktops() -> None:
     tasks = yaml.safe_load((ROLE / "tasks/logitech-g604.yml").read_text())
     names = [task["name"] for task in tasks]
     assert "Install the previous/next desktop switcher" in names
-    assert "Reassign the G604 top buttons to F13/F14 in the onboard profile" in names
+    assert "Reassign the G604 top and back buttons to F13/F14/KEY_6 in the onboard profile" in names
+    assert DEFAULTS["logitech_g604_back_keycode"] == 15  # KEY_6
+    assert DEFAULTS["logitech_g604_forward_keycode"] == 10  # KEY_1, thumb button 1
     script = SCRIPT.read_text()
+    assert "alt+Left" in script and "alt+Right" in script
     assert '"$desktop_prev_keycode") $desktop_command prev' in script
     assert '"$desktop_next_keycode") $desktop_command next' in script
     assert not (ROLE / "files/curiosity-vt").exists()

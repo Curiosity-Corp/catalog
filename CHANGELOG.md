@@ -22,6 +22,8 @@ All notable changes to this project are documented here. The format follows
   The two top buttons (stock DPI up/down) are reassigned in the mouse's onboard
   profile (libratbag/`ratbagd`) to F13/F14 and rotate through the
   Openbox desktops via the new `/usr/local/bin/curiosity-desktop`.
+  Thumb button 1 is forward and the lower thumb button set to `KEY_6` is back
+  (`Alt+Right` / `Alt+Left`).
   Rollback: drop the `curiosity-g604` autostart line and `pkill xbindkeys`;
   `ratbagctl <dev> profile 0 button 9 action set resolution-down` (and `10`
   `resolution-up`) restores the DPI buttons.

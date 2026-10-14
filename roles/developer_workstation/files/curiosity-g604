@@ -10,14 +10,18 @@
 #     role) arrive as key presses from its separate keyboard device, so that
 #     device is floated (its keys no longer reach applications) and watched:
 #     the lightbar keycode runs the lightbar command and the top buttons run
-#     curiosity-desktop prev/next (Openbox desktops).
+#     curiosity-desktop prev/next (Openbox desktops); thumb button 1 is
+#     browser forward (Alt+Right) and the lower thumb button the onboard
+#     profile sets to KEY_6 is back (Alt+Left).
 # Both are stopped when the mouse disappears, so a machine without a G604 pays
 # only a cheap poll and a replugged or re-paired mouse picks the mapping up again.
 # One instance runs per X display; starting a second one is a no-op.
 #
 # Environment overrides: CURIOSITY_G604_LIGHTBAR_KEYCODE (default 12, thumb
 # button 3), CURIOSITY_G604_LIGHTBAR_COMMAND (default "litra toggle"),
-# CURIOSITY_G604_DESKTOP_PREV_KEYCODE (191) and CURIOSITY_G604_DESKTOP_NEXT_KEYCODE (192),
+# CURIOSITY_G604_DESKTOP_PREV_KEYCODE (191), CURIOSITY_G604_DESKTOP_NEXT_KEYCODE (192),
+# CURIOSITY_G604_BACK_KEYCODE (15), CURIOSITY_G604_FORWARD_KEYCODE (10),
+# CURIOSITY_G604_BACK_COMMAND and CURIOSITY_G604_FORWARD_COMMAND,
 # and for tests CURIOSITY_G604_CONF, CURIOSITY_G604_NAME,
 # CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK, CURIOSITY_G604_DESKTOP_COMMAND. The
 # role writes the keycodes and the lightbar command to
@@ -30,6 +34,10 @@ lightbar_command=${CURIOSITY_G604_LIGHTBAR_COMMAND:-litra toggle}
 desktop_prev_keycode=${CURIOSITY_G604_DESKTOP_PREV_KEYCODE:-191}
 desktop_next_keycode=${CURIOSITY_G604_DESKTOP_NEXT_KEYCODE:-192}
 desktop_command=${CURIOSITY_G604_DESKTOP_COMMAND:-curiosity-desktop}
+back_keycode=${CURIOSITY_G604_BACK_KEYCODE:-15}
+forward_keycode=${CURIOSITY_G604_FORWARD_KEYCODE:-10}
+back_command=${CURIOSITY_G604_BACK_COMMAND:-xdotool key --clearmodifiers alt+Left}
+forward_command=${CURIOSITY_G604_FORWARD_COMMAND:-xdotool key --clearmodifiers alt+Right}
 conf=${CURIOSITY_G604_CONF:-/etc/curiosity/g604-xbindkeys.rc}
 device_name=${CURIOSITY_G604_NAME:-Logitech G604}
 interval=${CURIOSITY_G604_INTERVAL:-5}
@@ -71,6 +79,8 @@ watch_thumb_buttons() {
             "$lightbar_keycode") sh -c "$lightbar_command" >/dev/null 2>&1 & ;;
             "$desktop_prev_keycode") $desktop_command prev >/dev/null 2>&1 & ;;
             "$desktop_next_keycode") $desktop_command next >/dev/null 2>&1 & ;;
+            "$back_keycode") sh -c "$back_command" >/dev/null 2>&1 & ;;
+            "$forward_keycode") sh -c "$forward_command" >/dev/null 2>&1 & ;;
         esac
     done
 }

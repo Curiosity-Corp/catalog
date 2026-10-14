@@ -63,7 +63,8 @@ send nothing to the computer, so the role reassigns them in the onboard profile
 with `ratbagctl` (package `ratbagd`) to F13/F14. `curiosity-g604` turns those
 keys into `curiosity-desktop prev` / `curiosity-desktop next`, which rotate
 through the Openbox desktops (1 to 4, wrapping around). They never switch
-virtual terminals. To give the buttons back their DPI function:
+virtual terminals. Thumb button 1 is browser forward (`Alt+Right`) and the lower thumb button
+the onboard profile sets to `KEY_6` is back (`Alt+Left`). To give the top buttons back their DPI function:
 `ratbagctl <device> profile 0 button 9 action set resolution-down` and
 `... button 10 action set resolution-up`.
 
