@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- DeskMeet1 (`deskmeet-b760`) console parity with X (#86): new hardware-profile
+  key `console_video: "DP-3:7680x4320@30"` (derived variable `console_video`,
+  empty elsewhere) installs
+  `/etc/default/grub.d/92-curiosity-console-video.cfg`, which appends
+  `video=DP-3:7680x4320@30` to `GRUB_CMDLINE_LINUX_DEFAULT` so every VT comes up
+  at the TV's own CTA 8K30 mode and VT switches cause no modeset. The value is
+  validated (`connector:WxH@Hz`, no `R`, no spaces); GRUB is regenerated only
+  when the drop-in changes, and an empty value removes the drop-in and
+  regenerates. Never use reduced-blanking or custom timings: the 8K TV rejects
+  non-CTA 8K modes ("mode not supported"). The profile also opts in to console
+  tuning (`console_tuning` mapping; `console_tuning_enabled`, `_font`, `_ttys`
+  and `_manage_console_setup` are now derived from the profile) with
+  `Uni3-Terminus32x16.psf.gz` on VT 1-9. Other profiles are unchanged.
+  Rollback: `sudo rm /etc/default/grub.d/92-curiosity-console-video.cfg && sudo update-grub && reboot`.
 - DeskMeet1 (`deskmeet-b760`) 8K display: the profile now sets
   `i915_pcon_frl_444`, `broadcast_rgb: Full` and `display_scale: 2`.
   `i915_pcon_frl_444_enabled` installs a patch for Intel i915 that keeps RGB

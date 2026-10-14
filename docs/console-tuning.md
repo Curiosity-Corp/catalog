@@ -9,7 +9,8 @@ makes the Linux text console usable on a large or HiDPI monitor:
 
 It is **off by default** (`console_tuning_enabled: false`), so unrelated
 machines are unchanged. It never edits the bootloader or kernel command line,
-installs a kernel, or restarts the machine.
+installs a kernel, or restarts the machine. (The separate `console_video` GRUB
+drop-in for DeskMeet 8K is described below.)
 
 ## The problem
 
@@ -164,6 +165,48 @@ Service logs: `journalctl -u curiosity-console-tuning`.
   the files), then `systemctl disable --now curiosity-console-tuning` and delete
   the files in the table above.
 
+## DeskMeet 8K: every VT at the TV's own mode
+
+The `deskmeet-b760` hardware profile (Arc A380 -> VL605 DP-to-HDMI 2.1 PCON ->
+Samsung 8K TV) uses two opt-in pieces so the boot console, every fbcon VT and X
+all run 7680x4320@30 and a VT switch causes no modeset. Without them fbcon came
+up at 3840x2160@60 while X ran 7680x4320@30.
+
+**Kernel mode (`console_video`, `tasks/console-video.yml`).** The profile key
+`console_video: "DP-3:7680x4320@30"` (derived variable `console_video`,
+empty by default) installs `/etc/default/grub.d/92-curiosity-console-video.cfg`:
+
+```sh
+GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }video=DP-3:7680x4320@30"
+```
+
+It appends to whatever earlier files set and never edits `/etc/default/grub`.
+GRUB is regenerated (`update-grub`, else `grub-mkconfig`) only when the drop-in
+changed. When `console_video` is empty the role removes the drop-in and
+regenerates GRUB. The value must match `connector:WxH@Hz`; anything else (a
+trailing `R`, spaces, extra flags) fails the run. `DP-3` is the kernel connector
+name (`curiosity-console-status` lists them); the kernel matches the argument
+against the probed EDID modes (CTA VIC 194-196, 1188 MHz).
+
+**Never use non-CTA timings.** Use only a mode the EDID advertises. Reduced
+blanking (`R`) or custom timings make this TV show "mode not supported" at 8K.
+
+**Readable font.** The profile's `console_tuning` mapping turns on this task
+group with `Uni3-Terminus32x16.psf.gz` (16x32 cells, 512 glyphs, 480x135
+characters at 8K) on VT 1-9, and persists it through console-setup
+(`console_tuning_manage_console_setup`). The framebuffer-fill step is a no-op
+when fbcon already starts at the full size.
+
+A reboot applies the new command line. To roll back:
+
+```sh
+sudo rm /etc/default/grub.d/92-curiosity-console-video.cfg && sudo update-grub && reboot
+```
+
+(The role would reinstall the drop-in on its next run while the profile key is
+set; remove `console_video` from the profile or override it with `""` to make the
+removal permanent.)
+
 ## Documented only: the kernel command-line option
 
 The stronger fix is to stop the kernel from lighting the small panel at all, so
@@ -172,7 +215,7 @@ fbdev is created at the monitor's size from the start. Add a
 `video=eDP-1:d`, to the kernel command line. List connector names with
 `curiosity-console-status`.
 
-**This role never edits GRUB or any bootloader file.** If you choose this, do
+**The console tuning task group never edits GRUB or any bootloader file.** If you choose this, do
 it by hand and understand the risks:
 
 - With the panel disabled and the external monitor absent at boot there is no
