@@ -1,0 +1,14 @@
+# Managed by the curiosity workstation role (Logitech G604 button profile).
+# Read by curiosity-g604, which only runs xbindkeys while a G604 is present.
+# X buttons: 6 = wheel tilt left, 7 = wheel tilt right.
+
+# Wheel tilt left: copy (Ctrl+Insert works in terminals as well as GUI apps)
+"xdotool key --clearmodifiers ctrl+Insert"
+  b:{{ logitech_g604_copy_button }}
+
+# Wheel tilt right: paste (Shift+Insert)
+"xdotool key --clearmodifiers shift+Insert"
+  b:{{ logitech_g604_paste_button }}
+
+# The thumb buttons (1-3, keycodes 10-12) are handled by curiosity-g604 itself,
+# see /etc/curiosity/g604.env.

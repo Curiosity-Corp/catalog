@@ -19,6 +19,12 @@
     group: "{{ dw_user.name }}"
     mode: "0644"
 
+- name: Apply the double-click interval to Openbox rc.xml
+  ansible.builtin.replace:
+    path: "{{ dw_user.home }}/.config/openbox/rc.xml"
+    regexp: '<doubleClickTime>[0-9]+</doubleClickTime>'
+    replace: "<doubleClickTime>{{ minimal_desktop_double_click_ms }}</doubleClickTime>"
+
 - name: Deploy Openbox menu.xml
   ansible.builtin.copy:
     src: minimal-desktop/menu.xml

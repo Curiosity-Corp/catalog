@@ -1,0 +1,130 @@
+#!/bin/sh
+# curiosity-g604: apply the Logitech G604 button profile while the mouse is
+# present on this X display. Managed by the curiosity workstation role.
+#
+# The mouse is detected by its X input device name. While it is attached:
+#   - xbindkeys (config rendered by the role to /etc/curiosity/g604-xbindkeys.rc)
+#     maps the wheel tilt buttons;
+#   - the G604's thumb buttons 1-3 (keycodes 10-12) and its two top buttons
+#     (F13/F14, keycodes 191/192, set in the mouse's onboard profile by the
+#     role) arrive as key presses from its separate keyboard device, so that
+#     device is floated (its keys no longer reach applications) and watched:
+#     the lightbar keycode runs the lightbar command and the top buttons run
+#     curiosity-desktop prev/next (Openbox desktops); thumb button 1 is
+#     browser forward (Alt+Right) and the lower thumb button the onboard
+#     profile sets to KEY_6 is back (Alt+Left); the lower right thumb button
+#     (KEY_4) toggles the microphone and the one that sends KEY_5 snaps the
+#     focused window to the middle zone and back (openbox-zone toggle).
+# Both are stopped when the mouse disappears, so a machine without a G604 pays
+# only a cheap poll and a replugged or re-paired mouse picks the mapping up again.
+# One instance runs per X display; starting a second one is a no-op.
+#
+# Environment overrides: CURIOSITY_G604_LIGHTBAR_KEYCODE (default 12, thumb
+# button 3), CURIOSITY_G604_LIGHTBAR_COMMAND (default "litra toggle"),
+# CURIOSITY_G604_DESKTOP_PREV_KEYCODE (191), CURIOSITY_G604_DESKTOP_NEXT_KEYCODE (192),
+# CURIOSITY_G604_BACK_KEYCODE (15), CURIOSITY_G604_FORWARD_KEYCODE (10),
+# CURIOSITY_G604_BACK_COMMAND and CURIOSITY_G604_FORWARD_COMMAND,
+# CURIOSITY_G604_MIC_KEYCODE (13), CURIOSITY_G604_ZONE_KEYCODE (14), CURIOSITY_G604_SCREENSHOT_KEYCODE (11) and their
+# _COMMAND counterparts,
+# and for tests CURIOSITY_G604_CONF, CURIOSITY_G604_NAME,
+# CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK, CURIOSITY_G604_DESKTOP_COMMAND. The
+# role writes the keycodes and the lightbar command to
+# /etc/curiosity/g604.env (override the path with CURIOSITY_G604_ENV).
+
+env_file=${CURIOSITY_G604_ENV:-/etc/curiosity/g604.env}
+[ -r "$env_file" ] && . "$env_file"
+lightbar_keycode=${CURIOSITY_G604_LIGHTBAR_KEYCODE:-12}
+lightbar_command=${CURIOSITY_G604_LIGHTBAR_COMMAND:-litra toggle}
+desktop_prev_keycode=${CURIOSITY_G604_DESKTOP_PREV_KEYCODE:-191}
+desktop_next_keycode=${CURIOSITY_G604_DESKTOP_NEXT_KEYCODE:-192}
+desktop_command=${CURIOSITY_G604_DESKTOP_COMMAND:-curiosity-desktop}
+back_keycode=${CURIOSITY_G604_BACK_KEYCODE:-15}
+forward_keycode=${CURIOSITY_G604_FORWARD_KEYCODE:-10}
+back_command=${CURIOSITY_G604_BACK_COMMAND:-xdotool key --clearmodifiers alt+Left}
+forward_command=${CURIOSITY_G604_FORWARD_COMMAND:-xdotool key --clearmodifiers alt+Right}
+mic_keycode=${CURIOSITY_G604_MIC_KEYCODE:-13}
+zone_keycode=${CURIOSITY_G604_ZONE_KEYCODE:-14}
+shot_keycode=${CURIOSITY_G604_SCREENSHOT_KEYCODE:-11}
+shot_command=${CURIOSITY_G604_SCREENSHOT_COMMAND:-flameshot gui}
+mic_command=${CURIOSITY_G604_MIC_COMMAND:-curiosity-mic-mute}
+zone_command=${CURIOSITY_G604_ZONE_COMMAND:-openbox-zone toggle browser}
+conf=${CURIOSITY_G604_CONF:-/etc/curiosity/g604-xbindkeys.rc}
+device_name=${CURIOSITY_G604_NAME:-Logitech G604}
+interval=${CURIOSITY_G604_INTERVAL:-5}
+lock_dir=${XDG_RUNTIME_DIR:-/tmp}
+lock=${CURIOSITY_G604_LOCK:-$lock_dir/curiosity-g604.$(printf '%s' "${DISPLAY:-none}" | tr -c 'A-Za-z0-9' '_').lock}
+
+for tool in xinput xbindkeys flock; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "curiosity-g604: $tool is not installed" >&2; exit 1; }
+done
+[ -r "$conf" ] || { echo "curiosity-g604: cannot read $conf" >&2; exit 1; }
+
+exec 9>"$lock" || { echo "curiosity-g604: cannot open $lock" >&2; exit 1; }
+flock -n 9 || exit 0
+
+bindings_pid=
+keys_pid=
+
+mouse_present() {
+    xinput list --name-only 2>/dev/null | grep -Fxq "$device_name"
+}
+
+# X id of the G604's keyboard-class slave (or floating) device, if any.
+keyboard_id() {
+    xinput list 2>/dev/null | awk -v name="$device_name" '
+        index($0, name) && /keyboard|floating slave/ {
+            if (match($0, /id=[0-9]+/)) { print substr($0, RSTART + 3, RLENGTH - 3); exit }
+        }'
+}
+
+# Float the G604's keyboard so its buttons stop typing, then run the command
+# bound to each watched keycode on every press.
+watch_thumb_buttons() {
+    kbd_id=$(keyboard_id)
+    [ -n "$kbd_id" ] || return 1
+    xinput float "$kbd_id" 2>/dev/null
+    xinput test "$kbd_id" 2>/dev/null | while read -r kind state code _; do
+        [ "$kind $state" = "key press" ] || continue
+        case "$code" in
+            "$lightbar_keycode") sh -c "$lightbar_command" >/dev/null 2>&1 & ;;
+            "$desktop_prev_keycode") $desktop_command prev >/dev/null 2>&1 & ;;
+            "$desktop_next_keycode") $desktop_command next >/dev/null 2>&1 & ;;
+            "$back_keycode") sh -c "$back_command" >/dev/null 2>&1 & ;;
+            "$forward_keycode") sh -c "$forward_command" >/dev/null 2>&1 & ;;
+            "$mic_keycode") sh -c "$mic_command" >/dev/null 2>&1 & ;;
+            "$zone_keycode") sh -c "$zone_command" >/dev/null 2>&1 & ;;
+            "$shot_keycode") sh -c "$shot_command" >/dev/null 2>&1 & ;;
+        esac
+    done
+}
+
+stop_bindings() {
+    for pid in $bindings_pid $keys_pid; do
+        kill "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+    done
+    bindings_pid=
+    keys_pid=
+}
+
+trap 'stop_bindings; exit 0' INT TERM HUP
+trap stop_bindings EXIT
+
+while :; do
+    if mouse_present; then
+        if [ -z "$bindings_pid" ] || ! kill -0 "$bindings_pid" 2>/dev/null; then
+            bindings_pid=
+            xbindkeys -n -f "$conf" 9>&- &
+            bindings_pid=$!
+        fi
+        if [ -z "$keys_pid" ] || ! kill -0 "$keys_pid" 2>/dev/null; then
+            keys_pid=
+            watch_thumb_buttons 9>&- &
+            keys_pid=$!
+        fi
+    else
+        stop_bindings
+    fi
+    sleep "$interval" 9>&- &
+    wait $!
+done

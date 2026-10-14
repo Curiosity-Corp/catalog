@@ -38,6 +38,45 @@ of the update rollback inventory, and the `litra --version` healthcheck only
 warns on hosts where the flag is off. The profile's udev rule must still grant
 the user hidraw access to the lightbar.
 
+A profile may set `logitech_g604: true` (derived `logitech_g604_enabled`;
+`deskmeet-b760` opts in) to install a Logitech G604 mouse button profile. The
+role installs `xbindkeys` and `xdotool`, renders
+`/etc/curiosity/g604-xbindkeys.rc` and installs `/usr/local/bin/curiosity-g604`,
+which the Openbox autostart starts. The launcher detects the mouse by its X
+input name at run time and binds the buttons only while a G604 is attached, so
+an unplugged or re-paired mouse is picked up again without a re-login. The
+defaults are wheel tilt left (X button 6) = copy (`Ctrl+Insert`), tilt right
+(button 7) = paste (`Shift+Insert`, which also works in terminals) and the
+top thumb button 3 = `litra toggle` for the lightbar (it needs `litra_cli`). The
+thumb buttons 1-3 on the top of the side are not mouse buttons: they are key
+presses (keycodes 10, 11, 12) from the G604's own keyboard device. The launcher
+floats that device so the buttons stop typing digits, and runs the lightbar
+command on `logitech_g604_lightbar_keycode` (12). Change
+`logitech_g604_copy_button`, `logitech_g604_paste_button`,
+`logitech_g604_lightbar_keycode` or `logitech_g604_lightbar_command` to remap;
+`xinput test <id>` on the G604 keyboard device shows a button's keycode.
+
+The lower right thumb button (keycode 13) toggles the microphone (`logitech_g604_mic_keycode`) and the button that sends KEY_5 (keycode 14) toggles the focused window between its place and the middle zone (`logitech_g604_zone_keycode`, `openbox-zone toggle`).
+Rollback: remove the `curiosity-g604` line from `~/.config/openbox/autostart`
+and `pkill -f curiosity-g604; pkill xbindkeys`.
+
+The two buttons on top by the left click are DPI down/up inside the mouse and
+send nothing to the computer, so the role reassigns them in the onboard profile
+with `ratbagctl` (package `ratbagd`) to F13/F14. `curiosity-g604` turns those
+keys into `curiosity-desktop prev` / `curiosity-desktop next`, which rotate
+through the Openbox desktops (1 to 4, wrapping around). They never switch
+virtual terminals. Thumb button 1 is browser forward (`Alt+Right`) and the lower thumb button
+the onboard profile sets to `KEY_6` is back (`Alt+Left`). To give the top buttons back their DPI function:
+`ratbagctl <device> profile 0 button 9 action set resolution-down` and
+`... button 10 action set resolution-up`.
+
+A profile may also set `double_click_ms` (default `500`), which feeds
+`minimal_desktop_double_click_ms` for Openbox's `doubleClickTime` and GTK's
+`gtk-double-click-time`. A lower value needs a quicker, more deliberate
+double-click (`deskmeet-b760` uses `200`, because its G604 switch chatters; a
+shorter interval does not filter chatter, so replacing the switch is the real
+fix).
+
 A profile may also set `display_scale` (an integer, default `1`) and
 `broadcast_rgb` (`Full`, `Limited 16:235` or `Automatic`, default unset), which
 feed `minimal_desktop_display_scale` and `minimal_desktop_display_broadcast_rgb`.
@@ -155,7 +194,7 @@ names, and topology can still disclose sensitive infrastructure.
 The standard minimal Openbox desktop installs XScreenSaver and `vlock`, and
 removes Light Locker, `i3lock`, and `xss-lock`. LightDM starts the graphical
 session no earlier than VT8, leaving the lower virtual terminals available for
-text consoles. Openbox starts XScreenSaver with a 10-minute idle timeout and
+text consoles. Openbox starts XScreenSaver with a 10-minute idle timeout (a hardware profile can set `idle_lock_minutes`; `deskmeet-b760` uses 60) and
 blank-only mode. It uses the host's login PAM policy and displays its prompts in
 the unlock dialog, so a machine that requires a password and a second factor
 asks for them separately. The lock uses the current account; no username or

@@ -22,6 +22,27 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Hardware-profile key `idle_lock_minutes` sets the XScreenSaver idle lock timeout (`minimal_desktop_idle_lock_minutes`, default 10); `deskmeet-b760` uses 60.
+- G604 thumb buttons: the lower right button (onboard KEY_4, keycode 13) runs `curiosity-mic-mute` (toggles the default microphone, shows a notice); the one sending KEY_5 (keycode 14) runs `openbox-zone toggle browser` (snap the focused window to the middle zone, press again to restore its exact previous geometry and maximized state). `openbox-zone` now uses `wmctrl` for maximize states. The G604 pointer speed is the onboard resolution `logitech_g604_dpi` (default 3200, was 800). Thumb 2 (keycode 11) runs `flameshot gui` (`logitech_g604_screenshot_keycode`/`_command`). Variables: `logitech_g604_mic_keycode`, `logitech_g604_zone_keycode`.
+- Logitech G604 button profile: new hardware-profile key `logitech_g604`
+  (derived `logitech_g604_enabled`, on for `deskmeet-b760`) installs
+  `xbindkeys`, `/etc/curiosity/g604-xbindkeys.rc` and
+  `/usr/local/bin/curiosity-g604`, started from the Openbox autostart. While a
+  G604 is attached (detected by X input name) wheel tilt left/right send
+  `Ctrl+Insert`/`Shift+Insert` (copy/paste) and thumb button 3 (keycode 12 from the
+  G604's keyboard device, floated so it stops typing digits) runs
+  `litra toggle`; buttons and the command are `logitech_g604_*` variables. New
+  profile key `double_click_ms` (derived `minimal_desktop_double_click_ms`,
+  default 500, `200` on `deskmeet-b760`) sets Openbox `doubleClickTime` and
+  `gtk-double-click-time`, so a pull no longer reverts a hand-tuned interval.
+  The two top buttons (stock DPI up/down) are reassigned in the mouse's onboard
+  profile (libratbag/`ratbagd`) to F13/F14 and rotate through the
+  Openbox desktops via the new `/usr/local/bin/curiosity-desktop`.
+  Thumb button 1 is forward and the lower thumb button set to `KEY_6` is back
+  (`Alt+Right` / `Alt+Left`).
+  Rollback: drop the `curiosity-g604` autostart line and `pkill xbindkeys`;
+  `ratbagctl <dev> profile 0 button 9 action set resolution-down` (and `10`
+  `resolution-up`) restores the DPI buttons.
 - DeskMeet1 (`deskmeet-b760`) console parity with X (#86): new hardware-profile
   key `console_video: "DP-3:7680x4320@30"` (derived variable `console_video`,
   empty elsewhere) installs

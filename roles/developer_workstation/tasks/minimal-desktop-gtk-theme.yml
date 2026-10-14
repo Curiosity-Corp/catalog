@@ -24,6 +24,7 @@
       gtk-cursor-theme-name="Adwaita"
       gtk-toolbar-style=GTK_TOOLBAR_ICONS
       gtk-toolbar-icon-size=GTK_ICON_SIZE_SMALL_TOOLBAR
+      gtk-double-click-time={{ minimal_desktop_double_click_ms }}
 
 - name: Deploy GTK3 theme config (Arc-Dark)
   ansible.builtin.copy:
@@ -38,3 +39,4 @@
       gtk-font-name=Sans 10
       gtk-cursor-theme-name=Adwaita
       gtk-application-prefer-dark-theme=true
+      gtk-double-click-time={{ minimal_desktop_double_click_ms }}

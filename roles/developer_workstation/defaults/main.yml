@@ -687,7 +687,8 @@ tmp_hygiene_pressure_config_path: /etc/curiosity/tmp-pressure-tmpfiles.conf
 minimal_desktop_enabled: false
 minimal_desktop_autologin: true
 minimal_desktop_firefox_tweaks: true
-minimal_desktop_idle_lock_minutes: 10
+# Derived from the hardware profile's optional `idle_lock_minutes` (default 10).
+minimal_desktop_idle_lock_minutes: "{{ (hardware_profiles.get(hardware_profile, {})).get('idle_lock_minutes', 10) | int }}"
 
 # LightDM. The greeter is `gtk` (lightdm-gtk-greeter) or `slick`
 # (slick-greeter). Graphical sessions start no earlier than
@@ -872,7 +873,11 @@ pro_mimic_motd_news_enabled: false
 # display_scale (integer, default 1: whole-number desktop scale for a
 # high-DPI display; see minimal_desktop_display_scale) and broadcast_rgb
 # (Full, Limited 16:235 or Automatic, default unset: the output's xrandr
-# `Broadcast RGB` property; see minimal_desktop_display_broadcast_rgb).
+# `Broadcast RGB` property; see minimal_desktop_display_broadcast_rgb),
+# logitech_g604 (boolean, default false: install the Logitech G604 button
+# profile; see logitech_g604_enabled) and double_click_ms (integer, default
+# 500: Openbox and GTK double-click interval; see minimal_desktop_double_click_ms)
+# and idle_lock_minutes (integer, default 10: XScreenSaver blank/lock timeout).
 # =============================================================================
 hardware_profile: generic
 
@@ -881,6 +886,45 @@ hardware_profile: generic
 # only profiles that opt in (and hosts that override this variable) download or
 # install it. Referenced by the litra contract's `enabled_when`.
 litra_cli_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('litra_cli', false) | bool }}"
+
+# Logitech G604 button profile (tasks/logitech-g604.yml). Derived from the
+# selected hardware profile's optional `logitech_g604` flag. The mapping is
+# applied by /usr/local/bin/curiosity-g604, which detects the mouse at run
+# time and only binds the buttons while a G604 is attached. Copy/paste buttons
+# are X button numbers: 6/7 are the wheel tilt left/right. Copy and paste use
+# Ctrl+Insert / Shift+Insert so they also work in terminals. The thumb buttons
+# 1-3 on the top of the side are key presses (keycodes 10, 11, 12) from the
+# mouse's own keyboard device; the lightbar runs on thumb button 3 (keycode 12).
+logitech_g604_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('logitech_g604', false) | bool }}"
+logitech_g604_copy_button: 6
+logitech_g604_paste_button: 7
+logitech_g604_lightbar_keycode: 12
+# The two buttons on top by the left click (DPI up/down in the stock profile)
+# are reassigned in the mouse's onboard profile to F13/F14 (X keycodes 191/192)
+# and rotate through the Openbox desktops (curiosity-desktop prev/next).
+logitech_g604_desktop_prev_keycode: 191
+logitech_g604_desktop_next_keycode: 192
+# Browser back/forward on two thumb buttons: thumb button 1 (keycode 10) is
+# forward; the lower thumb button the onboard profile sets to KEY_6 (keycode 15)
+# is back. Both send Alt+Left / Alt+Right.
+logitech_g604_back_keycode: 15
+logitech_g604_forward_keycode: 10
+# Lower right thumb button (onboard KEY_4, keycode 13): toggle the microphone.
+# The button that sends KEY_5 (keycode 14): snap the focused window to the
+# middle `browser` zone and, pressed again, put it back where it was.
+# Pointer speed of the mouse, one of its onboard resolutions (400, 800, 1600, 3200).
+logitech_g604_dpi: 3200
+logitech_g604_mic_keycode: 13
+logitech_g604_zone_keycode: 14
+# Thumb button 2 (keycode 11): interactive screenshot with flameshot.
+logitech_g604_screenshot_keycode: 11
+logitech_g604_screenshot_command: flameshot gui
+logitech_g604_lightbar_command: litra toggle
+
+# Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps.
+# Derived from the hardware profile's optional `double_click_ms`; a shorter
+# interval makes a double-click more deliberate (DeskMeet1's G604 chatters).
+minimal_desktop_double_click_ms: "{{ (hardware_profiles.get(hardware_profile, {})).get('double_click_ms', 500) | int }}"
 
 # Patched i915 module (RGB 4:4:4 over a DP -> HDMI 2.1 PCON), rebuilt for every
 # installed kernel by tasks/i915-pcon-frl-444.yml. Derived from the selected
@@ -1020,6 +1064,14 @@ hardware_profiles:
     # Litra Beam lightbar (046d:c901): install the `litra` CLI; the hidraw
     # access it needs is granted by the 60-logitech-litra udev rule below.
     litra_cli: true
+    # Logitech G604 mouse: wheel tilt = copy/paste, a thumb button toggles the
+    # Litra lightbar (see logitech_g604_* variables).
+    logitech_g604: true
+    # The G604's left switch chatters (spurious double-clicks): require a
+    # quick, deliberate double-click instead of the 500 ms default.
+    double_click_ms: 200
+    # Lock after 60 idle minutes instead of the 10 minute default.
+    idle_lock_minutes: 60
     # Samsung 8K TV on the Arc A380 over a DP -> HDMI 2.1 PCON cable: stock i915
     # sends YCbCr 4:2:0; the patched module keeps RGB 4:4:4 (DSC over FRL).
     # Built but defaulted off by the curiosity-i915-pcon-frl-444 modprobe

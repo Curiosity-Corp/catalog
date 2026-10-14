@@ -1,0 +1,26 @@
+#!/bin/sh
+# curiosity-mic-mute: toggle the default microphone and show its new state.
+# Managed by the curiosity workstation role.
+
+if command -v wpctl >/dev/null 2>&1; then
+    wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle || exit 1
+    state=$(wpctl get-volume @DEFAULT_AUDIO_SOURCE@)
+elif command -v pactl >/dev/null 2>&1; then
+    pactl set-source-mute @DEFAULT_SOURCE@ toggle || exit 1
+    case "$(pactl get-source-mute @DEFAULT_SOURCE@)" in *yes*) state=MUTED ;; *) state=live ;; esac
+else
+    echo "curiosity-mic-mute: neither wpctl nor pactl is installed" >&2
+    exit 1
+fi
+
+case "$state" in
+    *MUTED*) message="Microphone muted" ;;
+    *) message="Microphone live" ;;
+esac
+
+# Replace the previous notification instead of stacking one per press.
+if command -v dunstify >/dev/null 2>&1; then
+    dunstify -r 5011 -u low -t 1500 "$message"
+elif command -v notify-send >/dev/null 2>&1; then
+    notify-send -u low -t 1500 "$message"
+fi

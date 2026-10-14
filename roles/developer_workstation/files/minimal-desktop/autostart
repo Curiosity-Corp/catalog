@@ -32,6 +32,13 @@ fi
 # Set cursor immediately
 xsetroot -cursor_name left_ptr &
 
+# Logitech G604 button profile (installed only when logitech_g604_enabled).
+# The launcher detects the mouse itself and is a no-op if already running on
+# this display.
+if command -v curiosity-g604 >/dev/null 2>&1; then
+    curiosity-g604 &
+fi
+
 # Preferred display layout. LightDM runs the same helper for its own X server;
 # startx sessions (pinned VTs) have no such hook. The helper is only installed
 # when minimal_desktop_display_setup_enabled is true.

@@ -1,11 +1,21 @@
 #!/usr/bin/python3
-"""Move the focused Openbox window into one of the AI workspace zones."""
+"""Move the focused Openbox window into one of the AI workspace zones.
+
+`openbox-zone <zone>` snaps the window into the zone. `openbox-zone toggle
+[zone]` (default `browser`, the middle of the screen) snaps it there and
+remembers where it was; running it again puts the window back exactly where it
+was, including a maximized or fullscreen state.
+"""
 
 from __future__ import annotations
 
+import json
+import os
 import re
 import subprocess
 import sys
+import time
+from pathlib import Path
 
 
 MARGIN = 12
@@ -13,7 +23,14 @@ GAP = 12
 
 
 ZONE_NAMES = ("agent-top", "agent-bottom", "browser", "chats", "top", "bottom")
-USAGE = "usage: openbox-zone {agent-top|agent-bottom|browser|chats|top|bottom}\n       openbox-zone --list"
+USAGE = (
+    "usage: openbox-zone {agent-top|agent-bottom|browser|chats|top|bottom}\n"
+    "       openbox-zone toggle [zone]   (default zone: browser)\n"
+    "       openbox-zone --list"
+)
+DEFAULT_TOGGLE_ZONE = "browser"
+STATE_FLAGS = ("MAXIMIZED_VERT", "MAXIMIZED_HORZ", "FULLSCREEN")
+TOLERANCE = 6
 
 
 def run(*args: str) -> str:
@@ -86,62 +103,152 @@ def frame_extents(window_id: str) -> tuple[int, int, int, int]:
     return 0, 0, 0, 0
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print(USAGE, file=sys.stderr)
-        return 2
+def client_geometry(window_id: str) -> tuple[int, int, int, int]:
+    """Frame top-left x, y and client width, height: what windowmove/windowsize take."""
+    output = run("xwininfo", "-id", window_id)
 
-    name = sys.argv[1]
-    if name == "--list":
+    def field(label: str) -> int:
+        return int(re.search(rf"{label}:\s+(-?\d+)", output).group(1))
+
+    left, _right, top, _bottom = frame_extents(window_id)
+    return (
+        field("Absolute upper-left X") - left,
+        field("Absolute upper-left Y") - top,
+        field("Width"),
+        field("Height"),
+    )
+
+
+def window_states(window_id: str) -> list[str]:
+    try:
+        output = run("xprop", "-id", window_id, "_NET_WM_STATE")
+    except subprocess.CalledProcessError:
+        return []
+    return [flag for flag in STATE_FLAGS if f"_NET_WM_STATE_{flag}" in output]
+
+
+def state_file(window_id: str) -> Path:
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/openbox-zone-{os.getuid()}"
+    directory = Path(runtime) / "openbox-zone"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{window_id}.json"
+
+
+def target_geometry(zone_name: str, window_id: str) -> tuple[int, int, int, int]:
+    x, y, width, height = zones(work_area())[zone_name]
+    left, right, top, bottom = frame_extents(window_id)
+    return x, y, max(1, width - left - right), max(1, height - top - bottom)
+
+
+def set_states(window_id: str, action: str, flags: list[str]) -> None:
+    """Add or remove EWMH window states with wmctrl (xdotool has no windowstate)."""
+    if not flags:
+        return
+    properties = ",".join(flag.lower() for flag in flags)
+    subprocess.run(
+        ["wmctrl", "-i", "-r", window_id, "-b", f"{action},{properties}"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def wait_until_states_clear(window_id: str, flags: list[str]) -> None:
+    """Openbox applies state changes asynchronously; resizing before they land stalls."""
+    for _ in range(20):
+        if not any(flag in window_states(window_id) for flag in flags):
+            return
+        time.sleep(0.05)
+
+
+def place(window_id: str, geometry: tuple[int, int, int, int]) -> None:
+    x, y, client_w, client_h = geometry
+    active = window_states(window_id)
+    if active:
+        set_states(window_id, "remove", active)
+        wait_until_states_clear(window_id, active)
+    # --sync waits for the window manager; bound it so a refused resize cannot hang.
+    for command in (
+        ["xdotool", "windowmove", "--sync", window_id, str(x), str(y)],
+        ["xdotool", "windowsize", "--sync", window_id, str(client_w), str(client_h)],
+    ):
+        try:
+            subprocess.run(command, check=True, timeout=3)
+        except subprocess.TimeoutExpired:
+            print(f"openbox-zone: {command[1]} did not complete in time", file=sys.stderr)
+
+
+def near(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    return all(abs(p - q) <= TOLERANCE for p, q in zip(a, b))
+
+
+def toggle(zone_name: str, window_id: str) -> None:
+    target = target_geometry(zone_name, window_id)
+    saved_path = state_file(window_id)
+    current = client_geometry(window_id)
+    states = window_states(window_id)
+
+    if saved_path.exists() and not states and near(current, target):
+        try:
+            saved = json.loads(saved_path.read_text())
+            geometry = tuple(int(saved[key]) for key in ("x", "y", "width", "height"))
+            flags = [flag for flag in saved["states"] if flag in STATE_FLAGS]
+        except (OSError, ValueError, KeyError, TypeError):
+            saved_path.unlink(missing_ok=True)
+        else:
+            saved_path.unlink(missing_ok=True)
+            if flags:
+                place(window_id, geometry)
+                set_states(window_id, "add", flags)
+            else:
+                place(window_id, geometry)
+            return
+
+    saved_path.write_text(
+        json.dumps(
+            {
+                "x": current[0],
+                "y": current[1],
+                "width": current[2],
+                "height": current[3],
+                "states": states,
+            }
+        )
+    )
+    place(window_id, target)
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args == ["--list"]:
         print("\n".join(ZONE_NAMES))
         return 0
+    do_toggle = bool(args) and args[0] == "toggle"
+    names = args[1:] if do_toggle else args
+    if len(names) > 1 or (not names and not do_toggle):
+        print(USAGE, file=sys.stderr)
+        return 2
+    name = names[0] if names else DEFAULT_TOGGLE_ZONE
     if name not in ZONE_NAMES:
         print(f"unknown zone: {name}\n{USAGE}", file=sys.stderr)
         return 2
 
     try:
-        zone = zones(work_area())[name]
         window_id = run("xdotool", "getactivewindow")
+        if do_toggle:
+            toggle(name, window_id)
+        else:
+            place(window_id, target_geometry(name, window_id))
     except FileNotFoundError as exc:
         print(
             f"openbox-zone: required tool not found ({exc.filename}); "
-            "install the xdotool and x11-utils packages",
+            "install the xdotool, wmctrl and x11-utils packages",
             file=sys.stderr,
         )
         return 127
     except subprocess.CalledProcessError:
         print("no active window to place", file=sys.stderr)
         return 1
-
-    x, y, width, height = zone
-    left, right, top, bottom = frame_extents(window_id)
-    client_w = max(1, width - left - right)
-    client_h = max(1, height - top - bottom)
-
-    subprocess.run(
-        [
-            "xdotool",
-            "windowstate",
-            "--remove",
-            "MAXIMIZED_VERT",
-            "--remove",
-            "MAXIMIZED_HORZ",
-            "--remove",
-            "FULLSCREEN",
-            window_id,
-        ],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    subprocess.run(
-        ["xdotool", "windowmove", "--sync", window_id, str(x), str(y)],
-        check=True,
-    )
-    subprocess.run(
-        ["xdotool", "windowsize", "--sync", window_id, str(client_w), str(client_h)],
-        check=True,
-    )
     return 0
 
 
