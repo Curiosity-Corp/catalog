@@ -913,7 +913,7 @@ logitech_g604_forward_keycode: 10
 # The button that sends KEY_5 (keycode 14): snap the focused window to the
 # middle `browser` zone and, pressed again, put it back where it was.
 # Pointer speed of the mouse, one of its onboard resolutions (400, 800, 1600, 3200).
-logitech_g604_dpi: 1600
+logitech_g604_dpi: 3200
 logitech_g604_mic_keycode: 13
 logitech_g604_zone_keycode: 14
 # Thumb button 2 (keycode 11): interactive screenshot with flameshot.
