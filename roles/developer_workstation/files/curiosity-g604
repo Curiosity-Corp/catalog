@@ -1,0 +1,57 @@
+#!/bin/sh
+# curiosity-g604: apply the Logitech G604 button profile while the mouse is
+# present on this X display. Managed by the curiosity workstation role.
+#
+# The mouse is detected by its X input device name. xbindkeys (config rendered
+# by the role to /etc/curiosity/g604-xbindkeys.rc) is started when the G604
+# appears and stopped when it disappears, so a machine without a G604 pays only
+# a cheap poll and a replugged or re-paired mouse picks the mapping up again.
+# One instance runs per X display; starting a second one is a no-op.
+#
+# Environment overrides (mainly for tests): CURIOSITY_G604_CONF,
+# CURIOSITY_G604_NAME, CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK.
+
+conf=${CURIOSITY_G604_CONF:-/etc/curiosity/g604-xbindkeys.rc}
+device_name=${CURIOSITY_G604_NAME:-Logitech G604}
+interval=${CURIOSITY_G604_INTERVAL:-5}
+lock_dir=${XDG_RUNTIME_DIR:-/tmp}
+lock=${CURIOSITY_G604_LOCK:-$lock_dir/curiosity-g604.$(printf '%s' "${DISPLAY:-none}" | tr -c 'A-Za-z0-9' '_').lock}
+
+for tool in xinput xbindkeys flock; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "curiosity-g604: $tool is not installed" >&2; exit 1; }
+done
+[ -r "$conf" ] || { echo "curiosity-g604: cannot read $conf" >&2; exit 1; }
+
+exec 9>"$lock" || { echo "curiosity-g604: cannot open $lock" >&2; exit 1; }
+flock -n 9 || exit 0
+
+bindings_pid=
+
+mouse_present() {
+    xinput list --name-only 2>/dev/null | grep -Fxq "$device_name"
+}
+
+stop_bindings() {
+    if [ -n "$bindings_pid" ]; then
+        kill "$bindings_pid" 2>/dev/null
+        wait "$bindings_pid" 2>/dev/null
+        bindings_pid=
+    fi
+}
+
+trap 'stop_bindings; exit 0' INT TERM HUP
+trap stop_bindings EXIT
+
+while :; do
+    if mouse_present; then
+        if [ -z "$bindings_pid" ] || ! kill -0 "$bindings_pid" 2>/dev/null; then
+            bindings_pid=
+            xbindkeys -n -f "$conf" 9>&- &
+            bindings_pid=$!
+        fi
+    else
+        stop_bindings
+    fi
+    sleep "$interval" &
+    wait $!
+done

@@ -38,6 +38,30 @@ of the update rollback inventory, and the `litra --version` healthcheck only
 warns on hosts where the flag is off. The profile's udev rule must still grant
 the user hidraw access to the lightbar.
 
+A profile may set `logitech_g604: true` (derived `logitech_g604_enabled`;
+`deskmeet-b760` opts in) to install a Logitech G604 mouse button profile. The
+role installs `xbindkeys` and `xdotool`, renders
+`/etc/curiosity/g604-xbindkeys.rc` and installs `/usr/local/bin/curiosity-g604`,
+which the Openbox autostart starts. The launcher detects the mouse by its X
+input name at run time and binds the buttons only while a G604 is attached, so
+an unplugged or re-paired mouse is picked up again without a re-login. The
+defaults are wheel tilt left (X button 6) = copy (`Ctrl+Insert`), tilt right
+(button 7) = paste (`Shift+Insert`, which also works in terminals) and the
+thumb button 10 = `litra toggle` for the lightbar (it needs `litra_cli`). Change
+`logitech_g604_copy_button`, `logitech_g604_paste_button`,
+`logitech_g604_lightbar_button` or `logitech_g604_lightbar_command` to remap;
+`xinput test-xi2 --root` shows which button number a physical button sends.
+Buttons 8 and 9 are the browser back/forward buttons and are left alone.
+Rollback: remove the `curiosity-g604` line from `~/.config/openbox/autostart`
+and `pkill -f curiosity-g604; pkill xbindkeys`.
+
+A profile may also set `double_click_ms` (default `500`), which feeds
+`minimal_desktop_double_click_ms` for Openbox's `doubleClickTime` and GTK's
+`gtk-double-click-time`. A lower value needs a quicker, more deliberate
+double-click (`deskmeet-b760` uses `200`, because its G604 switch chatters; a
+shorter interval does not filter chatter, so replacing the switch is the real
+fix).
+
 A profile may also set `display_scale` (an integer, default `1`) and
 `broadcast_rgb` (`Full`, `Limited 16:235` or `Automatic`, default unset), which
 feed `minimal_desktop_display_scale` and `minimal_desktop_display_broadcast_rgb`.

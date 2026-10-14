@@ -872,7 +872,10 @@ pro_mimic_motd_news_enabled: false
 # display_scale (integer, default 1: whole-number desktop scale for a
 # high-DPI display; see minimal_desktop_display_scale) and broadcast_rgb
 # (Full, Limited 16:235 or Automatic, default unset: the output's xrandr
-# `Broadcast RGB` property; see minimal_desktop_display_broadcast_rgb).
+# `Broadcast RGB` property; see minimal_desktop_display_broadcast_rgb),
+# logitech_g604 (boolean, default false: install the Logitech G604 button
+# profile; see logitech_g604_enabled) and double_click_ms (integer, default
+# 500: Openbox and GTK double-click interval; see minimal_desktop_double_click_ms).
 # =============================================================================
 hardware_profile: generic
 
@@ -881,6 +884,24 @@ hardware_profile: generic
 # only profiles that opt in (and hosts that override this variable) download or
 # install it. Referenced by the litra contract's `enabled_when`.
 litra_cli_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('litra_cli', false) | bool }}"
+
+# Logitech G604 button profile (tasks/logitech-g604.yml). Derived from the
+# selected hardware profile's optional `logitech_g604` flag. The mapping is
+# applied by /usr/local/bin/curiosity-g604, which detects the mouse at run
+# time and only binds the buttons while a G604 is attached. Buttons are X
+# button numbers: 6/7 are the wheel tilt left/right, 10 is a thumb button that
+# browsers do not use for back/forward (8/9). Copy and paste use
+# Ctrl+Insert / Shift+Insert so they also work in terminals.
+logitech_g604_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('logitech_g604', false) | bool }}"
+logitech_g604_copy_button: 6
+logitech_g604_paste_button: 7
+logitech_g604_lightbar_button: 10
+logitech_g604_lightbar_command: litra toggle
+
+# Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps.
+# Derived from the hardware profile's optional `double_click_ms`; a shorter
+# interval makes a double-click more deliberate (DeskMeet1's G604 chatters).
+minimal_desktop_double_click_ms: "{{ (hardware_profiles.get(hardware_profile, {})).get('double_click_ms', 500) | int }}"
 
 # Patched i915 module (RGB 4:4:4 over a DP -> HDMI 2.1 PCON), rebuilt for every
 # installed kernel by tasks/i915-pcon-frl-444.yml. Derived from the selected
@@ -1020,6 +1041,12 @@ hardware_profiles:
     # Litra Beam lightbar (046d:c901): install the `litra` CLI; the hidraw
     # access it needs is granted by the 60-logitech-litra udev rule below.
     litra_cli: true
+    # Logitech G604 mouse: wheel tilt = copy/paste, a thumb button toggles the
+    # Litra lightbar (see logitech_g604_* variables).
+    logitech_g604: true
+    # The G604's left switch chatters (spurious double-clicks): require a
+    # quick, deliberate double-click instead of the 500 ms default.
+    double_click_ms: 200
     # Samsung 8K TV on the Arc A380 over a DP -> HDMI 2.1 PCON cable: stock i915
     # sends YCbCr 4:2:0; the patched module keeps RGB 4:4:4 (DSC over FRL).
     i915_pcon_frl_444: true

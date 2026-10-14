@@ -8,6 +8,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Logitech G604 button profile: new hardware-profile key `logitech_g604`
+  (derived `logitech_g604_enabled`, on for `deskmeet-b760`) installs
+  `xbindkeys`, `/etc/curiosity/g604-xbindkeys.rc` and
+  `/usr/local/bin/curiosity-g604`, started from the Openbox autostart. While a
+  G604 is attached (detected by X input name) wheel tilt left/right send
+  `Ctrl+Insert`/`Shift+Insert` (copy/paste) and thumb button 10 runs
+  `litra toggle`; buttons and the command are `logitech_g604_*` variables. New
+  profile key `double_click_ms` (derived `minimal_desktop_double_click_ms`,
+  default 500, `200` on `deskmeet-b760`) sets Openbox `doubleClickTime` and
+  `gtk-double-click-time`, so a pull no longer reverts a hand-tuned interval.
+  Rollback: drop the `curiosity-g604` autostart line and `pkill xbindkeys`.
 - DeskMeet1 (`deskmeet-b760`) console parity with X (#86): new hardware-profile
   key `console_video: "DP-3:7680x4320@30"` (derived variable `console_video`,
   empty elsewhere) installs

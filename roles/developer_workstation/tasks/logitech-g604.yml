@@ -1,0 +1,59 @@
+---
+# =============================================================================
+# Logitech G604 button profile
+# =============================================================================
+# Wheel tilt left/right become copy/paste and one thumb button toggles the
+# Litra lightbar. Included only when `logitech_g604_enabled` is true (the
+# hardware profile's `logitech_g604` flag). The mapping is applied by
+# /usr/local/bin/curiosity-g604, which the Openbox autostart starts; it detects
+# the mouse at run time, so the profile applies only while a G604 is attached.
+# =============================================================================
+
+- name: Validate the Logitech G604 button settings
+  ansible.builtin.assert:
+    that:
+      - logitech_g604_copy_button | string is match('^[0-9]+$')
+      - logitech_g604_paste_button | string is match('^[0-9]+$')
+      - logitech_g604_lightbar_button | string is match('^[0-9]+$')
+      - logitech_g604_lightbar_command | length > 0
+      - '"\"" not in logitech_g604_lightbar_command'
+      - (
+          [logitech_g604_copy_button | int, logitech_g604_paste_button | int, logitech_g604_lightbar_button | int]
+          | unique | length
+        ) == 3
+    fail_msg: >-
+      The G604 copy, paste and lightbar buttons must be three different X
+      button numbers, and the lightbar command must be non-empty without
+      double quotes.
+
+- name: Install the G604 button tooling
+  ansible.builtin.apt:
+    name:
+      - xbindkeys
+      - xdotool
+      - xinput
+    state: present
+
+- name: Ensure /etc/curiosity exists
+  ansible.builtin.file:
+    path: /etc/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render the G604 xbindkeys profile
+  ansible.builtin.template:
+    src: curiosity-g604-xbindkeys.rc.j2
+    dest: /etc/curiosity/g604-xbindkeys.rc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the G604 profile launcher
+  ansible.builtin.copy:
+    src: curiosity-g604
+    dest: /usr/local/bin/curiosity-g604
+    owner: root
+    group: root
+    mode: "0755"

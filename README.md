@@ -112,6 +112,8 @@ The most important variables are:
 | `sunshine_enabled` | `false` | Opt into remote desktop streaming |
 | `bitwarden_desktop_enabled` | `true` | Install the official Bitwarden desktop `.deb` system-wide on x86_64 `desktop` workstations (users sign in themselves) |
 | `litra_cli_enabled` | from hardware profile (`false` unless the profile sets `litra_cli: true`, as `deskmeet-b760` does) | Install the `litra` CLI to control Logitech Litra lightbars |
+| `logitech_g604_enabled` | from hardware profile (`false` unless the profile sets `logitech_g604: true`, as `deskmeet-b760` does) | Map the G604 wheel tilt to copy/paste and a thumb button to a Litra lightbar toggle while the mouse is attached |
+| `minimal_desktop_double_click_ms` | from hardware profile (`500` unless the profile sets `double_click_ms`, as `deskmeet-b760` does with `200`) | Openbox and GTK double-click interval |
 | `i915_pcon_frl_444_enabled` | from hardware profile (`false` unless the profile sets `i915_pcon_frl_444: true`, as `deskmeet-b760` does) | Build a patched Intel i915 module for each installed kernel so an HDMI 2.1 PCON keeps RGB 4:4:4 (see `docs/configuration.md`) |
 | `minimal_desktop_display_scale` | from hardware profile (`1` unless the profile sets `display_scale`, as `deskmeet-b760` does with `2`) | Render `~/.Xresources` and scale the tint2 panel for a high-DPI display |
 | `minimal_desktop_display_broadcast_rgb` | from hardware profile (empty unless the profile sets `broadcast_rgb`, as `deskmeet-b760` does with `Full`) | xrandr `Broadcast RGB` value `curiosity-display-setup` applies to its output |
