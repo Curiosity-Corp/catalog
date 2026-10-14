@@ -888,14 +888,20 @@ litra_cli_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('litra_
 # Logitech G604 button profile (tasks/logitech-g604.yml). Derived from the
 # selected hardware profile's optional `logitech_g604` flag. The mapping is
 # applied by /usr/local/bin/curiosity-g604, which detects the mouse at run
-# time and only binds the buttons while a G604 is attached. Buttons are X
-# button numbers: 6/7 are the wheel tilt left/right, 10 is a thumb button that
-# browsers do not use for back/forward (8/9). Copy and paste use
-# Ctrl+Insert / Shift+Insert so they also work in terminals.
+# time and only binds the buttons while a G604 is attached. Copy/paste buttons
+# are X button numbers: 6/7 are the wheel tilt left/right. Copy and paste use
+# Ctrl+Insert / Shift+Insert so they also work in terminals. The thumb buttons
+# 1-3 on the top of the side are key presses (keycodes 10, 11, 12) from the
+# mouse's own keyboard device; the lightbar runs on thumb button 3 (keycode 12).
 logitech_g604_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('logitech_g604', false) | bool }}"
 logitech_g604_copy_button: 6
 logitech_g604_paste_button: 7
-logitech_g604_lightbar_button: 10
+logitech_g604_lightbar_keycode: 12
+# The two buttons on top by the left click (DPI up/down in the stock profile)
+# are reassigned in the mouse's onboard profile to F13/F14 (X keycodes 191/192)
+# and switch to the previous/next virtual terminal in use (curiosity-vt).
+logitech_g604_vt_prev_keycode: 191
+logitech_g604_vt_next_keycode: 192
 logitech_g604_lightbar_command: litra toggle
 
 # Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps.

@@ -1,0 +1,43 @@
+#!/bin/sh
+# curiosity-vt: switch to the previous or next virtual terminal in use.
+# Managed by the curiosity workstation role.
+#
+# "In use" means a text login, shell or X server is attached to the VT, so the
+# unused VTs between the pinned sessions are skipped, and the order wraps. The
+# console already has Alt+Left / Alt+Right for plain adjacent switching; this
+# gives X sessions (mouse buttons, key bindings) the same move. Inside X the
+# switch is requested with the XF86Switch_VT keysym (no root needed); without
+# an X display it falls back to chvt.
+#
+# usage: curiosity-vt prev|next
+
+direction=$1
+case "$direction" in
+    prev | next) ;;
+    *) echo "usage: curiosity-vt prev|next" >&2; exit 2 ;;
+esac
+
+active=${CURIOSITY_VT_ACTIVE:-/sys/class/tty/tty0/active}
+current=$(sed 's/^tty//' "$active" 2>/dev/null)
+case "$current" in
+    '' | *[!0-9]*) echo "curiosity-vt: cannot read the active VT from $active" >&2; exit 1 ;;
+esac
+
+in_use=$(ps -eo tty= | sed -n 's/^tty\([0-9][0-9]*\)$/\1/p'; echo "$current")
+in_use=$(printf '%s\n' "$in_use" | sort -nu | awk '$1 >= 1 && $1 <= 12')
+
+target=$(printf '%s\n' "$in_use" | awk -v cur="$current" -v dir="$direction" '
+    { v[NR] = $1; if ($1 == cur) i = NR }
+    END {
+        if (NR < 2) exit
+        j = (dir == "next") ? i + 1 : i - 1
+        if (j > NR) j = 1
+        if (j < 1) j = NR
+        print v[j]
+    }')
+[ -n "$target" ] || exit 0
+
+if [ -n "${DISPLAY:-}" ] && command -v xdotool >/dev/null 2>&1; then
+    exec xdotool key --clearmodifiers "XF86Switch_VT_$target"
+fi
+exec chvt "$target"

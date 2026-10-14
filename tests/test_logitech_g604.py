@@ -50,21 +50,16 @@ def test_double_click_defaults_and_deskmeet_override() -> None:
     assert _derived("minimal_desktop_double_click_ms", "deskmeet-b760") == "200"
 
 
-def test_default_buttons_are_distinct_and_lightbar_toggles() -> None:
-    buttons = {
-        DEFAULTS["logitech_g604_copy_button"],
-        DEFAULTS["logitech_g604_paste_button"],
-        DEFAULTS["logitech_g604_lightbar_button"],
-    }
-    assert len(buttons) == 3
-    # 6/7 are the wheel tilt; 8/9 are browser back/forward and must stay free.
+def test_default_buttons() -> None:
+    # 6/7 are the wheel tilt; the lightbar is thumb button 3, keycode 12
+    # (thumb buttons 1-3 are keycodes 10-12 from the G604's keyboard device).
     assert DEFAULTS["logitech_g604_copy_button"] == 6
     assert DEFAULTS["logitech_g604_paste_button"] == 7
-    assert DEFAULTS["logitech_g604_lightbar_button"] not in (8, 9)
+    assert DEFAULTS["logitech_g604_lightbar_keycode"] == 12
     assert DEFAULTS["logitech_g604_lightbar_command"] == "litra toggle"
 
 
-def test_xbindkeys_template_maps_tilt_to_copy_paste_and_thumb_to_litra() -> None:
+def test_xbindkeys_template_maps_wheel_tilt_to_copy_and_paste() -> None:
     template = (ROLE / "templates/curiosity-g604-xbindkeys.rc.j2").read_text()
     rendered = jinja2.Template(template).render(
         **{key: value for key, value in DEFAULTS.items() if key.startswith("logitech_g604_")}
@@ -75,8 +70,6 @@ def test_xbindkeys_template_maps_tilt_to_copy_paste_and_thumb_to_litra() -> None
         "b:6",
         '"xdotool key --clearmodifiers shift+Insert"',
         "b:7",
-        '"litra toggle"',
-        "b:10",
     ]
 
 
@@ -84,6 +77,7 @@ def test_tasks_and_autostart_wire_the_launcher() -> None:
     tasks = yaml.safe_load((ROLE / "tasks/logitech-g604.yml").read_text())
     names = [task["name"] for task in tasks]
     assert "Install the G604 profile launcher" in names
+    assert "Render the G604 thumb button settings" in names
     modules = {key for task in tasks for key in task if key.startswith("ansible.builtin.")}
     assert {"ansible.builtin.assert", "ansible.builtin.apt", "ansible.builtin.template", "ansible.builtin.copy"} <= modules
     main = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
@@ -106,6 +100,13 @@ def test_launcher_is_valid_posix_sh() -> None:
     subprocess.run(["sh", "-n", str(SCRIPT)], check=True)
 
 
+def test_launcher_watches_the_thumb_button_keycode() -> None:
+    script = SCRIPT.read_text()
+    assert "xinput float" in script
+    assert '"$lightbar_keycode") sh -c "$lightbar_command"' in script
+    assert "CURIOSITY_G604_LIGHTBAR_KEYCODE:-12" in script
+
+
 @pytest.mark.skipif(shutil.which("flock") is None, reason="flock is required")
 def test_launcher_binds_only_while_the_mouse_is_present(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
@@ -117,8 +118,18 @@ def test_launcher_binds_only_while_the_mouse_is_present(tmp_path: Path) -> None:
         textwrap.dedent(
             f"""\
             #!/bin/sh
-            echo "Virtual core pointer"
-            [ -e {present} ] && echo "Logitech G604"
+            case "$1" in
+              float) echo "$2" >> {tmp_path / "floated"}; exit 0;;
+              test) printf 'key press   12 \\n'; exec sleep 30;;
+              list)
+                if [ "$2" = "--name-only" ]; then
+                  echo "Virtual core pointer"
+                  [ -e {present} ] && echo "Logitech G604"
+                else
+                  [ -e {present} ] && printf '    Logitech G604   id=15\\t[slave  keyboard (3)]\\n'
+                fi
+                exit 0;;
+            esac
             exit 0
             """
         )
@@ -143,6 +154,8 @@ def test_launcher_binds_only_while_the_mouse_is_present(tmp_path: Path) -> None:
         "CURIOSITY_G604_CONF": str(conf),
         "CURIOSITY_G604_INTERVAL": "0.2",
         "CURIOSITY_G604_LOCK": str(tmp_path / "lock"),
+        "CURIOSITY_G604_ENV": "/dev/null",
+        "CURIOSITY_G604_LIGHTBAR_COMMAND": f"echo toggled >> {tmp_path / 'toggled'}",
     }
     launcher = subprocess.Popen(["sh", str(SCRIPT)], env=env)
     try:
@@ -152,6 +165,8 @@ def test_launcher_binds_only_while_the_mouse_is_present(tmp_path: Path) -> None:
         present.touch()
         _wait_for(started)
         assert f"-n -f {conf}" in started.read_text()
+        _wait_for(tmp_path / "toggled")
+        assert (tmp_path / "floated").read_text().split() == ["15"]
 
         # A second launcher on the same display must be a no-op.
         assert subprocess.run(["sh", str(SCRIPT)], env=env, timeout=5).returncode == 0
@@ -170,3 +185,66 @@ def _wait_for(path: Path, timeout: float = 5.0) -> None:
             return
         time.sleep(0.05)
     raise AssertionError(f"{path.name} was never created")
+
+
+VT_SCRIPT = ROLE / "files/curiosity-vt"
+
+
+def _run_vt(tmp_path: Path, active: str, ttys: list[str], direction: str) -> str:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    out = tmp_path / "switched"
+    (bin_dir / "ps").write_text("#!/bin/sh\nprintf '%s\\n' " + " ".join(ttys) + "\n")
+    (bin_dir / "xdotool").write_text(f'#!/bin/sh\necho "$@" > {out}\n')
+    for tool in ("ps", "xdotool"):
+        (bin_dir / tool).chmod(0o755)
+    active_file = tmp_path / "active"
+    active_file.write_text(active + "\n")
+    out.unlink(missing_ok=True)
+    subprocess.run(
+        ["sh", str(VT_SCRIPT), direction],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "DISPLAY": ":0",
+            "CURIOSITY_VT_ACTIVE": str(active_file),
+        },
+        check=True,
+    )
+    return out.read_text().strip() if out.exists() else ""
+
+
+@pytest.mark.parametrize(
+    ("active", "direction", "target"),
+    [
+        ("tty10", "prev", "9"),
+        ("tty9", "prev", "8"),
+        ("tty8", "prev", "1"),
+        ("tty1", "prev", "10"),
+        ("tty10", "next", "1"),
+        ("tty1", "next", "8"),
+    ],
+)
+def test_vt_switcher_skips_unused_vts_and_wraps(tmp_path: Path, active: str, direction: str, target: str) -> None:
+    ttys = ["tty1", "tty10", "tty8", "tty9", "pts/3", "?"]
+    assert _run_vt(tmp_path, active, ttys, direction) == f"key --clearmodifiers XF86Switch_VT_{target}"
+
+
+def test_vt_switcher_does_nothing_with_a_single_vt(tmp_path: Path) -> None:
+    assert _run_vt(tmp_path, "tty3", [], "next") == ""
+
+
+def test_vt_switcher_rejects_bad_usage() -> None:
+    assert subprocess.run(["sh", str(VT_SCRIPT), "sideways"], capture_output=True).returncode == 2
+
+
+def test_top_buttons_run_the_vt_switcher() -> None:
+    assert DEFAULTS["logitech_g604_vt_prev_keycode"] == 191  # F13
+    assert DEFAULTS["logitech_g604_vt_next_keycode"] == 192  # F14
+    tasks = yaml.safe_load((ROLE / "tasks/logitech-g604.yml").read_text())
+    names = [task["name"] for task in tasks]
+    assert "Install the previous/next virtual terminal switcher" in names
+    assert "Reassign the G604 top buttons to F13/F14 in the onboard profile" in names
+    script = SCRIPT.read_text()
+    assert '"$vt_prev_keycode") $vt_command prev' in script
+    assert '"$vt_next_keycode") $vt_command next' in script

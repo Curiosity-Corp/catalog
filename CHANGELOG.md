@@ -13,12 +13,18 @@ All notable changes to this project are documented here. The format follows
   `xbindkeys`, `/etc/curiosity/g604-xbindkeys.rc` and
   `/usr/local/bin/curiosity-g604`, started from the Openbox autostart. While a
   G604 is attached (detected by X input name) wheel tilt left/right send
-  `Ctrl+Insert`/`Shift+Insert` (copy/paste) and thumb button 10 runs
+  `Ctrl+Insert`/`Shift+Insert` (copy/paste) and thumb button 3 (keycode 12 from the
+  G604's keyboard device, floated so it stops typing digits) runs
   `litra toggle`; buttons and the command are `logitech_g604_*` variables. New
   profile key `double_click_ms` (derived `minimal_desktop_double_click_ms`,
   default 500, `200` on `deskmeet-b760`) sets Openbox `doubleClickTime` and
   `gtk-double-click-time`, so a pull no longer reverts a hand-tuned interval.
-  Rollback: drop the `curiosity-g604` autostart line and `pkill xbindkeys`.
+  The two top buttons (stock DPI up/down) are reassigned in the mouse's onboard
+  profile (libratbag/`ratbagd`) to F13/F14 and switch to the previous/next
+  virtual terminal in use via the new `/usr/local/bin/curiosity-vt`.
+  Rollback: drop the `curiosity-g604` autostart line and `pkill xbindkeys`;
+  `ratbagctl <dev> profile 0 button 9 action set resolution-down` (and `10`
+  `resolution-up`) restores the DPI buttons.
 - DeskMeet1 (`deskmeet-b760`) console parity with X (#86): new hardware-profile
   key `console_video: "DP-3:7680x4320@30"` (derived variable `console_video`,
   empty elsewhere) installs

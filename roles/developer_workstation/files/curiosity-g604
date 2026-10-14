@@ -2,15 +2,34 @@
 # curiosity-g604: apply the Logitech G604 button profile while the mouse is
 # present on this X display. Managed by the curiosity workstation role.
 #
-# The mouse is detected by its X input device name. xbindkeys (config rendered
-# by the role to /etc/curiosity/g604-xbindkeys.rc) is started when the G604
-# appears and stopped when it disappears, so a machine without a G604 pays only
-# a cheap poll and a replugged or re-paired mouse picks the mapping up again.
+# The mouse is detected by its X input device name. While it is attached:
+#   - xbindkeys (config rendered by the role to /etc/curiosity/g604-xbindkeys.rc)
+#     maps the wheel tilt buttons;
+#   - the G604's thumb buttons 1-3 (keycodes 10-12) and its two top buttons
+#     (F13/F14, keycodes 191/192, set in the mouse's onboard profile by the
+#     role) arrive as key presses from its separate keyboard device, so that
+#     device is floated (its keys no longer reach applications) and watched:
+#     the lightbar keycode runs the lightbar command and the top buttons run
+#     curiosity-vt prev/next.
+# Both are stopped when the mouse disappears, so a machine without a G604 pays
+# only a cheap poll and a replugged or re-paired mouse picks the mapping up again.
 # One instance runs per X display; starting a second one is a no-op.
 #
-# Environment overrides (mainly for tests): CURIOSITY_G604_CONF,
-# CURIOSITY_G604_NAME, CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK.
+# Environment overrides: CURIOSITY_G604_LIGHTBAR_KEYCODE (default 12, thumb
+# button 3), CURIOSITY_G604_LIGHTBAR_COMMAND (default "litra toggle"),
+# CURIOSITY_G604_VT_PREV_KEYCODE (191) and CURIOSITY_G604_VT_NEXT_KEYCODE (192),
+# and for tests CURIOSITY_G604_CONF, CURIOSITY_G604_NAME,
+# CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK, CURIOSITY_G604_VT_COMMAND. The
+# role writes the keycodes and the lightbar command to
+# /etc/curiosity/g604.env (override the path with CURIOSITY_G604_ENV).
 
+env_file=${CURIOSITY_G604_ENV:-/etc/curiosity/g604.env}
+[ -r "$env_file" ] && . "$env_file"
+lightbar_keycode=${CURIOSITY_G604_LIGHTBAR_KEYCODE:-12}
+lightbar_command=${CURIOSITY_G604_LIGHTBAR_COMMAND:-litra toggle}
+vt_prev_keycode=${CURIOSITY_G604_VT_PREV_KEYCODE:-191}
+vt_next_keycode=${CURIOSITY_G604_VT_NEXT_KEYCODE:-192}
+vt_command=${CURIOSITY_G604_VT_COMMAND:-curiosity-vt}
 conf=${CURIOSITY_G604_CONF:-/etc/curiosity/g604-xbindkeys.rc}
 device_name=${CURIOSITY_G604_NAME:-Logitech G604}
 interval=${CURIOSITY_G604_INTERVAL:-5}
@@ -26,17 +45,43 @@ exec 9>"$lock" || { echo "curiosity-g604: cannot open $lock" >&2; exit 1; }
 flock -n 9 || exit 0
 
 bindings_pid=
+keys_pid=
 
 mouse_present() {
     xinput list --name-only 2>/dev/null | grep -Fxq "$device_name"
 }
 
+# X id of the G604's keyboard-class slave (or floating) device, if any.
+keyboard_id() {
+    xinput list 2>/dev/null | awk -v name="$device_name" '
+        index($0, name) && /keyboard|floating slave/ {
+            if (match($0, /id=[0-9]+/)) { print substr($0, RSTART + 3, RLENGTH - 3); exit }
+        }'
+}
+
+# Float the G604's keyboard so its buttons stop typing, then run the command
+# bound to each watched keycode on every press.
+watch_thumb_buttons() {
+    kbd_id=$(keyboard_id)
+    [ -n "$kbd_id" ] || return 1
+    xinput float "$kbd_id" 2>/dev/null
+    xinput test "$kbd_id" 2>/dev/null | while read -r kind state code _; do
+        [ "$kind $state" = "key press" ] || continue
+        case "$code" in
+            "$lightbar_keycode") sh -c "$lightbar_command" >/dev/null 2>&1 & ;;
+            "$vt_prev_keycode") $vt_command prev >/dev/null 2>&1 & ;;
+            "$vt_next_keycode") $vt_command next >/dev/null 2>&1 & ;;
+        esac
+    done
+}
+
 stop_bindings() {
-    if [ -n "$bindings_pid" ]; then
-        kill "$bindings_pid" 2>/dev/null
-        wait "$bindings_pid" 2>/dev/null
-        bindings_pid=
-    fi
+    for pid in $bindings_pid $keys_pid; do
+        kill "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+    done
+    bindings_pid=
+    keys_pid=
 }
 
 trap 'stop_bindings; exit 0' INT TERM HUP
@@ -48,6 +93,11 @@ while :; do
             bindings_pid=
             xbindkeys -n -f "$conf" 9>&- &
             bindings_pid=$!
+        fi
+        if [ -z "$keys_pid" ] || ! kill -0 "$keys_pid" 2>/dev/null; then
+            keys_pid=
+            watch_thumb_buttons 9>&- &
+            keys_pid=$!
         fi
     else
         stop_bindings
