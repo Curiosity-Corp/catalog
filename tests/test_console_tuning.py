@@ -59,10 +59,14 @@ def _fake_var(xres, yres, xv, yv, xoff=0, yoff=0, bpp=32, activate=0):
 
 def test_console_tuning_is_off_by_default_and_changes_nothing_else() -> None:
     defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
-    assert defaults["console_tuning_enabled"] is False
-    assert defaults["console_tuning_font"] == ""
+    # Derived from the hardware profile; only a profile with a console_tuning
+    # mapping opts in (deskmeet-b760), so the generic default stays off.
+    assert "console_tuning" in defaults["console_tuning_enabled"]
+    profiles = defaults["hardware_profiles"]
+    assert [name for name, profile in profiles.items() if profile.get("console_tuning")] == ["deskmeet-b760"]
+    assert defaults["console_tuning_font"].count("get('font', '')") == 1
     assert defaults["console_tuning_palette"] == {}
-    assert defaults["console_tuning_manage_console_setup"] is False
+    assert "'manage_console_setup', false" in defaults["console_tuning_manage_console_setup"]
     assert defaults["console_tuning_extra_packages"] == []
     # Existing T460 defaults are untouched.
     assert defaults["t460_fbcon_horizontal_enabled"] is False

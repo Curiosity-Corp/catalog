@@ -1,0 +1,118 @@
+---
+# =============================================================================
+# Console video: put every VT on the display's own native mode
+# =============================================================================
+# Included from main.yml on x86_64 desktop/thin-client/byod-kiosk Linux hosts
+# outside containers. Acts on console_video (from the hardware profile).
+#
+# With a non-empty console_video the role installs a GRUB drop-in that APPENDS
+# `video=<connector>:<W>x<H>@<Hz>` to GRUB_CMDLINE_LINUX_DEFAULT, so the boot
+# console and fbcon come up at the same mode X uses and a VT switch causes no
+# modeset. The kernel matches the argument against the probed EDID modes, so use
+# only an EDID/CTA mode: never reduced blanking ('R') or custom timings (the
+# DeskMeet 8K TV reports "mode not supported" for non-CTA 8K timings).
+#
+# With an empty console_video the drop-in is removed and GRUB regenerated.
+# GRUB is regenerated only when the drop-in changed. /etc/default/grub itself is
+# never modified. Rollback by hand:
+#   sudo rm /etc/default/grub.d/92-curiosity-console-video.cfg && sudo update-grub && reboot
+# =============================================================================
+
+- name: Validate the console video mode
+  ansible.builtin.assert:
+    that:
+      - console_video is string
+      - console_video is match('^[A-Za-z0-9-]+:[0-9]{3,5}x[0-9]{3,5}@[0-9]{1,3}\Z')
+    fail_msg: >-
+      console_video must look like <connector>:<W>x<H>@<Hz>, for example
+      DP-3:7680x4320@30, with no spaces and no reduced-blanking or custom-timing
+      flags (EDID modes only); got {{ console_video | to_json }}.
+  when: console_video | string | length > 0
+
+- name: Check for the GRUB defaults file
+  ansible.builtin.stat:
+    path: /etc/default/grub
+  register: _console_video_defaults
+
+- name: Install the console video GRUB drop-in
+  when:
+    - console_video | string | length > 0
+    - _console_video_defaults.stat.exists
+  block:
+    - name: Ensure the GRUB defaults drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/default/grub.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the console video GRUB drop-in
+      ansible.builtin.copy:
+        dest: "{{ console_video_dropin_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (curiosity catalog): bring every VT up at the display's own EDID mode.
+          # Appends to whatever earlier GRUB files set; never replaces GRUB_CMDLINE_LINUX_DEFAULT.
+          GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }video={{ console_video }}"
+      register: _console_video_installed
+
+- name: Remove the console video GRUB drop-in when console_video is empty
+  ansible.builtin.file:
+    path: "{{ console_video_dropin_path }}"
+    state: absent
+  when: console_video | string | length == 0
+  register: _console_video_removed
+
+- name: Regenerate GRUB after the console video drop-in changed
+  when: (_console_video_installed is changed) or (_console_video_removed is changed)
+  block:
+    - name: Locate update-grub
+      ansible.builtin.stat:
+        path: /usr/sbin/update-grub
+      register: _console_video_update_grub
+
+    - name: Locate grub-mkconfig
+      ansible.builtin.stat:
+        path: /usr/sbin/grub-mkconfig
+      register: _console_video_mkconfig
+
+    - name: Regenerate the GRUB configuration with update-grub
+      ansible.builtin.command: /usr/sbin/update-grub
+      changed_when: true
+      when: _console_video_update_grub.stat.exists | default(false)
+
+    - name: Regenerate the GRUB configuration with grub-mkconfig
+      ansible.builtin.command: /usr/sbin/grub-mkconfig -o /boot/grub/grub.cfg
+      changed_when: true
+      when:
+        - not (_console_video_update_grub.stat.exists | default(false))
+        - _console_video_mkconfig.stat.exists | default(false)
+
+    - name: Note that no GRUB regeneration tool is installed
+      ansible.builtin.debug:
+        msg: >-
+          Neither update-grub nor grub-mkconfig is installed; the console video
+          change takes effect the next time the GRUB configuration is generated.
+      when:
+        - not (_console_video_update_grub.stat.exists | default(false))
+        - not (_console_video_mkconfig.stat.exists | default(false))
+
+    - name: Check the generated GRUB configuration
+      ansible.builtin.stat:
+        path: /boot/grub/grub.cfg
+      register: _console_video_cfg
+      when:
+        - (_console_video_update_grub.stat.exists | default(false)) or (_console_video_mkconfig.stat.exists | default(false))
+        - not ansible_check_mode
+
+    - name: Verify /boot/grub/grub.cfg exists after regeneration
+      ansible.builtin.assert:
+        that:
+          - _console_video_cfg.stat.exists
+        fail_msg: /boot/grub/grub.cfg is missing after regenerating the GRUB configuration.
+      when:
+        - (_console_video_update_grub.stat.exists | default(false)) or (_console_video_mkconfig.stat.exists | default(false))
+        - not ansible_check_mode

@@ -354,6 +354,17 @@
     - ansible_architecture == 'x86_64'
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
+- name: Include console video (kernel video= argument for a native-mode console)
+  ansible.builtin.include_tasks: console-video.yml
+  tags: [grub, boot, console, display]
+  # Same machine-level scope as GRUB autoboot. Always included on these hosts so
+  # a profile that stops setting console_video has its drop-in removed.
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_system == 'Linux'
+    - ansible_architecture == 'x86_64'
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include /tmp hygiene (age-based cleanup and pressure relief)
   ansible.builtin.include_tasks: tmp-hygiene.yml
   tags: [tmp-hygiene, system]

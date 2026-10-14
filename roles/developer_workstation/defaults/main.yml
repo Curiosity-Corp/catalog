@@ -588,7 +588,10 @@ t460_fbcon_cmdline_path: /etc/curiosity/t460-fbcon-horizontal.cmdline
 # kernel, or reboots; see docs/console-tuning.md for the documented-only
 # kernel-command-line alternative. Skipped on workspace/kiosk profiles, in
 # containers, and on hosts without /dev/fb0 (the helper exits 0 with a message).
-console_tuning_enabled: false
+# A hardware profile opts in with a `console_tuning` mapping (font, ttys,
+# manage_console_setup; see the deskmeet-b760 profile); a host can still set
+# console_tuning_enabled directly. Every other profile stays off.
+console_tuning_enabled: "{{ ((hardware_profiles.get(hardware_profile, {})).get('console_tuning', {})) | length > 0 }}"
 # Grow fb0's visible size to its virtual size (fixes the cropped console).
 console_tuning_fill_framebuffer: true
 # PSF font FILE NAME from /usr/share/consolefonts (with extension), or an
@@ -599,21 +602,21 @@ console_tuning_fill_framebuffer: true
 #   Uni3-Terminus16.psf.gz      (8x16)
 #   spleen-12x24.psfu.gz        (needs console_tuning_extra_packages:
 #                                [fonts-spleen]; also 5x8, 6x12, 8x16, 16x32, 32x64)
-console_tuning_font: ""
+console_tuning_font: "{{ (hardware_profiles.get(hardware_profile, {})).get('console_tuning', {}).get('font', '') }}"
 # VT palette overrides, index (0-15) -> rrggbb. Empty leaves colours alone.
 # Index 7 is the default foreground and 15 bright/bold white. Example soft
 # greys (quote the values): {7: "857f7a", 15: "b4afaa"}. The palette is per-VT and lost on reboot, so
 # the same oneshot re-applies it.
 console_tuning_palette: {}
 # Virtual terminals that receive the font and palette.
-console_tuning_ttys: [1, 2, 3, 4, 5, 6]
+console_tuning_ttys: "{{ (hardware_profiles.get(hardware_profile, {})).get('console_tuning', {}).get('ttys', [1, 2, 3, 4, 5, 6]) }}"
 # Upper bound (seconds) to wait for the early firmware framebuffer to be
 # replaced by the KMS driver, and a short settle delay before reading fb0.
 console_tuning_wait_seconds: 15
 console_tuning_settle_seconds: 2
 # Also write FONT= into /etc/default/console-setup (when that file exists) so
 # console-setup loads the same font; the helper still re-applies afterwards.
-console_tuning_manage_console_setup: false
+console_tuning_manage_console_setup: "{{ (hardware_profiles.get(hardware_profile, {})).get('console_tuning', {}).get('manage_console_setup', false) | bool }}"
 # Debian/Ubuntu packages providing setfont, setupcon and the interpreter.
 console_tuning_install_packages: true
 console_tuning_packages:
@@ -862,6 +865,10 @@ pro_mimic_motd_news_enabled: false
 # /usr/local/bin/litra via the latest-release contract; see litra_cli_enabled),
 # i915_pcon_frl_444 (boolean, default false: build the patched i915 that keeps
 # RGB 4:4:4 behind a DP -> HDMI 2.1 PCON; see i915_pcon_frl_444_enabled),
+# console_video (string, default unset: `<connector>:<W>x<H>@<Hz>` appended to
+# the kernel command line as video=...; see console_video and
+# tasks/console-video.yml), console_tuning (mapping, default unset: font, ttys
+# and manage_console_setup for the opt-in console tuning task group),
 # display_scale (integer, default 1: whole-number desktop scale for a
 # high-DPI display; see minimal_desktop_display_scale) and broadcast_rgb
 # (Full, Limited 16:235 or Automatic, default unset: the output's xrandr
@@ -880,6 +887,15 @@ litra_cli_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('litra_
 # hardware profile's optional `i915_pcon_frl_444` flag; only deskmeet-b760 opts
 # in. A reboot activates a newly built module; the role never reloads i915.
 i915_pcon_frl_444_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('i915_pcon_frl_444', false) | bool }}"
+
+# Kernel video= argument that makes every VT (fbcon, boot console, X) come up at
+# the display's own EDID/CTA mode so switching VTs causes no modeset. Derived
+# from the hardware profile's optional `console_video`; empty (the default)
+# installs nothing and removes a previously installed drop-in. Format
+# `<connector>:<W>x<H>@<Hz>`, validated by tasks/console-video.yml. Only EDID
+# modes: never reduced blanking or custom timings (the 8K TV rejects them).
+console_video: "{{ (hardware_profiles.get(hardware_profile, {})).get('console_video', '') }}"
+console_video_dropin_path: /etc/default/grub.d/92-curiosity-console-video.cfg
 
 # Whole-number desktop scale of the minimal desktop, from the hardware profile's
 # `display_scale` (1 leaves every user's X resources and tint2 panel alone). At
@@ -1007,6 +1023,17 @@ hardware_profiles:
     # Samsung 8K TV on the Arc A380 over a DP -> HDMI 2.1 PCON cable: stock i915
     # sends YCbCr 4:2:0; the patched module keeps RGB 4:4:4 (DSC over FRL).
     i915_pcon_frl_444: true
+    # Every VT comes up at the TV's own CTA 8K30 mode (VIC 194-196, from the EDID,
+    # 1188 MHz) so VT switches never modeset; X already runs that mode. Kernel
+    # connector DP-3 is the A380 output. Never use reduced blanking or custom
+    # timings here: the TV answers "mode not supported".
+    console_video: "DP-3:7680x4320@30"
+    # Readable fbcon at 8K: 16x32 Terminus (Uni3, 512 glyphs) on VT1-9 (so the
+    # higher VTs match), also persisted for early boot through console-setup.
+    console_tuning:
+      font: Uni3-Terminus32x16.psf.gz
+      ttys: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+      manage_console_setup: true
     # PC/desktop use wants full-range RGB, not the limited range i915 picks
     # automatically for HDMI/CEA modes.
     broadcast_rgb: Full

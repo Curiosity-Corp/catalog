@@ -4,6 +4,7 @@ import grp
 import hashlib
 import os
 import pwd
+import re
 import shutil
 import subprocess
 import tempfile
@@ -422,3 +423,169 @@ def test_scaled_desktop_matches_the_hand_made_files_and_is_idempotent(tmp_path: 
         assert all(a.startswith(("panel_size", "launcher_icon_size")) for a, _ in changed)
     assert (homes["plain"] / ".config/tint2/tint2rc").read_bytes() == (layouts / "bottom.tint2rc").read_bytes()
     assert not (homes["plain"] / ".Xresources").exists()
+
+
+# --- console video (kernel video= argument) and readable fbcon font ------------
+
+CONSOLE_VIDEO = TASKS / "console-video.yml"
+CONSOLE_VIDEO_VALUE = "DP-3:7680x4320@30"
+CONSOLE_VIDEO_RE = re.compile(r"^[A-Za-z0-9-]+:[0-9]{3,5}x[0-9]{3,5}@[0-9]{1,3}\Z")
+
+
+def _console_video_dropin(value: str = CONSOLE_VIDEO_VALUE) -> str:
+    copy = next(t for t in _flatten(_tasks("console-video.yml")) if "ansible.builtin.copy" in t)
+    content = copy["ansible.builtin.copy"]["content"]
+    return jinja2.Environment(keep_trailing_newline=True).from_string(content).render(console_video=value)
+
+
+def _grub_cmdline_after(dropin: str, earlier: str | None) -> str:
+    """Source an /etc/default/grub stand-in and then the drop-in, as grub-mkconfig does."""
+    with tempfile.TemporaryDirectory(prefix="grub-dropin-") as temp_dir:
+        root = Path(temp_dir)
+        (root / "grub").write_text("" if earlier is None else f'GRUB_CMDLINE_LINUX_DEFAULT="{earlier}"\n')
+        (root / "92.cfg").write_text(dropin)
+        script = '. "$1"; . "$2"; printf %s "$GRUB_CMDLINE_LINUX_DEFAULT"'
+        result = subprocess.run(["sh", "-c", script, "sh", str(root / "grub"), str(root / "92.cfg")], text=True, capture_output=True)
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+
+def test_only_the_deskmeet_b760_profile_sets_console_video_and_tuning() -> None:
+    deskmeet = PROFILES["deskmeet-b760"]
+    assert deskmeet["console_video"] == CONSOLE_VIDEO_VALUE
+    assert CONSOLE_VIDEO_RE.match(deskmeet["console_video"])
+    tuning = deskmeet["console_tuning"]
+    assert tuning["font"] == "Uni3-Terminus32x16.psf.gz"
+    assert tuning["ttys"] == list(range(1, 10))
+    for name, profile in PROFILES.items():
+        if name != "deskmeet-b760":
+            assert "console_video" not in profile, name
+            assert "console_tuning" not in profile, name
+
+
+def test_console_video_and_tuning_are_derived_and_default_off() -> None:
+    assert _derived("console_video", PROFILES, "deskmeet-b760") == CONSOLE_VIDEO_VALUE
+    assert _derived("console_tuning_enabled", PROFILES, "deskmeet-b760") == "True"
+    assert _derived("console_tuning_font", PROFILES, "deskmeet-b760") == "Uni3-Terminus32x16.psf.gz"
+    assert _derived("console_tuning_ttys", PROFILES, "deskmeet-b760") == "[1, 2, 3, 4, 5, 6, 7, 8, 9]"
+    assert _derived("console_tuning_manage_console_setup", PROFILES, "deskmeet-b760") == "True"
+    for name in set(PROFILES) - {"deskmeet-b760"} | {"no-such-profile"}:
+        assert _derived("console_video", PROFILES, name) == "", name
+        assert _derived("console_tuning_enabled", PROFILES, name) == "False", name
+        assert _derived("console_tuning_font", PROFILES, name) == "", name
+        assert _derived("console_tuning_ttys", PROFILES, name) == "[1, 2, 3, 4, 5, 6]", name
+        assert _derived("console_tuning_manage_console_setup", PROFILES, name) == "False", name
+
+
+def test_the_console_font_exists_in_the_distribution_and_is_a_512_glyph_psf2() -> None:
+    import gzip
+    import struct
+
+    font = Path("/usr/share/consolefonts") / PROFILES["deskmeet-b760"]["console_tuning"]["font"]
+    if not font.exists():
+        pytest.skip("console fonts are not installed on this machine")
+    header = gzip.decompress(font.read_bytes())[:32]
+    magic, _version, _size, _flags, length, _charsize, height, width = struct.unpack("<8I", header)
+    assert magic == 0x864AB572
+    assert length in (256, 512)
+    assert (width, height) == (16, 32)
+
+
+@pytest.mark.parametrize("value", ["DP-3:7680x4320@30", "HDMI-A-1:3840x2160@60", "eDP-1:1920x1080@60"])
+def test_console_video_regex_accepts_connector_mode_hz(value: str) -> None:
+    assert CONSOLE_VIDEO_RE.match(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "DP-3:7680x4320@30R",  # reduced blanking
+        "DP-3:7680x4320R@30",
+        "DP-3:7680x4320@30 e",  # spaces and force flags
+        "DP-3:7680x4320@30,e",
+        "DP-3:7680x4320",  # no refresh
+        "7680x4320@30",  # no connector
+        "DP-3:7680x4320@30.00",
+        "DP-3:7680x4320@30 video=DP-1:d",  # injection
+        'DP-3:7680x4320@30"; reboot; "',
+        "DP-3:7680x4320@30\n",
+        "DP-3:7680x4320@30margins",
+    ],
+)
+def test_console_video_regex_rejects_reduced_blanking_and_custom_timing(value: str) -> None:
+    assert not CONSOLE_VIDEO_RE.match(value)
+
+
+def test_the_task_validates_with_the_same_regex_and_fails_loudly() -> None:
+    tasks = _tasks("console-video.yml")
+    validate = _named(tasks, "Validate the console video mode")
+    pattern = re.search(r"match\('([^']+)'\)", " ".join(validate["ansible.builtin.assert"]["that"]))
+    assert pattern and pattern.group(1) == CONSOLE_VIDEO_RE.pattern
+    assert "fail_msg" in validate["ansible.builtin.assert"]
+    assert "reduced-blanking" in validate["ansible.builtin.assert"]["fail_msg"]
+    assert validate["when"] == "console_video | string | length > 0"
+    # Validation precedes any change to the system.
+    assert tasks.index(validate) == 0
+
+
+def test_the_dropin_appends_and_preserves_earlier_command_line_arguments() -> None:
+    dropin = _console_video_dropin()
+    assigned = [line for line in dropin.splitlines() if line and not line.startswith("#")]
+    assert assigned == [
+        'GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }video=DP-3:7680x4320@30"'
+    ]
+    assert _grub_cmdline_after(dropin, "quiet splash") == "quiet splash video=DP-3:7680x4320@30"
+    assert _grub_cmdline_after(dropin, "") == "video=DP-3:7680x4320@30"
+    assert _grub_cmdline_after(dropin, None) == "video=DP-3:7680x4320@30"
+    # Never reduced blanking, custom timings or other mode flags.
+    assert "R" not in dropin.split("video=")[1].split('"')[0]
+
+
+def test_the_dropin_sorts_after_the_autoboot_dropin_and_never_touches_etc_default_grub() -> None:
+    assert DEFAULTS["console_video_dropin_path"] == "/etc/default/grub.d/92-curiosity-console-video.cfg"
+    assert DEFAULTS["grub_autoboot_dropin_path"] < DEFAULTS["console_video_dropin_path"]
+    text = CONSOLE_VIDEO.read_text()
+    for task in _flatten(_tasks("console-video.yml")):
+        for module in ("ansible.builtin.copy", "ansible.builtin.file", "ansible.builtin.lineinfile", "ansible.builtin.blockinfile"):
+            if module in task:
+                assert task[module].get("path", task[module].get("dest")) != "/etc/default/grub", task["name"]
+    assert "lineinfile" not in text and "blockinfile" not in text
+
+
+def test_grub_is_regenerated_only_on_change_and_the_dropin_is_removed_when_disabled() -> None:
+    tasks = _tasks("console-video.yml")
+    install_block = next(task for task in tasks if "Install the console video GRUB drop-in" == task["name"] and "block" in task)
+    assert "console_video | string | length > 0" in install_block["when"]
+    copy = _named(install_block["block"], "Install the console video GRUB drop-in")
+    assert copy["register"] == "_console_video_installed"
+    assert copy["ansible.builtin.copy"]["dest"] == "{{ console_video_dropin_path }}"
+    assert copy["ansible.builtin.copy"]["mode"] == "0644"
+
+    removal = _named(tasks, "Remove the console video GRUB drop-in")
+    assert removal["ansible.builtin.file"] == {"path": "{{ console_video_dropin_path }}", "state": "absent"}
+    assert removal["when"] == "console_video | string | length == 0"
+    assert removal["register"] == "_console_video_removed"
+
+    regenerate = next(task for task in tasks if task.get("name", "").startswith("Regenerate GRUB after"))
+    assert regenerate["when"] == "(_console_video_installed is changed) or (_console_video_removed is changed)"
+    commands = {task["ansible.builtin.command"] for task in _flatten(regenerate["block"]) if "ansible.builtin.command" in task}
+    assert commands == {"/usr/sbin/update-grub", "/usr/sbin/grub-mkconfig -o /boot/grub/grub.cfg"}
+    # The generated config is checked, like the autoboot drop-in.
+    assert any("grub.cfg exists" in task.get("name", "") for task in _flatten(regenerate["block"]))
+    # No command task runs outside the change-gated block.
+    assert not [task for task in tasks if "ansible.builtin.command" in task]
+
+
+def test_the_dropin_is_idempotent_for_a_fixed_value() -> None:
+    assert _console_video_dropin() == _console_video_dropin()
+    assert _console_video_dropin().endswith("\n")
+
+
+def test_main_includes_console_video_on_the_same_hosts_as_grub_autoboot() -> None:
+    tasks = _tasks("main.yml")
+    include = _named(tasks, "Include console video")
+    autoboot = _named(tasks, "Include GRUB autoboot")
+    assert include["ansible.builtin.include_tasks"] == "console-video.yml"
+    # Not gated on console_video itself: an empty value must reach the removal task.
+    assert not any("console_video" in str(condition) for condition in include["when"])
+    assert [c for c in include["when"]] == [c for c in autoboot["when"] if "grub_autoboot_enabled" not in c]
