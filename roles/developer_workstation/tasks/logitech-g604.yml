@@ -121,9 +121,16 @@
       # Pointer speed: make the onboard resolution the one with this DPI.
       want={{ logitech_g604_dpi | int }}
       idx=$(ratbagctl "$dev" profile 0 get | awk -v dpi="${want}dpi" '$2 == dpi || $2 == dpi":" || $3 == dpi { sub(":", "", $1); print $1; exit }')
+      # The mouse can report another (disabled) profile as active, in which
+      # case resolution changes in profile 0 do nothing: activate profile 0.
+      if ! ratbagctl "$dev" info | grep -q "^Profile 0: (active)"; then
+        ratbagctl "$dev" profile active set 0
+        changed=yes
+      fi
       if [ -n "$idx" ]; then
-        if ! ratbagctl "$dev" profile 0 resolution "$idx" get | grep -q "(active)"; then
+        if ! ratbagctl "$dev" profile 0 resolution "$idx" get | grep -q "(active) (default)"; then
           ratbagctl "$dev" profile 0 resolution active set "$idx"
+          ratbagctl "$dev" profile 0 resolution default set "$idx"
           changed=yes
         fi
       fi
