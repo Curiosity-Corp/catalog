@@ -1,7 +1,9 @@
 """DeskMeet 8K display: patched i915 (RGB 4:4:4 over a PCON), Broadcast RGB and 2x scaling."""
 
+import grp
 import hashlib
 import os
+import pwd
 import shutil
 import subprocess
 import tempfile
@@ -331,7 +333,16 @@ def test_display_scale_is_wired_per_user() -> None:
 
 @pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason="ansible-playbook not installed")
 def test_scaled_desktop_matches_the_hand_made_files_and_is_idempotent(tmp_path: Path) -> None:
-    user = os.environ.get("USER") or "root"
+    # The tasks chown to the account name for both owner and group, so the test
+    # needs an account whose group has the same name (not $USER: CI containers
+    # often leave it unset or run under an arbitrary uid).
+    try:
+        user = pwd.getpwuid(os.getuid()).pw_name
+        group = grp.getgrgid(os.getgid()).gr_name
+    except KeyError:
+        pytest.skip("the current uid has no passwd or group entry")
+    if group != user:
+        pytest.skip("the current account's primary group is not named after it")
     homes = {"top": tmp_path / "top", "bottom": tmp_path / "bottom", "plain": tmp_path / "plain"}
     for home in homes.values():
         home.mkdir()
