@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- DeskMeet1 (`deskmeet-b760`) 8K TV blacked out about once a minute with the
+  patched i915's RGB 4:4:4 path on (8K30 DSC 14 bpp over HBR2 to the PCON,
+  ~28.5 Gbps uncompressed on FRL 40G, the TV's maximum). The PCON's DPCD kept
+  reporting the HDMI link up and zero FRL errors through each drop, so the TV
+  side is losing lock at the top FRL rate. The profile now installs
+  `/etc/modprobe.d/curiosity-i915-pcon-frl-444.conf` (`options i915
+  pcon_frl_444=0`): the patched module stays built, but i915 sends 8K30 the
+  stock way (HBR3, no DSC). Resolution stays 7680x4320@30. To try 4:4:4 again
+  (certified 48G cable, Samsung Input Signal Plus), change the option to 1 and
+  reboot. Live rollback: `echo 1 | sudo tee /sys/module/i915/parameters/pcon_frl_444`
+  and modeset (`xrandr --output DP-3 --mode 7680x4320 --rate 25`, then `--rate 30`).
+
 ### Added
 
 - DeskMeet1 (`deskmeet-b760`) console parity with X (#86): new hardware-profile
