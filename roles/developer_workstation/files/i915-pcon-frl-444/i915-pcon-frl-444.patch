@@ -1,0 +1,144 @@
+--- a/drivers/gpu/drm/i915/display/intel_dp.c	2026-10-13 22:11:10.291798076 -0400
++++ b/drivers/gpu/drm/i915/display/intel_dp.c	2026-10-13 22:11:10.292860530 -0400
+@@ -30,6 +30,8 @@
+ #include <linux/iopoll.h>
+ #include <linux/log2.h>
+ #include <linux/math.h>
++#include <linux/math64.h>
++#include <linux/moduleparam.h>
+ #include <linux/notifier.h>
+ #include <linux/seq_buf.h>
+ #include <linux/slab.h>
+@@ -1261,6 +1263,87 @@
+ 	return max_tmds_clock;
+ }
+ 
++static int intel_dp_hdmi_sink_max_frl(struct intel_dp *intel_dp);
++static bool intel_dp_is_hdmi_2_1_sink(struct intel_dp *intel_dp);
++
++/*
++ * Local (non-upstream) knob, deliberately not added to struct
++ * intel_display_params: that would change the type CRC of the exported
++ * intel_display_device_*() symbols and break modversions with the stock kvmgt.
++ * Rollback without reinstalling: i915.pcon_frl_444=0, or write 0 to
++ * /sys/module/i915/parameters/pcon_frl_444 (takes effect on the next modeset).
++ */
++static bool pcon_frl_444 = true;
++module_param_named(pcon_frl_444, pcon_frl_444, bool, 0600);
++MODULE_PARM_DESC(pcon_frl_444,
++		 "Allow RGB/YCbCr 4:4:4 over a DP->HDMI 2.1 PCON (FRL) when the HDMI link bandwidth fits, instead of falling back to YCbCr 4:2:0 because of the legacy TMDS clock limit (default: true)");
++
++/*
++ * True if i915.pcon_frl_444 is on and the HDMI link behind the PCON will run
++ * in FRL mode. These are the same conditions under which
++ * intel_dp_check_frl_training() trains FRL: a PCON with source control mode
++ * and a HDMI 2.1 (FRL capable) sink. Without those the HDMI link stays in
++ * TMDS mode.
++ */
++static bool intel_dp_pcon_frl_444_active(struct intel_dp *intel_dp)
++{
++	return pcon_frl_444 &&
++	       drm_dp_is_branch(intel_dp->dpcd) &&
++	       intel_dp->dfp.pcon_max_frl_bw &&
++	       (intel_dp->downstream_ports[2] & DP_PCON_SOURCE_CTL_MODE) &&
++	       intel_dp_is_hdmi_2_1_sink(intel_dp);
++}
++
++/*
++ * An HDMI 2.1 PCON that has been given an FRL capable sink does not run the
++ * HDMI link in TMDS mode, so the TMDS character rate limits (DFP max/min
++ * TMDS clock) don't apply. What limits the mode is the FRL bandwidth, i.e.
++ * the lower of what the PCON and the sink support.
++ *
++ * Returns true if an HDMI link carrying @sink_format at @bpc for a pixel
++ * clock of @clock (kHz) fits the FRL bandwidth.
++ *
++ * Only 4:4:4 (RGB/YCbCr 4:4:4) is considered. Everything else keeps using the
++ * TMDS limits, as does everything when i915.pcon_frl_444=0.
++ *
++ * Note this is evaluated at compute time from capabilities only; FRL link
++ * training happens at enable time, so intel_dp->frl.is_trained can't be used.
++ */
++static bool intel_dp_pcon_frl_bw_ok(struct intel_dp *intel_dp,
++				    int clock, int bpc,
++				    enum intel_output_format sink_format)
++{
++	int max_frl_gbps, tmds_clock;
++	u64 required_kbps, available_kbps;
++
++	if (sink_format == INTEL_OUTPUT_FORMAT_YCBCR420)
++		return false;
++
++	if (!intel_dp_pcon_frl_444_active(intel_dp))
++		return false;
++
++	max_frl_gbps = min(intel_dp->dfp.pcon_max_frl_bw,
++			   intel_dp_hdmi_sink_max_frl(intel_dp));
++	if (max_frl_gbps <= 0)
++		return false;
++
++	/*
++	 * Data rate of 3 components of @bpc bits per pixel. The TMDS clock
++	 * helper already scales the pixel clock by bpc/8, so the data rate is
++	 * 24 bits per TMDS character clock (kHz * bits = kbps).
++	 */
++	tmds_clock = intel_hdmi_tmds_clock(clock, bpc, sink_format);
++	required_kbps = (u64)tmds_clock * 24;
++
++	/*
++	 * FRL uses 16b/18b encoding. Leave 3% for blanking/FRL packet overhead
++	 * so we don't pick a bpc that is only marginally within the raw rate.
++	 */
++	available_kbps = div_u64((u64)max_frl_gbps * 1000000 * 16 * 97, 18 * 100);
++
++	return required_kbps <= available_kbps;
++}
++
+ static enum drm_mode_status
+ intel_dp_tmds_clock_valid(struct intel_dp *intel_dp,
+ 			  int clock, int bpc,
+@@ -1272,6 +1355,10 @@
+ 	if (!respect_downstream_limits)
+ 		return MODE_OK;
+ 
++	/* FRL capable PCON + sink: the TMDS clock limits don't apply */
++	if (intel_dp_pcon_frl_bw_ok(intel_dp, clock, bpc, sink_format))
++		return MODE_OK;
++
+ 	tmds_clock = intel_hdmi_tmds_clock(clock, bpc, sink_format);
+ 
+ 	min_tmds_clock = intel_dp->dfp.min_tmds_clock;
+@@ -2715,6 +2802,17 @@
+ 								     crtc_state)));
+ 	}
+ 
++	/*
++	 * HDMI has no 6 bpc. With a PCON in FRL mode, prefer DSC on the DP
++	 * link over dithering the pipe down to 6 bpc to fit it uncompressed
++	 * (i915.pcon_frl_444).
++	 */
++	if (!dsc && crtc_state->output_format != INTEL_OUTPUT_FORMAT_YCBCR420 &&
++	    intel_dp_pcon_frl_444_active(intel_dp) &&
++	    intel_dp_supports_dsc(intel_dp, connector, crtc_state) &&
++	    limits->pipe.max_bpp >= 24)
++		limits->pipe.min_bpp = max(limits->pipe.min_bpp, 24);
++
+ 	if (dsc && !intel_dp_dsc_compute_pipe_bpp_limits(connector, limits))
+ 		return false;
+ 
+@@ -3976,7 +4074,14 @@
+ 	rate_per_lane = info->hdmi.max_frl_rate_per_lane;
+ 	max_frl_rate = max_lanes * rate_per_lane;
+ 
+-	if (info->hdmi.dsc_cap.v_1p2) {
++	/*
++	 * The sink's DSC FRL limit only applies to a compressed HDMI stream,
++	 * which needs a PCON with a DSC encoder. A PCON without one (it may
++	 * still decode DSC from the DP side) always sends uncompressed video,
++	 * so the plain FRL limit applies (i915.pcon_frl_444).
++	 */
++	if (info->hdmi.dsc_cap.v_1p2 &&
++	    (!pcon_frl_444 || drm_dp_pcon_enc_is_dsc_1_2(intel_dp->pcon_dsc_dpcd))) {
+ 		max_dsc_lanes = info->hdmi.dsc_cap.max_lanes;
+ 		dsc_rate_per_lane = info->hdmi.dsc_cap.max_frl_rate_per_lane;
+ 		if (max_dsc_lanes && dsc_rate_per_lane)
