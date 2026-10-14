@@ -69,6 +69,16 @@ def test_only_the_deskmeet_b760_profile_opts_in() -> None:
             assert key not in profile, f"{name} must not set {key}"
 
 
+def test_deskmeet_keeps_the_4_4_4_path_off_by_modprobe_option() -> None:
+    # 8K30 RGB 4:4:4 at FRL 40G made the TV drop the signal about once a
+    # minute; the profile must load the patched module with the path off.
+    options = {o["name"]: o["content"] for o in PROFILES["deskmeet-b760"]["modprobe_options"]}
+    assert options["curiosity-i915-pcon-frl-444"].strip() == "options i915 pcon_frl_444=0"
+    # The option must name a parameter the patch really defines.
+    patch = (I915 / "i915-pcon-frl-444.patch").read_text()
+    assert "module_param_named(pcon_frl_444, pcon_frl_444, bool" in patch
+
+
 def test_derived_variables_follow_the_profile_and_default_off() -> None:
     assert _derived("i915_pcon_frl_444_enabled", PROFILES, "deskmeet-b760") == "True"
     assert _derived("minimal_desktop_display_scale", PROFILES, "deskmeet-b760") == "2"

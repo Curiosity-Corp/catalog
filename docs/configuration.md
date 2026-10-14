@@ -82,6 +82,17 @@ failing the pull. It never reloads i915: reboot to use a new module, or run
 session). `i915-pcon-frl-444-build --check <kver>` reports whether a build is
 needed, and `--destdir DIR` builds and verifies without touching `/lib/modules`.
 
+The module parameter `i915.pcon_frl_444` turns the 4:4:4 path on or off without
+a rebuild. `deskmeet-b760` sets it to `0` through the profile's
+`curiosity-i915-pcon-frl-444` modprobe option: on its Samsung 8K TV, 8K30 RGB
+4:4:4 runs FRL at 40G (the TV's maximum) and the TV lost the signal about once a
+minute while the PCON still reported the HDMI link up with no FRL errors. With
+the parameter at `0`, i915 sends 8K30 the stock way (HBR3, no DSC) at the same
+resolution. To test 4:4:4 live, write `1` to
+`/sys/module/i915/parameters/pcon_frl_444` and force a modeset (for example
+`xrandr --output DP-3 --mode 7680x4320 --rate 25`, then `--rate 30`); write `0`
+and modeset again to go back.
+
 ## Optional private services
 
 Keep these values out of the repository:

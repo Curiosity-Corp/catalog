@@ -110,7 +110,7 @@ def test_deskmeet_b760_udev_rules_cover_the_desk_peripherals() -> None:
 
 def test_deskmeet_b760_loopback_options_match_the_udev_node() -> None:
     profile = _profiles()["deskmeet-b760"]
-    (options,) = profile["modprobe_options"]
+    (options,) = [o for o in profile["modprobe_options"] if "v4l2loopback" in o["content"]]
     assert re.fullmatch(r"[a-z0-9-]+", options["name"])
     assert (
         options["content"].strip()

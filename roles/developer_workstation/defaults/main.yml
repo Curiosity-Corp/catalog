@@ -1022,6 +1022,8 @@ hardware_profiles:
     litra_cli: true
     # Samsung 8K TV on the Arc A380 over a DP -> HDMI 2.1 PCON cable: stock i915
     # sends YCbCr 4:2:0; the patched module keeps RGB 4:4:4 (DSC over FRL).
+    # Built but defaulted off by the curiosity-i915-pcon-frl-444 modprobe
+    # option below (signal drops at FRL 40G).
     i915_pcon_frl_444: true
     # Every VT comes up at the TV's own CTA 8K30 mode (VIC 194-196, from the EDID,
     # 1188 MHz) so VT switches never modeset; X already runs that mode. Kernel
@@ -1068,6 +1070,18 @@ hardware_profiles:
       - name: curiosity-v4l2loopback
         content: |
           options v4l2loopback video_nr=42 card_label="Canon EOS 50D" exclusive_caps=1
+      # The patched i915 stays built, but its 4:4:4 path is off by default:
+      # 8K30 RGB 4:4:4 needs ~28.5 Gbps on the HDMI side (FRL 40G, the TV's
+      # maximum) and the TV dropped the signal about once a minute while the
+      # PCON still reported the link up with zero FRL errors (2026-10-14).
+      # Off, i915 sends 8K30 the stock way (HBR3, no DSC), the path that ran
+      # without drops before the patch.
+      # To try 4:4:4 again (certified 48G cable, Input Signal Plus), set this
+      # to 1 and reboot, or write 1 to /sys/module/i915/parameters/pcon_frl_444
+      # and modeset.
+      - name: curiosity-i915-pcon-frl-444
+        content: |
+          options i915 pcon_frl_444=0
     # Loaded now and at boot via /etc/modules-load.d/curiosity-hardware.conf
     kernel_modules:
       - v4l2loopback
