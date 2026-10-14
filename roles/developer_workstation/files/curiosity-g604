@@ -102,6 +102,6 @@ while :; do
     else
         stop_bindings
     fi
-    sleep "$interval" &
+    sleep "$interval" 9>&- &
     wait $!
 done
