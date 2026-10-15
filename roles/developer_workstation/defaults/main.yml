@@ -877,6 +877,8 @@ pro_mimic_motd_news_enabled: false
 # logitech_g604 (boolean, default false: install the Logitech G604 button
 # profile; see logitech_g604_enabled) and double_click_ms (integer, default
 # 500: Openbox and GTK double-click interval; see minimal_desktop_double_click_ms)
+# and samsung_tv_cli (boolean, default false: install the curiosity-tv Samsung
+# TV remote-control CLI; see samsung_tv_cli_enabled)
 # and idle_lock_minutes (integer, default 10: XScreenSaver blank/lock timeout).
 # =============================================================================
 hardware_profile: generic
@@ -925,6 +927,21 @@ logitech_g604_zone_keycode: 14
 logitech_g604_screenshot_keycode: 11
 logitech_g604_screenshot_command: flameshot gui
 logitech_g604_lightbar_command: litra toggle
+
+# Samsung TV remote-control CLI (tasks/samsung-tv-cli.yml). Derived from the
+# selected hardware profile's optional `samsung_tv_cli` flag. Installs
+# /usr/local/bin/curiosity-tv, which drives the TV the workstation uses as its
+# monitor (REST, WebSocket remote, UPnP, Wake-on-LAN). The TV's address and MAC
+# are the defaults baked into the tool; CURIOSITY_TV_HOST / CURIOSITY_TV_MAC
+# override them per user. The pairing token is never stored by the role: it
+# comes from $CURIOSITY_TV_TOKEN, the user's 0600 cache or Azure Key Vault.
+samsung_tv_cli_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('samsung_tv_cli', false) | bool }}"
+# Azure Key Vault holding the TV pairing token (the secret's value is never in
+# this repository). Set samsung_tv_key_vault in the inventory; when non-empty
+# the role renders /etc/curiosity/samsung-tv.env so `curiosity-tv` can fetch the
+# token with `az` when it has no cached copy.
+samsung_tv_key_vault: ""
+samsung_tv_key_vault_secret: deskmeet-samsung-tv-ws-token
 
 # Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps.
 # Derived from the hardware profile's optional `double_click_ms`; a shorter
@@ -1072,6 +1089,8 @@ hardware_profiles:
     # Logitech G604 mouse: wheel tilt = copy/paste, a thumb button toggles the
     # Litra lightbar (see logitech_g604_* variables).
     logitech_g604: true
+    # Samsung QN55QN700B TV: install the curiosity-tv remote-control CLI.
+    samsung_tv_cli: true
     # The G604's left switch chatters (spurious double-clicks): require a
     # quick, deliberate double-click instead of the 500 ms default.
     double_click_ms: 200
