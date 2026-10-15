@@ -1,5 +1,5 @@
---- a/drivers/gpu/drm/i915/display/intel_dp.c	2026-10-13 22:11:10.291798076 -0400
-+++ b/drivers/gpu/drm/i915/display/intel_dp.c	2026-10-13 22:11:10.292860530 -0400
+--- a/drivers/gpu/drm/i915/display/intel_dp.c
++++ b/drivers/gpu/drm/i915/display/intel_dp.c
 @@ -30,6 +30,8 @@
  #include <linux/iopoll.h>
  #include <linux/log2.h>
@@ -9,7 +9,7 @@
  #include <linux/notifier.h>
  #include <linux/seq_buf.h>
  #include <linux/slab.h>
-@@ -1261,6 +1263,87 @@
+@@ -1261,6 +1263,121 @@ static int intel_dp_max_tmds_clock(struc
  	return max_tmds_clock;
  }
  
@@ -27,6 +27,40 @@
 +module_param_named(pcon_frl_444, pcon_frl_444, bool, 0600);
 +MODULE_PARM_DESC(pcon_frl_444,
 +		 "Allow RGB/YCbCr 4:4:4 over a DP->HDMI 2.1 PCON (FRL) when the HDMI link bandwidth fits, instead of falling back to YCbCr 4:2:0 because of the legacy TMDS clock limit (default: true)");
++
++/*
++ * Local (non-upstream) knob, same reasoning as pcon_frl_444 above. Caps the
++ * HDMI FRL rate the PCON is asked to train at, below min(PCON max, sink EDID
++ * max). A lower rate gives more per-lane margin to a marginal cable or sink.
++ * Only affects FRL link training (read at each training, i.e. the next
++ * modeset/hotplug), not mode validation. 0 = no cap.
++ */
++static int pcon_max_frl_gbps;
++module_param_named(pcon_max_frl_gbps, pcon_max_frl_gbps, int, 0600);
++MODULE_PARM_DESC(pcon_max_frl_gbps,
++		 "Cap the HDMI FRL rate (Gbps) a DP->HDMI 2.1 PCON trains at; rounded down to an FRL rate (48, 40, 32, 24, 18, 9), values below 9 mean 9 (default: 0 = no cap)");
++
++/*
++ * The FRL rate i915.pcon_max_frl_gbps caps training at: the parameter rounded
++ * down to a rate intel_dp_pcon_set_frl_mask() knows, or 0 for no cap.
++ */
++static int intel_dp_pcon_max_frl_gbps_cap(void)
++{
++	static const int frl_rates_gbps[] = { 48, 40, 32, 24, 18, 9 };
++	int gbps = READ_ONCE(pcon_max_frl_gbps);
++	unsigned int i;
++
++	if (gbps <= 0)
++		return 0;
++
++	for (i = 0; i < ARRAY_SIZE(frl_rates_gbps); i++) {
++		if (gbps >= frl_rates_gbps[i])
++			return frl_rates_gbps[i];
++	}
++
++	/* Below the lowest FRL rate: train at the lowest rather than not at all */
++	return frl_rates_gbps[ARRAY_SIZE(frl_rates_gbps) - 1];
++}
 +
 +/*
 + * True if i915.pcon_frl_444 is on and the HDMI link behind the PCON will run
@@ -97,7 +131,7 @@
  static enum drm_mode_status
  intel_dp_tmds_clock_valid(struct intel_dp *intel_dp,
  			  int clock, int bpc,
-@@ -1272,6 +1355,10 @@
+@@ -1272,6 +1389,10 @@ intel_dp_tmds_clock_valid(struct intel_d
  	if (!respect_downstream_limits)
  		return MODE_OK;
  
@@ -108,7 +142,7 @@
  	tmds_clock = intel_hdmi_tmds_clock(clock, bpc, sink_format);
  
  	min_tmds_clock = intel_dp->dfp.min_tmds_clock;
-@@ -2715,6 +2802,17 @@
+@@ -2715,6 +2836,17 @@ intel_dp_compute_config_limits(struct in
  								     crtc_state)));
  	}
  
@@ -126,7 +160,7 @@
  	if (dsc && !intel_dp_dsc_compute_pipe_bpp_limits(connector, limits))
  		return false;
  
-@@ -3976,7 +4074,14 @@
+@@ -3976,7 +4108,14 @@ static int intel_dp_hdmi_sink_max_frl(st
  	rate_per_lane = info->hdmi.max_frl_rate_per_lane;
  	max_frl_rate = max_lanes * rate_per_lane;
  
@@ -142,3 +176,40 @@
  		max_dsc_lanes = info->hdmi.dsc_cap.max_lanes;
  		dsc_rate_per_lane = info->hdmi.dsc_cap.max_frl_rate_per_lane;
  		if (max_dsc_lanes && dsc_rate_per_lane)
+@@ -4003,7 +4142,7 @@ static int intel_dp_pcon_start_frl_train
+ 	struct intel_display *display = to_intel_display(intel_dp);
+ #define TIMEOUT_FRL_READY_MS 500
+ #define TIMEOUT_HDMI_LINK_ACTIVE_MS 1000
+-	int max_frl_bw, max_pcon_frl_bw, max_edid_frl_bw, ret;
++	int max_frl_bw, max_pcon_frl_bw, max_edid_frl_bw, frl_cap_gbps, ret;
+ 	u8 max_frl_bw_mask = 0, frl_trained_mask;
+ 	bool is_active;
+ 
+@@ -4016,13 +4155,26 @@ static int intel_dp_pcon_start_frl_train
+ 
+ 	max_frl_bw = min(max_edid_frl_bw, max_pcon_frl_bw);
+ 
++	frl_cap_gbps = intel_dp_pcon_max_frl_gbps_cap();
++	if (frl_cap_gbps && max_frl_bw > 0) {
++		drm_dbg(display->drm,
++			"FRL rate cap (i915.pcon_max_frl_gbps=%d) = %d Gbps, training at %d Gbps\n",
++			pcon_max_frl_gbps, frl_cap_gbps, min(max_frl_bw, frl_cap_gbps));
++		max_frl_bw = min(max_frl_bw, frl_cap_gbps);
++	}
++
+ 	if (max_frl_bw <= 0)
+ 		return -EINVAL;
+ 
+ 	max_frl_bw_mask = intel_dp_pcon_set_frl_mask(max_frl_bw);
+ 	drm_dbg(display->drm, "MAX_FRL_BW_MASK = %u\n", max_frl_bw_mask);
+ 
+-	if (intel_dp_pcon_is_frl_trained(intel_dp, max_frl_bw_mask, &frl_trained_mask))
++	/*
++	 * A link already trained above the i915.pcon_max_frl_gbps cap (by the
++	 * PCON on its own, or before the cap was set) must be retrained, not kept.
++	 */
++	if (intel_dp_pcon_is_frl_trained(intel_dp, max_frl_bw_mask, &frl_trained_mask) &&
++	    !(frl_cap_gbps && frl_trained_mask > max_frl_bw_mask))
+ 		goto frl_trained;
+ 
+ 	ret = drm_dp_pcon_frl_prepare(&intel_dp->aux, false);

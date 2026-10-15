@@ -72,12 +72,42 @@ def test_only_the_deskmeet_b760_profile_opts_in() -> None:
 def test_deskmeet_keeps_the_4_4_4_path_off_by_modprobe_option() -> None:
     # 8K30 RGB 4:4:4 (8 bpc, DSC over the PCON) made the TV drop the signal
     # about once a minute; the profile must load the patched module with the
-    # path off.
+    # path off. The stock path still blanked about every 20 minutes at FRL
+    # 40G, so the HDMI FRL rate is also capped at 32G (#88).
     options = {o["name"]: o["content"] for o in PROFILES["deskmeet-b760"]["modprobe_options"]}
-    assert options["curiosity-i915-pcon-frl-444"].strip() == "options i915 pcon_frl_444=0"
-    # The option must name a parameter the patch really defines.
+    assert (
+        options["curiosity-i915-pcon-frl-444"].strip()
+        == "options i915 pcon_frl_444=0 pcon_max_frl_gbps=32"
+    )
+    # Every option must name a parameter the patch really defines.
     patch = (I915 / "i915-pcon-frl-444.patch").read_text()
     assert "module_param_named(pcon_frl_444, pcon_frl_444, bool" in patch
+    assert "module_param_named(pcon_max_frl_gbps, pcon_max_frl_gbps, int, 0600)" in patch
+
+
+def test_the_frl_rate_cap_clamps_pcon_frl_training() -> None:
+    # The cap must act where the PCON is told which FRL rate to train at, right
+    # after the upstream min(sink EDID max, PCON max), and be rounded down to
+    # a rate intel_dp_pcon_set_frl_mask() knows (it only maps exact rates).
+    patch = (I915 / "i915-pcon-frl-444.patch").read_text()
+    hunks = patch.split("\n@@ ")
+    training = [
+        hunk for hunk in hunks
+        if hunk.split("\n", 1)[0].split("@@", 1)[-1].strip().startswith("static int intel_dp_pcon_start_frl_train")
+    ]
+    added = "\n".join(
+        line[1:] for hunk in training for line in hunk.splitlines() if line.startswith("+")
+    )
+    context = "\n".join(hunk for hunk in training)
+    assert "max_frl_bw = min(max_edid_frl_bw, max_pcon_frl_bw);" in context
+    assert "frl_cap_gbps = intel_dp_pcon_max_frl_gbps_cap();" in added
+    assert "max_frl_bw = min(max_frl_bw, frl_cap_gbps);" in added
+    assert "drm_dbg(" in added
+    # A link the PCON already trained above the cap (say 40G at boot) must be
+    # retrained instead of kept by the "already trained" fast path.
+    assert "!(frl_cap_gbps && frl_trained_mask > max_frl_bw_mask))" in added
+    assert "static const int frl_rates_gbps[] = { 48, 40, 32, 24, 18, 9 };" in patch
+    assert "static int pcon_max_frl_gbps;" in patch  # default 0 = no cap
 
 
 def test_derived_variables_follow_the_profile_and_default_off() -> None:
