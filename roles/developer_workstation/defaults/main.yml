@@ -912,6 +912,11 @@ logitech_g604_forward_keycode: 10
 # Lower right thumb button (onboard KEY_4, keycode 13): toggle the microphone.
 # The button that sends KEY_5 (keycode 14): snap the focused window to the
 # middle `browser` zone and, pressed again, put it back where it was.
+# Write the button macros (F13/F14/KEY_4/KEY_5/KEY_6) into the mouse. Set
+# false on a host without an X11 Openbox session (e.g. GNOME on Wayland),
+# where the launcher cannot consume them and the thumb buttons would type
+# digits; the pointer speed below still applies.
+logitech_g604_onboard_buttons: true
 # Pointer speed of the mouse, one of its onboard resolutions (400, 800, 1600, 3200).
 logitech_g604_dpi: 3200
 logitech_g604_mic_keycode: 13

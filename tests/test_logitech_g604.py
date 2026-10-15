@@ -157,6 +157,8 @@ def test_launcher_binds_only_while_the_mouse_is_present(tmp_path: Path) -> None:
         "CURIOSITY_G604_INTERVAL": "0.2",
         "CURIOSITY_G604_LOCK": str(tmp_path / "lock"),
         "CURIOSITY_G604_ENV": "/dev/null",
+        "DISPLAY": ":99",
+        "XDG_SESSION_TYPE": "x11",
         "CURIOSITY_G604_LIGHTBAR_COMMAND": f"echo toggled >> {tmp_path / 'toggled'}",
     }
     launcher = subprocess.Popen(["sh", str(SCRIPT)], env=env)
@@ -262,3 +264,31 @@ def test_top_buttons_rotate_the_openbox_desktops() -> None:
     assert '"$desktop_prev_keycode") $desktop_command prev' in script
     assert '"$desktop_next_keycode") $desktop_command next' in script
     assert not (ROLE / "files/curiosity-vt").exists()
+
+
+def test_launcher_autostarts_in_any_openbox_session_but_not_gnome() -> None:
+    tasks = yaml.safe_load((ROLE / "tasks/logitech-g604.yml").read_text())
+    names = [task["name"] for task in tasks]
+    assert "Autostart the G604 profile launcher in Openbox sessions" in names
+    entry = (ROLE / "files/curiosity-g604.desktop").read_text()
+    assert "Exec=/usr/local/bin/curiosity-g604" in entry
+    assert "OnlyShowIn=Openbox;" in entry
+
+
+@pytest.mark.parametrize("env", [{"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"}, {"DISPLAY": ""}])
+def test_launcher_leaves_quietly_without_an_x11_session(tmp_path: Path, env: dict) -> None:
+    result = subprocess.run(
+        ["sh", str(SCRIPT)],
+        env={"PATH": "/usr/bin:/bin", "CURIOSITY_G604_ENV": "/dev/null",
+             "CURIOSITY_G604_LOCK": str(tmp_path / "lock"), **env},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert not (tmp_path / "lock").exists()
+
+
+def test_onboard_button_macros_can_be_switched_off() -> None:
+    assert DEFAULTS["logitech_g604_onboard_buttons"] is True
+    task = (ROLE / "tasks/logitech-g604.yml").read_text()
+    assert "logitech_g604_onboard_buttons | bool | lower" in task

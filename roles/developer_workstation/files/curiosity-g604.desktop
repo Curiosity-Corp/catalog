@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Logitech G604 button profile
+Comment=Maps the G604 thumb, top and tilt buttons (curiosity workstation role)
+Exec=/usr/local/bin/curiosity-g604
+OnlyShowIn=Openbox;
+NoDisplay=true
+X-GNOME-Autostart-enabled=false

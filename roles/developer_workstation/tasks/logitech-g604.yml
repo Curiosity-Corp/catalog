@@ -83,6 +83,17 @@
     group: root
     mode: "0755"
 
+# XDG autostart so the launcher runs in any Openbox session, not only the
+# catalog-managed minimal desktop (whose autostart also starts it; the
+# launcher's per-DISPLAY lock keeps one copy). GNOME/Wayland is excluded.
+- name: Autostart the G604 profile launcher in Openbox sessions
+  ansible.builtin.copy:
+    src: curiosity-g604.desktop
+    dest: /etc/xdg/autostart/curiosity-g604.desktop
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Install the microphone mute toggle
   ansible.builtin.copy:
     src: curiosity-mic-mute
@@ -110,14 +121,18 @@
       dev=$(ratbagctl list | awk '/Logitech G604/ { sub(":", "", $1); print $1; exit }')
       [ -n "$dev" ] || { echo "no G604 attached"; exit 0; }
       changed=
-      for pair in "9 KEY_F13" "10 KEY_F14" "5 KEY_6" "3 KEY_4" "4 KEY_5"; do
-        set -- $pair
-        current=$(ratbagctl "$dev" profile 0 button "$1" get)
-        if [[ "$current" != *"$2'" ]]; then
-          ratbagctl "$dev" profile 0 button "$1" action set macro "$2"
-          changed=yes
-        fi
-      done
+      # Button macros only make sense where the launcher consumes them (an
+      # X11 Openbox session); elsewhere the thumb buttons would type digits.
+      if [ "{{ logitech_g604_onboard_buttons | bool | lower }}" = true ]; then
+        for pair in "9 KEY_F13" "10 KEY_F14" "5 KEY_6" "3 KEY_4" "4 KEY_5"; do
+          set -- $pair
+          current=$(ratbagctl "$dev" profile 0 button "$1" get)
+          if [[ "$current" != *"$2'" ]]; then
+            ratbagctl "$dev" profile 0 button "$1" action set macro "$2"
+            changed=yes
+          fi
+        done
+      fi
       # Pointer speed: make the onboard resolution the one with this DPI.
       want={{ logitech_g604_dpi | int }}
       idx=$(ratbagctl "$dev" profile 0 get | awk -v dpi="${want}dpi" '$2 == dpi || $2 == dpi":" || $3 == dpi { sub(":", "", $1); print $1; exit }')
