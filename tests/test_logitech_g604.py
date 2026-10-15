@@ -292,3 +292,126 @@ def test_onboard_button_macros_can_be_switched_off() -> None:
     assert DEFAULTS["logitech_g604_onboard_buttons"] is True
     task = (ROLE / "tasks/logitech-g604.yml").read_text()
     assert "logitech_g604_onboard_buttons | bool | lower" in task
+
+
+SOLAAR_GUARD = ROLE / "files/curiosity-solaar-g604-dpi"
+
+
+def _solaar_config(dpi: int, sensitive: dict | None = None) -> str:
+    g604 = {
+        "_NAME": "G604 Wireless Gaming Mouse",
+        "_wpid": "4085",
+        "dpi": dpi,
+        "onboard_profiles": 1,
+        "report_rate": 1,
+    }
+    if sensitive is not None:
+        g604["_sensitive"] = sensitive
+    other = {"_NAME": "ERGO K860 Split Keyboard", "fn-swap": True}
+    return yaml.safe_dump(["1.1.19-1", other, g604], sort_keys=False)
+
+
+def _guard(config: Path, dpi: str = "3200") -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["python3", "-I", str(SOLAAR_GUARD), str(config), dpi], capture_output=True, text=True, check=False
+    )
+
+
+def test_solaar_guard_stops_solaar_overriding_the_dpi(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(_solaar_config(1600, {"hires-scroll-mode": "ignore"}))
+    config.chmod(0o664)
+    result = _guard(config)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "CHANGED"
+    data = yaml.safe_load(config.read_text())
+    assert data[0] == "1.1.19-1"
+    assert data[1] == {"_NAME": "ERGO K860 Split Keyboard", "fn-swap": True}
+    g604 = data[2]
+    assert g604["dpi"] == 3200
+    assert g604["_sensitive"] == {"hires-scroll-mode": "ignore", "dpi": "ignore"}
+    assert g604["onboard_profiles"] == 1 and g604["report_rate"] == 1
+    assert stat.S_IMODE(config.stat().st_mode) == 0o664
+    # Idempotent.
+    again = _guard(config)
+    assert again.stdout.strip() == "UNCHANGED"
+
+
+def test_solaar_guard_adds_the_sensitive_map_when_missing(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(_solaar_config(3200))
+    assert _guard(config).stdout.strip() == "CHANGED"
+    assert yaml.safe_load(config.read_text())[2]["_sensitive"] == {"dpi": "ignore"}
+
+
+def test_solaar_guard_leaves_missing_configs_and_rejects_bad_ones(tmp_path: Path) -> None:
+    assert _guard(tmp_path / "absent.yaml").stdout.strip() == "ABSENT"
+    no_g604 = tmp_path / "other.yaml"
+    no_g604.write_text(yaml.safe_dump(["1.1.19-1", {"_NAME": "MX Keys"}]))
+    assert _guard(no_g604).stdout.strip() == "ABSENT"
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("- [unclosed\n")
+    result = _guard(broken)
+    assert result.returncode == 1 and "cannot read Solaar config" in result.stderr
+    assert _guard(no_g604, "fast").returncode == 2
+
+
+def test_solaar_autostart_runs_the_guard_before_solaar() -> None:
+    tasks = yaml.safe_load((ROLE / "tasks/logitech-g604.yml").read_text())
+    by_name = {t["name"]: t for t in tasks}
+    install = by_name["Install the Solaar G604 DPI guard"]["ansible.builtin.copy"]
+    assert install["src"] == "curiosity-solaar-g604-dpi"
+    assert install["dest"] == "/usr/local/bin/curiosity-solaar-g604-dpi"
+    autostart = by_name["Start Solaar through the G604 DPI guard at login"]
+    copy = autostart["ansible.builtin.copy"]
+    # Same file name as the packaged entry, so XDG autostart uses this one instead.
+    assert copy["dest"] == "{{ dw_user.home }}/.config/autostart/solaar.desktop"
+    assert autostart["loop"] == "{{ dev_users }}"
+    exec_line = next(line for line in copy["content"].splitlines() if line.startswith("Exec="))
+    # No quotes, `;` or `$`: the Desktop Entry spec reserves them in Exec.
+    assert exec_line == "Exec=curiosity-solaar-g604-dpi --launch {{ logitech_g604_dpi | int }}"
+
+
+@pytest.mark.skipif(shutil.which("desktop-file-validate") is None, reason="desktop-file-utils not installed")
+def test_solaar_autostart_is_a_valid_desktop_entry(tmp_path: Path) -> None:
+    tasks = yaml.safe_load((ROLE / "tasks/logitech-g604.yml").read_text())
+    task = next(t for t in tasks if t["name"] == "Start Solaar through the G604 DPI guard at login")
+    entry = tmp_path / "solaar.desktop"
+    entry.write_text(jinja2.Template(task["ansible.builtin.copy"]["content"]).render(logitech_g604_dpi=3200))
+    result = subprocess.run(["desktop-file-validate", str(entry)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _launch(tmp_path: Path) -> tuple[subprocess.CompletedProcess, Path]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    started = tmp_path / "solaar-started"
+    fake = bin_dir / "solaar"
+    fake.write_text(f'#!/bin/sh\necho "$@" > {started}\n')
+    fake.chmod(0o755)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "XDG_CONFIG_HOME": str(tmp_path / "xdg"), "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-I", str(SOLAAR_GUARD), "--launch", "3200"], capture_output=True, text=True, env=env, check=False
+    )
+    return result, started
+
+
+def test_solaar_launch_fixes_the_xdg_config_then_starts_solaar(tmp_path: Path) -> None:
+    config = tmp_path / "xdg/solaar/config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(_solaar_config(1600))
+    result, started = _launch(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert started.read_text().strip() == "--window=hide"
+    g604 = yaml.safe_load(config.read_text())[2]
+    assert g604["dpi"] == 3200 and g604["_sensitive"] == {"dpi": "ignore"}
+
+
+def test_solaar_launch_still_starts_solaar_on_a_broken_config(tmp_path: Path) -> None:
+    config = tmp_path / "xdg/solaar/config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("- [unclosed\n")
+    result, started = _launch(tmp_path)
+    assert result.returncode == 0
+    assert "starting Solaar without the DPI fix" in result.stderr
+    assert started.read_text().strip() == "--window=hide"

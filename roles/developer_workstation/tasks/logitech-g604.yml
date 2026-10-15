@@ -154,3 +154,51 @@
   register: _g604_onboard
   changed_when: "'CHANGED' in _g604_onboard.stdout"
   failed_when: false
+
+# Solaar (installed for the Logitech receiver) remembers its own DPI per device
+# and re-applies it whenever it starts or the mouse reconnects, overriding the
+# onboard profile's speed above. The guard marks that setting "ignore" in the
+# user's Solaar config. It must run while Solaar is closed (a running Solaar
+# writes its in-memory copy back), so each user's Solaar autostart entry, which
+# overrides the packaged /etc/xdg/autostart/solaar.desktop of the same name,
+# runs the guard first and then starts Solaar exactly as the package does.
+- name: Install the Solaar G604 DPI guard
+  ansible.builtin.copy:
+    src: curiosity-solaar-g604-dpi
+    dest: /usr/local/bin/curiosity-solaar-g604-dpi
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure each user's autostart directory exists
+  ansible.builtin.file:
+    path: "{{ dw_user.home }}/.config/autostart"
+    state: directory
+    owner: "{{ dw_user.name }}"
+    mode: "0755"
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
+
+- name: Start Solaar through the G604 DPI guard at login
+  ansible.builtin.copy:
+    dest: "{{ dw_user.home }}/.config/autostart/solaar.desktop"
+    owner: "{{ dw_user.name }}"
+    mode: "0644"
+    content: |
+      [Desktop Entry]
+      # Managed by the curiosity workstation role (Logitech G604 profile):
+      # keep Solaar from overriding the onboard {{ logitech_g604_dpi | int }} DPI, then start it.
+      Type=Application
+      Name=Solaar
+      Comment=Logitech Unifying Receiver peripherals manager
+      Icon=solaar
+      Exec=curiosity-solaar-g604-dpi --launch {{ logitech_g604_dpi | int }}
+      StartupNotify=false
+      NoDisplay=true
+      X-GNOME-Autostart-enabled=true
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
