@@ -1,0 +1,77 @@
+#!/usr/bin/python3
+"""Keep Solaar from overriding the Logitech G604 pointer speed.
+
+The G604's DPI lives in its onboard profile, which the curiosity role writes
+with libratbag. Solaar also remembers a DPI per device and re-applies it every
+time it starts or the mouse reconnects, which silently undid the profile (a
+saved 1600 replaced the profile's 3200). This marks Solaar's `dpi` setting for
+every G604 entry as "ignore" (Solaar then neither applies nor saves it) and
+records the profile's DPI there, so the Solaar window shows the real value.
+
+Usage: curiosity-solaar-g604-dpi CONFIG DPI
+Prints CHANGED, UNCHANGED or ABSENT (no config file or no G604 entry yet;
+Solaar creates both on first use). Exits non-zero on a config it cannot parse.
+Managed by the curiosity workstation role.
+"""
+import os
+import sys
+import tempfile
+
+import yaml
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 3 or not argv[2].isdigit():
+        print("usage: curiosity-solaar-g604-dpi CONFIG DPI", file=sys.stderr)
+        return 2
+    path, dpi = argv[1], int(argv[2])
+    try:
+        with open(path, encoding="utf-8") as handle:
+            config = yaml.safe_load(handle)
+    except FileNotFoundError:
+        print("ABSENT")
+        return 0
+    except (OSError, yaml.YAMLError) as exc:
+        print(f"cannot read Solaar config {path}: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(config, list):
+        print(f"unexpected Solaar config layout in {path}", file=sys.stderr)
+        return 1
+
+    entries = [e for e in config if isinstance(e, dict) and "G604" in str(e.get("_NAME", ""))]
+    if not entries:
+        print("ABSENT")
+        return 0
+    changed = False
+    for entry in entries:
+        sensitive = entry.get("_sensitive")
+        if not isinstance(sensitive, dict):
+            sensitive = entry["_sensitive"] = {}
+        if entry.get("dpi") != dpi or sensitive.get("dpi") != "ignore":
+            entry["dpi"] = dpi
+            sensitive["dpi"] = "ignore"
+            changed = True
+    if not changed:
+        print("UNCHANGED")
+        return 0
+
+    # Write next to the original and rename, keeping its owner and mode.
+    st = os.stat(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".config.yaml.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(config, handle, default_flow_style=None, width=150, sort_keys=False)
+        os.chmod(tmp, st.st_mode & 0o7777)
+        if os.geteuid() == 0:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        os.replace(tmp, path)
+    except OSError as exc:
+        os.unlink(tmp)
+        print(f"cannot write Solaar config {path}: {exc}", file=sys.stderr)
+        return 1
+    print("CHANGED")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

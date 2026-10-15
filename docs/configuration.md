@@ -58,6 +58,16 @@ command on `logitech_g604_lightbar_keycode` (12). Change
 
 The launcher autostarts in any Openbox (X11) session via `/etc/xdg/autostart/curiosity-g604.desktop`; on GNOME/Wayland it does nothing, so set `logitech_g604_onboard_buttons: false` there to keep the thumb buttons from typing digits (the `logitech_g604_dpi` pointer speed still applies).
 
+Solaar also stores a DPI per device and re-applies it whenever it starts or the
+mouse reconnects, which overrode the onboard `logitech_g604_dpi` (a saved 1600
+replaced 3200). The role installs `/usr/local/bin/curiosity-solaar-g604-dpi` and,
+for each `dev_users` account, `~/.config/autostart/solaar.desktop` (it takes the
+place of the packaged `/etc/xdg/autostart/solaar.desktop`). At login it marks
+Solaar's `dpi` setting for the G604 as `ignore` (and records `logitech_g604_dpi`
+there) before starting `solaar --window=hide`, so the onboard profile is the only
+source of the pointer speed. It changes nothing while Solaar has no G604 entry
+yet, and only edits the file while Solaar is not running.
+
 The lower right thumb button (keycode 13) toggles the microphone (`logitech_g604_mic_keycode`) and the button that sends KEY_5 (keycode 14) toggles the focused window between its place and the middle zone (`logitech_g604_zone_keycode`, `openbox-zone toggle`).
 Rollback: remove the `curiosity-g604` line from `~/.config/openbox/autostart`
 and `pkill -f curiosity-g604; pkill xbindkeys`.

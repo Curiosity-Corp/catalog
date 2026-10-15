@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- G604 pointer speed: Solaar re-applied its own saved DPI (1600) on every start or reconnect, overriding the onboard `logitech_g604_dpi` (3200). A per-user `~/.config/autostart/solaar.desktop` now runs `curiosity-solaar-g604-dpi` before Solaar starts, marking Solaar's G604 `dpi` setting `ignore` so the onboard profile wins.
 - G604 launcher now autostarts in any Openbox session through `/etc/xdg/autostart/curiosity-g604.desktop` (it previously started only from the catalog-managed minimal-desktop autostart) and exits quietly on Wayland. `logitech_g604_onboard_buttons: false` skips the onboard button macros on hosts without an X11 Openbox session (pointer speed still applies).
 - Fix: write the authd-oidc and authd-msentraid `broker.conf` as 0600; authd-oidc 0.5+ refuses to start with 0644, which left OIDC sign-in down after a broker restart.
 - DeskMeet1 (`deskmeet-b760`) 8K TV still blanked about every 20 minutes on the
