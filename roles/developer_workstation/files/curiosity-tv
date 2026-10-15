@@ -1,0 +1,765 @@
+#!/usr/bin/python3
+"""Control the Samsung QN55QN700B (Tizen) TV from this workstation.
+
+The TV is the DeskMeet1 8K monitor (192.168.1.250). This drives it without the
+physical remote through the interfaces Tizen exposes on the LAN:
+
+  REST        http://TV:8001/api/v2/        device info, application launch
+  WebSocket   wss://TV:8002/api/v2/channels/samsung.remote.control
+                                             remote keys, apps, browser, text
+  UPnP DMR    http://TV:9197/dmr             RenderingControl volume get/set
+  Wake-on-LAN UDP/9 magic packet             power on from standby
+
+Usage: curiosity-tv [--host IP] [--mac MAC] [--timeout S] [--json] COMMAND ...
+       status | on | off | pair | key KEY... | input hdmi1..4|source
+       volume up|down|mute [N] | volume get | volume set N
+       channel up|down|N | home | back | apps | launch APP | browse URL
+       text STRING | cursor move DX DY | cursor click|rightclick
+
+`status` needs no token. Everything over the WebSocket needs the pairing token,
+looked up in this order and never printed or put on a command line:
+  1. $CURIOSITY_TV_TOKEN
+  2. $XDG_STATE_HOME/curiosity-tv/token (0600; default ~/.local/state)
+  3. Azure Key Vault omlab-secrets, secret deskmeet-samsung-tv-ws-token
+     (through `az`; the value is then cached as in 2)
+If the TV issues a new token on connect it is written to the cache only (0600)
+and a notice asks you to sync it to Key Vault.
+
+Exit status: 0 success, 1 failure, 2 usage error, 3 not authorised/no token.
+Managed by the curiosity workstation role.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import re
+import socket
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any, Callable
+
+DEFAULT_HOST = "192.168.1.250"
+DEFAULT_MAC = "70:09:71:93:5A:20"
+WOL_TARGETS = ("192.168.1.255", "255.255.255.255")
+WOL_PORT = 9
+REMOTE_NAME = "Curiosity DeskMeet"  # the name the TV already trusts
+KEY_VAULT = "omlab-secrets"
+KEY_VAULT_SECRET = "deskmeet-samsung-tv-ws-token"
+DEFAULT_TIMEOUT = 10.0
+BROWSER_APP_ID = "org.tizen.browser"
+
+# Well-known Tizen app ids. `curiosity-tv apps` lists what this TV has installed.
+APP_ALIASES: dict[str, str] = {
+    "youtube": "111299001912",
+    "netflix": "3201907018807",
+    "browser": BROWSER_APP_ID,
+    "internet": BROWSER_APP_ID,
+    "plex": "3201512006963",
+    "prime": "3201910019365",
+    "primevideo": "3201910019365",
+    "amazon": "3201910019365",
+    "disney": "3201901017640",
+    "disneyplus": "3201901017640",
+    "hulu": "3201601007625",
+    "spotify": "3201606009684",
+    "appletv": "3201807016597",
+    "youtubetv": "3201707014489",
+}
+
+# Best-effort HDMI source apps (the Tizen source switcher); `input source`
+# (KEY_HDMI) always works and opens the TV's own source list.
+HDMI_APP_IDS: dict[str, str] = {f"hdmi{n}": f"org.tizen.hdmi{n}" for n in range(1, 5)}
+
+KEY_RE = re.compile(r"^KEY_[A-Z0-9_]+$")
+TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]{4,256}$")
+APP_ID_RE = re.compile(r"^(?:[0-9]{8,}|[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+)$")
+MAC_RE = re.compile(r"^(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$")
+
+_secrets: set[str] = set()
+
+
+class TvError(Exception):
+    """A failure to report on stderr; exit_code is the process status."""
+
+    exit_code = 1
+
+
+class AuthError(TvError):
+    exit_code = 3
+
+
+def redact(text: str) -> str:
+    """Remove any token value (or token= query) from text before showing it."""
+    for secret in _secrets:
+        text = text.replace(secret, "***")
+        text = text.replace(urllib.parse.quote(secret, safe=""), "***")
+    return re.sub(r"(token=)[^&\s'\"]+", r"\1***", text)
+
+
+def info(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+# --------------------------------------------------------------------- token
+
+
+def state_dir() -> Path:
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return Path(base) / "curiosity-tv"
+
+
+def token_cache_path() -> Path:
+    return state_dir() / "token"
+
+
+def _valid_token(raw: str, origin: str) -> str:
+    token = raw.strip()
+    if not TOKEN_RE.match(token):
+        raise TvError(f"the token from {origin} is empty or has unexpected characters")
+    _secrets.add(token)
+    return token
+
+
+def write_token_cache(token: str) -> Path:
+    """Write the token to the cache with mode 0600, atomically."""
+    path = token_cache_path()
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise TvError(f"cannot write the token cache {path}: {exc.strerror or exc}") from exc
+    return path
+
+
+def fetch_vault_token() -> str:
+    command = [
+        "az", "keyvault", "secret", "show", "--vault-name", KEY_VAULT,
+        "--name", KEY_VAULT_SECRET, "--query", "value", "-o", "tsv",
+    ]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+    except FileNotFoundError as exc:
+        raise AuthError("no TV token: `az` is not installed (set CURIOSITY_TV_TOKEN)") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise AuthError("no TV token: `az keyvault secret show` timed out") from exc
+    if proc.returncode != 0:
+        reason = (proc.stderr.strip().splitlines() or ["unknown error"])[-1]
+        raise AuthError(f"no TV token: Key Vault {KEY_VAULT}/{KEY_VAULT_SECRET} unreadable ({redact(reason)})")
+    return proc.stdout
+
+
+def load_token() -> str:
+    env = os.environ.get("CURIOSITY_TV_TOKEN", "").strip()
+    if env:
+        return _valid_token(env, "$CURIOSITY_TV_TOKEN")
+    cache = token_cache_path()
+    try:
+        cached = cache.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        cached = ""
+    except OSError as exc:
+        raise TvError(f"cannot read the token cache {cache}: {exc.strerror or exc}") from exc
+    if cached.strip():
+        return _valid_token(cached, str(cache))
+    token = _valid_token(fetch_vault_token(), f"Key Vault {KEY_VAULT}")
+    write_token_cache(token)
+    return token
+
+
+# ---------------------------------------------------------------------- REST
+
+
+def http_json(url: str, *, method: str = "GET", timeout: float = DEFAULT_TIMEOUT) -> Any:
+    request = urllib.request.Request(url, method=method, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (http LAN URL)
+            body = response.read()
+    except urllib.error.HTTPError as exc:
+        raise TvError(f"TV answered {exc.code} {exc.reason} for {method} {urllib.parse.urlsplit(url).path}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise TvError(f"cannot reach the TV at {urllib.parse.urlsplit(url).netloc}: {reason}") from exc
+    try:
+        return json.loads(body) if body.strip() else {}
+    except json.JSONDecodeError as exc:
+        raise TvError(f"the TV sent invalid JSON for {urllib.parse.urlsplit(url).path}") from exc
+
+
+def device_info(host: str, timeout: float) -> dict[str, Any]:
+    data = http_json(f"http://{host}:8001/api/v2/", timeout=timeout)
+    if not isinstance(data, dict) or not isinstance(data.get("device"), dict):
+        raise TvError("unexpected device info from the TV")
+    return data
+
+
+def power_state(host: str, timeout: float) -> str:
+    """'on', 'standby' (whatever the TV reports) or 'unreachable'."""
+    try:
+        device = device_info(host, timeout)["device"]
+    except TvError:
+        return "unreachable"
+    return str(device.get("PowerState") or "on").lower()
+
+
+def rest_launch(host: str, app_id: str, timeout: float) -> dict[str, Any]:
+    quoted = urllib.parse.quote(app_id, safe="")
+    result = http_json(f"http://{host}:8001/api/v2/applications/{quoted}", method="POST", timeout=timeout)
+    return result if isinstance(result, dict) else {}
+
+
+# --------------------------------------------------------------- Wake-on-LAN
+
+
+def parse_mac(mac: str) -> bytes:
+    if not MAC_RE.match(mac):
+        raise TvError(f"invalid MAC address: {mac!r}")
+    return bytes.fromhex(re.sub(r"[:-]", "", mac))
+
+
+def magic_packet(mac: str) -> bytes:
+    return b"\xff" * 6 + parse_mac(mac) * 16
+
+
+def send_wol(mac: str, targets: tuple[str, ...] = WOL_TARGETS) -> list[str]:
+    """Broadcast the magic packet; returns the targets that accepted it."""
+    packet = magic_packet(mac)
+    sent: list[str] = []
+    errors: list[str] = []
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for target in targets:
+            try:
+                sock.sendto(packet, (target, WOL_PORT))
+                sent.append(target)
+            except OSError as exc:
+                errors.append(f"{target}: {exc.strerror or exc}")
+    if not sent:
+        raise TvError("Wake-on-LAN packet could not be sent (" + "; ".join(errors) + ")")
+    return sent
+
+
+# ----------------------------------------------------------------- WebSocket
+
+
+def _websocket() -> Any:
+    try:
+        import websocket
+    except ImportError as exc:
+        raise TvError("python3-websocket is missing (apt install python3-websocket)") from exc
+    return websocket
+
+
+class Session:
+    """One authenticated connection to the TV's remote-control channel."""
+
+    def __init__(self, host: str, token: str | None, timeout: float) -> None:
+        self.host = host
+        self.token = token
+        self.timeout = timeout
+        self.ws: Any = None
+        self.new_token: str | None = None
+
+    def __enter__(self) -> Session:
+        return self  # open_session() has already connected
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self.ws is not None:
+            try:
+                self.ws.close()
+            except OSError:
+                pass  # the TV already dropped the socket; nothing left to close
+            self.ws = None
+
+    def connect(self) -> None:
+        websocket = _websocket()
+        name = base64.b64encode(REMOTE_NAME.encode()).decode()
+        url = f"wss://{self.host}:8002/api/v2/channels/samsung.remote.control?name={urllib.parse.quote(name, safe='')}"
+        if self.token:
+            url += f"&token={urllib.parse.quote(self.token, safe='')}"
+        try:
+            self.ws = websocket.create_connection(
+                url, timeout=self.timeout, sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False}
+            )
+        except (OSError, websocket.WebSocketException) as exc:
+            raise TvError(f"cannot open the TV remote channel at {self.host}:8002: {redact(str(exc))}") from exc
+        event = self.wait_for({"ms.channel.connect", "ms.channel.unauthorized", "ms.channel.timeOut", "ms.error"})
+        name_of = event.get("event")
+        if name_of != "ms.channel.connect":
+            self.close()
+            hint = "run `curiosity-tv pair` and press Allow on the TV" if not self.token else "the saved token was rejected"
+            raise AuthError(f"the TV refused the connection ({name_of}); {hint}")
+        issued = (event.get("data") or {}).get("token")
+        if issued and issued != self.token:
+            self.new_token = str(issued)
+            _secrets.add(self.new_token)
+
+    def recv(self, timeout: float) -> dict[str, Any] | None:
+        websocket = _websocket()
+        self.ws.settimeout(max(timeout, 0.05))
+        try:
+            raw = self.ws.recv()
+        except websocket.WebSocketTimeoutException:
+            return None
+        except (OSError, websocket.WebSocketException) as exc:
+            raise TvError(f"the TV closed the remote channel: {redact(str(exc))}") from exc
+        try:
+            message = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return message if isinstance(message, dict) else {}
+
+    def wait_for(self, events: set[str], timeout: float | None = None) -> dict[str, Any]:
+        deadline = time.monotonic() + (timeout if timeout is not None else self.timeout)
+        while (remaining := deadline - time.monotonic()) > 0:
+            message = self.recv(remaining)
+            if message and message.get("event") in events:
+                return message
+        raise TvError("timed out waiting for the TV (" + ", ".join(sorted(events)) + ")")
+
+    def send(self, payload: dict[str, Any]) -> None:
+        websocket = _websocket()
+        try:
+            self.ws.send(json.dumps(payload))
+        except (OSError, websocket.WebSocketException) as exc:
+            raise TvError(f"sending to the TV failed: {redact(str(exc))}") from exc
+
+    def key(self, name: str) -> None:
+        self.send({"method": "ms.remote.control", "params": {
+            "Cmd": "Click", "DataOfCmd": name, "Option": "false", "TypeOfRemote": "SendRemoteKey"}})
+
+    def emit(self, event: str, data: dict[str, Any] | None = None) -> None:
+        params: dict[str, Any] = {"event": event, "to": "host"}
+        if data is not None:
+            params["data"] = data
+        self.send({"method": "ms.channel.emit", "params": params})
+
+    def installed_apps(self) -> list[dict[str, Any]]:
+        self.emit("ed.installedApp.get")
+        reply = self.wait_for({"ed.installedApp.get"})
+        apps = (reply.get("data") or {}).get("data")
+        if not isinstance(apps, list):
+            raise TvError("the TV sent no installed-app list")
+        return [app for app in apps if isinstance(app, dict) and app.get("appId")]
+
+
+def open_session(args: argparse.Namespace, *, token: str | None = None) -> Session:
+    """Connect with the saved token and persist a token the TV re-issues."""
+    session = Session(args.host, token if token is not None else load_token(), args.timeout)
+    session.connect()
+    if session.new_token:
+        write_token_cache(session.new_token)
+        info(f"TV issued a new token: refreshed {token_cache_path()}. "
+             f"Sync it to Key Vault {KEY_VAULT}/{KEY_VAULT_SECRET}.")
+    return session
+
+
+# ------------------------------------------------------------------ commands
+
+
+def normalize_key(name: str) -> str:
+    key = name.strip().upper()
+    if not key.startswith("KEY_"):
+        key = "KEY_" + key
+    if not KEY_RE.match(key):
+        raise TvError(f"invalid key name: {name!r}")
+    return key
+
+
+def parse_key_steps(items: list[str]) -> list[tuple[str, float | str]]:
+    steps: list[tuple[str, float | str]] = []
+    for item in items:
+        if item.lower().startswith("sleep:"):
+            try:
+                seconds = float(item.split(":", 1)[1])
+            except ValueError as exc:
+                raise TvError(f"invalid pause {item!r} (use sleep:SECONDS)") from exc
+            if not 0 <= seconds <= 60:
+                raise TvError(f"pause {item!r} must be between 0 and 60 seconds")
+            steps.append(("sleep", seconds))
+        else:
+            steps.append(("key", normalize_key(item)))
+    if not steps:
+        raise TvError("no keys given")
+    return steps
+
+
+def run_keys(args: argparse.Namespace, steps: list[tuple[str, float | str]], *, repeat: int = 1) -> int:
+    with open_session(args) as session:
+        for _ in range(repeat):
+            for kind, value in steps:
+                if kind == "sleep":
+                    time.sleep(float(value))
+                    continue
+                session.key(str(value))
+                print(f"sent {value}", flush=True)
+                time.sleep(args.delay)
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    data = device_info(args.host, args.timeout)
+    if args.json:
+        print(json.dumps(data, indent=2, sort_keys=True))
+        return 0
+    device = data["device"]
+    rows = [
+        ("power", str(device.get("PowerState") or "on")),
+        ("name", device.get("name")),
+        ("model", device.get("modelName")),
+        ("resolution", device.get("resolution")),
+        ("firmware", device.get("firmwareVersion")),
+        ("os", f"{device.get('OS', '')} {data.get('version', '')}".strip()),
+        ("network", device.get("networkType")),
+        ("wifi mac", device.get("wifiMac")),
+        ("token auth", device.get("TokenAuthSupport")),
+    ]
+    for label, value in rows:
+        if value not in (None, ""):
+            print(f"{label:<11}{value}")
+    return 0
+
+
+def cmd_on(args: argparse.Namespace) -> int:
+    if power_state(args.host, args.timeout) == "on":
+        print("TV is already on")
+        return 0
+    deadline = time.monotonic() + args.wait
+    next_packet = 0.0
+    while time.monotonic() < deadline:
+        if time.monotonic() >= next_packet:
+            sent = send_wol(args.mac)
+            if next_packet == 0.0:
+                print(f"sent Wake-on-LAN to {args.mac} via {', '.join(sent)}", flush=True)
+            next_packet = time.monotonic() + 5
+        time.sleep(1)
+        if power_state(args.host, min(args.timeout, 3)) == "on":
+            print("TV is on")
+            return 0
+    raise TvError(f"the TV did not report PowerState on within {args.wait:g} s")
+
+
+def cmd_off(args: argparse.Namespace) -> int:
+    state = power_state(args.host, args.timeout)
+    if state != "on":
+        print(f"TV is not on ({state}); nothing to do")
+        return 0
+    run_keys(args, [("key", "KEY_POWER")])
+    return 0
+
+
+def cmd_pair(args: argparse.Namespace) -> int:
+    info("Press Allow on the TV when the prompt appears.")
+    session = Session(args.host, None, max(args.timeout, 35.0))
+    try:
+        session.connect()
+    finally:
+        session.close()
+    if not session.new_token:
+        print("connected; the TV trusts this client without issuing a token")
+        return 0
+    path = write_token_cache(session.new_token)
+    print(f"paired: token saved to {path}. Sync it to Key Vault {KEY_VAULT}/{KEY_VAULT_SECRET}.")
+    return 0
+
+
+def cmd_key(args: argparse.Namespace) -> int:
+    if not 1 <= args.repeat <= 100:
+        raise TvError("--repeat must be between 1 and 100")
+    return run_keys(args, parse_key_steps(args.keys), repeat=args.repeat)
+
+
+def cmd_input(args: argparse.Namespace) -> int:
+    if args.source == "source":
+        return run_keys(args, [("key", "KEY_HDMI")])
+    with open_session(args) as session:
+        session.emit("ed.apps.launch", {"appId": HDMI_APP_IDS[args.source], "action_type": "NATIVE_LAUNCH"})
+        time.sleep(0.5)
+    print(f"requested {args.source}")
+    return 0
+
+
+VOLUME_KEYS = {"up": "KEY_VOLUP", "down": "KEY_VOLDOWN", "mute": "KEY_MUTE"}
+
+
+def cmd_volume(args: argparse.Namespace) -> int:
+    action = args.action
+    if action in VOLUME_KEYS:
+        count = 1 if args.value is None else args.value
+        if not 1 <= count <= 100 or (action == "mute" and count != 1):
+            raise TvError("volume up/down take a count of 1-100; mute takes none")
+        return run_keys(args, [("key", VOLUME_KEYS[action])], repeat=count)
+    if action == "get":
+        if args.value is not None:
+            raise TvError("volume get takes no value")
+        print(upnp_get_volume(args.host, args.timeout))
+        return 0
+    if args.value is None or not 0 <= args.value <= 100:
+        raise TvError("volume set needs a level from 0 to 100")
+    upnp_set_volume(args.host, args.value, args.timeout)
+    print(f"volume set to {args.value}")
+    return 0
+
+
+def cmd_channel(args: argparse.Namespace) -> int:
+    target = args.target.lower()
+    if target in ("up", "down"):
+        return run_keys(args, [("key", "KEY_CHUP" if target == "up" else "KEY_CHDOWN")])
+    if not target.isdigit() or len(target) > 4:
+        raise TvError("channel takes up, down or a channel number")
+    return run_keys(args, [("key", f"KEY_{digit}") for digit in target] + [("key", "KEY_ENTER")])
+
+
+def cmd_home(args: argparse.Namespace) -> int:
+    return run_keys(args, [("key", "KEY_HOME")])
+
+
+def cmd_back(args: argparse.Namespace) -> int:
+    return run_keys(args, [("key", "KEY_RETURN")])
+
+
+def cmd_apps(args: argparse.Namespace) -> int:
+    with open_session(args) as session:
+        apps = session.installed_apps()
+    apps.sort(key=lambda app: str(app.get("name", "")).lower())
+    if args.json:
+        print(json.dumps(apps, indent=2, sort_keys=True))
+        return 0
+    for app in apps:
+        print(f"{app['appId']:<28}{app.get('name', '')}")
+    return 0
+
+
+def alias_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def resolve_app(spec: str, installed: Callable[[], list[dict[str, Any]]]) -> str:
+    """Alias, app id, or (via the TV's installed apps) a unique name match."""
+    wanted = alias_key(spec)
+    if wanted in APP_ALIASES:
+        return APP_ALIASES[wanted]
+    if APP_ID_RE.match(spec):
+        return spec
+    apps = installed()
+    exact = [a for a in apps if alias_key(str(a.get("name", ""))) == wanted]
+    matches = exact or [a for a in apps if wanted and wanted in alias_key(str(a.get("name", "")))]
+    if len(matches) == 1:
+        return str(matches[0]["appId"])
+    if not matches:
+        raise TvError(f"no installed app matches {spec!r} (see `curiosity-tv apps`)")
+    names = ", ".join(f"{a.get('name')} ({a['appId']})" for a in matches[:6])
+    raise TvError(f"{spec!r} is ambiguous: {names}")
+
+
+def cmd_launch(args: argparse.Namespace) -> int:
+    def installed() -> list[dict[str, Any]]:
+        with open_session(args) as session:
+            return session.installed_apps()
+
+    app_id = resolve_app(args.app, installed)
+    try:
+        result = rest_launch(args.host, app_id, args.timeout)
+    except TvError as rest_error:
+        if " 404 " in str(rest_error):
+            raise TvError(f"the TV has no app {app_id} (see `curiosity-tv apps`)") from rest_error
+        info(f"REST launch failed ({rest_error}); trying the remote channel")
+        with open_session(args) as session:
+            session.emit("ed.apps.launch", {"appId": app_id, "action_type": "DEEP_LINK"})
+            time.sleep(0.5)
+        print(f"requested launch of {app_id}")
+        return 0
+    label = result.get("name") or app_id
+    print(f"launched {label} ({app_id})")
+    return 0
+
+
+def cmd_browse(args: argparse.Namespace) -> int:
+    parts = urllib.parse.urlsplit(args.url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise TvError("browse needs an http:// or https:// URL")
+    with open_session(args) as session:
+        session.emit("ed.apps.launch", {"appId": BROWSER_APP_ID, "action_type": "NATIVE_LAUNCH", "metaTag": args.url})
+        time.sleep(0.5)
+    print(f"opened {args.url} in the TV browser")
+    return 0
+
+
+def cmd_text(args: argparse.Namespace) -> int:
+    if not args.string:
+        raise TvError("text needs a non-empty string")
+    encoded = base64.b64encode(args.string.encode()).decode()
+    with open_session(args) as session:
+        session.send({"method": "ms.remote.control", "params": {
+            "Cmd": encoded, "DataOfCmd": "base64", "TypeOfRemote": "SendInputString"}})
+        time.sleep(0.3)
+    print(f"sent {len(args.string)} characters (needs an active on-screen keyboard)")
+    return 0
+
+
+def cmd_cursor(args: argparse.Namespace) -> int:
+    with open_session(args) as session:
+        if args.action == "move":
+            if args.dx is None or args.dy is None:
+                raise TvError("cursor move needs DX and DY")
+            session.send({"method": "ms.remote.control", "params": {
+                "Cmd": "Move", "Position": {"x": args.dx, "y": args.dy, "Time": str(int(time.time() * 1000))},
+                "TypeOfRemote": "ProcessMouseDevice"}})
+        else:
+            session.send({"method": "ms.remote.control", "params": {
+                "Cmd": "LeftClick" if args.action == "click" else "RightClick",
+                "TypeOfRemote": "ProcessMouseDevice"}})
+        time.sleep(0.2)
+    print(f"cursor {args.action} sent")
+    return 0
+
+
+# --------------------------------------------------------------------- UPnP
+
+RENDERING = "urn:schemas-upnp-org:service:RenderingControl:1"
+
+
+def upnp_control_url(host: str, timeout: float) -> str:
+    description = f"http://{host}:9197/dmr"
+    try:
+        with urllib.request.urlopen(description, timeout=timeout) as response:  # noqa: S310
+            root = ET.fromstring(response.read())
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise TvError(f"UPnP is not reachable at {host}:9197 ({getattr(exc, 'reason', exc)}); use `volume up|down`") from exc
+    except ET.ParseError as exc:
+        raise TvError("the TV sent an invalid UPnP description") from exc
+    for service in root.iter():
+        if service.tag.endswith("}service") or service.tag == "service":
+            fields = {child.tag.rsplit("}", 1)[-1]: (child.text or "").strip() for child in service}
+            if "RenderingControl" in fields.get("serviceType", "") and fields.get("controlURL"):
+                return urllib.parse.urljoin(description, fields["controlURL"])
+    raise TvError("the TV exposes no UPnP RenderingControl service")
+
+
+def upnp_call(host: str, action: str, arguments: dict[str, str], timeout: float) -> ET.Element:
+    body = "".join(f"<{name}>{value}</{name}>" for name, value in arguments.items())
+    envelope = (
+        '<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+        's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>'
+        f'<u:{action} xmlns:u="{RENDERING}"><InstanceID>0</InstanceID>{body}</u:{action}>'
+        "</s:Body></s:Envelope>"
+    )
+    request = urllib.request.Request(
+        upnp_control_url(host, timeout), data=envelope.encode(), method="POST",
+        headers={"Content-Type": 'text/xml; charset="utf-8"', "SOAPACTION": f'"{RENDERING}#{action}"'},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return ET.fromstring(response.read())
+    except urllib.error.HTTPError as exc:
+        raise TvError(f"UPnP {action} failed: {exc.code} {exc.reason}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise TvError(f"UPnP {action} failed: {getattr(exc, 'reason', exc)}") from exc
+    except ET.ParseError as exc:
+        raise TvError(f"UPnP {action} returned invalid XML") from exc
+
+
+def upnp_get_volume(host: str, timeout: float) -> int:
+    reply = upnp_call(host, "GetVolume", {"Channel": "Master"}, timeout)
+    for element in reply.iter():
+        if element.tag.rsplit("}", 1)[-1] == "CurrentVolume" and (element.text or "").strip().isdigit():
+            return int(element.text.strip())
+    raise TvError("UPnP GetVolume returned no volume")
+
+
+def upnp_set_volume(host: str, level: int, timeout: float) -> None:
+    upnp_call(host, "SetVolume", {"Channel": "Master", "DesiredVolume": str(int(level))}, timeout)
+
+
+# ------------------------------------------------------------------- parsing
+
+
+def non_negative_float(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not a number: {text!r}") from exc
+    if value < 0:
+        raise argparse.ArgumentTypeError("must not be negative")
+    return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="curiosity-tv", description="Control the Samsung TV without the remote.",
+        epilog="The pairing token comes from $CURIOSITY_TV_TOKEN, the 0600 cache, or Key Vault; it is never printed.",
+    )
+    parser.add_argument("--host", default=os.environ.get("CURIOSITY_TV_HOST", DEFAULT_HOST), help="TV address (default %(default)s)")
+    parser.add_argument("--mac", default=os.environ.get("CURIOSITY_TV_MAC", DEFAULT_MAC), help="TV MAC for Wake-on-LAN (default %(default)s)")
+    parser.add_argument("--timeout", type=non_negative_float, default=DEFAULT_TIMEOUT, help="network timeout in seconds (default %(default)s)")
+    parser.add_argument("--delay", type=non_negative_float, default=0.4, help="pause after each key in seconds (default %(default)s)")
+    parser.add_argument("--json", action="store_true", help="machine-readable output for status and apps")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    def add(name: str, func: Callable[[argparse.Namespace], int], help_text: str) -> argparse.ArgumentParser:
+        command = sub.add_parser(name, help=help_text, description=help_text)
+        command.set_defaults(func=func)
+        return command
+
+    add("status", cmd_status, "show power state, model and resolution (no token needed)")
+    on = add("on", cmd_on, "Wake-on-LAN, then wait for PowerState on")
+    on.add_argument("--wait", type=non_negative_float, default=30.0, help="seconds to wait (default %(default)s)")
+    add("off", cmd_off, "press KEY_POWER only if the TV is on")
+    add("pair", cmd_pair, "request a new pairing token (press Allow on the TV)")
+    key = add("key", cmd_key, "send remote keys, e.g. key KEY_VOLUP sleep:1 KEY_VOLDOWN")
+    key.add_argument("keys", nargs="+", metavar="KEY", help="KEY_NAME (KEY_ optional) or sleep:SECONDS")
+    key.add_argument("--repeat", type=int, default=1, help="repeat the whole sequence N times")
+    inp = add("input", cmd_input, "switch input (this changes what the TV shows)")
+    inp.add_argument("source", choices=[*HDMI_APP_IDS, "source"], help="hdmi1..hdmi4, or `source` to open the source list")
+    vol = add("volume", cmd_volume, "up/down/mute by key, get/set through UPnP")
+    vol.add_argument("action", choices=["up", "down", "mute", "get", "set"])
+    vol.add_argument("value", nargs="?", type=int, help="step count for up/down, level 0-100 for set")
+    ch = add("channel", cmd_channel, "channel up, down or a number")
+    ch.add_argument("target", metavar="up|down|NUMBER")
+    add("home", cmd_home, "press Home (Smart Hub)")
+    add("back", cmd_back, "press Back")
+    add("apps", cmd_apps, "list installed apps")
+    launch = add("launch", cmd_launch, "launch an app by alias, name or appId")
+    launch.add_argument("app", help="alias (" + ", ".join(sorted(APP_ALIASES)) + "), app name or appId")
+    browse = add("browse", cmd_browse, "open a URL in the TV browser")
+    browse.add_argument("url")
+    text = add("text", cmd_text, "type text into the active on-screen keyboard")
+    text.add_argument("string", metavar="STRING")
+    cursor = add("cursor", cmd_cursor, "move the pointer or click")
+    cursor.add_argument("action", choices=["move", "click", "rightclick"])
+    cursor.add_argument("dx", nargs="?", type=int)
+    cursor.add_argument("dy", nargs="?", type=int)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        parse_mac(args.mac)
+        return int(args.func(args))
+    except TvError as exc:
+        print(f"curiosity-tv: {redact(str(exc))}", file=sys.stderr)
+        return exc.exit_code
+    except KeyboardInterrupt:
+        print("curiosity-tv: interrupted", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

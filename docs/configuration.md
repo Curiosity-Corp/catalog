@@ -105,6 +105,54 @@ i915). i915 chooses limited range for HDMI/CEA modes by default, which washes
 out a PC desktop on a TV; `Full` fixes that. `deskmeet-b760` sets
 `display_scale: 2` and `broadcast_rgb: Full`.
 
+### Samsung TV remote control
+
+A profile that sets `samsung_tv_cli: true` (`deskmeet-b760`; derived variable
+`samsung_tv_cli_enabled`) installs `python3-websocket` and
+`/usr/local/bin/curiosity-tv`, which controls the Samsung QN55QN700B (Tizen) TV
+at `192.168.1.250` (MAC `70:09:71:93:5A:20`) without the physical remote. It uses
+the REST API (`:8001/api/v2/`), the WebSocket remote (`wss://:8002`), UPnP
+RenderingControl (`:9197`) and Wake-on-LAN. `--host`/`--mac` (or
+`CURIOSITY_TV_HOST`/`CURIOSITY_TV_MAC`) override the address. The WebSocket
+client name is `Curiosity DeskMeet`, the name the TV already trusts.
+
+```
+curiosity-tv status                      # power, model, resolution (no token)
+curiosity-tv on                          # Wake-on-LAN, wait up to --wait 30 s for PowerState on
+curiosity-tv off                         # KEY_POWER, only if the TV is on
+curiosity-tv key KEY_VOLUP sleep:1 KEY_VOLDOWN --repeat 2
+curiosity-tv volume up 3 | down | mute   # keys; `volume get|set 20` uses UPnP
+curiosity-tv channel up|down|7           # also: home, back
+curiosity-tv input hdmi1..hdmi4          # changes what the TV shows; `input source` opens the list
+curiosity-tv apps                        # installed apps (appId and name)
+curiosity-tv launch youtube              # alias, app name or appId
+curiosity-tv browse https://example.org  # TV browser at a URL
+curiosity-tv text "hello"                # while an on-screen keyboard is open
+curiosity-tv cursor move 40 0 | click    # pointer
+curiosity-tv pair                        # new pairing; press Allow on the TV
+```
+
+`launch` posts to `/api/v2/applications/<id>` and falls back to the WebSocket
+`ed.apps.launch` event. Built-in aliases: youtube, netflix, browser (internet),
+plex, prime (primevideo, amazon), disney, hulu, spotify, appletv, youtubetv;
+`curiosity-tv apps` shows the ids this TV really has. `input hdmiN` launches the
+TV's source app `org.tizen.hdmiN` over the WebSocket, which is best effort and
+untested on this firmware; `input source` (KEY_HDMI) is the reliable way to open
+the source list. `volume get|set` needs the TV's UPnP service on port 9197, which
+is only reachable while the TV is awake.
+
+Everything over the WebSocket needs the pairing token. It is read from
+`$CURIOSITY_TV_TOKEN`, else the cache `$XDG_STATE_HOME/curiosity-tv/token`
+(mode 0600, default `~/.local/state`), else Azure Key Vault `omlab-secrets`
+secret `deskmeet-samsung-tv-ws-token` through `az keyvault secret show` (the
+value is then cached). The token is never printed, logged or passed on a command
+line; it only appears in the TLS URL inside the process. If the TV issues a new
+token on connect, only the cache is updated and the tool says so on stderr:
+write the new value to Key Vault (`az keyvault secret set`) so other machines
+stay in sync. Exit status is 0 on success, 1 on failure, 2 for a usage error and
+3 when there is no usable token or the TV refuses it. When the TV is in standby
+its ports are closed, so run `curiosity-tv on` first.
+
 ### Patched i915 for an HDMI 2.1 PCON
 
 A profile that sets `i915_pcon_frl_444: true` (`deskmeet-b760`; derived variable

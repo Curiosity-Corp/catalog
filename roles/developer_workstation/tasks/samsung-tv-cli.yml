@@ -1,0 +1,27 @@
+---
+# =============================================================================
+# Samsung TV remote-control CLI (curiosity-tv)
+# =============================================================================
+# Controls the Samsung Tizen TV used as this workstation's monitor without the
+# physical remote: power (Wake-on-LAN and KEY_POWER), keys, volume, apps, the
+# TV browser and text entry. Included only when `samsung_tv_cli_enabled` is
+# true (the hardware profile's `samsung_tv_cli` flag). The WebSocket pairing
+# token is not managed here; the tool reads it from $CURIOSITY_TV_TOKEN, the
+# user's 0600 cache or Azure Key Vault (`az`, from the cloud CLI baseline).
+# =============================================================================
+
+# The tool runs on the system interpreter (/usr/bin/python3), so the
+# websocket-client library comes from the distribution package.
+- name: Install the Samsung TV CLI dependencies
+  ansible.builtin.apt:
+    name:
+      - python3-websocket
+    state: present
+
+- name: Install the Samsung TV remote-control CLI
+  ansible.builtin.copy:
+    src: curiosity-tv
+    dest: /usr/local/bin/curiosity-tv
+    owner: root
+    group: root
+    mode: "0755"

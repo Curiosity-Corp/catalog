@@ -497,6 +497,13 @@
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - logitech_g604_enabled | bool
 
+- name: Install the Samsung TV remote-control CLI
+  ansible.builtin.include_tasks: samsung-tv-cli.yml
+  tags: [hardware, samsung-tv]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - samsung_tv_cli_enabled | bool
+
 - name: Include the patched i915 module for an HDMI 2.1 PCON
   ansible.builtin.include_tasks: i915-pcon-frl-444.yml
   tags: [hardware, i915]
