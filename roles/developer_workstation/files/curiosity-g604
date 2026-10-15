@@ -54,6 +54,12 @@ interval=${CURIOSITY_G604_INTERVAL:-5}
 lock_dir=${XDG_RUNTIME_DIR:-/tmp}
 lock=${CURIOSITY_G604_LOCK:-$lock_dir/curiosity-g604.$(printf '%s' "${DISPLAY:-none}" | tr -c 'A-Za-z0-9' '_').lock}
 
+# The mapping needs an X11 session (xinput, xbindkeys, xdotool); on Wayland
+# there is nothing to attach to, so leave quietly.
+if [ "${XDG_SESSION_TYPE:-}" = wayland ] || [ -z "${DISPLAY:-}" ]; then
+    exit 0
+fi
+
 for tool in xinput xbindkeys flock; do
     command -v "$tool" >/dev/null 2>&1 || { echo "curiosity-g604: $tool is not installed" >&2; exit 1; }
 done
