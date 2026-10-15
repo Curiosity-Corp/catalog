@@ -1,0 +1,65 @@
+---
+# =============================================================================
+# Focused polish for an existing Openbox + LightDM desktop
+# =============================================================================
+# Manage common UI tools, the greeter, the Tint2 panel and a small set of
+# additional user helpers without replacing the user's Openbox rc.xml/menu.xml.
+
+- name: Ensure useful Openbox desktop tools are installed
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-packages.yml
+    apply:
+      tags: [desktop-polish, packages]
+  tags: [desktop-polish, packages]
+
+- name: Apply LightDM greeter and session-wrapper improvements
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-lightdm.yml
+    apply:
+      tags: [desktop-polish, lightdm]
+  tags: [desktop-polish, lightdm]
+
+# The Tint2 include also deploys the desktop-polish autostart helper and the
+# shared volume-status script used by the live system-wide panel.
+- name: Deploy the polished Tint2 panel
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-tint2.yml
+    apply:
+      tags: [desktop-polish, tint2]
+  tags: [desktop-polish, tint2]
+
+- name: Ensure user Openbox configuration directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/openbox"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+  tags: [desktop-polish, openbox]
+
+- name: Preserve the distribution Openbox configuration when the user has none
+  ansible.builtin.copy:
+    src: /etc/xdg/openbox/rc.xml
+    dest: "{{ dev_user_home }}/.config/openbox/rc.xml"
+    remote_src: true
+    force: false
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+  tags: [desktop-polish, openbox]
+
+- name: Add an alternate Flameshot shortcut without replacing existing screenshot keys
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.config/openbox/rc.xml"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    marker: "<!-- {mark} ANSIBLE MANAGED FLAMESHOT SHORTCUT -->"
+    insertbefore: '^\s*</keyboard>\s*$'
+    validate: >-
+      /usr/bin/python3 -c 'import sys, xml.etree.ElementTree as ET; ET.parse(sys.argv[1])' %s
+    block: |
+      <keybind key="W-Print">
+        <action name="Execute"><command>flameshot gui</command></action>
+      </keybind>
+  tags: [desktop-polish, openbox]

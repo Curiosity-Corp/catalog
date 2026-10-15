@@ -523,6 +523,13 @@ t460_fbcon_cmdline_path: /etc/curiosity/t460-fbcon-horizontal.cmdline
 # Lightweight GUI for machines that only need a browser and terminal.
 # Mutually exclusive with display_config_enabled (GDM/GNOME).
 minimal_desktop_enabled: false
+
+# Apply focused Openbox/LightDM improvements on an existing desktop while
+# preserving the user's current Openbox menu and window-manager settings.
+desktop_polish_enabled: false
+
+# Enable a visible Plymouth passphrase prompt for encrypted-root boots.
+boot_prompt_visibility_enabled: false
 minimal_desktop_autologin: true
 minimal_desktop_firefox_tweaks: true
 
@@ -734,6 +741,13 @@ hardware_profiles:
       - fprintd
       - libpam-fprintd
       - libfprint-2-tod1
+      # Canon EOS cameras: file transfer and tethered shooting
+      - gphoto2
+      - gvfs-backends
+      - gvfs-fuse
+      # Focusrite Scarlett USB audio-interface controls and ALSA tools
+      - alsa-scarlett-gui
+      - alsa-utils
     # Same always-available posture as x86-byod-laptop: the fleet runs
     # hardware_profile=t460, so these flags must be present here or the
     # TLP/no-sleep/netplan tasks in system-tuning.yml never fire.
@@ -741,6 +755,11 @@ hardware_profiles:
     performance_mode: true
     services: []
     pipx_packages: []
-    udev_rules: []
+    # Give the signed-in workstation user access to the connected Canon EOS 50D.
+    udev_rules:
+      - name: 70-canon-eos-50d
+        content: |
+          # Canon EOS 50D PTP camera — active-seat and plugdev access.
+          SUBSYSTEM=="usb", ATTR{idVendor}=="04a9", ATTR{idProduct}=="319b", MODE="0660", GROUP="plugdev", TAG+="uaccess"
     pia_vpn: false
     console_diagnostics: true

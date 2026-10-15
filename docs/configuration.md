@@ -92,6 +92,27 @@ interactively. If enabling cleanup, test the retention window on a disposable
 shared machine. If enabling automatic updates, choose an update ring and keep
 the local rollback state on a persistent filesystem.
 
+## Existing Openbox desktop polish
+
+`desktop_polish_enabled` is opt-in and defaults to `false`. Set it to `true` on
+an existing Openbox + LightDM desktop to deploy greeter styling, the Tint2
+panel, sound controls, screenshot helper, and laptop power indicator while
+preserving the user's Openbox settings, startup file, and LightDM session
+wrapper. `minimal_desktop_autologin` defaults to `true` for existing minimal and
+kiosk profiles; set it to `false` to keep a manual login screen. Use
+`minimal_desktop_enabled` when the role should own the complete minimal desktop
+configuration.
+
+## Encrypted-root boot prompt
+
+`boot_prompt_visibility_enabled` is opt-in and defaults to `false`. Set it to
+`true` on a machine whose root filesystem is encrypted and asks for a LUKS
+passphrase during startup. The role installs the Plymouth text theme and adds
+`quiet splash` to `GRUB_CMDLINE_LINUX_DEFAULT` while preserving existing kernel
+arguments. It refreshes GRUB and initramfs when that setting changes; reboot is
+required before the new prompt appears. This setting does not alter encryption
+or unlock policy.
+
 ## Free Ubuntu-Pro equivalents (pro-mimic)
 
 The `pro-mimic` plane (tags `pro-mimic, security`, `tasks/pro-mimic.yml`)

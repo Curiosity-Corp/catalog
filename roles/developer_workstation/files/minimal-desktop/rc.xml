@@ -81,6 +81,11 @@
       <action name="Execute"><command>rofi -show run</command></action>
     </keybind>
 
+    <!-- Screenshot -->
+    <keybind key="Print">
+      <action name="Execute"><command>flameshot gui</command></action>
+    </keybind>
+
     <!-- Window management -->
     <keybind key="A-F4">
       <action name="Close"/>

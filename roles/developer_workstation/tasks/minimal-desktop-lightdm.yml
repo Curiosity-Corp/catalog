@@ -3,7 +3,7 @@
 # Minimal Desktop — LightDM Greeter Configuration
 # =============================================================================
 
-- name: Configure LightDM GTK greeter (dark, minimal, no animations)
+- name: Configure LightDM GTK greeter (dark, minimal, accessible)
   ansible.builtin.copy:
     dest: /etc/lightdm/lightdm-gtk-greeter.conf
     owner: root
@@ -13,20 +13,26 @@
       [greeter]
       theme-name = Arc-Dark
       icon-theme-name = Adwaita
+      cursor-theme-name = Adwaita
+      cursor-theme-size = 24
       font-name = Sans 10
       xft-antialias = true
       xft-dpi = 96
       xft-hintstyle = hintfull
       xft-rgba = rgb
-      background = #1a1a2e
+      background = #101827
       user-background = false
       hide-user-image = true
+      round-user-image = false
+      highlight-logged-user = true
       transition-duration = 0
       transition-type = none
-      indicators = ~clock;~power
-      clock-format = %H:%M
+      indicators = ~language;~layout;~a11y;~clock;~power
+      clock-format = %a %d %b  %H:%M
+      a11y-states = -contrast;-font;-keyboard;-reader
       panel-position = top
       position = 50% 50%
+      allow-debugging = false
 
 - name: Ensure /etc/lightdm/lightdm.conf.d exists
   ansible.builtin.file:
@@ -36,7 +42,7 @@
     group: root
     mode: "0755"
 
-- name: Configure LightDM auto-login
+- name: Configure LightDM auto-login only when explicitly enabled
   ansible.builtin.copy:
     dest: /etc/lightdm/lightdm.conf.d/50-autologin.conf
     owner: root
@@ -46,13 +52,39 @@
       [Seat:*]
       autologin-user={{ dev_user }}
       autologin-session=openbox
-  when: minimal_desktop_autologin | default(true)
+  when: minimal_desktop_autologin | default(false) | bool
+
+- name: Keep LightDM on the manual login screen by default
+  ansible.builtin.copy:
+    dest: /etc/lightdm/lightdm.conf.d/60-manual-login.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Seat:*]
+      greeter-hide-users = false
+      greeter-show-manual-login = true
+  when: not (minimal_desktop_autologin | default(false) | bool)
+
+- name: Remove obsolete LightDM auto-login drop-in
+  ansible.builtin.file:
+    path: /etc/lightdm/lightdm.conf.d/50-autologin.conf
+    state: absent
+  when: not (minimal_desktop_autologin | default(false) | bool)
+
+- name: Read configured default display manager
+  ansible.builtin.slurp:
+    src: /etc/X11/default-display-manager
+  register: _default_display_manager
+  failed_when: false
+  changed_when: false
 
 - name: Set LightDM as default display manager
   ansible.builtin.command: >
     dpkg-reconfigure lightdm --frontend noninteractive
   environment:
     DEBIAN_FRONTEND: noninteractive
+  when: (_default_display_manager.content | default('') | b64decode | trim) != '/usr/sbin/lightdm'
   changed_when: true
 
 - name: Get current systemd default target

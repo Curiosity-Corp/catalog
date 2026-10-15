@@ -105,6 +105,9 @@ The most important variables are:
 | `workstation_profile` | `desktop` | `desktop`, `workspace`, `thin-client`, or `byod-kiosk` |
 | `dev_user` / `dev_user_home` | `curiosity` / `/home/curiosity` | Account that owns user-scoped tools |
 | `apt_upgrade_enabled` | `true` | Enable safe APT maintenance |
+| `boot_prompt_visibility_enabled` | `false` | Show a Plymouth prompt on encrypted-root startup (requires reboot) |
+| `desktop_polish_enabled` | `false` | Polish an existing Openbox/LightDM desktop without replacing user window-manager settings |
+| `minimal_desktop_autologin` | `true` | Preserve automatic login for minimal and kiosk profiles; set `false` to require manual login |
 | `coder_cli_enabled` | `false` | Opt into a configured Coder deployment |
 | `cloud_clis_enabled` | `true` | Install the desktop/workspace Azure, AWS, and GitLab CLI baseline |
 | `keycloak_sso_enabled` | `false` | Opt into Keycloak login integration |

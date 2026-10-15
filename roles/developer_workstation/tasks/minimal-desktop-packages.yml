@@ -11,6 +11,7 @@
       - obconf
       - lightdm
       - lightdm-gtk-greeter
+      - accountsservice
       # Compositor
       - picom
       # Panel and launcher
@@ -23,13 +24,15 @@
       - xterm
       - pcmanfm
       # Wallpaper and appearance
-      - nitrogen
       - lxappearance
       - arc-theme
       - adwaita-icon-theme
       # System tray applets
-      - volumeicon-alsa
       - network-manager-gnome
+      - pavucontrol
+      - arandr
+      - flameshot
+      - xfce4-power-manager
       # X11 utilities
       - x11-xserver-utils
       - xdotool

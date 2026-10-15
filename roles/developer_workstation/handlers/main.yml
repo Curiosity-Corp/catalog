@@ -1,4 +1,16 @@
 ---
+- name: Update GRUB configuration for Plymouth
+  ansible.builtin.command:
+    cmd: update-grub
+  changed_when: true
+  listen: Refresh GRUB and initramfs for Plymouth
+
+- name: Rebuild initramfs images with Plymouth prompt support
+  ansible.builtin.command:
+    cmd: update-initramfs -u -k all
+  changed_when: true
+  listen: Refresh GRUB and initramfs for Plymouth
+
 - name: Update apt cache
   ansible.builtin.apt:
     update_cache: true

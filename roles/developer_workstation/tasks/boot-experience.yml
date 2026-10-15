@@ -1,0 +1,37 @@
+---
+# =============================================================================
+# Visible passphrase prompt for encrypted-root boots
+# =============================================================================
+
+- name: Ensure Plymouth text prompt support is installed
+  ansible.builtin.apt:
+    name:
+      - plymouth
+      - plymouth-theme-ubuntu-text
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Read current GRUB default kernel arguments
+  ansible.builtin.command:
+    argv:
+      - awk
+      - -F
+      - '"'
+      - '$1 ~ /^GRUB_CMDLINE_LINUX_DEFAULT=/ { print $2; exit }'
+      - /etc/default/grub
+  register: _grub_default_kernel_args
+  changed_when: false
+
+- name: Ensure a visible Plymouth passphrase prompt is enabled
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: '^GRUB_CMDLINE_LINUX_DEFAULT='
+    line: >-
+      GRUB_CMDLINE_LINUX_DEFAULT="{{
+        (_grub_default_kernel_args.stdout.split() + ['quiet', 'splash'])
+        | unique
+        | join(' ')
+      }}"
+    backup: true
+  notify: Refresh GRUB and initramfs for Plymouth

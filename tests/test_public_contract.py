@@ -1,6 +1,7 @@
 """Public OSS contract checks that do not require a managed host."""
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -50,6 +51,42 @@ def test_defaults_are_safe_for_unrelated_machines() -> None:
     assert defaults["ziti_intercept_domains"] == []
     assert defaults["custom_ca_certificates"] == []
     assert defaults["sunshine_default_pass"] == ""
+    assert defaults["desktop_polish_enabled"] is False
+    assert defaults["minimal_desktop_autologin"] is True
+    assert defaults["boot_prompt_visibility_enabled"] is False
+
+
+def test_t460_profile_supports_connected_camera_and_scarlett_devices() -> None:
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    packages = set(defaults["hardware_profiles"]["t460"]["packages"])
+    assert {"gphoto2", "gvfs-backends", "gvfs-fuse"} <= packages
+    assert {"alsa-scarlett-gui", "alsa-utils"} <= packages
+
+    rules = defaults["hardware_profiles"]["t460"]["udev_rules"]
+    assert any("04a9" in rule["content"] and "319b" in rule["content"] for rule in rules)
+
+
+def test_encrypted_boot_prompt_is_opt_in_and_keeps_grub_reproducible() -> None:
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["boot_prompt_visibility_enabled"] is False
+
+    main = (ROLE / "tasks/main.yml").read_text()
+    assert "include_tasks: boot-experience.yml" in main
+    assert "boot_prompt_visibility_enabled | default(false) | bool" in main
+
+    boot = (ROLE / "tasks/boot-experience.yml").read_text()
+    assert "plymouth-theme-ubuntu-text" in boot
+    assert "GRUB_CMDLINE_LINUX_DEFAULT" in boot
+    assert "['quiet', 'splash']" in boot
+    assert "Refresh GRUB and initramfs for Plymouth" in boot
+
+    hardware = (ROLE / "tasks/hardware-drivers.yml").read_text()
+    assert "cpu-performance.service" in hardware
+    assert "notify: Reload systemd" in hardware
+
+    handlers = (ROLE / "handlers/main.yml").read_text()
+    assert "name: Reload systemd" in handlers
+    assert "daemon_reload: true" in handlers
 
 
 def test_private_material_is_not_in_the_public_surface() -> None:
@@ -84,3 +121,30 @@ def test_renovate_is_public_and_valid_json() -> None:
     config = json.loads((ROOT / "renovate.json").read_text())
     assert config["$schema"].startswith("https://docs.renovatebot.com/")
     assert "config:recommended" in config["extends"]
+
+
+
+def test_desktop_polish_preserves_openbox_configuration() -> None:
+    tasks = yaml.safe_load((ROLE / "tasks/desktop-polish.yml").read_text())
+    shortcut = next(
+        task["ansible.builtin.blockinfile"]
+        for task in tasks
+        if task.get("name", "").startswith("Add an alternate Flameshot")
+    )
+    pattern = shortcut["insertbefore"]
+    assert re.search(pattern, "</keyboard>")
+    assert re.search(pattern, "  </keyboard>")
+    assert shortcut["validate"]
+
+    tint2 = yaml.safe_load((ROLE / "tasks/minimal-desktop-tint2.yml").read_text())
+    startup = next(
+        task
+        for task in tint2
+        if task.get("name", "").startswith("Add useful helpers")
+    )
+    assert "ansible.builtin.blockinfile" in startup
+    assert startup["when"] == [
+        "workstation_profile == 'desktop'",
+        "desktop_polish_enabled | default(false) | bool",
+        "not (minimal_desktop_enabled | default(false) | bool)",
+    ]

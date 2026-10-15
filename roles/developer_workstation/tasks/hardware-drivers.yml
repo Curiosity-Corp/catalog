@@ -24,6 +24,32 @@
   loop: "{{ hardware_profiles[hardware_profile].services }}"
   when: hardware_profiles[hardware_profile].services | length > 0
 
+# A legacy server governor unit conflicts with TLP's ordering on ThinkPads.
+# The cycle delays multi-user.target and leaves systemd degraded on startup.
+- name: Check for the legacy CPU performance governor unit
+  ansible.builtin.stat:
+    path: /etc/systemd/system/cpu-performance.service
+  register: _legacy_cpu_performance_unit
+  when: hardware_profile == 't460'
+
+- name: Disable the legacy CPU performance governor unit on T460 laptops
+  ansible.builtin.systemd:
+    name: cpu-performance.service
+    enabled: false
+    state: stopped
+  when:
+    - hardware_profile == 't460'
+    - _legacy_cpu_performance_unit.stat.exists | default(false)
+
+- name: Remove the legacy CPU performance governor unit on T460 laptops
+  ansible.builtin.file:
+    path: /etc/systemd/system/cpu-performance.service
+    state: absent
+  when:
+    - hardware_profile == 't460'
+    - _legacy_cpu_performance_unit.stat.exists | default(false)
+  notify: Reload systemd
+
 # ---- udev rules ----
 
 - name: Install hardware-specific udev rules ({{ hardware_profile }})
@@ -38,6 +64,28 @@
   ansible.builtin.command: udevadm control --reload-rules
   when: _udev_rules_result is changed
   changed_when: true
+
+- name: Reapply Canon EOS 50D access rules to the connected camera
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - trigger
+      - --action=change
+      - --subsystem-match=usb
+      - --attr-match=idVendor=04a9
+      - --attr-match=idProduct=319b
+  when:
+    - hardware_profile == 't460'
+    - _udev_rules_result is changed
+  changed_when: true
+
+- name: Wait for Canon EOS 50D udev permissions to settle
+  ansible.builtin.command:
+    cmd: udevadm settle --timeout=10
+  when:
+    - hardware_profile == 't460'
+    - _udev_rules_result is changed
+  changed_when: false
 
 # ---- pipx packages (installed as dev_user) ----
 

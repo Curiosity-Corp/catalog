@@ -291,6 +291,14 @@
         (minimal_desktop_enabled | default(false))
       )
 
+- name: Include focused desktop polish for existing Openbox workstations
+  ansible.builtin.include_tasks: desktop-polish.yml
+  tags: [desktop-polish]
+  when:
+    - workstation_profile == 'desktop'
+    - desktop_polish_enabled | default(false) | bool
+    - not (minimal_desktop_enabled | default(false) | bool)
+
 - name: Include keyboard layout enforcement (US physical keyboards)
   ansible.builtin.include_tasks: keyboard.yml
   tags: [keyboard, system]
@@ -366,6 +374,11 @@
   ansible.builtin.include_tasks: hardware-drivers.yml
   tags: [hardware]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+
+- name: Include visible encrypted-boot prompt configuration
+  ansible.builtin.include_tasks: boot-experience.yml
+  tags: [boot, security]
+  when: boot_prompt_visibility_enabled | default(false) | bool
 
 - name: Include fonts
   ansible.builtin.include_tasks: fonts.yml

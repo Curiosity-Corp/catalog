@@ -1,8 +1,8 @@
 # Set cursor immediately
 xsetroot -cursor_name left_ptr &
 
-# Wallpaper (solid dark fallback)
-nitrogen --restore 2>/dev/null || xsetroot -solid "#1a1a2e" &
+# Solid wallpaper fallback
+xsetroot -solid "#1a1a2e" &
 
 # Compositor
 picom --config ~/.config/picom/picom.conf &
@@ -15,4 +15,5 @@ dunst &
 
 # System tray applets
 nm-applet &
-volumeicon &
+xfce4-power-manager &
+flameshot &

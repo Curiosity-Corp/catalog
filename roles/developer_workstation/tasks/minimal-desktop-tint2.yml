@@ -11,10 +11,78 @@
     group: "{{ dev_user }}"
     mode: "0755"
 
-- name: Deploy tint2 panel config (dark, 28px bottom bar)
+- name: Ensure user application override directory exists
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.local/share/applications"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Deploy corrected ARandR launcher metadata
+  ansible.builtin.copy:
+    src: minimal-desktop/arandr.desktop
+    dest: "{{ dev_user_home }}/.local/share/applications/arandr.desktop"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+
+- name: Ensure Openbox user configuration directory exists for desktop helpers
+  ansible.builtin.file:
+    path: "{{ dev_user_home }}/.config/openbox"
+    state: directory
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+
+- name: Add useful helpers without replacing the user's Openbox autostart
+  ansible.builtin.blockinfile:
+    path: "{{ dev_user_home }}/.config/openbox/autostart"
+    create: true
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0755"
+    marker: "# {mark} ANSIBLE MANAGED DESKTOP POLISH"
+    block: |
+      if command -v xfce4-power-manager >/dev/null 2>&1; then
+        xfce4-power-manager &
+      fi
+      if command -v flameshot >/dev/null 2>&1; then
+        flameshot &
+      fi
+  when:
+    - workstation_profile == 'desktop'
+    - desktop_polish_enabled | default(false) | bool
+    - not (minimal_desktop_enabled | default(false) | bool)
+
+- name: Deploy tint2 panel config (dark, launcher and system tray bar)
   ansible.builtin.copy:
     src: minimal-desktop/tint2rc
     dest: "{{ dev_user_home }}/.config/tint2/tint2rc"
     owner: "{{ dev_user }}"
     group: "{{ dev_user }}"
     mode: "0644"
+
+- name: Ensure system-wide tint2 configuration directory exists
+  ansible.builtin.file:
+    path: /etc/xdg/tint2
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy system-wide tint2 panel config used by Openbox autostart
+  ansible.builtin.copy:
+    src: minimal-desktop/tint2rc
+    dest: /etc/xdg/tint2/tint2rc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy Tint2 volume status helper
+  ansible.builtin.copy:
+    src: minimal-desktop/tint2-volume-status
+    dest: /usr/local/bin/tint2-volume-status
+    owner: root
+    group: root
+    mode: "0755"
