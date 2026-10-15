@@ -1133,8 +1133,9 @@ hardware_profiles:
       # the VL605 PCON at FRL 40G (the TV's EDID max), and the TV still blanked
       # about every 20 minutes on the stock path. 8K30 HDMI is 8 bpc RGB
       # (~28.5 Gbps incl. blanking, ~23.9 Gbps active), which fits FRL 32G
-      # (8G x 4 lanes) with more per-lane margin. Live-verified 2026-10-14
-      # (PCON DPCD 0x3036=0x91, zero FRL errors).
+      # (8G x 4 lanes) with more per-lane margin. Unverified: the running VL605
+      # echoes the requested rate in DPCD 0x3036 but keeps the TV at 40G (TV
+      # SCDC 0x31 = 0x35); check SCDC 0x31 = 0x34 after a reboot.
       # To try 4:4:4 again (certified 48G cable, Input Signal Plus), set
       # pcon_frl_444=1 and reboot, or write 1 to
       # /sys/module/i915/parameters/pcon_frl_444 and modeset. Both parameters

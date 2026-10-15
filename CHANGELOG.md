@@ -17,7 +17,9 @@ All notable changes to this project are documented here. The format follows
   and the profile's modprobe option is now `options i915 pcon_frl_444=0
   pcon_max_frl_gbps=32`. 8K30 HDMI is 8 bpc RGB (~28.5 Gbps incl. blanking,
   ~23.9 Gbps active), which fits FRL 32G (8G x 4) with more per-lane margin;
-  live-verified 2026-10-14 (PCON 0x3036=0x91, zero FRL errors). The changed
+  the running VL605 only echoes the requested rate in DPCD 0x3036 and keeps
+  the HDMI link at 40G (TV SCDC 0x31 = FRL_Rate 5), so the cap is unverified
+  until a reboot shows SCDC 0x31 = 0x34. The changed
   patch SHA makes the next pull rebuild the module; it takes effect after a
   reboot.
 - DeskMeet1 (`deskmeet-b760`) 8K TV blacked out about once a minute with the
