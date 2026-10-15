@@ -62,9 +62,9 @@ Solaar also stores a DPI per device and re-applies it whenever it starts or the
 mouse reconnects, which overrode the onboard `logitech_g604_dpi` (a saved 1600
 replaced 3200). The role installs `/usr/local/bin/curiosity-solaar-g604-dpi` and,
 for each `dev_users` account, `~/.config/autostart/solaar.desktop` (it takes the
-place of the packaged `/etc/xdg/autostart/solaar.desktop`). At login it marks
+place of the packaged `/etc/xdg/autostart/solaar.desktop`). At login, `curiosity-solaar-g604-dpi --launch` marks
 Solaar's `dpi` setting for the G604 as `ignore` (and records `logitech_g604_dpi`
-there) before starting `solaar --window=hide`, so the onboard profile is the only
+there) and then starts `solaar --window=hide` (even if the config cannot be read), so the onboard profile is the only
 source of the pointer speed. It changes nothing while Solaar has no G604 entry
 yet, and only edits the file while Solaar is not running.
 

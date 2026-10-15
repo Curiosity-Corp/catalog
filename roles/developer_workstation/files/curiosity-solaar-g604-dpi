@@ -9,8 +9,13 @@ every G604 entry as "ignore" (Solaar then neither applies nor saves it) and
 records the profile's DPI there, so the Solaar window shows the real value.
 
 Usage: curiosity-solaar-g604-dpi CONFIG DPI
-Prints CHANGED, UNCHANGED or ABSENT (no config file or no G604 entry yet;
-Solaar creates both on first use). Exits non-zero on a config it cannot parse.
+       curiosity-solaar-g604-dpi --launch DPI
+The first form prints CHANGED, UNCHANGED or ABSENT (no config file or no G604
+entry yet; Solaar creates both on first use) and exits non-zero on a config it
+cannot parse. --launch is the login autostart command: it applies the same fix
+to Solaar's own config ($XDG_CONFIG_HOME/solaar/config.yaml), reports any
+failure on stderr, and then always replaces itself with
+`solaar --window=hide`, so a bad config never stops Solaar from starting.
 Managed by the curiosity workstation role.
 """
 import os
@@ -20,11 +25,28 @@ import tempfile
 import yaml
 
 
+USAGE = "usage: curiosity-solaar-g604-dpi CONFIG DPI | --launch DPI"
+
+
+def solaar_config_path() -> str:
+    """Solaar's own lookup (solaar/configuration.py)."""
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(config_home, "solaar", "config.yaml")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3 or not argv[2].isdigit():
-        print("usage: curiosity-solaar-g604-dpi CONFIG DPI", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
-    path, dpi = argv[1], int(argv[2])
+    if argv[1] == "--launch":
+        status = pin_dpi(solaar_config_path(), int(argv[2]))
+        if status != 0:
+            print("curiosity-solaar-g604-dpi: starting Solaar without the DPI fix", file=sys.stderr)
+        os.execvp("solaar", ["solaar", "--window=hide"])
+    return pin_dpi(argv[1], int(argv[2]))
+
+
+def pin_dpi(path: str, dpi: int) -> int:
     try:
         with open(path, encoding="utf-8") as handle:
             config = yaml.safe_load(handle)

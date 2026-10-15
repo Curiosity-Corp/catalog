@@ -368,7 +368,50 @@ def test_solaar_autostart_runs_the_guard_before_solaar() -> None:
     assert copy["dest"] == "{{ dw_user.home }}/.config/autostart/solaar.desktop"
     assert autostart["loop"] == "{{ dev_users }}"
     exec_line = next(line for line in copy["content"].splitlines() if line.startswith("Exec="))
-    assert exec_line == (
-        "Exec=sh -c 'curiosity-solaar-g604-dpi \"$HOME/.config/solaar/config.yaml\" "
-        "{{ logitech_g604_dpi | int }}; exec solaar --window=hide'"
+    # No quotes, `;` or `$`: the Desktop Entry spec reserves them in Exec.
+    assert exec_line == "Exec=curiosity-solaar-g604-dpi --launch {{ logitech_g604_dpi | int }}"
+
+
+@pytest.mark.skipif(shutil.which("desktop-file-validate") is None, reason="desktop-file-utils not installed")
+def test_solaar_autostart_is_a_valid_desktop_entry(tmp_path: Path) -> None:
+    tasks = yaml.safe_load((ROLE / "tasks/logitech-g604.yml").read_text())
+    task = next(t for t in tasks if t["name"] == "Start Solaar through the G604 DPI guard at login")
+    entry = tmp_path / "solaar.desktop"
+    entry.write_text(jinja2.Template(task["ansible.builtin.copy"]["content"]).render(logitech_g604_dpi=3200))
+    result = subprocess.run(["desktop-file-validate", str(entry)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _launch(tmp_path: Path) -> tuple[subprocess.CompletedProcess, Path]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    started = tmp_path / "solaar-started"
+    fake = bin_dir / "solaar"
+    fake.write_text(f'#!/bin/sh\necho "$@" > {started}\n')
+    fake.chmod(0o755)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "XDG_CONFIG_HOME": str(tmp_path / "xdg"), "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-I", str(SOLAAR_GUARD), "--launch", "3200"], capture_output=True, text=True, env=env, check=False
     )
+    return result, started
+
+
+def test_solaar_launch_fixes_the_xdg_config_then_starts_solaar(tmp_path: Path) -> None:
+    config = tmp_path / "xdg/solaar/config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(_solaar_config(1600))
+    result, started = _launch(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert started.read_text().strip() == "--window=hide"
+    g604 = yaml.safe_load(config.read_text())[2]
+    assert g604["dpi"] == 3200 and g604["_sensitive"] == {"dpi": "ignore"}
+
+
+def test_solaar_launch_still_starts_solaar_on_a_broken_config(tmp_path: Path) -> None:
+    config = tmp_path / "xdg/solaar/config.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("- [unclosed\n")
+    result, started = _launch(tmp_path)
+    assert result.returncode == 0
+    assert "starting Solaar without the DPI fix" in result.stderr
+    assert started.read_text().strip() == "--window=hide"

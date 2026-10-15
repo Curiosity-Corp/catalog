@@ -194,7 +194,7 @@
       Name=Solaar
       Comment=Logitech Unifying Receiver peripherals manager
       Icon=solaar
-      Exec=sh -c 'curiosity-solaar-g604-dpi "$HOME/.config/solaar/config.yaml" {{ logitech_g604_dpi | int }}; exec solaar --window=hide'
+      Exec=curiosity-solaar-g604-dpi --launch {{ logitech_g604_dpi | int }}
       StartupNotify=false
       NoDisplay=true
       X-GNOME-Autostart-enabled=true
