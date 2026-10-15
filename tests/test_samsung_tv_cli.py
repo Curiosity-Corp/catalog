@@ -38,6 +38,9 @@ tv = _load()
 def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.delenv("CURIOSITY_TV_TOKEN", raising=False)
+    monkeypatch.delenv("CURIOSITY_TV_KEY_VAULT", raising=False)
+    monkeypatch.delenv("CURIOSITY_TV_KEY_VAULT_SECRET", raising=False)
+    monkeypatch.setenv("CURIOSITY_TV_ENV", str(tmp_path / "absent.env"))
     monkeypatch.setattr(tv.time, "sleep", lambda _seconds: None)
     tv._secrets.clear()
 
@@ -490,16 +493,36 @@ def test_token_order_env_then_cache_then_key_vault(monkeypatch: pytest.MonkeyPat
         return subprocess.CompletedProcess(command, 0, stdout="24681357\n", stderr="")
 
     monkeypatch.setattr(tv.subprocess, "run", fake_run)
+    monkeypatch.setenv("CURIOSITY_TV_KEY_VAULT", "example-vault")
     monkeypatch.setenv("CURIOSITY_TV_TOKEN", "11112222")
     assert tv.load_token() == "11112222" and not calls
     monkeypatch.delenv("CURIOSITY_TV_TOKEN")
     assert tv.load_token() == "24681357"
     assert calls == [[
-        "az", "keyvault", "secret", "show", "--vault-name", "omlab-secrets",
+        "az", "keyvault", "secret", "show", "--vault-name", "example-vault",
         "--name", "deskmeet-samsung-tv-ws-token", "--query", "value", "-o", "tsv"]]
     cache = tmp_path / "state/curiosity-tv/token"
     assert stat.S_IMODE(cache.stat().st_mode) == 0o600
     assert tv.load_token() == "24681357" and len(calls) == 1
+
+
+def test_key_vault_names_come_from_the_settings_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env = tmp_path / "tv.env"
+    env.write_text("# comment\nCURIOSITY_TV_KEY_VAULT=file-vault\nCURIOSITY_TV_KEY_VAULT_SECRET='file-secret'\nOTHER=x\n")
+    monkeypatch.setenv("CURIOSITY_TV_ENV", str(env))
+    assert tv.key_vault_settings() == ("file-vault", "file-secret")
+    monkeypatch.setenv("CURIOSITY_TV_KEY_VAULT", "env-vault")
+    assert tv.key_vault_settings() == ("env-vault", "file-secret")
+    monkeypatch.setenv("CURIOSITY_TV_KEY_VAULT", "bad name;rm")
+    with pytest.raises(tv.TvError, match="invalid Key Vault"):
+        tv.key_vault_settings()
+
+
+def test_secret_name_defaults_and_no_vault_is_an_auth_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    assert tv.key_vault_settings() == ("", "deskmeet-samsung-tv-ws-token")
+    monkeypatch.setattr(tv.subprocess, "run", lambda *a, **k: pytest.fail("az must not run without a vault"))
+    assert tv.main(["key", "KEY_UP"]) == 3
+    assert "CURIOSITY_TV_KEY_VAULT" in capsys.readouterr().err
 
 
 def test_cached_token_wins_over_key_vault(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -515,6 +538,7 @@ def test_missing_az_is_a_clear_auth_error(monkeypatch: pytest.MonkeyPatch, capsy
         raise FileNotFoundError("az")
 
     monkeypatch.setattr(tv.subprocess, "run", no_az)
+    monkeypatch.setenv("CURIOSITY_TV_KEY_VAULT", "example-vault")
     assert tv.main(["key", "KEY_UP"]) == 3
     assert "CURIOSITY_TV_TOKEN" in capsys.readouterr().err
 
@@ -638,3 +662,8 @@ def test_role_installs_the_cli_and_its_dependency() -> None:
     include = next(t for t in main if t.get("ansible.builtin.include_tasks") == "samsung-tv-cli.yml")
     assert "samsung_tv_cli_enabled | bool" in include["when"]
     assert "samsung_tv_cli_enabled" in DEFAULTS
+    # The vault name is private: the repository ships it empty.
+    assert DEFAULTS["samsung_tv_key_vault"] == ""
+    settings = by_name["Render the Samsung TV Key Vault settings"]["ansible.builtin.copy"]
+    assert settings["dest"] == "/etc/curiosity/samsung-tv.env"
+    assert "CURIOSITY_TV_KEY_VAULT={{ samsung_tv_key_vault }}" in settings["content"]

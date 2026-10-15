@@ -20,8 +20,10 @@ Usage: curiosity-tv [--host IP] [--mac MAC] [--timeout S] [--json] COMMAND ...
 looked up in this order and never printed or put on a command line:
   1. $CURIOSITY_TV_TOKEN
   2. $XDG_STATE_HOME/curiosity-tv/token (0600; default ~/.local/state)
-  3. Azure Key Vault omlab-secrets, secret deskmeet-samsung-tv-ws-token
-     (through `az`; the value is then cached as in 2)
+  3. Azure Key Vault (through `az`; the value is then cached as in 2). The
+     vault and secret names come from $CURIOSITY_TV_KEY_VAULT and
+     $CURIOSITY_TV_KEY_VAULT_SECRET (default secret deskmeet-samsung-tv-ws-token)
+     or from /etc/curiosity/samsung-tv.env, which the role renders.
 If the TV issues a new token on connect it is written to the cache only (0600)
 and a notice asks you to sync it to Key Vault.
 
@@ -52,8 +54,10 @@ DEFAULT_MAC = "70:09:71:93:5A:20"
 WOL_TARGETS = ("192.168.1.255", "255.255.255.255")
 WOL_PORT = 9
 REMOTE_NAME = "Curiosity DeskMeet"  # the name the TV already trusts
-KEY_VAULT = "omlab-secrets"
-KEY_VAULT_SECRET = "deskmeet-samsung-tv-ws-token"
+DEFAULT_KEY_VAULT_SECRET = "deskmeet-samsung-tv-ws-token"
+SETTINGS_FILE = "/etc/curiosity/samsung-tv.env"  # $CURIOSITY_TV_ENV overrides
+SETTINGS_KEYS = ("CURIOSITY_TV_KEY_VAULT", "CURIOSITY_TV_KEY_VAULT_SECRET")
+AZ_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,126}$")
 DEFAULT_TIMEOUT = 10.0
 BROWSER_APP_ID = "org.tizen.browser"
 
@@ -144,10 +148,43 @@ def write_token_cache(token: str) -> Path:
     return path
 
 
+def key_vault_settings() -> tuple[str, str]:
+    """(vault, secret) from the environment, else the role-rendered env file."""
+    values = {key: os.environ.get(key, "").strip() for key in SETTINGS_KEYS}
+    path = os.environ.get("CURIOSITY_TV_ENV", SETTINGS_FILE)
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []
+    except OSError as exc:
+        raise TvError(f"cannot read {path}: {exc.strerror or exc}") from exc
+    for line in lines:
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if sep and key in values and not values[key]:
+            values[key] = value.strip().strip("'\"")
+    vault, secret = values["CURIOSITY_TV_KEY_VAULT"], values["CURIOSITY_TV_KEY_VAULT_SECRET"] or DEFAULT_KEY_VAULT_SECRET
+    for label, name in (("vault", vault), ("secret", secret)):
+        if name and not AZ_NAME_RE.match(name):
+            raise TvError(f"invalid Key Vault {label} name {name!r}")
+    return vault, secret
+
+
+def vault_hint() -> str:
+    vault, secret = key_vault_settings()
+    return f"Key Vault {vault}/{secret}" if vault else "your Key Vault"
+
+
 def fetch_vault_token() -> str:
+    vault, secret = key_vault_settings()
+    if not vault:
+        raise AuthError(
+            "no TV token: set CURIOSITY_TV_TOKEN, run `curiosity-tv pair`, or name the Key Vault "
+            f"in $CURIOSITY_TV_KEY_VAULT or {os.environ.get('CURIOSITY_TV_ENV', SETTINGS_FILE)}"
+        )
     command = [
-        "az", "keyvault", "secret", "show", "--vault-name", KEY_VAULT,
-        "--name", KEY_VAULT_SECRET, "--query", "value", "-o", "tsv",
+        "az", "keyvault", "secret", "show", "--vault-name", vault,
+        "--name", secret, "--query", "value", "-o", "tsv",
     ]
     try:
         proc = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
@@ -157,7 +194,7 @@ def fetch_vault_token() -> str:
         raise AuthError("no TV token: `az keyvault secret show` timed out") from exc
     if proc.returncode != 0:
         reason = (proc.stderr.strip().splitlines() or ["unknown error"])[-1]
-        raise AuthError(f"no TV token: Key Vault {KEY_VAULT}/{KEY_VAULT_SECRET} unreadable ({redact(reason)})")
+        raise AuthError(f"no TV token: Key Vault {vault}/{secret} unreadable ({redact(reason)})")
     return proc.stdout
 
 
@@ -174,7 +211,7 @@ def load_token() -> str:
         raise TvError(f"cannot read the token cache {cache}: {exc.strerror or exc}") from exc
     if cached.strip():
         return _valid_token(cached, str(cache))
-    token = _valid_token(fetch_vault_token(), f"Key Vault {KEY_VAULT}")
+    token = _valid_token(fetch_vault_token(), "Key Vault")
     write_token_cache(token)
     return token
 
@@ -365,7 +402,7 @@ def open_session(args: argparse.Namespace, *, token: str | None = None) -> Sessi
     if session.new_token:
         write_token_cache(session.new_token)
         info(f"TV issued a new token: refreshed {token_cache_path()}. "
-             f"Sync it to Key Vault {KEY_VAULT}/{KEY_VAULT_SECRET}.")
+             f"Sync it to {vault_hint()}.")
     return session
 
 
@@ -474,7 +511,7 @@ def cmd_pair(args: argparse.Namespace) -> int:
         print("connected; the TV trusts this client without issuing a token")
         return 0
     path = write_token_cache(session.new_token)
-    print(f"paired: token saved to {path}. Sync it to Key Vault {KEY_VAULT}/{KEY_VAULT_SECRET}.")
+    print(f"paired: token saved to {path}. Sync it to {vault_hint()}.")
     return 0
 
 

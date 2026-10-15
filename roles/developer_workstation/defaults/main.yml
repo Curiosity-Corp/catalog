@@ -936,6 +936,12 @@ logitech_g604_lightbar_command: litra toggle
 # override them per user. The pairing token is never stored by the role: it
 # comes from $CURIOSITY_TV_TOKEN, the user's 0600 cache or Azure Key Vault.
 samsung_tv_cli_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('samsung_tv_cli', false) | bool }}"
+# Azure Key Vault holding the TV pairing token (the secret's value is never in
+# this repository). Set samsung_tv_key_vault in the inventory; when non-empty
+# the role renders /etc/curiosity/samsung-tv.env so `curiosity-tv` can fetch the
+# token with `az` when it has no cached copy.
+samsung_tv_key_vault: ""
+samsung_tv_key_vault_secret: deskmeet-samsung-tv-ws-token
 
 # Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps.
 # Derived from the hardware profile's optional `double_click_ms`; a shorter

@@ -143,12 +143,15 @@ is only reachable while the TV is awake.
 
 Everything over the WebSocket needs the pairing token. It is read from
 `$CURIOSITY_TV_TOKEN`, else the cache `$XDG_STATE_HOME/curiosity-tv/token`
-(mode 0600, default `~/.local/state`), else Azure Key Vault `omlab-secrets`
-secret `deskmeet-samsung-tv-ws-token` through `az keyvault secret show` (the
-value is then cached). The token is never printed, logged or passed on a command
+(mode 0600, default `~/.local/state`), else Azure Key Vault through `az keyvault secret show` (the value is then
+cached). Set `samsung_tv_key_vault` (default empty, so no private name is in
+this repository; `samsung_tv_key_vault_secret` defaults to
+`deskmeet-samsung-tv-ws-token`) and the role renders the names, not the value,
+into `/etc/curiosity/samsung-tv.env`; `CURIOSITY_TV_KEY_VAULT` and
+`CURIOSITY_TV_KEY_VAULT_SECRET` override them per user. The token is never printed, logged or passed on a command
 line; it only appears in the TLS URL inside the process. If the TV issues a new
 token on connect, only the cache is updated and the tool says so on stderr:
-write the new value to Key Vault (`az keyvault secret set`) so other machines
+write the new value to the Key Vault secret (`az keyvault secret set`) so other machines
 stay in sync. Exit status is 0 on success, 1 on failure, 2 for a usage error and
 3 when there is no usable token or the TV refuses it. When the TV is in standby
 its ports are closed, so run `curiosity-tv on` first.

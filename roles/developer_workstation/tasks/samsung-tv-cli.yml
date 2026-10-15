@@ -25,3 +25,30 @@
     owner: root
     group: root
     mode: "0755"
+
+- name: Validate the Samsung TV Key Vault names
+  ansible.builtin.assert:
+    that:
+      - samsung_tv_key_vault == '' or samsung_tv_key_vault is match('^[A-Za-z0-9][A-Za-z0-9-]*$')
+      - samsung_tv_key_vault_secret is match('^[A-Za-z0-9][A-Za-z0-9-]*$')
+    fail_msg: samsung_tv_key_vault and samsung_tv_key_vault_secret must be Azure Key Vault names (letters, digits, hyphens).
+
+- name: Ensure /etc/curiosity exists
+  ansible.builtin.file:
+    path: /etc/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Names only: the token value is never written by the role.
+- name: Render the Samsung TV Key Vault settings
+  ansible.builtin.copy:
+    dest: /etc/curiosity/samsung-tv.env
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (curiosity-tv). Names only.
+      CURIOSITY_TV_KEY_VAULT={{ samsung_tv_key_vault }}
+      CURIOSITY_TV_KEY_VAULT_SECRET={{ samsung_tv_key_vault_secret }}
