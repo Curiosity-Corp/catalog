@@ -146,8 +146,14 @@ at 9G); `dmesg` with `drm.debug=0x4` (KMS) logs the cap and the rate used.
 VL605 PCON at FRL 40G (the TV's EDID maximum) and the TV still blanked about every
 20 minutes on the stock path. 8K30 over HDMI is 8 bpc RGB (~28.5 Gbps including
 blanking, ~23.9 Gbps active), which fits FRL 32G (8G x 4 lanes) with more per-lane
-margin; live-verified on 2026-10-14 (PCON DPCD `0x3036` = `0x91`, zero FRL
-errors). The parameter arrived with a new patch, so the next pull rebuilds the
+margin. Caveat: on the running link the VL605 does not honour a lower rate. It
+reports the requested rate in DPCD `0x3036` (`0x91`) within milliseconds, but
+the TV's SCDC `0x31` (read through the PCON's DDC, I2C address `0x54`) stays at
+FRL_Rate 5 (40G): the PCON trains the HDMI link on its own at the sink's EDID
+maximum. Whether it honours the cap during the boot-time training is untested;
+check SCDC `0x31` after a reboot (`0x34` means 32G). The SCDC character error
+counters (`0x50`-`0x58`) are the reliable view of link health, the PCON's DPCD
+FRL error counters stay at zero. The parameter arrived with a new patch, so the next pull rebuilds the
 module (the marker's patch SHA-256 changes) and a reboot is needed before
 `/sys/module/i915/parameters/pcon_max_frl_gbps` exists. After that it can be
 written at runtime (root, mode `0600`) and applies at the next FRL training,
