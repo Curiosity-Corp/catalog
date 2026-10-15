@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Fix: write the authd-oidc and authd-msentraid `broker.conf` as 0600; authd-oidc 0.5+ refuses to start with 0644, which left OIDC sign-in down after a broker restart.
 - DeskMeet1 (`deskmeet-b760`) 8K TV blacked out about once a minute with the
   patched i915's RGB 4:4:4 path on (8K30 DSC 14 bpp over HBR2 to the PCON,
   ~28.5 Gbps uncompressed on FRL 40G, the TV's maximum). The PCON's DPCD kept

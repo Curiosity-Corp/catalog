@@ -50,6 +50,7 @@
   when: _authd_oidc_snap.rc != 0
   changed_when: true
 
+# authd brokers refuse to start unless broker.conf is 0600 (authd-oidc 0.5+).
 - name: Configure authd-oidc broker for Keycloak
   ansible.builtin.copy:
     dest: /var/snap/authd-oidc/current/broker.conf
@@ -63,7 +64,7 @@
       allowed_users = {{ keycloak_allowed_users }}
     owner: root
     group: root
-    mode: "0644"
+    mode: "0600"
   register: _broker_conf
 
 - name: Create authd broker discovery directory

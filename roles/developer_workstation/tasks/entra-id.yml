@@ -25,6 +25,7 @@
     name: authd-msentraid
     state: present
 
+# authd brokers refuse to start unless broker.conf is 0600 (authd-oidc 0.5+).
 - name: Configure authd-msentraid broker
   ansible.builtin.copy:
     dest: /var/snap/authd-msentraid/current/broker.conf
@@ -38,7 +39,7 @@
       allowed_users = {{ entra_id_allowed_users }}
     owner: root
     group: root
-    mode: "0644"
+    mode: "0600"
   notify: Restart authd-msentraid
 
 - name: Ensure authd service is enabled and running
