@@ -946,3 +946,16 @@ def test_apps_end_to_end_is_bounded_when_the_tv_ignores_the_request(
 def test_launch_resolves_names_through_the_probe(monkeypatch: pytest.MonkeyPatch, silent_session: type[FakeSession]) -> None:
     _fake_app_rest(monkeypatch, APP_STATES)
     assert tv.resolve_app("Internet", lambda: tv.list_apps(tv.build_parser().parse_args(["launch", "x"]))[0]) == "org.tizen.browser"
+
+
+def test_apps_columns_fit_long_names(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    long_name = "Spotify - Music and Podcasts"
+    monkeypatch.setattr(
+        tv,
+        "list_apps",
+        lambda _args: ([{"appId": "3201606009684", "name": long_name}, {"appId": "111299001912", "name": "YouTube", "running": True}], "rest-probe"),
+    )
+    assert tv.main(["apps"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split(long_name)[1].startswith("  ") and lines[0].endswith("installed")
+    assert lines[0].index("installed") == lines[1].index("running")

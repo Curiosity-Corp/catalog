@@ -785,8 +785,10 @@ def cmd_apps(args: argparse.Namespace) -> int:
     if not apps:
         print("no known apps found on the TV" if source == "rest-probe" else "the TV reports no installed apps")
         return 0
+    id_width = max(len(str(app["appId"])) for app in apps) + 2
+    name_width = max(len(str(app.get("name", ""))) for app in apps) + 2
     for app in apps:
-        line = f"{app['appId']:<28}{app.get('name', '')!s:<20}"
+        line = f"{app['appId']!s:<{id_width}}{app.get('name', '')!s:<{name_width}}"
         print((line + app_state_label(app)) if source == "rest-probe" else line.rstrip())
     return 0
 
