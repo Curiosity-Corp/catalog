@@ -27,27 +27,38 @@ looked up in this order and never printed or put on a command line:
 If the TV issues a new token on connect it is written to the cache only (0600)
 and a notice asks you to sync it to Key Vault.
 
-Exit status: 0 success, 1 failure, 2 usage error, 3 not authorised/no token.
+Every network operation (REST, UPnP, WebSocket connect/send/receive/close)
+runs under a hard wall-clock deadline (--timeout, default 10 s), so no
+subcommand can hang; websocket-client answers TV pings inside recv(), which
+would otherwise defeat a per-socket timeout. `apps` waits --wait seconds
+(default 8) for ed.installedApp.get, which 2020+ firmware often ignores, then
+probes the known app ids over REST.
+
+Exit status: 0 success, 1 failure, 2 usage error, 3 not authorised/no token,
+4 timed out.
 Managed by the curiosity workstation role.
 """
 from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import json
 import os
 import re
+import signal
 import socket
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 DEFAULT_HOST = "192.168.1.250"
 DEFAULT_MAC = "70:09:71:93:5A:20"
@@ -59,9 +70,13 @@ SETTINGS_FILE = "/etc/curiosity/samsung-tv.env"  # $CURIOSITY_TV_ENV overrides
 SETTINGS_KEYS = ("CURIOSITY_TV_KEY_VAULT", "CURIOSITY_TV_KEY_VAULT_SECRET")
 AZ_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,126}$")
 DEFAULT_TIMEOUT = 10.0
+APPS_REPLY_WAIT = 8.0  # ed.installedApp.get; 2020+ firmware often never answers
+APP_PROBE_TIMEOUT = 3.0  # cap per REST app probe
+CLOSE_TIMEOUT = 2.0
 BROWSER_APP_ID = "org.tizen.browser"
 
-# Well-known Tizen app ids. `curiosity-tv apps` lists what this TV has installed.
+# Well-known Tizen app ids. `curiosity-tv apps` lists what this TV has installed,
+# or, when the TV ignores ed.installedApp.get, which of these it has.
 APP_ALIASES: dict[str, str] = {
     "youtube": "111299001912",
     "netflix": "3201907018807",
@@ -101,6 +116,20 @@ class AuthError(TvError):
     exit_code = 3
 
 
+class TvTimeout(TvError):
+    """A network operation outlived its hard deadline."""
+
+    exit_code = 4
+
+
+class HttpStatusError(TvError):
+    """The TV answered an HTTP request with an error status."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 def redact(text: str) -> str:
     """Remove any token value (or token= query) from text before showing it."""
     for secret in _secrets:
@@ -111,6 +140,65 @@ def redact(text: str) -> str:
 
 def info(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
+
+
+# ------------------------------------------------------------------ deadlines
+
+
+class _Deadline:
+    def __init__(self, at: float, what: str, seconds: float) -> None:
+        self.at, self.what, self.seconds = at, what, seconds
+
+
+_deadlines: list[_Deadline] = []
+
+
+def _arm_alarm() -> None:
+    if not _deadlines:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        return
+    nearest = min(deadline.at for deadline in _deadlines)
+    signal.setitimer(signal.ITIMER_REAL, max(nearest - time.monotonic(), 0.001))
+
+
+def _on_alarm(_signum: int, _frame: object) -> None:
+    if not _deadlines:
+        return
+    now = time.monotonic()
+    expired = [deadline for deadline in _deadlines if deadline.at <= now + 0.005]
+    if not expired:  # fired early (clock granularity): re-arm for the rest
+        _arm_alarm()
+        return
+    first = min(expired, key=lambda deadline: deadline.at)
+    raise TvTimeout(f"timed out after {first.seconds:g} s waiting for {first.what}")
+
+
+@contextlib.contextmanager
+def hard_deadline(seconds: float, what: str) -> Iterator[None]:
+    """Raise TvTimeout if the block outlives `seconds` of wall-clock time.
+
+    Socket timeouts only bound each read; a peer that keeps trickling bytes or
+    pings (websocket-client answers pings inside recv()) can block forever.
+    SIGALRM interrupts any blocking call. Deadlines nest: the nearest one wins.
+    Off the main thread (where signals cannot be delivered) this is a no-op and
+    the socket timeouts are the only bound.
+    """
+    if threading.current_thread() is not threading.main_thread() or not hasattr(signal, "setitimer"):
+        yield
+        return
+    seconds = max(float(seconds), 0.05)
+    entry = _Deadline(time.monotonic() + seconds, what, seconds)
+    outermost = not _deadlines
+    previous = signal.signal(signal.SIGALRM, _on_alarm) if outermost else None
+    _deadlines.append(entry)
+    try:
+        _arm_alarm()
+        yield
+    finally:
+        _deadlines.remove(entry)
+        _arm_alarm()
+        if outermost:
+            signal.signal(signal.SIGALRM, previous if previous is not None else signal.SIG_DFL)
 
 
 # --------------------------------------------------------------------- token
@@ -220,19 +308,22 @@ def load_token() -> str:
 
 
 def http_json(url: str, *, method: str = "GET", timeout: float = DEFAULT_TIMEOUT) -> Any:
+    parts = urllib.parse.urlsplit(url)
     request = urllib.request.Request(url, method=method, headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (http LAN URL)
+        what = f"{method} {parts.path} from the TV at {parts.netloc}"
+        with hard_deadline(timeout, what), \
+                urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 (http LAN URL)
             body = response.read()
     except urllib.error.HTTPError as exc:
-        raise TvError(f"TV answered {exc.code} {exc.reason} for {method} {urllib.parse.urlsplit(url).path}") from exc
+        raise HttpStatusError(f"TV answered {exc.code} {exc.reason} for {method} {parts.path}", exc.code) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
-        raise TvError(f"cannot reach the TV at {urllib.parse.urlsplit(url).netloc}: {reason}") from exc
+        raise TvError(f"cannot reach the TV at {parts.netloc}: {reason}") from exc
     try:
         return json.loads(body) if body.strip() else {}
     except json.JSONDecodeError as exc:
-        raise TvError(f"the TV sent invalid JSON for {urllib.parse.urlsplit(url).path}") from exc
+        raise TvError(f"the TV sent invalid JSON for {parts.path}") from exc
 
 
 def device_info(host: str, timeout: float) -> dict[str, Any]:
@@ -276,6 +367,7 @@ def send_wol(mac: str, targets: tuple[str, ...] = WOL_TARGETS) -> list[str]:
     sent: list[str] = []
     errors: list[str] = []
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(2.0)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         for target in targets:
             try:
@@ -316,12 +408,22 @@ class Session:
         self.close()
 
     def close(self) -> None:
-        if self.ws is not None:
-            try:
-                self.ws.close()
-            except OSError:
-                pass  # the TV already dropped the socket; nothing left to close
-            self.ws = None
+        """Close politely, but never wait more than CLOSE_TIMEOUT for the TV."""
+        ws, self.ws = self.ws, None
+        if ws is None:
+            return
+        websocket = _websocket()
+        try:
+            with hard_deadline(CLOSE_TIMEOUT, "the TV to close the remote channel"):
+                ws.close()
+        except (OSError, websocket.WebSocketException, TvTimeout):
+            # The TV dropped the socket or ignored the close frame: tear it down.
+            shutdown = getattr(ws, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except OSError as exc:
+                    info(f"note: closing the remote channel failed ({exc.strerror or exc})")
 
     def connect(self) -> None:
         websocket = _websocket()
@@ -330,12 +432,17 @@ class Session:
         if self.token:
             url += f"&token={urllib.parse.quote(self.token, safe='')}"
         try:
-            self.ws = websocket.create_connection(
-                url, timeout=self.timeout, sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False}
-            )
+            with hard_deadline(self.timeout, f"the TV remote channel at {self.host}:8002 to open"):
+                self.ws = websocket.create_connection(
+                    url, timeout=self.timeout, sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False}
+                )
         except (OSError, websocket.WebSocketException) as exc:
             raise TvError(f"cannot open the TV remote channel at {self.host}:8002: {redact(str(exc))}") from exc
-        event = self.wait_for({"ms.channel.connect", "ms.channel.unauthorized", "ms.channel.timeOut", "ms.error"})
+        try:
+            event = self.wait_for({"ms.channel.connect", "ms.channel.unauthorized", "ms.channel.timeOut", "ms.error"})
+        except TvError:
+            self.close()
+            raise
         name_of = event.get("event")
         if name_of != "ms.channel.connect":
             self.close()
@@ -362,17 +469,26 @@ class Session:
         return message if isinstance(message, dict) else {}
 
     def wait_for(self, events: set[str], timeout: float | None = None) -> dict[str, Any]:
-        deadline = time.monotonic() + (timeout if timeout is not None else self.timeout)
-        while (remaining := deadline - time.monotonic()) > 0:
-            message = self.recv(remaining)
-            if message and message.get("event") in events:
-                return message
-        raise TvError("timed out waiting for the TV (" + ", ".join(sorted(events)) + ")")
+        """The first message whose event is in `events`; others are skipped.
+
+        Bounded by a hard deadline: TV pings and unrelated events cannot keep
+        this waiting past `timeout` (default: the session timeout).
+        """
+        seconds = timeout if timeout is not None else self.timeout
+        what = "the TV (" + ", ".join(sorted(events)) + ")"
+        deadline = time.monotonic() + seconds
+        with hard_deadline(seconds, what):
+            while (remaining := deadline - time.monotonic()) > 0:
+                message = self.recv(remaining)
+                if message and message.get("event") in events:
+                    return message
+        raise TvTimeout(f"timed out after {seconds:g} s waiting for {what}")
 
     def send(self, payload: dict[str, Any]) -> None:
         websocket = _websocket()
         try:
-            self.ws.send(json.dumps(payload))
+            with hard_deadline(self.timeout, "the TV to accept a remote-channel message"):
+                self.ws.send(json.dumps(payload))
         except (OSError, websocket.WebSocketException) as exc:
             raise TvError(f"sending to the TV failed: {redact(str(exc))}") from exc
 
@@ -386,12 +502,23 @@ class Session:
             params["data"] = data
         self.send({"method": "ms.channel.emit", "params": params})
 
-    def installed_apps(self) -> list[dict[str, Any]]:
+    def installed_apps(self, wait: float = APPS_REPLY_WAIT) -> list[dict[str, Any]] | None:
+        """The TV's installed apps, or None if it does not answer within `wait`.
+
+        2020+ Tizen firmware commonly ignores ed.installedApp.get (or answers
+        ms.error); unrelated events (clientConnect, edenTV updates) are skipped.
+        """
         self.emit("ed.installedApp.get")
-        reply = self.wait_for({"ed.installedApp.get"})
-        apps = (reply.get("data") or {}).get("data")
+        try:
+            reply = self.wait_for({"ed.installedApp.get", "ms.error"}, timeout=wait)
+        except TvTimeout:
+            return None
+        if reply.get("event") != "ed.installedApp.get":
+            return None
+        data = reply.get("data")
+        apps = data.get("data") if isinstance(data, dict) else data
         if not isinstance(apps, list):
-            raise TvError("the TV sent no installed-app list")
+            return None
         return [app for app in apps if isinstance(app, dict) and app.get("appId")]
 
 
@@ -570,15 +697,96 @@ def cmd_back(args: argparse.Namespace) -> int:
     return run_keys(args, [("key", "KEY_RETURN")])
 
 
+def known_app_ids() -> dict[str, list[str]]:
+    """Each distinct alias app id with the aliases that name it, in table order."""
+    ids: dict[str, list[str]] = {}
+    for alias, app_id in APP_ALIASES.items():
+        ids.setdefault(app_id, []).append(alias)
+    return ids
+
+
+def rest_app_state(host: str, app_id: str, timeout: float) -> dict[str, Any] | None:
+    """REST GET /api/v2/applications/ID: the app's state, or None on 404."""
+    quoted = urllib.parse.quote(app_id, safe="")
+    try:
+        result = http_json(f"http://{host}:8001/api/v2/applications/{quoted}", timeout=timeout)
+    except HttpStatusError as exc:
+        if exc.status == 404:
+            return None
+        raise
+    return result if isinstance(result, dict) else {}
+
+
+def probe_known_apps(host: str, timeout: float) -> list[dict[str, Any]]:
+    """Which APP_ALIASES apps the TV has, from one REST GET per app id.
+
+    Each probe is bounded by min(timeout, APP_PROBE_TIMEOUT). The first probe
+    that cannot reach the TV aborts the rest, so an unreachable TV costs one
+    probe timeout rather than one per app.
+    """
+    per_probe = min(timeout, APP_PROBE_TIMEOUT)
+    found: list[dict[str, Any]] = []
+    missing: list[str] = []
+    failed: list[str] = []
+    for app_id, aliases in known_app_ids().items():
+        try:
+            state = rest_app_state(host, app_id, per_probe)
+        except HttpStatusError as exc:
+            failed.append(f"{aliases[0]} ({exc})")
+            continue
+        except TvError as exc:
+            raise TvError(f"cannot probe apps over REST: {exc}") from exc
+        if state is None:
+            missing.append(aliases[0])
+            continue
+        found.append({
+            "appId": app_id,
+            "name": str(state.get("name") or aliases[0]),
+            "running": bool(state.get("running")),
+            "visible": bool(state.get("visible")),
+            "version": state.get("version"),
+            "source": "rest-probe",
+        })
+    if missing:
+        info("not installed: " + ", ".join(missing))
+    if failed:
+        info("could not check: " + "; ".join(failed))
+    return found
+
+
+def list_apps(args: argparse.Namespace) -> tuple[list[dict[str, Any]], str]:
+    """(apps, source): the TV's own list, else a REST probe of the known apps."""
+    reason: str
+    try:
+        with open_session(args) as session:
+            apps = session.installed_apps(args.apps_wait)
+        if apps is not None:
+            return apps, "installedApp"
+        reason = f"the TV did not answer ed.installedApp.get within {args.apps_wait:g} s"
+    except TvError as exc:  # unreachable channel, refused token, timeout
+        reason = f"the remote channel failed ({exc})"
+    info(f"{redact(reason)}; probing {len(known_app_ids())} known apps over REST")
+    return probe_known_apps(args.host, args.timeout), "rest-probe"
+
+
+def app_state_label(app: dict[str, Any]) -> str:
+    if app.get("visible"):
+        return "running (foreground)"
+    return "running" if app.get("running") else "installed"
+
+
 def cmd_apps(args: argparse.Namespace) -> int:
-    with open_session(args) as session:
-        apps = session.installed_apps()
+    apps, source = list_apps(args)
     apps.sort(key=lambda app: str(app.get("name", "")).lower())
     if args.json:
         print(json.dumps(apps, indent=2, sort_keys=True))
         return 0
+    if not apps:
+        print("no known apps found on the TV" if source == "rest-probe" else "the TV reports no installed apps")
+        return 0
     for app in apps:
-        print(f"{app['appId']:<28}{app.get('name', '')}")
+        line = f"{app['appId']:<28}{app.get('name', '')!s:<20}"
+        print((line + app_state_label(app)) if source == "rest-probe" else line.rstrip())
     return 0
 
 
@@ -606,14 +814,13 @@ def resolve_app(spec: str, installed: Callable[[], list[dict[str, Any]]]) -> str
 
 def cmd_launch(args: argparse.Namespace) -> int:
     def installed() -> list[dict[str, Any]]:
-        with open_session(args) as session:
-            return session.installed_apps()
+        return list_apps(args)[0]
 
     app_id = resolve_app(args.app, installed)
     try:
         result = rest_launch(args.host, app_id, args.timeout)
     except TvError as rest_error:
-        if " 404 " in str(rest_error):
+        if isinstance(rest_error, HttpStatusError) and rest_error.status == 404:
             raise TvError(f"the TV has no app {app_id} (see `curiosity-tv apps`)") from rest_error
         info(f"REST launch failed ({rest_error}); trying the remote channel")
         with open_session(args) as session:
@@ -674,7 +881,8 @@ RENDERING = "urn:schemas-upnp-org:service:RenderingControl:1"
 def upnp_control_url(host: str, timeout: float) -> str:
     description = f"http://{host}:9197/dmr"
     try:
-        with urllib.request.urlopen(description, timeout=timeout) as response:  # noqa: S310
+        with hard_deadline(timeout, f"the UPnP description from {host}:9197"), \
+                urllib.request.urlopen(description, timeout=timeout) as response:  # noqa: S310
             root = ET.fromstring(response.read())
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise TvError(f"UPnP is not reachable at {host}:9197 ({getattr(exc, 'reason', exc)}); use `volume up|down`") from exc
@@ -701,7 +909,8 @@ def upnp_call(host: str, action: str, arguments: dict[str, str], timeout: float)
         headers={"Content-Type": 'text/xml; charset="utf-8"', "SOAPACTION": f'"{RENDERING}#{action}"'},
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with hard_deadline(timeout, f"UPnP {action} on {host}:9197"), \
+                urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             return ET.fromstring(response.read())
     except urllib.error.HTTPError as exc:
         raise TvError(f"UPnP {action} failed: {exc.code} {exc.reason}") from exc
@@ -736,6 +945,13 @@ def non_negative_float(text: str) -> float:
     return value
 
 
+def positive_float(text: str) -> float:
+    value = non_negative_float(text)
+    if value == 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="curiosity-tv", description="Control the Samsung TV without the remote.",
@@ -743,7 +959,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--host", default=os.environ.get("CURIOSITY_TV_HOST", DEFAULT_HOST), help="TV address (default %(default)s)")
     parser.add_argument("--mac", default=os.environ.get("CURIOSITY_TV_MAC", DEFAULT_MAC), help="TV MAC for Wake-on-LAN (default %(default)s)")
-    parser.add_argument("--timeout", type=non_negative_float, default=DEFAULT_TIMEOUT, help="network timeout in seconds (default %(default)s)")
+    parser.add_argument("--timeout", type=positive_float, default=DEFAULT_TIMEOUT,
+                        help="hard deadline for each network operation in seconds (default %(default)s)")
     parser.add_argument("--delay", type=non_negative_float, default=0.4, help="pause after each key in seconds (default %(default)s)")
     parser.add_argument("--json", action="store_true", help="machine-readable output for status and apps")
     sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
@@ -770,8 +987,12 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("target", metavar="up|down|NUMBER")
     add("home", cmd_home, "press Home (Smart Hub)")
     add("back", cmd_back, "press Back")
-    add("apps", cmd_apps, "list installed apps")
+    apps = add("apps", cmd_apps, "list installed apps (falls back to probing the known apps over REST)")
+    apps.add_argument("--wait", dest="apps_wait", type=positive_float, default=APPS_REPLY_WAIT,
+                      help="seconds to wait for the TV's installed-app list (default %(default)s)")
     launch = add("launch", cmd_launch, "launch an app by alias, name or appId")
+    launch.add_argument("--wait", dest="apps_wait", type=positive_float, default=APPS_REPLY_WAIT,
+                        help="seconds to wait for the installed-app list when matching a name (default %(default)s)")
     launch.add_argument("app", help="alias (" + ", ".join(sorted(APP_ALIASES)) + "), app name or appId")
     browse = add("browse", cmd_browse, "open a URL in the TV browser")
     browse.add_argument("url")

@@ -4,8 +4,11 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import signal
+import socket
 import stat
 import subprocess
+import time
 import urllib.parse
 from pathlib import Path
 from types import ModuleType
@@ -42,6 +45,7 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CURIOSITY_TV_KEY_VAULT_SECRET", raising=False)
     monkeypatch.setenv("CURIOSITY_TV_ENV", str(tmp_path / "absent.env"))
     monkeypatch.setattr(tv.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(tv, "CLOSE_TIMEOUT", 0.1)
     tv._secrets.clear()
 
 
@@ -77,7 +81,7 @@ class FakeSession:
     def emit(self, event: str, data: dict[str, Any] | None = None) -> None:
         self.sent.append({"emit": event, "data": data})
 
-    def installed_apps(self) -> list[dict[str, Any]]:
+    def installed_apps(self, wait: float = 8.0) -> list[dict[str, Any]] | None:
         return [
             {"appId": "111299001912", "name": "YouTube"},
             {"appId": "3201907018807", "name": "Netflix"},
@@ -122,6 +126,12 @@ def test_parser_rejects_bad_usage(argv: list[str]) -> None:
     with pytest.raises(SystemExit) as exit_info:
         tv.build_parser().parse_args(argv)
     assert exit_info.value.code == 2
+
+
+def test_zero_timeouts_are_rejected() -> None:
+    for argv in (["--timeout", "0", "status"], ["apps", "--wait", "0"]):
+        with pytest.raises(SystemExit):
+            tv.build_parser().parse_args(argv)
 
 
 def test_defaults_target_the_deskmeet_tv() -> None:
@@ -180,6 +190,9 @@ def test_wol_goes_to_both_broadcasts_on_port_9(monkeypatch: pytest.MonkeyPatch) 
             return None
 
         def setsockopt(self, *args: object) -> None:
+            return None
+
+        def settimeout(self, _seconds: float) -> None:
             return None
 
         def sendto(self, data: bytes, address: tuple[str, int]) -> None:
@@ -341,7 +354,7 @@ def test_launch_falls_back_to_the_websocket(monkeypatch: pytest.MonkeyPatch, ses
 
 def test_launch_reports_a_missing_app(monkeypatch: pytest.MonkeyPatch, session: type[FakeSession], capsys: pytest.CaptureFixture[str]) -> None:
     def missing(host: str, app_id: str, timeout: float) -> dict[str, Any]:
-        raise tv.TvError("TV answered 404 Not Found for POST /api/v2/applications/1")
+        raise tv.HttpStatusError("TV answered 404 Not Found for POST /api/v2/applications/1", 404)
 
     monkeypatch.setattr(tv, "rest_launch", missing)
     assert tv.main(["launch", "plex"]) == 1
@@ -667,3 +680,269 @@ def test_role_installs_the_cli_and_its_dependency() -> None:
     settings = by_name["Render the Samsung TV Key Vault settings"]["ansible.builtin.copy"]
     assert settings["dest"] == "/etc/curiosity/samsung-tv.env"
     assert "CURIOSITY_TV_KEY_VAULT={{ samsung_tv_key_vault }}" in settings["content"]
+
+
+# ------------------------------------------------------------ hard deadlines
+
+
+@pytest.fixture
+def blocker() -> Any:
+    """A real socket whose recv() blocks until something interrupts it."""
+    left, right = socket.socketpair()
+    yield left
+    left.close()
+    right.close()
+
+
+def test_hard_deadline_interrupts_a_blocking_call(blocker: socket.socket) -> None:
+    started = time.monotonic()
+    with pytest.raises(tv.TvTimeout, match=r"timed out after 0.2 s waiting for the test"), tv.hard_deadline(0.2, "the test"):
+        blocker.recv(1)
+    assert time.monotonic() - started < 2
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    assert signal.getsignal(signal.SIGALRM) is signal.SIG_DFL
+    assert tv.TvTimeout.exit_code == 4
+
+
+def test_hard_deadlines_nest_and_the_nearest_wins(blocker: socket.socket) -> None:
+    with tv.hard_deadline(30, "outer"):
+        with pytest.raises(tv.TvTimeout, match="inner"), tv.hard_deadline(0.1, "inner"):
+            blocker.recv(1)
+        remaining, _interval = signal.getitimer(signal.ITIMER_REAL)
+        assert 20 < remaining <= 30  # the outer deadline is re-armed
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+
+
+def test_hard_deadline_is_a_no_op_off_the_main_thread() -> None:
+    import threading
+
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            with tv.hard_deadline(0.05, "thread"):
+                pass
+        except BaseException as exc:  # noqa: BLE001 - surfaced to the test thread
+            errors.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(5)
+    assert not errors
+
+
+class BlockingWebSocket(FakeWebSocket):
+    """recv() never returns, like websocket-client answering TV pings forever."""
+
+    def __init__(self, replies: list[dict[str, Any]], blocker: socket.socket) -> None:
+        super().__init__(replies)
+        self.blocker = blocker
+        self.closed = False
+        self.shut = False
+
+    def recv(self) -> str:
+        if self.replies:
+            return self.replies.pop(0)
+        self.blocker.recv(1)
+        return ""
+
+    def close(self) -> None:
+        self.blocker.recv(1)  # the TV ignores the close frame
+
+    def shutdown(self) -> None:
+        self.shut = True
+
+
+class ChattyWebSocket(FakeWebSocket):
+    """After the connect event: unrelated events forever, never the reply asked for."""
+
+    def recv(self) -> str:
+        if self.replies:
+            return self.replies.pop(0)
+        return json.dumps({"event": "ed.edenTV.update", "data": {"update_type": "ed.edenApp.update"}})
+
+
+def _session_with(monkeypatch: pytest.MonkeyPatch, ws: Any) -> Any:
+    pytest.importorskip("websocket")
+    monkeypatch.setattr(tv._websocket(), "create_connection", lambda url, **kwargs: ws)
+    session = tv.Session("192.168.1.250", SECRET, 0.3)
+    session.connect()
+    return session
+
+
+def test_installed_apps_gives_up_when_the_tv_never_answers(monkeypatch: pytest.MonkeyPatch, blocker: socket.socket) -> None:
+    ws = BlockingWebSocket([{"event": "ms.channel.connect", "data": {}}], blocker)
+    session = _session_with(monkeypatch, ws)
+    started = time.monotonic()
+    assert session.installed_apps(wait=0.3) is None
+    assert time.monotonic() - started < 2
+    session.close()
+    assert ws.shut  # close() was bounded and fell back to shutdown()
+
+
+def test_installed_apps_ignores_unrelated_events_until_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = ChattyWebSocket([{"event": "ms.channel.connect", "data": {}}])
+    session = _session_with(monkeypatch, ws)
+    started = time.monotonic()
+    assert session.installed_apps(wait=0.3) is None
+    assert time.monotonic() - started < 2
+
+
+def test_installed_apps_treats_ms_error_as_no_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    replies = [{"event": "ms.channel.connect", "data": {}}, {"event": "ms.error", "data": {"message": "unrecognized method"}}]
+    session, _urls = _connect_with(monkeypatch, replies, SECRET)
+    session.connect()
+    assert session.installed_apps(wait=0.5) is None
+
+
+def test_connect_handshake_without_an_answer_times_out(monkeypatch: pytest.MonkeyPatch, blocker: socket.socket) -> None:
+    pytest.importorskip("websocket")
+    ws = BlockingWebSocket([], blocker)
+    monkeypatch.setattr(tv._websocket(), "create_connection", lambda url, **kwargs: ws)
+    session = tv.Session("192.168.1.250", SECRET, 0.2)
+    with pytest.raises(tv.TvTimeout, match="ms.channel.connect"):
+        session.connect()
+    assert session.ws is None and ws.shut
+
+
+def test_a_hung_rest_call_exits_4_with_a_clear_message(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], blocker: socket.socket
+) -> None:
+    def hang(*args: Any, **kwargs: Any) -> None:
+        blocker.recv(1)
+
+    monkeypatch.setattr(tv.urllib.request, "urlopen", hang)
+    started = time.monotonic()
+    assert tv.main(["--timeout", "0.2", "status"]) == 4
+    assert time.monotonic() - started < 2
+    assert "timed out after 0.2 s waiting for GET /api/v2/ from the TV at 192.168.1.250:8001" in capsys.readouterr().err
+    assert tv.main(["--timeout", "0.2", "volume", "get"]) == 4
+    assert "UPnP description" in capsys.readouterr().err
+
+
+def test_every_network_path_runs_under_a_hard_deadline() -> None:
+    lines = SCRIPT.read_text().splitlines()
+    needles = ("urllib.request.urlopen(", "websocket.create_connection(", "self.ws.send(", "ws.close()", "self.ws.recv(")
+    calls = [n for n, line in enumerate(lines) if any(needle in line for needle in needles)]
+    assert len(calls) >= 7
+    for n in calls:
+        if "self.ws.recv(" in lines[n]:
+            continue  # only reached through wait_for(), which holds the deadline
+        assert "with hard_deadline(" in lines[n - 1], lines[n].strip()
+    wait_for = "\n".join(lines).split("def wait_for", 1)[1].split("def send", 1)[0]
+    assert "with hard_deadline(seconds" in wait_for and "self.recv(" in wait_for
+
+
+# ------------------------------------------------------------- apps fallback
+
+APP_STATES: dict[str, dict[str, Any]] = {
+    "111299001912": {"id": "111299001912", "name": "YouTube", "running": True, "visible": False, "version": "2.1.5"},
+    "3201907018807": {"id": "3201907018807", "name": "Netflix", "running": False, "visible": False, "version": "5.3.1"},
+    "org.tizen.browser": {"id": "org.tizen.browser", "name": "Internet", "running": True, "visible": True, "version": "1"},
+}
+
+
+@pytest.fixture
+def silent_session(monkeypatch: pytest.MonkeyPatch, session: type[FakeSession]) -> type[FakeSession]:
+    monkeypatch.setattr(FakeSession, "installed_apps", lambda self, wait=8.0: None)
+    return session
+
+
+def _fake_app_rest(monkeypatch: pytest.MonkeyPatch, states: dict[str, dict[str, Any]]) -> list[str]:
+    calls: list[str] = []
+
+    def http_json(url: str, *, method: str = "GET", timeout: float = 10.0) -> Any:
+        assert method == "GET" and timeout <= tv.APP_PROBE_TIMEOUT
+        app_id = urllib.parse.unquote(url.rsplit("/", 1)[1])
+        calls.append(app_id)
+        if app_id not in states:
+            raise tv.HttpStatusError("TV answered 404 Not Found", 404)
+        return states[app_id]
+
+    monkeypatch.setattr(tv, "http_json", http_json)
+    return calls
+
+
+def test_apps_falls_back_to_probing_known_ids(
+    monkeypatch: pytest.MonkeyPatch, silent_session: type[FakeSession], capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls = _fake_app_rest(monkeypatch, APP_STATES)
+    assert tv.main(["apps", "--wait", "0.1"]) == 0
+    assert calls == list(dict.fromkeys(tv.APP_ALIASES.values()))  # each id once
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert [line.split()[0] for line in lines] == ["org.tizen.browser", "3201907018807", "111299001912"]
+    assert "running (foreground)" in lines[0] and lines[1].endswith("installed") and lines[2].endswith("running")
+    assert "did not answer ed.installedApp.get within 0.1 s" in captured.err
+    assert "not installed: plex" in captured.err
+    assert SECRET not in captured.out + captured.err
+
+
+def test_apps_fallback_json(monkeypatch: pytest.MonkeyPatch, silent_session: type[FakeSession], capsys: pytest.CaptureFixture[str]) -> None:
+    _fake_app_rest(monkeypatch, APP_STATES)
+    assert tv.main(["--json", "apps"]) == 0
+    apps = json.loads(capsys.readouterr().out)
+    youtube = next(app for app in apps if app["appId"] == "111299001912")
+    assert youtube == {"appId": "111299001912", "name": "YouTube", "running": True, "visible": False,
+                       "version": "2.1.5", "source": "rest-probe"}
+
+
+def test_apps_falls_back_when_the_remote_channel_fails(
+    monkeypatch: pytest.MonkeyPatch, session: type[FakeSession], capsys: pytest.CaptureFixture[str]
+) -> None:
+    def refuse(self: FakeSession) -> None:
+        raise tv.AuthError("the TV refused the connection (ms.channel.unauthorized)")
+
+    monkeypatch.setattr(tv, "open_session", lambda args: refuse(FakeSession("h", None, 1)))
+    _fake_app_rest(monkeypatch, {})
+    assert tv.main(["apps"]) == 0
+    captured = capsys.readouterr()
+    assert "remote channel failed" in captured.err and "no known apps found" in captured.out
+
+
+def test_apps_probe_stops_at_the_first_unreachable_probe(
+    monkeypatch: pytest.MonkeyPatch, silent_session: type[FakeSession], capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[str] = []
+
+    def down(url: str, **kwargs: Any) -> Any:
+        calls.append(url)
+        raise tv.TvTimeout("timed out after 3 s waiting for GET")
+
+    monkeypatch.setattr(tv, "http_json", down)
+    assert tv.main(["apps"]) == 1
+    assert len(calls) == 1
+    assert "cannot probe apps over REST" in capsys.readouterr().err
+
+
+def test_apps_probe_reports_unexpected_statuses(
+    monkeypatch: pytest.MonkeyPatch, silent_session: type[FakeSession], capsys: pytest.CaptureFixture[str]
+) -> None:
+    def flaky(url: str, **kwargs: Any) -> Any:
+        if url.endswith("/111299001912"):
+            raise tv.HttpStatusError("TV answered 500 Server Error", 500)
+        raise tv.HttpStatusError("TV answered 404 Not Found", 404)
+
+    monkeypatch.setattr(tv, "http_json", flaky)
+    assert tv.main(["apps"]) == 0
+    assert "could not check: youtube (TV answered 500 Server Error)" in capsys.readouterr().err
+
+
+def test_apps_end_to_end_is_bounded_when_the_tv_ignores_the_request(
+    monkeypatch: pytest.MonkeyPatch, blocker: socket.socket, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("websocket")
+    ws = BlockingWebSocket([{"event": "ms.channel.connect", "data": {}}], blocker)
+    monkeypatch.setattr(tv._websocket(), "create_connection", lambda url, **kwargs: ws)
+    monkeypatch.setenv("CURIOSITY_TV_TOKEN", SECRET)
+    _fake_app_rest(monkeypatch, APP_STATES)
+    started = time.monotonic()
+    assert tv.main(["--timeout", "0.5", "apps", "--wait", "0.3"]) == 0
+    assert time.monotonic() - started < 3
+    assert "YouTube" in capsys.readouterr().out
+    assert json.loads(ws.sent[0])["params"]["event"] == "ed.installedApp.get"
+
+
+def test_launch_resolves_names_through_the_probe(monkeypatch: pytest.MonkeyPatch, silent_session: type[FakeSession]) -> None:
+    _fake_app_rest(monkeypatch, APP_STATES)
+    assert tv.resolve_app("Internet", lambda: tv.list_apps(tv.build_parser().parse_args(["launch", "x"]))[0]) == "org.tizen.browser"
