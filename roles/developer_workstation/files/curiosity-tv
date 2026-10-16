@@ -735,7 +735,8 @@ def probe_known_apps(host: str, timeout: float) -> list[dict[str, Any]]:
             failed.append(f"{aliases[0]} ({exc})")
             continue
         except TvError as exc:
-            raise TvError(f"cannot probe apps over REST: {exc}") from exc
+            kind = TvTimeout if isinstance(exc, TvTimeout) else TvError
+            raise kind(f"cannot probe apps over REST: {exc}") from exc
         if state is None:
             missing.append(aliases[0])
             continue

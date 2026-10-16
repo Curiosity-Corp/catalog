@@ -910,7 +910,7 @@ def test_apps_probe_stops_at_the_first_unreachable_probe(
         raise tv.TvTimeout("timed out after 3 s waiting for GET")
 
     monkeypatch.setattr(tv, "http_json", down)
-    assert tv.main(["apps"]) == 1
+    assert tv.main(["apps"]) == 4  # a timeout keeps its exit status
     assert len(calls) == 1
     assert "cannot probe apps over REST" in capsys.readouterr().err
 
