@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=StreamStack
+GenericName=Call and stream studio
+Comment=Start the studio, pick a voice preset and preview cameras from the panel
+Exec=streamstack-tray --menu
+Icon=streamstack
+Terminal=false
+Categories=AudioVideo;Video;

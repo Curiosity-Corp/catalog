@@ -1,0 +1,230 @@
+# StreamStack
+
+StreamStack turns a Linux desktop into a repeatable call and stream studio for
+Microsoft Teams, Zoom and OBS: a DSLR over USB live view or HDMI capture, a USB
+microphone with a broadcast voice chain, one command to check picture and
+sound before you go live, a panel menu, and an optional **auto-cinematographer
+and auto-audio engineer** that uses Claude to keep the picture and voice right
+during the call.
+
+```text
+Canon EOS (USB live view) --streamstack canon-bridge--> /dev/video42  "Canon EOS 50D"
+Elgato Cam Link 4K (HDMI) ----------------------------> /dev/streamstack/camlink
+            both --> OBS (lighting, colour, LUT, scenes) --> /dev/video43 "StreamStack Camera"
+USB microphone --> Easy Effects (voice chain) --> "Easy Effects Source"
+```
+
+In Teams and Zoom, pick **StreamStack Camera** and **Easy Effects Source**.
+
+## Install
+
+StreamStack is a small Python package (standard library only) that drives
+system tools. Install those from your distribution (Ubuntu/Debian names):
+
+```bash
+sudo apt install obs-studio easyeffects lsp-plugins-lv2 calf-plugins qpwgraph pavucontrol \
+  v4l2loopback-dkms v4l2loopback-utils v4l-utils qv4l2 gphoto2 ffmpeg pulseaudio-utils \
+  python3-gi gir1.2-ayatanaappindicator3-0.1 python3-websocket libnotify-bin
+```
+
+Then install StreamStack itself, either self-contained under `/usr/local`
+(no pip, nothing in the system Python):
+
+```bash
+sudo make install            # PREFIX=/usr/local; DESTDIR= for packaging
+streamstack setup            # as each user: OBS profile/scenes and voice presets
+```
+
+or with pip/pipx (`pipx install .`, plus `[auto]` for `websocket-client` when
+the distribution package is not available).
+
+Create the two loopback cameras. Chromium-based browsers (Teams on the web,
+the Teams PWA) list a loopback camera only with `exclusive_caps=1`, and only
+while something feeds it:
+
+```bash
+# /etc/modprobe.d/streamstack.conf
+options v4l2loopback devices=2 video_nr=42,43 card_label="Canon EOS 50D,StreamStack Camera" exclusive_caps=1,1 max_buffers=2
+# /etc/modules-load.d/streamstack.conf
+v4l2loopback
+```
+
+Host-wide settings go in `/etc/streamstack/streamstack.env`, per-user
+overrides in `~/.config/streamstack/streamstack.env` (see
+[Configuration](#configuration)). Configuration management tools can manage
+the first and leave the second to users.
+
+## Daily use
+
+### From the panel
+
+**StreamStack** in the application menu (`streamstack-tray --menu`) opens the
+studio menu at the pointer: what calls receive right now, Start/Stop studio,
+auto mode, voice presets and effect bypass, mic check, previews of every live
+camera in every mode it offers, shortcuts to OBS, Easy Effects, qpwgraph,
+pavucontrol and qv4l2, the doctor and the Teams/Zoom settings.
+
+For a panel button, show `streamstack status --icon` and open the menu on
+click. It prints a camera icon (red dot: graded camera live, green: raw camera,
+amber: needs attention, grey: off) and writes the details to stderr for the
+tooltip; `streamstack status --short` gives the same as text. In tint2:
+
+```ini
+# add one more E to panel_items
+execp = new
+execp_command = streamstack status --icon
+execp_interval = 3
+execp_has_icon = 1
+execp_icon_w = 22
+execp_icon_h = 22
+execp_lclick_command = streamstack-tray --menu
+execp_mclick_command = streamstack preview canon
+```
+
+`streamstack-tray` without `--menu` is a system tray icon (Ayatana
+AppIndicator, falling back to an XEmbed status icon); some tint2 builds crash
+when a GTK status icon docks, so the menu button is the safer default.
+
+### From a terminal
+
+```bash
+streamstack studio          # Easy Effects + Canon bridge + OBS with the virtual camera
+streamstack doctor          # every device, its format, and what to pick in the call app
+streamstack preview canon   # raw Canon feed (also: camlink, program); --grid for thirds
+streamstack cameras         # every live camera and every mode it offers
+streamstack preview /dev/video0 --mode '1920x1080@30 MJPG'
+streamstack stop            # stop OBS (and the bridge): calls use the raw camera
+streamstack mic-check --raw # hear the raw mic, then the processed voice
+streamstack voice           # list voice presets; `streamstack voice "StreamStack Voice Warm"`
+streamstack auto on|off     # the Claude auto-cinematographer and auto-audio
+streamstack call-settings   # the Teams and Zoom toggles that match this rig
+```
+
+### Voice presets
+
+All presets share one chain (high-pass, noise removal, gate, compressor,
+bass/presence/treble EQ, de-esser, pitch, limiter), so bass, treble and pitch
+are always one slider away in Easy Effects (Equalizer: band 0 is bass, band 3
+is treble; Pitch: semitones).
+
+| Preset | Character |
+| --- | --- |
+| StreamStack Voice | default broadcast voice |
+| StreamStack Voice Warm | more low end for thin rooms or mics |
+| StreamStack Voice Bright | more presence and air for dark mics |
+| StreamStack Voice Deep | pitch down 2 semitones, extra body |
+| StreamStack Voice Minimal | only high-pass, gentle compression and the limiter |
+
+`streamstack setup` never overwrites your own changes; `streamstack setup
+--force` restores the shipped presets and OBS defaults.
+
+### Lighting and colour
+
+The OBS scene collection **StreamStack** has the Canon and Cam Link sources
+with three filters each: **Lighting & Color** (Color Correction), **Sharpen**
+(off) and **Cinematic LUT** (off, teal/orange at 35%). Grade in OBS, not in
+the call app, so Teams and Zoom both receive the same picture.
+
+Get it right in camera first:
+
+- Expose for the face and lock exposure (M mode, fixed ISO) so the image does
+  not breathe.
+- Set a fixed white balance (Kelvin) that matches your lights.
+- Key light 30–45° off-axis and slightly above eye level, fill on the other
+  side at about half power, and a separation light behind you.
+- Frame on the thirds (`streamstack preview canon --grid`), eyes on the upper
+  line, a little headroom.
+
+## Auto mode
+
+`streamstack auto on` (or the panel menu) runs a local auto-exposure and
+mic-gain loop every 15 s, and asks Claude every few minutes to review one still
+of the graded picture and propose bounded changes to contrast, saturation,
+white balance, the LUT, sharpening, the voice preset and where the face is for
+spot metering. Every change is clamped, ramped, logged and undoable with
+`streamstack auto reset`. It runs on your Claude subscription through the
+signed-in Claude Code CLI, restricted to reading that one still, or on the
+Anthropic API. See [docs/auto-mode.md](docs/auto-mode.md) for what it sends,
+the limits, and the backends.
+
+## Laptops: graded or raw
+
+The graded camera runs OBS on top of the camera feed: it composites on the
+GPU, then copies every frame back to the CPU for the virtual camera while the
+browser encodes the call. On a dual-core laptop that can make the call stutter.
+
+- For everyday calls on a laptop, `streamstack stop` and pick the raw camera.
+  Grade in camera instead: Picture Style, Kelvin white balance and fixed
+  exposure cost nothing.
+- Keep the studio for calls that need scenes, a LUT or side-by-side.
+- Match the OBS canvas to the camera instead of upscaling, for example
+  `STREAMSTACK_WIDTH=1280 STREAMSTACK_HEIGHT=720 STREAMSTACK_FPS=20` for a
+  720p20 PTP feed.
+
+The Cam Link 4K delivers uncompressed frames from the camera's HDMI output, so
+there is no decode on the CPU (USB live view is MJPEG). It needs a clean HDMI
+output, mains power for long calls, and a USB 3 port (not a USB 2 hub).
+
+## Teams and Zoom
+
+Start `streamstack studio` **before** joining, so the virtual camera is already
+running when the browser enumerates devices. `streamstack call-settings`
+prints the exact toggles; in short: camera StreamStack Camera, microphone
+Easy Effects Source, headphones, noise suppression Low, no background effects
+or touch-up, Zoom's automatic mic volume off. Make a test call first.
+
+## Canon bridge
+
+`STREAMSTACK_CANON_BRIDGE=gphoto2` (default) streams live view through
+`gphoto2 --capture-movie | ffmpeg`, cropped to 16:9 at the configured size and
+frame rate, as the `streamstack-canon` user service. `command` runs
+`STREAMSTACK_CANON_COMMAND` instead (with `STREAMSTACK_CAMERA_DEVICE` set);
+`none` is for HDMI-only cameras through the Cam Link.
+
+When another tool on the host already owns the Canon's loopback node, set
+`STREAMSTACK_CAMERA_EXTERNAL=true` and point `STREAMSTACK_CAMERA_DEVICE` and
+`STREAMSTACK_CAMERA_LABEL` at it; StreamStack then never runs its own bridge.
+
+## Configuration
+
+`KEY=value` lines, shell quoting allowed. Later files win: built-in defaults,
+then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
+`~/.config/streamstack/streamstack.env`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `STREAMSTACK_CAMERA_DEVICE` / `_LABEL` | `/dev/video42`, `Canon EOS 50D` | the camera loopback node |
+| `STREAMSTACK_PROGRAM_DEVICE` / `_LABEL` | `/dev/video43`, `StreamStack Camera` | the OBS virtual camera node |
+| `STREAMSTACK_WIDTH`, `_HEIGHT`, `_FPS` | `1920`, `1080`, `30` | bridge output and OBS canvas |
+| `STREAMSTACK_CAMERA_EXTERNAL` | `false` | another tool feeds the camera node |
+| `STREAMSTACK_CANON_BRIDGE` | `gphoto2` | `gphoto2`, `command` or `none` |
+| `STREAMSTACK_CANON_COMMAND` | | the bridge command for `command` |
+| `STREAMSTACK_VOICE_PRESET` | `StreamStack Voice` | preset `streamstack studio` loads |
+| `STREAMSTACK_MICROPHONE` | | part of the call mic's name; empty picks an Elgato Wave, then the default input |
+| `STREAMSTACK_AUTO_BACKEND` | `claude-cli` | `claude-cli`, `api` or `local` |
+| `STREAMSTACK_AUTO_MODEL` | | model for Claude passes (empty: the CLI default, `claude-sonnet-5-5` on the API) |
+| `STREAMSTACK_AUTO_INTERVAL` | `15` | seconds between local exposure/gain passes |
+| `STREAMSTACK_AUTO_AI_INTERVAL` | `300` | seconds between Claude passes (backs off to 4x when nothing changes) |
+| `STREAMSTACK_AUTO_VIDEO`, `_AUDIO`, `_NOTIFY` | `true` | turn parts of auto mode off |
+
+## Troubleshooting
+
+- `streamstack doctor` reports a loopback device with the wrong name: another
+  `/etc/modprobe.d/*.conf` sets v4l2loopback options. Remove it and reboot.
+- The OBS virtual camera feeds the **first free** loopback node, not a named
+  one. If the camera node has no producer yet, OBS can take it. `streamstack
+  studio` waits for the camera and otherwise starts OBS without the virtual
+  camera; `doctor` warns when OBS holds the wrong node.
+- An open camera keeps the module loaded, so a changed device layout applies
+  at the next reboot rather than mid-call.
+
+## Development
+
+```bash
+make test        # pytest (PYTHONPATH=src)
+make lint        # ruff check + ruff format --check
+make build       # sdist and wheel
+```
+
+Releases follow [semantic versioning](https://semver.org); see
+[CHANGELOG.md](CHANGELOG.md). Licensed under Apache-2.0.

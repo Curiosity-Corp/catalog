@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=StreamStack tray
+GenericName=Call and stream studio
+Comment=StreamStack tray icon (start the studio, voice presets, previews)
+Exec=streamstack-tray
+Icon=streamstack
+Terminal=false
+NoDisplay=true
+Categories=AudioVideo;Video;
+X-GNOME-Autostart-enabled=true

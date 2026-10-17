@@ -1,0 +1,10 @@
+#!/usr/bin/python3 -I
+"""Launcher for a `make install` tree: PREFIX/bin/streamstack-tray -> PREFIX/lib/streamstack."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib/streamstack"))
+
+from streamstack.tray import main  # noqa: E402
+
+sys.exit(main())
