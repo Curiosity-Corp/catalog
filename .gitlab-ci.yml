@@ -11,6 +11,10 @@ stages:
   - package
 
 variables:
+  # The Secret-Detection template skips merge request pipelines unless this is
+  # "true"; without it secret_detection would never run now that feature
+  # branches only get MR pipelines.
+  AST_ENABLE_MR_PIPELINES: "true"
   ANSIBLE_FORCE_COLOR: "1"
   ANSIBLE_NOCOLOR: "0"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
