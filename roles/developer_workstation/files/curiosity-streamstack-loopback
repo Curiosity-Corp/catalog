@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Managed by the curiosity workstation role (streamstack task group).
+#
+# Bring up the StreamStack loopback cameras from /etc/streamstack/streamstack.env
+# without disturbing an open camera, and print what happened: current, added,
+# reloaded or busy. Runs at boot (curiosity-streamstack-loopback.service) and
+# on every catalog run.
+#
+# An idle module is reloaded so the modprobe options apply. A module in use (a
+# call, OBS, a camera bridge) - or one another tool configures, with
+# STREAMSTACK_CAMERA_EXTERNAL=true - is never unloaded: missing nodes are added
+# next to the open ones and a node with another name is reported as busy.
+set -euo pipefail
+
+env_file=${STREAMSTACK_ENV_FILE:-/etc/streamstack/streamstack.env}
+# shellcheck source=/dev/null
+. "$env_file"
+
+external=${STREAMSTACK_CAMERA_EXTERNAL:-false}
+nodes=()
+if [[ "$external" != true ]]; then
+  nodes+=("${STREAMSTACK_CAMERA_DEVICE#/dev/video}|$STREAMSTACK_CAMERA_LABEL")
+fi
+nodes+=("${STREAMSTACK_PROGRAM_DEVICE#/dev/video}|$STREAMSTACK_PROGRAM_LABEL")
+
+named() { [[ "$(cat "/sys/class/video4linux/video$1/name" 2>/dev/null)" == "$2" ]]; }
+
+all_named() {
+  local node
+  for node in "${nodes[@]}"; do
+    named "${node%%|*}" "${node#*|}" || return 1
+  done
+}
+
+add_missing() {
+  local node state=added
+  for node in "${nodes[@]}"; do
+    if [[ ! -e "/dev/video${node%%|*}" ]]; then
+      v4l2loopback-ctl add -n "${node#*|}" -x 1 -b 2 "${node%%|*}" >/dev/null
+    elif ! named "${node%%|*}" "${node#*|}"; then
+      state=busy
+    fi
+  done
+  echo "$state"
+}
+
+if all_named; then
+  echo current
+  exit 0
+fi
+
+if [[ -d /sys/module/v4l2loopback ]]; then
+  if [[ "$external" == true || "$(cat /sys/module/v4l2loopback/refcnt)" != "0" ]]; then
+    add_missing
+    exit 0
+  fi
+  modprobe -r v4l2loopback
+fi
+modprobe v4l2loopback
+if all_named; then
+  echo reloaded
+else
+  add_missing
+fi

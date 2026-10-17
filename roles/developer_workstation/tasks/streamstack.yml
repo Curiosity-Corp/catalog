@@ -1,0 +1,442 @@
+---
+# =============================================================================
+# StreamStack: call and stream studio (Teams, Zoom, OBS)
+# =============================================================================
+# One repeatable rig for DSLR + capture card + USB microphone workstations:
+#
+#   Canon (USB live view) --streamstack-canon--> /dev/video42 "Canon EOS 50D"
+#   Elgato Cam Link 4K (UVC) ------------------> /dev/streamstack/camlink
+#   both --> OBS (lighting/colour/LUT, scenes) --> /dev/video43 "StreamStack Camera"
+#   Elgato Wave (or any mic) --> Easy Effects --> "Easy Effects Source"
+#
+# Teams and Zoom then pick "StreamStack Camera" and "Easy Effects Source".
+# Both loopback nodes use exclusive_caps=1, which Chromium-based browsers
+# (Teams web) require before they list a virtual camera.
+#
+# The application (CLI, panel menu, auto mode, presets) is the StreamStack
+# project, vendored at files/streamstack as a squashed git subtree of a release
+# tag; this file wires it into the host: packages, the loopback cameras, udev,
+# the settings file, and the install under /usr/local.
+#
+# Included only when `streamstack_enabled` is true (the hardware profile's
+# `streamstack` flag, or a host-local override). Per-user OBS and Easy Effects
+# defaults are seeded once and never overwritten; `streamstack setup --force`
+# restores them on request. See docs/streamstack.md.
+# =============================================================================
+
+- name: Validate the StreamStack settings
+  ansible.builtin.assert:
+    that:
+      - streamstack_camera_video_nr | int >= 0
+      - streamstack_program_video_nr | int >= 0
+      - streamstack_camera_video_nr | int != streamstack_program_video_nr | int
+      - streamstack_camera_label | length > 0
+      - streamstack_program_label | length > 0
+      - streamstack_camera_label is not search('[,"\n]')
+      - streamstack_program_label is not search('[,"\n]')
+      - streamstack_width | string is match('^[0-9]+$')
+      - streamstack_height | string is match('^[0-9]+$')
+      - streamstack_fps | string is match('^[0-9]+$')
+      - streamstack_width | int % 4 == 0
+      - streamstack_height | int % 4 == 0
+      - streamstack_canon_bridge in ['gphoto2', 'command', 'none']
+      - streamstack_canon_bridge != 'command' or streamstack_canon_bridge_command | length > 0
+      - streamstack_canon_bridge_command is not search("['\n]")
+      - streamstack_auto_backend in ['claude-cli', 'api', 'local']
+      - streamstack_auto_model is match('^[A-Za-z0-9._:-]*$')
+      - streamstack_microphone is not search("['\n]")
+      - streamstack_auto_interval | int >= 5
+      - streamstack_auto_ai_interval | int >= 60
+      - streamstack_camlink_usb_ids | select('match', '^[0-9a-f]{4}:[0-9a-f]{4}$') | list | length == streamstack_camlink_usb_ids | length
+    fail_msg: >-
+      StreamStack needs two different loopback device numbers, labels without
+      commas or quotes, a width/height divisible by 4, a numeric frame rate,
+      a bridge of gphoto2, command (with streamstack_canon_bridge_command)
+      or none, and an auto backend of claude-cli, api or local with a local
+      interval of at least 5 s and a Claude interval of at least 60 s.
+
+- name: Install the StreamStack studio packages
+  ansible.builtin.apt:
+    name: "{{ streamstack_packages }}"
+    state: present
+
+- name: Check for the v4l2loopback kernel module
+  ansible.builtin.command: modinfo -n v4l2loopback
+  register: _streamstack_v4l2loopback_modinfo
+  changed_when: false
+  failed_when: false
+
+# Prefer the prebuilt, signed module package for the running kernel flavour and
+# fall back to DKMS where the archive has none.
+- name: Install the v4l2loopback kernel module
+  when: _streamstack_v4l2loopback_modinfo.rc != 0
+  block:
+    - name: Install the prebuilt v4l2loopback module package
+      ansible.builtin.apt:
+        name: linux-modules-v4l2loopback-generic
+        state: present
+  rescue:
+    - name: Install v4l2loopback through DKMS
+      ansible.builtin.apt:
+        name: v4l2loopback-dkms
+        state: present
+
+- name: Ensure /etc/streamstack exists
+  ansible.builtin.file:
+    path: /etc/streamstack
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# With streamstack_camera_external another tool on the host (for example a
+# camera fleet service) owns the module options and feeds the camera node;
+# StreamStack then only adds its program node next to it.
+- name: Configure the StreamStack loopback cameras
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/curiosity-streamstack-v4l2loopback.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack task group).
+      # video{{ streamstack_camera_video_nr }}: camera bridge, video{{ streamstack_program_video_nr }}: OBS virtual camera.
+      options v4l2loopback devices=2 video_nr={{ streamstack_camera_video_nr }},{{ streamstack_program_video_nr }} card_label="{{ streamstack_camera_label }},{{ streamstack_program_label }}" exclusive_caps=1,1 max_buffers=2
+  when: not (streamstack_camera_external | bool)
+
+- name: Leave the loopback options to the tool that owns the camera
+  ansible.builtin.file:
+    path: /etc/modprobe.d/curiosity-streamstack-v4l2loopback.conf
+    state: absent
+  when: streamstack_camera_external | bool
+
+- name: Load v4l2loopback at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/curiosity-streamstack.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack task group).
+      v4l2loopback
+
+# Earlier catalog releases configured a single loopback camera from the
+# deskmeet-b760 hardware profile; StreamStack owns both nodes now.
+- name: Remove the superseded single-camera loopback options
+  ansible.builtin.file:
+    path: /etc/modprobe.d/curiosity-v4l2loopback.conf
+    state: absent
+
+- name: Find other v4l2loopback options on this host
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      grep -lE '^[[:space:]]*options[[:space:]]+v4l2loopback' /etc/modprobe.d/*.conf
+      | grep -vx /etc/modprobe.d/curiosity-streamstack-v4l2loopback.conf || true
+    executable: /bin/bash
+  register: _streamstack_foreign_loopback
+  changed_when: false
+  when: not (streamstack_camera_external | bool)
+
+- name: Warn about v4l2loopback options StreamStack does not own
+  ansible.builtin.debug:
+    msg: >-
+      {{ _streamstack_foreign_loopback.stdout_lines | join(', ') }} also set
+      v4l2loopback options, and modprobe applies the last one it reads. Remove
+      them (and any service feeding their device) so the StreamStack cameras
+      come up as video{{ streamstack_camera_video_nr }}/video{{ streamstack_program_video_nr }},
+      or set streamstack_camera_external to adopt that camera instead.
+  when:
+    - not (streamstack_camera_external | bool)
+    - _streamstack_foreign_loopback.stdout_lines | length > 0
+
+- name: Grant the console user the StreamStack cameras
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/60-curiosity-streamstack.rules
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack task group).
+      # Loopback nodes: match on KERNEL only, ATTR{name} is not populated yet
+      # when the add event is processed.
+      SUBSYSTEM=="video4linux", KERNEL=="video{{ streamstack_camera_video_nr }}", GROUP="video", MODE="0660", TAG+="uaccess"
+      SUBSYSTEM=="video4linux", KERNEL=="video{{ streamstack_program_video_nr }}", GROUP="video", MODE="0660", TAG+="uaccess"
+      # Stable capture-card path for OBS: /dev/streamstack/camlink
+      {% for usb_id in streamstack_camlink_usb_ids %}
+      SUBSYSTEM=="video4linux", ATTRS{idVendor}=="{{ usb_id.split(':')[0] }}", ATTRS{idProduct}=="{{ usb_id.split(':')[1] }}", ATTR{index}=="0", SYMLINK+="streamstack/camlink"
+      {% endfor %}
+  register: _streamstack_udev
+
+- name: Reload udev rules for StreamStack  # noqa: no-handler
+  ansible.builtin.command: udevadm control --reload
+  when: _streamstack_udev is changed
+  changed_when: true
+
+- name: Re-apply udev rules to present video devices  # noqa: no-handler
+  ansible.builtin.command: udevadm trigger --subsystem-match=video4linux
+  when: _streamstack_udev is changed
+  changed_when: true
+
+- name: Render the StreamStack settings
+  ansible.builtin.copy:
+    dest: /etc/streamstack/streamstack.env
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack task group).
+      STREAMSTACK_CAMERA_DEVICE=/dev/video{{ streamstack_camera_video_nr | int }}
+      STREAMSTACK_CAMERA_LABEL={{ streamstack_camera_label | quote }}
+      STREAMSTACK_PROGRAM_DEVICE=/dev/video{{ streamstack_program_video_nr | int }}
+      STREAMSTACK_PROGRAM_LABEL={{ streamstack_program_label | quote }}
+      STREAMSTACK_WIDTH={{ streamstack_width | int }}
+      STREAMSTACK_HEIGHT={{ streamstack_height | int }}
+      STREAMSTACK_FPS={{ streamstack_fps | int }}
+      STREAMSTACK_CAMERA_EXTERNAL={{ streamstack_camera_external | bool | lower }}
+      STREAMSTACK_CANON_BRIDGE={{ 'none' if streamstack_camera_external | bool else streamstack_canon_bridge }}
+      STREAMSTACK_CANON_COMMAND='{{ streamstack_canon_bridge_command }}'
+      STREAMSTACK_VOICE_PRESET={{ streamstack_voice_preset | quote }}
+      STREAMSTACK_MICROPHONE='{{ streamstack_microphone }}'
+      STREAMSTACK_AUTO_BACKEND={{ streamstack_auto_backend }}
+      STREAMSTACK_AUTO_MODEL={{ streamstack_auto_model | quote }}
+      STREAMSTACK_AUTO_INTERVAL={{ streamstack_auto_interval | int }}
+      STREAMSTACK_AUTO_AI_INTERVAL={{ streamstack_auto_ai_interval | int }}
+      STREAMSTACK_AUTO_VIDEO={{ streamstack_auto_video | bool | lower }}
+      STREAMSTACK_AUTO_AUDIO={{ streamstack_auto_audio | bool | lower }}
+      STREAMSTACK_AUTO_NOTIFY={{ streamstack_auto_notify | bool | lower }}
+
+- name: Install the StreamStack loopback bring-up
+  ansible.builtin.copy:
+    src: curiosity-streamstack-loopback
+    dest: /usr/local/sbin/curiosity-streamstack-loopback
+    owner: root
+    group: root
+    mode: "0755"
+
+# At boot the module may come up from another tool's options (external mode)
+# or before an added node exists; the oneshot adds the missing nodes.
+- name: Install the StreamStack loopback boot service
+  ansible.builtin.copy:
+    src: curiosity-streamstack-loopback.service
+    dest: /etc/systemd/system/curiosity-streamstack-loopback.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: _streamstack_loopback_unit
+
+- name: Enable the StreamStack loopback boot service
+  ansible.builtin.systemd_service:
+    name: curiosity-streamstack-loopback.service
+    enabled: true
+    daemon_reload: "{{ _streamstack_loopback_unit is changed }}"
+
+# Reload only an idle module that StreamStack configures: an open camera (a
+# call, OBS, the bridge) holds a reference. Otherwise add the missing nodes
+# next to the open ones, and leave a misnamed node for the next boot.
+- name: Bring up the StreamStack loopback cameras
+  ansible.builtin.command: /usr/local/sbin/curiosity-streamstack-loopback
+  register: _streamstack_loopback
+  changed_when: _streamstack_loopback.stdout in ['reloaded', 'added']
+
+- name: Report a loopback camera change that waits for a reboot
+  ansible.builtin.debug:
+    msg: >-
+      v4l2loopback is in use and one of its nodes has another name, so the
+      StreamStack cameras appear after the next reboot (or after closing every
+      camera app and running `sudo modprobe -r v4l2loopback && sudo
+      /usr/local/sbin/curiosity-streamstack-loopback`).
+  when: _streamstack_loopback.stdout == 'busy'
+
+# Self-contained install: the package under /usr/local/lib/streamstack and
+# isolated-mode launchers on PATH, so nothing touches the system Python.
+- name: Read the vendored StreamStack version
+  ansible.builtin.set_fact:
+    _streamstack_version: >-
+      {{ lookup('ansible.builtin.file', 'streamstack/src/streamstack/__init__.py')
+         | regex_search('__version__ = "([^"]+)"', '\\1') | first }}
+
+- name: Read the installed StreamStack version
+  ansible.builtin.slurp:
+    src: /usr/local/lib/streamstack/streamstack/__init__.py
+  register: _streamstack_installed
+  failed_when: false
+
+# copy never deletes, so a module dropped upstream would linger; start clean
+# whenever the version changes.
+- name: Remove a StreamStack package of another version
+  ansible.builtin.file:
+    path: /usr/local/lib/streamstack/streamstack
+    state: absent
+  when: >-
+    _streamstack_installed.content is not defined
+    or ('__version__ = "' ~ _streamstack_version ~ '"') not in (_streamstack_installed.content | b64decode)
+
+- name: Install the StreamStack package
+  ansible.builtin.copy:
+    src: streamstack/src/streamstack/
+    dest: /usr/local/lib/streamstack/streamstack/
+    owner: root
+    group: root
+    mode: u=rwX,go=rX
+    directory_mode: "0755"
+
+- name: Install the StreamStack commands
+  ansible.builtin.copy:
+    src: "streamstack/packaging/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [streamstack, streamstack-auto, streamstack-tray]
+
+- name: Install the StreamStack icons in the hicolor theme
+  ansible.builtin.copy:
+    src: "streamstack/src/streamstack/data/icons/{{ item.src }}.svg"
+    dest: "/usr/local/share/icons/hicolor/scalable/{{ item.dest }}.svg"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {src: streamstack-live, dest: apps/streamstack}
+    - {src: streamstack-live, dest: status/streamstack-live}
+    - {src: streamstack-raw, dest: status/streamstack-raw}
+    - {src: streamstack-warn, dest: status/streamstack-warn}
+    - {src: streamstack-off, dest: status/streamstack-off}
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: List StreamStack in the application menu
+  ansible.builtin.copy:
+    src: streamstack/packaging/applications/streamstack.desktop
+    dest: /usr/share/applications/streamstack.desktop
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Decide whether the Canon bridge starts at login
+  ansible.builtin.set_fact:
+    _streamstack_bridge_autostart: >-
+      {{ streamstack_canon_bridge_autostart | bool and streamstack_canon_bridge != 'none'
+         and not (streamstack_camera_external | bool) }}
+
+- name: Install the Canon bridge user service
+  ansible.builtin.copy:
+    src: streamstack/packaging/systemd/user/streamstack-canon.service
+    dest: /etc/systemd/user/streamstack-canon.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ensure the global user default.target.wants directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/user/default.target.wants
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: _streamstack_bridge_autostart | bool
+
+- name: Start the Canon bridge at login for every desktop user
+  ansible.builtin.file:
+    path: /etc/systemd/user/default.target.wants/streamstack-canon.service
+    src: /etc/systemd/user/streamstack-canon.service
+    state: link
+    owner: root
+    group: root
+    force: true
+  when: _streamstack_bridge_autostart | bool
+
+- name: Leave the Canon bridge to `streamstack studio`
+  ansible.builtin.file:
+    path: /etc/systemd/user/default.target.wants/streamstack-canon.service
+    state: absent
+  when: not (_streamstack_bridge_autostart | bool)
+
+- name: Set the Easy Effects voice chain autostart
+  ansible.builtin.copy:
+    src: streamstack/packaging/applications/streamstack-easyeffects.desktop
+    dest: /etc/xdg/autostart/streamstack-easyeffects.desktop
+    owner: root
+    group: root
+    mode: "0644"
+  when: streamstack_easyeffects_autostart | bool
+
+- name: Remove the Easy Effects voice chain autostart
+  ansible.builtin.file:
+    path: /etc/xdg/autostart/streamstack-easyeffects.desktop
+    state: absent
+  when: not (streamstack_easyeffects_autostart | bool)
+
+- name: Install the StreamStack auto mode user service
+  ansible.builtin.copy:
+    src: streamstack/packaging/systemd/user/streamstack-auto.service
+    dest: /etc/systemd/user/streamstack-auto.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ensure the global user graphical-session.target.wants directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: streamstack_auto_autostart | bool
+
+# Off by default: auto mode sends a camera still to Claude every few minutes,
+# so each person turns it on (`streamstack auto on`, or the panel menu).
+- name: Start StreamStack auto mode at login for every desktop user
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants/streamstack-auto.service
+    src: /etc/systemd/user/streamstack-auto.service
+    state: link
+    owner: root
+    group: root
+    force: true
+  when: streamstack_auto_autostart | bool
+
+- name: Leave StreamStack auto mode to `streamstack auto on`
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants/streamstack-auto.service
+    state: absent
+  when: not (streamstack_auto_autostart | bool)
+
+- name: Start the StreamStack panel icon at login
+  ansible.builtin.copy:
+    src: streamstack/packaging/applications/streamstack-tray.desktop
+    dest: /etc/xdg/autostart/streamstack-tray.desktop
+    owner: root
+    group: root
+    mode: "0644"
+  when: streamstack_tray_autostart | bool
+
+- name: Leave the StreamStack panel icon to the application menu
+  ansible.builtin.file:
+    path: /etc/xdg/autostart/streamstack-tray.desktop
+    state: absent
+  when: not (streamstack_tray_autostart | bool)
+
+- name: Check managed user homes for StreamStack defaults
+  ansible.builtin.stat:
+    path: "{{ item.home }}"
+  loop: "{{ dev_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _streamstack_homes
+
+# Seeds only missing files, so a user's own OBS scenes and voice tweaks survive
+# every ansible-pull.
+- name: Seed StreamStack OBS and Easy Effects defaults for each user
+  ansible.builtin.command:
+    argv: [/usr/local/bin/streamstack, setup, --quiet]
+  become: true
+  become_user: "{{ item.item.name }}"
+  environment:
+    HOME: "{{ item.item.home }}"
+  loop: "{{ _streamstack_homes.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.stat.isdir | default(false)
+  changed_when: false

@@ -1,0 +1,12 @@
+# Managed by the curiosity workstation role (streamstack task group).
+[Unit]
+Description=StreamStack loopback cameras (camera bridge and OBS virtual camera)
+After=systemd-modules-load.service systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/curiosity-streamstack-loopback
+
+[Install]
+WantedBy=multi-user.target
