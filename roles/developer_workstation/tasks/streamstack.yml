@@ -254,7 +254,7 @@
   ansible.builtin.set_fact:
     _streamstack_version: >-
       {{ lookup('ansible.builtin.file', 'streamstack/src/streamstack/__init__.py')
-         | regex_search('__version__ = "([^"]+)"', '\\1') | first }}
+         | regex_search('__version__ = "([^"]+)"', '\1') | first }}
 
 - name: Read the installed StreamStack version
   ansible.builtin.slurp:
@@ -289,6 +289,15 @@
     group: root
     mode: "0755"
   loop: [streamstack, streamstack-auto, streamstack-tray]
+
+- name: Create the local hicolor icon directories
+  ansible.builtin.file:
+    path: "/usr/local/share/icons/hicolor/scalable/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [apps, status]
 
 - name: Install the StreamStack icons in the hicolor theme
   ansible.builtin.copy:
