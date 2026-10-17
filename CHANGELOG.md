@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Claude Code on npm 12: npm now blocks install scripts that are not allowlisted, so every global install or self-update left `claude` as the `bin/claude.exe` stub that only prints "native binary not installed". The role merges `ai_assistant_install_scripts` (`@anthropic-ai/claude-code`) into the user's `allow-scripts` npm setting before the nightly refresh, and runs the package's `install.cjs` when the launcher still fails afterwards.
 - G604 pointer speed: Solaar re-applied its own saved DPI (1600) on every start or reconnect, overriding the onboard `logitech_g604_dpi` (3200). A per-user `~/.config/autostart/solaar.desktop` now starts Solaar through `curiosity-solaar-g604-dpi --launch`, marking Solaar's G604 `dpi` setting `ignore` so the onboard profile wins.
 - G604 launcher now autostarts in any Openbox session through `/etc/xdg/autostart/curiosity-g604.desktop` (it previously started only from the catalog-managed minimal-desktop autostart) and exits quietly on Wayland. `logitech_g604_onboard_buttons: false` skips the onboard button macros on hosts without an X11 Openbox session (pointer speed still applies).
 - Fix: write the authd-oidc and authd-msentraid `broker.conf` as 0600; authd-oidc 0.5+ refuses to start with 0644, which left OIDC sign-in down after a broker restart.

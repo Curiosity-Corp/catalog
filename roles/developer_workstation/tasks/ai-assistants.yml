@@ -7,6 +7,62 @@
 # existing installs are refreshed on every nightly ansible-pull.
 # =============================================================================
 
+# npm 12 blocks install-time scripts unless the package is allowlisted. Claude
+# Code's postinstall copies its native binary over the bin/claude.exe stub, so
+# a blocked script leaves a `claude` that only prints "native binary not
+# installed" — after this refresh and after every self-update. Keep the
+# allowlist in the user's npmrc, merged with whatever the user added.
+- name: Read the npm version for AI assistant updates
+  ansible.builtin.command:
+    argv: ["{{ npm_global_executable }}", --version]
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _ai_npm_version
+  changed_when: false
+  failed_when: false
+
+- name: Read the user's npm install-script allowlist
+  ansible.builtin.command:
+    argv: ["{{ npm_global_executable }}", config, get, allow-scripts, --location=user]
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _ai_allow_scripts
+  changed_when: false
+  failed_when: false
+  when: _ai_npm_version.stdout | default('0') is version('12', '>=')
+
+- name: Allow the AI assistants' install scripts for global npm installs
+  ansible.builtin.command:
+    argv:
+      - "{{ npm_global_executable }}"
+      - config
+      - set
+      - "allow-scripts={{ _ai_allow_scripts_wanted }}"
+      - --location=user
+  vars:
+    _ai_allow_scripts_current: >-
+      {{ (_ai_allow_scripts.stdout | default('')).split(',') | map('trim')
+         | reject('in', ['', 'undefined', 'null']) | list }}
+    _ai_allow_scripts_wanted: "{{ (_ai_allow_scripts_current + ai_assistant_install_scripts) | unique | join(',') }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  when:
+    - _ai_npm_version.stdout | default('0') is version('12', '>=')
+    - ai_assistant_install_scripts | difference(_ai_allow_scripts_current) | length > 0
+  changed_when: true
+
 - name: Update user-scoped AI coding assistants to latest
   community.general.npm:
     name: "{{ item }}"
@@ -34,6 +90,33 @@
   loop: "{{ ai_assistant_command_links }}"
   loop_control:
     label: "{{ item.command }}"
+
+# A launcher whose install script was blocked earlier (or by a self-update
+# before the allowlist existed) is repaired by running that script now.
+- name: Check that the Claude Code launcher runs
+  ansible.builtin.command:
+    argv: ["{{ npm_global_prefix }}/bin/claude", --version]
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  register: _ai_claude_check
+  changed_when: false
+  failed_when: false
+
+- name: Finish a Claude Code install whose postinstall npm blocked
+  ansible.builtin.command:
+    argv: [node, install.cjs]
+    chdir: "{{ npm_global_prefix }}/lib/node_modules/@anthropic-ai/claude-code"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    PATH: "{{ npm_global_prefix }}/bin:/usr/local/bin:/usr/bin:/bin"
+  when:
+    - _ai_claude_check.rc != 0
+    - "'@anthropic-ai/claude-code' in ai_assistant_packages"
+  changed_when: true
 
 # =============================================================================
 # Standalone Codex CLI

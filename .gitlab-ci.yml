@@ -67,6 +67,7 @@ policy:
       tests/test_healthcheck_disabled_apps.py tests/test_litra_cli.py
       tests/test_minimal_desktop_panel.py tests/test_bitwarden_desktop.py
       tests/test_deskmeet_8k_display.py tests/test_samsung_tv_cli.py
+      tests/test_ai_assistant_install_scripts.py
 
 collection:
   extends: .python_setup

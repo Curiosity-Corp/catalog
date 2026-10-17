@@ -392,6 +392,12 @@ ai_assistant_packages:
   - "@google/gemini-cli"
   - "@qwen-code/qwen-code"
 
+# Packages whose install-time scripts npm 12+ may run in global installs
+# (`allow-scripts` in the user's npmrc). Claude Code's postinstall puts the
+# native binary in place; without it `claude` is a stub that only errors.
+ai_assistant_install_scripts:
+  - "@anthropic-ai/claude-code"
+
 # npm considers an already-installed package current even when an interrupted
 # image build left its global command shim absent. Keep the command contract
 # explicit so the Ansible run repairs the user-facing launchers idempotently.
