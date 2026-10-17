@@ -1,0 +1,17 @@
+# StreamStack auto mode: `streamstack auto on|off` or the panel menu.
+[Unit]
+Description=StreamStack auto-cinematographer and auto-audio
+After=graphical-session.target pipewire.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+ExecStart=streamstack-auto run
+Restart=on-failure
+RestartSec=10
+Nice=5
+CPUWeight=20
+NoNewPrivileges=true
+
+[Install]
+WantedBy=graphical-session.target
