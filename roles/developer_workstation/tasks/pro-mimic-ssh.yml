@@ -16,6 +16,14 @@
 # AllowGroups restriction is introduced, and key-only access keeps working.
 # The opt-in escape hatch is pro_mimic_ssh_password_auth=true, which removes
 # this drop-in and restores distro sshd defaults.
+#
+# Ordering: sshd keeps the FIRST value it reads for each keyword, and
+# sshd_config.d/*.conf is included in lexical order. cloud-init ships
+# 50-cloud-init.conf with "PasswordAuthentication yes", so the drop-in must
+# sort before it (00-) or it is silently overridden. The legacy 60- name lost
+# that race on every cloud-init image; it is removed below, and the effective
+# configuration is asserted with `sshd -T` so a future earlier-sorting
+# drop-in cannot reopen password login unnoticed.
 # =============================================================================
 
 - name: Check whether OpenSSH server is installed
@@ -25,7 +33,7 @@
 
 - name: Deploy hardened sshd drop-in
   ansible.builtin.copy:
-    dest: /etc/ssh/sshd_config.d/60-pro-mimic.conf
+    dest: /etc/ssh/sshd_config.d/00-pro-mimic.conf
     owner: root
     group: root
     mode: "0600"
@@ -44,9 +52,18 @@
     - Validate sshd configuration
     - Reload sshd
 
-- name: Remove hardened sshd drop-in when password auth is explicitly allowed
+- name: Remove legacy hardened sshd drop-in (overridden by 50-cloud-init.conf)
   ansible.builtin.file:
     path: /etc/ssh/sshd_config.d/60-pro-mimic.conf
+    state: absent
+  when: _pro_mimic_sshd_binary.stat.exists
+  notify:
+    - Validate sshd configuration
+    - Reload sshd
+
+- name: Remove hardened sshd drop-in when password auth is explicitly allowed
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/00-pro-mimic.conf
     state: absent
   when:
     - _pro_mimic_sshd_binary.stat.exists
@@ -54,3 +71,27 @@
   notify:
     - Validate sshd configuration
     - Reload sshd
+
+- name: Read effective sshd authentication settings
+  ansible.builtin.command:
+    cmd: sshd -T
+  register: _pro_mimic_sshd_effective
+  changed_when: false
+  check_mode: false
+  when:
+    - _pro_mimic_sshd_binary.stat.exists
+    - not (pro_mimic_ssh_password_auth | default(false) | bool)
+
+- name: Assert password and keyboard-interactive SSH login are off
+  ansible.builtin.assert:
+    that:
+      - "'passwordauthentication no' in _pro_mimic_sshd_effective.stdout_lines"
+      - "'kbdinteractiveauthentication no' in _pro_mimic_sshd_effective.stdout_lines"
+    fail_msg: >-
+      sshd still allows password or keyboard-interactive login: another
+      sshd_config.d drop-in sorts before 00-pro-mimic.conf or the main
+      sshd_config sets it first. Fix that file; do not weaken this check.
+    quiet: true
+  when:
+    - _pro_mimic_sshd_binary.stat.exists
+    - not (pro_mimic_ssh_password_auth | default(false) | bool)
