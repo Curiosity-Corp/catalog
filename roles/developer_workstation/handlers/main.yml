@@ -93,6 +93,13 @@
     name: fail2ban
     state: restarted
 
+- name: Reload systemd-networkd
+  ansible.builtin.command:
+    argv:
+      - networkctl
+      - reload
+  changed_when: true
+
 - name: Restart avahi-daemon
   ansible.builtin.systemd:
     name: avahi-daemon

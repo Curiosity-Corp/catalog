@@ -792,6 +792,11 @@ firewall_enabled: false
 firewall_ssh_interfaces: []
 # Also allow mosh (UDP 60000-61000) on the SSH interfaces.
 firewall_mosh: false
+# DNS-over-TLS resolvers (IP#SNI) for a hardware profile's
+# dns_over_tls_interfaces on an untrusted LAN.
+dns_over_tls_servers:
+  - 1.1.1.1#cloudflare-dns.com
+  - 1.0.0.1#cloudflare-dns.com
 
 # Profile cleanup (Shared PC mode equivalent)
 profile_cleanup_enabled: false
@@ -1063,12 +1068,15 @@ hardware_profiles:
     # Sits on a shared-house Wi-Fi: deny inbound from the LAN. Remote access
     # is Ziti (deskmeet1-ssh/-mosh, terminating on localhost) or the direct
     # cable on the onboard Ethernet port; no mDNS announcements, MTA on
-    # loopback only.
+    # loopback only, DNS-over-TLS on Wi-Fi.
     firewall: true
     firewall_ssh_interfaces:
       - enp0s31f6
     firewall_mosh: true
     untrusted_lan: true
+    # The shared Wi-Fi link resolves only over TLS.
+    dns_over_tls_interfaces:
+      - wlp8s0
     packages:
       # Logitech device management (Unifying/Bolt/Lightspeed receivers)
       - solaar

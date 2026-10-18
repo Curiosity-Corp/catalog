@@ -76,6 +76,27 @@ def test_deskmeet_profile_is_firewalled_off_the_shared_lan() -> None:
     assert not any(i.startswith("wl") for i in profile["firewall_ssh_interfaces"])
 
 
+def test_untrusted_lan_dns_over_tls_is_per_link_and_strict() -> None:
+    dot = _task("Encrypt DNS on untrusted LAN links")
+    copy = dot["ansible.builtin.copy"]
+    # Per link (netplan-generated unit drop-in), never resolved.conf-global:
+    # the ziti0 resolver speaks plain DNS.
+    assert copy["dest"].startswith("/etc/systemd/network/10-netplan-{{ item }}.network.d/")
+    assert "DNSOverTLS=yes" in copy["content"]
+    assert "UseDNS=false" in copy["content"]
+    assert dot["notify"] == "Reload systemd-networkd"
+    text = (TASKS / "firewall.yml").read_text()
+    assert "resolved.conf" not in "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert all("#" in server for server in defaults["dns_over_tls_servers"]), \
+        "every DoT server needs an SNI name for certificate validation"
+    profile = defaults["hardware_profiles"]["deskmeet-b760"]
+    assert profile["dns_over_tls_interfaces"] == ["wlp8s0"]
+    assert "ziti0" not in profile["dns_over_tls_interfaces"]
+
+
 def test_firewall_gate_honours_hardware_profile_flag() -> None:
     main = (TASKS / "main.yml").read_text()
     gate = main.split("- name: Include firewall (UFW)", 1)[1].split("\n- name:", 1)[0]
