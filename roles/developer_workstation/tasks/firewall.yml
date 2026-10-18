@@ -27,6 +27,8 @@
          or (hardware_profiles[hardware_profile].firewall_mosh | default(false) | bool) }}
     _firewall_untrusted_lan: >-
       {{ hardware_profiles[hardware_profile].untrusted_lan | default(false) | bool }}
+    _firewall_dot_interfaces: >-
+      {{ hardware_profiles[hardware_profile].dns_over_tls_interfaces | default([]) }}
 
 - name: Set UFW default deny incoming
   community.general.ufw:
@@ -96,7 +98,8 @@
     state: enabled
 
 # ---------------------------------------------------------------------------
-# Untrusted LAN: no service discovery announcements, loopback-only MTA.
+# Untrusted LAN: no service discovery announcements, loopback-only MTA, and
+# DNS-over-TLS on the listed links so the LAN cannot read or spoof lookups.
 # ufw's stock before.rules accept inbound mDNS (224.0.0.251:5353), so the
 # firewall alone does not stop avahi from answering; turn publishing off
 # (browsing .local names keeps working).
@@ -136,3 +139,40 @@
     - _firewall_untrusted_lan | bool
     - _firewall_postfix_conf.stat.exists | default(false)
   notify: Restart postfix
+
+# Strict DNS-over-TLS per link (networkd drop-in for the netplan-generated
+# 10-netplan-<if>.network), never global: the ziti0 resolver (100.64.0.1)
+# speaks plain DNS and must keep working. DHCP/RA-provided resolvers are
+# ignored on these links so a LAN resolver cannot be injected.
+- name: Create networkd drop-in directories for DNS-over-TLS links
+  ansible.builtin.file:
+    path: "/etc/systemd/network/10-netplan-{{ item }}.network.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ _firewall_dot_interfaces }}"
+  when: _firewall_untrusted_lan | bool
+
+- name: Encrypt DNS on untrusted LAN links
+  ansible.builtin.copy:
+    dest: "/etc/systemd/network/10-netplan-{{ item }}.network.d/60-dns-over-tls.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — developer-workstation role (untrusted_lan).
+      [Network]
+      DNSOverTLS=yes
+      {% for server in dns_over_tls_servers %}
+      DNS={{ server }}
+      {% endfor %}
+
+      [DHCPv4]
+      UseDNS=false
+
+      [IPv6AcceptRA]
+      UseDNS=false
+  loop: "{{ _firewall_dot_interfaces }}"
+  when: _firewall_untrusted_lan | bool
+  notify: Reload systemd-networkd
