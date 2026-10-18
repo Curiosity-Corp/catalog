@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Hardened SSH never took effect on cloud-init images: sshd keeps the first value it reads, and `50-cloud-init.conf` (`PasswordAuthentication yes`) loaded before the role's `60-pro-mimic.conf`. The drop-in is now `00-pro-mimic.conf`, the legacy file is removed, and every run checks the effective `sshd -T` output and fails if password or keyboard-interactive login is still offered (#96).
+- Inbound firewall for hosts on an untrusted LAN: a hardware profile can set `firewall: true`, limit SSH (and mosh with `firewall_mosh`) to `firewall_ssh_interfaces`, and set `untrusted_lan: true` to stop avahi publishing and keep Postfix on loopback. Host vars `firewall_ssh_interfaces` / `firewall_mosh` take precedence. `deskmeet-b760` enables all of these and trusts only ziti0 and the onboard Ethernet cable port, so the shared Wi-Fi gets no inbound access (#96).
+- `tests/test_pro_mimic.py` and the new `tests/test_firewall_posture.py` now run in the CI `policy` job.
+
 ### Fixed
 
 - G604 pointer speed: Solaar re-applied its own saved DPI (1600) on every start or reconnect, overriding the onboard `logitech_g604_dpi` (3200). A per-user `~/.config/autostart/solaar.desktop` now starts Solaar through `curiosity-solaar-g604-dpi --launch`, marking Solaar's G604 `dpi` setting `ignore` so the onboard profile wins.

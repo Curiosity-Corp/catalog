@@ -130,7 +130,7 @@ def test_ssh_hardening_is_a_minimal_hand_rolled_subset() -> None:
         "KbdInteractiveAuthentication no",
         "PermitRootLogin prohibit-password",
         "X11Forwarding no",
-        "sshd_config.d/60-pro-mimic.conf",
+        "sshd_config.d/00-pro-mimic.conf",
         "pro_mimic_ssh_password_auth",
         "Validate sshd configuration",
     ):
@@ -148,6 +148,23 @@ def test_ssh_hardening_is_a_minimal_hand_rolled_subset() -> None:
     handlers = (ROLE / "handlers/main.yml").read_text()
     assert "Validate sshd configuration" in handlers
     assert "cmd: sshd -t" in handlers
+
+
+def test_ssh_hardening_drop_in_wins_over_cloud_init() -> None:
+    """sshd keeps the first value per keyword and includes drop-ins in
+    lexical order, so the hardened drop-in must sort before cloud-init's
+    50-cloud-init.conf (which sets PasswordAuthentication yes)."""
+    ssh = (TASKS / "pro-mimic-ssh.yml").read_text()
+    dests = re.findall(r"dest: /etc/ssh/sshd_config\.d/(\S+)", ssh)
+    assert dests, "hardened sshd drop-in destination not found"
+    for name in dests:
+        assert name < "50-cloud-init.conf", f"{name} sorts after cloud-init"
+    # The legacy name is actively removed, and the effective config is
+    # asserted rather than trusted.
+    assert "path: /etc/ssh/sshd_config.d/60-pro-mimic.conf" in ssh
+    assert "cmd: sshd -T" in ssh
+    assert "'passwordauthentication no' in" in ssh
+    assert "'kbdinteractiveauthentication no' in" in ssh
 
 
 def test_hwe_drift_is_surfaced_never_enforced() -> None:

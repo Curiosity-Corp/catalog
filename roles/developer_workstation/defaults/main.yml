@@ -784,8 +784,14 @@ vscode_extensions:
 # Kiosk session (byod-kiosk profile)
 # Target URL for the full-screen kiosk browser session.
 kiosk_target_url: "https://example.org"
-# UFW firewall (SSH open, VNC restricted to ziti0)
+# UFW firewall (default deny inbound, VNC restricted to ziti0). A hardware
+# profile can turn it on with `firewall: true`.
 firewall_enabled: false
+# Interfaces SSH is allowed on; empty means every interface. A non-empty
+# hardware profile firewall_ssh_interfaces applies when this is empty.
+firewall_ssh_interfaces: []
+# Also allow mosh (UDP 60000-61000) on the SSH interfaces.
+firewall_mosh: false
 
 # Profile cleanup (Shared PC mode equivalent)
 profile_cleanup_enabled: false
@@ -1054,6 +1060,15 @@ hardware_profiles:
 
   deskmeet-b760:
     description: "ASRock DeskMeet B760 — Intel Arc A380 + desk USB hub peripherals"
+    # Sits on a shared-house Wi-Fi: deny inbound from the LAN. Remote access
+    # is Ziti (deskmeet1-ssh/-mosh, terminating on localhost) or the direct
+    # cable on the onboard Ethernet port; no mDNS announcements, MTA on
+    # loopback only.
+    firewall: true
+    firewall_ssh_interfaces:
+      - enp0s31f6
+    firewall_mosh: true
+    untrusted_lan: true
     packages:
       # Logitech device management (Unifying/Bolt/Lightspeed receivers)
       - solaar
