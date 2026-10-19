@@ -182,12 +182,44 @@
     - hardware_profiles[hardware_profile].performance_mode | default(false) | bool
   notify: Apply TLP power policy
 
+# Desktops (no TLP) get the same intent through power-profiles-daemon: the
+# "performance" profile sets intel_pstate's energy/performance preference to
+# performance, and the daemon keeps the choice across reboots.
+- name: Install and enable power-profiles-daemon (desktops)
+  when:
+    - not _is_laptop
+    - hardware_profiles[hardware_profile].performance_mode | default(false) | bool
+  block:
+    - name: Install power-profiles-daemon
+      ansible.builtin.apt:
+        name: power-profiles-daemon
+        state: present
+
+    - name: Ensure power-profiles-daemon is enabled and running
+      ansible.builtin.systemd:
+        name: power-profiles-daemon
+        enabled: true
+        state: started
+
+    - name: Read the active power profile
+      ansible.builtin.command:
+        argv: [powerprofilesctl, get]
+      register: _power_profile
+      changed_when: false
+
+    - name: Select the performance power profile
+      ansible.builtin.command:
+        argv: [powerprofilesctl, set, performance]
+      changed_when: true
+      when: _power_profile.stdout | trim != 'performance'
+
 # =============================================================================
-# Laptop no-sleep policy
+# No-sleep policy
 # =============================================================================
-# Admin laptops remain available for SSH/Ziti access when the lid is closed or
-# the desktop is idle.  Masking the targets also blocks explicit suspend and
-# hibernate requests from desktop helpers and login sessions.
+# Admin laptops and always-on desktops stay available for SSH/Ziti access when
+# the lid is closed or the desktop is idle.  Masking the targets also blocks
+# explicit suspend and hibernate requests from desktop helpers and login
+# sessions.  Applies to any chassis whose hardware profile sets disable_sleep.
 # =============================================================================
 
 - name: Deploy optional wired Netplan policy for admin laptops
@@ -202,7 +234,7 @@
   when:
     - hardware_profile in ['t460', 'x86-byod-laptop']
 
-- name: Ensure laptop no-sleep logind drop-in directory exists
+- name: Ensure no-sleep logind drop-in directory exists
   ansible.builtin.file:
     path: /etc/systemd/logind.conf.d
     state: directory
@@ -210,10 +242,9 @@
     group: root
     mode: "0755"
   when:
-    - _is_laptop
     - hardware_profiles[hardware_profile].disable_sleep | default(false) | bool
 
-- name: Deploy laptop no-sleep policy
+- name: Deploy no-sleep policy
   ansible.builtin.copy:
     dest: /etc/systemd/logind.conf.d/20-curiosity-laptop-nosleep.conf
     owner: root
@@ -231,11 +262,10 @@
       IdleAction=ignore
       IdleActionSec=0
   when:
-    - _is_laptop
     - hardware_profiles[hardware_profile].disable_sleep | default(false) | bool
   notify: Reload systemd-logind
 
-- name: Mask laptop sleep and hibernate targets
+- name: Mask sleep and hibernate targets
   ansible.builtin.systemd:
     name: "{{ item }}"
     masked: true
@@ -245,7 +275,7 @@
     - suspend.target
     - hibernate.target
     - hybrid-sleep.target
+    - suspend-then-hibernate.target
   when:
-    - _is_laptop
     - hardware_profiles[hardware_profile].disable_sleep | default(false) | bool
   failed_when: false
