@@ -233,3 +233,16 @@ def test_openziti_upstream_script_source_is_removed_before_catalog_entry() -> No
         assert "--regexp=/usr/share/keyrings/openziti.gpg" in refs["ansible.builtin.command"]["argv"]
         assert tasks[orphan]["when"] == "_openziti_upstream_keyring_refs.rc == 1"
         assert tasks[orphan]["ansible.builtin.file"]["path"] == "/usr/share/keyrings/openziti.gpg"
+
+
+def test_edge_repo_uses_the_microsoft_keyring_and_owns_its_repo_file() -> None:
+    tasks = yaml.safe_load((TASKS / "repos.yml").read_text())
+    named = {t.get("name"): t for t in tasks}
+    repo = named["Add Microsoft Edge repository"]["ansible.builtin.apt_repository"]
+    assert "signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg" in repo["repo"]
+    assert "https://packages.microsoft.com/repos/edge stable main" in repo["repo"]
+    default = named["Stop the Edge package from managing its own repo file"]["ansible.builtin.copy"]
+    assert default["dest"] == "/etc/default/microsoft-edge"
+    assert 'repo_add_once="false"' in default["content"]
+    packages = (TASKS / "packages.yml").read_text()
+    assert "- microsoft-edge-stable\n" in packages

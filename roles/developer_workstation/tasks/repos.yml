@@ -85,6 +85,35 @@
     state: present
   notify: Update apt cache
 
+# --- Microsoft Edge ---
+# Same packages.microsoft.com key as VS Code. The Edge package ships a daily
+# cron job that re-adds its own repo file with a different Signed-By keyring,
+# which apt rejects as a conflict; /etc/default/microsoft-edge turns that off,
+# and the installer's deb822 file is removed so only this entry remains.
+- name: Stop the Edge package from managing its own repo file
+  ansible.builtin.copy:
+    dest: /etc/default/microsoft-edge
+    content: |
+      # Managed by Ansible (developer_workstation): the role owns the Edge repo.
+      repo_add_once="false"
+      repo_reenable_on_distupgrade="false"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Remove the Edge installer repo config (conflicting Signed-By)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/microsoft-edge.sources
+    state: absent
+  notify: Update apt cache
+
+- name: Add Microsoft Edge repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/edge stable main"
+    filename: microsoft-edge
+    state: present
+  notify: Update apt cache
+
 # --- Google Cloud CLI ---
 - name: Converge google-cloud APT keyring
   ansible.builtin.include_tasks: apt-keyring.yml

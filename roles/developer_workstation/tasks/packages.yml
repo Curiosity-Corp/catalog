@@ -47,6 +47,7 @@
       - google-cloud-cli
       # --- Browsers ---
       - google-chrome-stable
+      - microsoft-edge-stable
       - brave-browser
       - firefox
       # --- Kubernetes ---
