@@ -159,3 +159,9 @@ def test_posture_resolution_precedence(tmp_path, host_vars, profile, ssh, mosh, 
     assert msg["mosh"] is mosh
     assert msg["untrusted"] is untrusted
     assert msg["dot"] == dot
+
+
+def test_site_playbook_runs_notified_handlers_even_when_a_task_fails() -> None:
+    """A lost networkd reload left the DoT drop-in written but never applied."""
+    play = yaml.safe_load((ROOT / "playbooks/site.yml").read_text())[0]
+    assert play["force_handlers"] is True
