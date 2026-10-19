@@ -639,3 +639,19 @@ def test_hardware_pipx_is_per_user_and_keeps_path_and_error_behaviour() -> None:
         "/usr/local/bin:{{ dw_user.home }}/.local/bin:/usr/bin:/bin"
     )
     assert "failed_when" not in install and "ignore_errors" not in install
+
+
+def test_lightdm_takes_display_manager_from_gdm3() -> None:
+    """A server install that gains gdm3 as a recommend must still end on LightDM."""
+    tasks = _tasks("minimal-desktop-lightdm.yml")
+    names = [t.get("name") for t in tasks]
+    select = _named(tasks, "Select LightDM as the shared display manager")
+    assert select["ansible.builtin.debconf"]["question"] == "shared/default-x-display-manager"
+    assert select["ansible.builtin.debconf"]["value"] == "lightdm"
+    alias = _named(tasks, "Point display-manager.service at LightDM")["ansible.builtin.file"]
+    assert alias["dest"] == "/etc/systemd/system/display-manager.service"
+    assert alias["src"].endswith("/systemd/system/lightdm.service")
+    assert alias["state"] == "link" and alias["force"] is True
+    enable = names.index("Enable and start LightDM")
+    assert names.index(select["name"]) < names.index("Set LightDM as default display manager")
+    assert names.index("Point display-manager.service at LightDM") < enable

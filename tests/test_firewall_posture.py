@@ -105,19 +105,25 @@ def test_firewall_gate_honours_hardware_profile_flag() -> None:
 
 
 RESOLVE_CASES = [
-    # (host vars, profile, expected ssh interfaces, mosh, untrusted)
-    ({}, {}, [], False, False),
+    # (host vars, profile, expected ssh interfaces, mosh, untrusted, dot)
+    ({}, {}, [], False, False, []),
     ({}, {"firewall_ssh_interfaces": ["enp0s31f6"], "firewall_mosh": True,
-          "untrusted_lan": True}, ["enp0s31f6"], True, True),
+          "untrusted_lan": True, "dns_over_tls_interfaces": ["wlp8s0"]},
+     ["enp0s31f6"], True, True, ["wlp8s0"]),
     ({"firewall_ssh_interfaces": ["eth9"]}, {"firewall_ssh_interfaces": ["enp0s31f6"]},
-     ["eth9"], False, False),
-    ({"firewall_ssh_interfaces": [], "firewall_mosh": True}, {}, [], True, False),
+     ["eth9"], False, False, []),
+    ({"firewall_ssh_interfaces": [], "firewall_mosh": True}, {}, [], True, False, []),
+    # A host whose Wi-Fi enumerates under another name overrides the profile.
+    ({"dns_over_tls_interfaces": ["wlp6s0"]}, {"dns_over_tls_interfaces": ["wlp8s0"]},
+     [], False, False, ["wlp6s0"]),
+    ({"dns_over_tls_interfaces": []}, {"dns_over_tls_interfaces": ["wlp8s0"]},
+     [], False, False, ["wlp8s0"]),
 ]
 
 
 @pytest.mark.skipif(shutil.which("ansible-playbook") is None, reason="ansible-playbook not installed")
-@pytest.mark.parametrize("host_vars,profile,ssh,mosh,untrusted", RESOLVE_CASES)
-def test_posture_resolution_precedence(tmp_path, host_vars, profile, ssh, mosh, untrusted) -> None:
+@pytest.mark.parametrize("host_vars,profile,ssh,mosh,untrusted,dot", RESOLVE_CASES)
+def test_posture_resolution_precedence(tmp_path, host_vars, profile, ssh, mosh, untrusted, dot) -> None:
     resolve = _task("Resolve firewall posture")
     play = [{
         "hosts": "localhost",
@@ -133,7 +139,8 @@ def test_posture_resolution_precedence(tmp_path, host_vars, profile, ssh, mosh, 
                 "dest": str(tmp_path / "out.json"),
                 "content": "{{ {'ssh': _firewall_ssh_interfaces,"
                            " 'mosh': _firewall_mosh | bool,"
-                           " 'untrusted': _firewall_untrusted_lan | bool} | to_json }}",
+                           " 'untrusted': _firewall_untrusted_lan | bool,"
+                           " 'dot': _firewall_dot_interfaces} | to_json }}",
             }},
         ],
     }]
@@ -151,3 +158,4 @@ def test_posture_resolution_precedence(tmp_path, host_vars, profile, ssh, mosh, 
     assert msg["ssh"] == ssh
     assert msg["mosh"] is mosh
     assert msg["untrusted"] is untrusted
+    assert msg["dot"] == dot

@@ -792,6 +792,10 @@ firewall_enabled: false
 firewall_ssh_interfaces: []
 # Also allow mosh (UDP 60000-61000) on the SSH interfaces.
 firewall_mosh: false
+# Links that resolve only over TLS on an untrusted LAN; empty means the
+# hardware profile's dns_over_tls_interfaces. Set it per host when the Wi-Fi
+# interface name differs from the profile's (PCIe slot order varies by board).
+dns_over_tls_interfaces: []
 # DNS-over-TLS resolvers (IP#SNI) for a hardware profile's
 # dns_over_tls_interfaces on an untrusted LAN.
 dns_over_tls_servers:
@@ -1089,6 +1093,14 @@ hardware_profiles:
       - intel-media-va-driver
       - intel-gpu-tools
       - vainfo
+      # Arc A380 compute (OpenCL, Level Zero) and Quick Sync (oneVPL GPU
+      # runtime), used by OBS/ffmpeg QSV encoding and checked with clinfo
+      - intel-opencl-icd
+      - libze1
+      - libze-intel-gpu1
+      - libvpl2
+      - libmfx-gen1.2
+      - clinfo
       # Elgato Stream Deck HID access
       - libhidapi-libusb0
       # Focusrite Scarlett 2i2 mixer/routing control
