@@ -20,6 +20,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A failed run dropped the handlers that earlier tasks had notified, and later runs never notified them again because the files were already in place. On dm313red the DNS-over-TLS drop-in for the Wi-Fi link was written but systemd-networkd was never reloaded, so the untrusted LAN kept serving DNS in clear text. `playbooks/site.yml` now sets `force_handlers: true`.
 - StreamStack could not bring up its loopback cameras on a host that had installed a newer kernel but not rebooted yet: `linux-modules-v4l2loopback-generic` only carries the module for the newest kernel ("Module v4l2loopback not found in directory /lib/modules/<running>"). The role now also installs the running kernel's `linux-main-modules-v4l2loopback-<kernel>` package, with DKMS still the fallback.
 - LightDM still failed to start right after the role repointed `display-manager.service` from gdm3: systemd kept the stale alias and refused to load `lightdm.service` ("File exists") until a daemon reload. The enable task now reloads systemd first.
 - Fresh Ubuntu Server installs never reached LightDM: the desktop package set pulls gdm3 in as a recommend, gdm3 claims `display-manager.service`, and enabling lightdm failed ("display-manager.service already exists and is a symlink to gdm3.service"). The role now selects LightDM in debconf (`shared/default-x-display-manager`) and repoints the alias before enabling it.

@@ -3,5 +3,9 @@
   hosts: localhost
   connection: local
   become: true
+  # A failed task must not drop handlers that earlier tasks notified: the next
+  # run sees those files unchanged and never notifies again, so for example a
+  # DNS-over-TLS drop-in stayed written but never loaded by systemd-networkd.
+  force_handlers: true
   roles:
     - developer_workstation
