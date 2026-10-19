@@ -176,12 +176,31 @@
       autologin-session=openbox
   when: minimal_desktop_autologin | default(true)
 
+# On a server install the desktop package set pulls gdm3 in as a recommend
+# (gnome-shell, gnome-session-bin), and gdm3's postinst claims the shared
+# display-manager selection. `dpkg-reconfigure lightdm` alone then keeps gdm3,
+# and enabling lightdm fails because display-manager.service already links to
+# gdm3.service. Select LightDM in debconf first and repoint the alias.
+- name: Select LightDM as the shared display manager in debconf
+  ansible.builtin.debconf:
+    name: lightdm
+    question: shared/default-x-display-manager
+    value: lightdm
+    vtype: select
+
 - name: Set LightDM as default display manager
   ansible.builtin.command: >
     dpkg-reconfigure lightdm --frontend noninteractive
   environment:
     DEBIAN_FRONTEND: noninteractive
   changed_when: true
+
+- name: Point display-manager.service at LightDM
+  ansible.builtin.file:
+    src: /lib/systemd/system/lightdm.service
+    dest: /etc/systemd/system/display-manager.service
+    state: link
+    force: true
 
 - name: Get current systemd default target
   ansible.builtin.command:

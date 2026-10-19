@@ -28,7 +28,8 @@
     _firewall_untrusted_lan: >-
       {{ hardware_profiles[hardware_profile].untrusted_lan | default(false) | bool }}
     _firewall_dot_interfaces: >-
-      {{ hardware_profiles[hardware_profile].dns_over_tls_interfaces | default([]) }}
+      {{ dns_over_tls_interfaces | default([], true)
+         or hardware_profiles[hardware_profile].dns_over_tls_interfaces | default([]) }}
 
 - name: Set UFW default deny incoming
   community.general.ufw:

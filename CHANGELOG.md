@@ -15,6 +15,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Fresh Ubuntu Server installs never reached LightDM: the desktop package set pulls gdm3 in as a recommend, gdm3 claims `display-manager.service`, and enabling lightdm failed ("display-manager.service already exists and is a symlink to gdm3.service"). The role now selects LightDM in debconf (`shared/default-x-display-manager`) and repoints the alias before enabling it.
+- `deskmeet-b760`: a host-level `dns_over_tls_interfaces` overrides the profile's list, for boards whose Wi-Fi enumerates under another name (the second DeskMeet's RTL8851BE is `wlp6s0`, not DeskMeet1's `wlp8s0`).
+
+### Added
+
+- `deskmeet-b760` installs the Arc A380 compute and Quick Sync runtime: `intel-opencl-icd`, `libze1`, `libze-intel-gpu1`, `libvpl2`, `libmfx-gen1.2` and `clinfo`, so OBS/ffmpeg QSV encoding and OpenCL work out of the box.
+
 - G604 pointer speed: Solaar re-applied its own saved DPI (1600) on every start or reconnect, overriding the onboard `logitech_g604_dpi` (3200). A per-user `~/.config/autostart/solaar.desktop` now starts Solaar through `curiosity-solaar-g604-dpi --launch`, marking Solaar's G604 `dpi` setting `ignore` so the onboard profile wins.
 - G604 launcher now autostarts in any Openbox session through `/etc/xdg/autostart/curiosity-g604.desktop` (it previously started only from the catalog-managed minimal-desktop autostart) and exits quietly on Wayland. `logitech_g604_onboard_buttons: false` skips the onboard button macros on hosts without an X11 Openbox session (pointer speed still applies).
 - Fix: write the authd-oidc and authd-msentraid `broker.conf` as 0600; authd-oidc 0.5+ refuses to start with 0644, which left OIDC sign-in down after a broker restart.
