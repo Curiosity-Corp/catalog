@@ -66,14 +66,18 @@
   changed_when: false
   failed_when: false
 
-# Prefer the prebuilt, signed module package for the running kernel flavour and
-# fall back to DKMS where the archive has none.
+# Prefer the prebuilt, signed module packages and fall back to DKMS where the
+# archive has none. The flavour metapackage follows the newest installed
+# kernel only, so a host still running an older kernel (updates installed,
+# not yet rebooted) also needs that kernel's own package.
 - name: Install the v4l2loopback kernel module
   when: _streamstack_v4l2loopback_modinfo.rc != 0
   block:
     - name: Install the prebuilt v4l2loopback module package
       ansible.builtin.apt:
-        name: linux-modules-v4l2loopback-generic
+        name:
+          - linux-modules-v4l2loopback-generic
+          - "linux-main-modules-v4l2loopback-{{ ansible_facts['kernel'] }}"
         state: present
   rescue:
     - name: Install v4l2loopback through DKMS
