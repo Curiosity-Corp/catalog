@@ -214,8 +214,12 @@
   when: _systemd_default_target.stdout | trim != 'graphical.target'
   changed_when: true
 
+# Reload first: systemd still holds the display-manager.service alias it
+# loaded for gdm3, and refuses to load lightdm.service ("File exists") until
+# it rereads the repointed link.
 - name: Enable and start LightDM
   ansible.builtin.systemd_service:
     name: lightdm
     enabled: true
     state: started
+    daemon_reload: true

@@ -19,6 +19,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- LightDM still failed to start right after the role repointed `display-manager.service` from gdm3: systemd kept the stale alias and refused to load `lightdm.service` ("File exists") until a daemon reload. The enable task now reloads systemd first.
 - Fresh Ubuntu Server installs never reached LightDM: the desktop package set pulls gdm3 in as a recommend, gdm3 claims `display-manager.service`, and enabling lightdm failed ("display-manager.service already exists and is a symlink to gdm3.service"). The role now selects LightDM in debconf (`shared/default-x-display-manager`) and repoints the alias before enabling it.
 - `deskmeet-b760`: a host-level `dns_over_tls_interfaces` overrides the profile's list, for boards whose Wi-Fi enumerates under another name (the second DeskMeet's RTL8851BE is `wlp6s0`, not DeskMeet1's `wlp8s0`).
 

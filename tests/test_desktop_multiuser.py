@@ -134,7 +134,7 @@ def test_lightdm_greeter_vt_wrapper_and_service() -> None:
         tasks, "Point LightDM at the X server wrapper"
     )["ansible.builtin.copy"]["content"]
     service = tasks[-1]["ansible.builtin.systemd_service"]
-    assert service == {"name": "lightdm", "enabled": True, "state": "started"}
+    assert service == {"name": "lightdm", "enabled": True, "state": "started", "daemon_reload": True}
     assert all("failed_when" not in task for task in tasks)
 
     # A hand-installed wrapper at the same path must survive a default pull.
@@ -655,3 +655,4 @@ def test_lightdm_takes_display_manager_from_gdm3() -> None:
     enable = names.index("Enable and start LightDM")
     assert names.index(select["name"]) < names.index("Set LightDM as default display manager")
     assert names.index("Point display-manager.service at LightDM") < enable
+    assert tasks[enable]["ansible.builtin.systemd_service"]["daemon_reload"] is True
