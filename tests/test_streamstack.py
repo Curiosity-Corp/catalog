@@ -67,6 +67,15 @@ def test_main_includes_streamstack_for_desktops_only() -> None:
     assert "workstation_profile == 'desktop'" in task["when"]
 
 
+def test_module_install_covers_the_running_kernel_before_a_reboot() -> None:
+    """The flavour metapackage tracks the newest kernel; the running one needs its own."""
+    block = next(t for t in TASKS if t.get("name") == "Install the v4l2loopback kernel module")
+    names = block["block"][0]["ansible.builtin.apt"]["name"]
+    assert "linux-modules-v4l2loopback-generic" in names
+    assert "linux-main-modules-v4l2loopback-{{ ansible_facts['kernel'] }}" in names
+    assert block["rescue"][0]["ansible.builtin.apt"]["name"] == "v4l2loopback-dkms"
+
+
 def test_loopback_options_make_two_browser_visible_cameras() -> None:
     content = _render(_task("Configure the StreamStack loopback cameras")["ansible.builtin.copy"]["content"])
     (options,) = [line for line in content.splitlines() if line.startswith("options")]
