@@ -990,6 +990,89 @@ minimal_desktop_display_scale: "{{ (hardware_profiles.get(hardware_profile, {}))
 # from the hardware profile's `broadcast_rgb`.
 minimal_desktop_display_broadcast_rgb: "{{ (hardware_profiles.get(hardware_profile, {})).get('broadcast_rgb', '') }}"
 
+# StreamStack call/stream studio (tasks/streamstack.yml, docs/streamstack.md).
+# Derived from the selected hardware profile's optional `streamstack` flag; set
+# `streamstack_enabled: true` in /etc/ansible/local-vars.yml on any desktop that
+# runs Teams/Zoom calls or streams with a DSLR, capture card or USB microphone.
+# Installs OBS Studio, Easy Effects (with the LSP/Calf plugin sets), qpwgraph
+# and camera tools, creates two exclusive_caps loopback cameras (the camera
+# bridge and the OBS virtual camera), and seeds per-user OBS scenes and voice
+# presets without ever overwriting a user's own changes.
+streamstack_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('streamstack', false) | bool }}"
+streamstack_camera_video_nr: 42
+streamstack_camera_label: Canon EOS 50D
+# Adopt a camera node another tool on the host already owns and feeds (its own
+# v4l2loopback options and service): set streamstack_camera_video_nr/_label to
+# that node. StreamStack then writes no module options, runs no bridge, and only
+# adds its program node next to it at run time and at boot.
+streamstack_camera_external: false
+streamstack_program_video_nr: 43
+streamstack_program_label: StreamStack Camera
+# OBS canvas/output and Canon bridge frame. Teams sends at most 1080p30 and
+# Zoom at most 1080p30 (HD on), so higher rates only cost CPU.
+streamstack_width: 1920
+streamstack_height: 1080
+streamstack_fps: 30
+# gphoto2: Canon live view through `gphoto2 --capture-movie | ffmpeg` (works for
+# EOS bodies gphoto2 supports). command: run streamstack_canon_bridge_command
+# instead, with STREAMSTACK_CAMERA_DEVICE set (for example a PTP tool with
+# exposure control). none: no bridge (HDMI cameras through the Cam Link only).
+streamstack_canon_bridge: gphoto2
+streamstack_canon_bridge_command: ""
+# Start the Canon bridge at login. Off by default: `streamstack studio` starts
+# it on demand, so an unplugged camera never leaves a restarting unit behind.
+streamstack_canon_bridge_autostart: false
+# Run Easy Effects in the background so "Easy Effects Source" is always there.
+streamstack_easyeffects_autostart: true
+streamstack_voice_preset: StreamStack Voice
+# Part of the call microphone's PipeWire name or description (auto mode levels
+# it, mic-check records it). Empty picks an Elgato Wave, then the default input;
+# a configured microphone that is unplugged is never replaced by a guess.
+streamstack_microphone: ""
+# Auto mode (`streamstack auto on|off`, or the panel menu): local loops keep
+# exposure and microphone gain right every streamstack_auto_interval seconds,
+# and every streamstack_auto_ai_interval seconds one camera still (never audio)
+# and the measured statistics go to Claude, whose bounded changes (contrast,
+# saturation, warmth, LUT, sharpening, voice preset) are ramped in. Backends:
+# claude-cli (the signed-in Claude Code CLI, i.e. the user's subscription),
+# api (ANTHROPIC_API_KEY from ~/.config/streamstack/auto.env) or local.
+streamstack_auto_backend: claude-cli
+streamstack_auto_model: ""
+streamstack_auto_interval: 15
+streamstack_auto_ai_interval: 300
+streamstack_auto_video: true
+streamstack_auto_audio: true
+streamstack_auto_notify: true
+streamstack_auto_autostart: false
+# The StreamStack menu (start/stop the studio, voice presets, every camera and
+# mode to preview, mic check, the doctor) is always in the application menu as
+# `streamstack-tray --menu`, for a panel button or hotkey. This also starts it
+# as a system tray icon at login; off by default because some tint2 builds
+# crash when a GTK status icon docks.
+streamstack_tray_autostart: false
+# USB vendor:product ids that get the /dev/streamstack/camlink symlink.
+streamstack_camlink_usb_ids:
+  - "0fd9:0066"  # Elgato Cam Link 4K
+streamstack_packages:
+  - obs-studio
+  - easyeffects
+  - lsp-plugins-lv2
+  - calf-plugins
+  - qpwgraph
+  - pavucontrol
+  - pulseaudio-utils
+  - v4l-utils
+  - qv4l2
+  - guvcview
+  - v4l2loopback-utils
+  - gphoto2
+  - ffmpeg
+  - python3-gi
+  - gir1.2-gtk-3.0
+  - gir1.2-ayatanaappindicator3-0.1
+  - libnotify-bin
+  - python3-websocket
+
 hardware_profiles:
   generic:
     description: "Generic developer workstation (no hardware-specific drivers)"
@@ -1126,6 +1209,10 @@ hardware_profiles:
     logitech_g604: true
     # Samsung QN55QN700B TV: install the curiosity-tv remote-control CLI.
     samsung_tv_cli: true
+    # Canon EOS 50D + Cam Link + Wave desk studio: StreamStack owns the
+    # loopback cameras (video42 "Canon EOS 50D" and video43 "StreamStack
+    # Camera") and their udev access.
+    streamstack: true
     # The G604's left switch chatters (spurious double-clicks): require a
     # quick, deliberate double-click instead of the 500 ms default.
     double_click_ms: 200
@@ -1172,16 +1259,8 @@ hardware_profiles:
         content: |
           # Canon EOS 50D (04a9:319b) — gphoto2 access; keep udisks from mounting it
           SUBSYSTEM=="usb", ATTR{idVendor}=="04a9", ATTR{idProduct}=="319b", MODE="0660", GROUP="plugdev", TAG+="uaccess", ENV{UDISKS_IGNORE}="1"
-      - name: 60-v4l2loopback-camera
-        content: |
-          # v4l2loopback virtual camera node. Match on KERNEL only: ATTR{name}
-          # is not populated yet when the add event is processed.
-          SUBSYSTEM=="video4linux", KERNEL=="video42", GROUP="video", MODE="0660", TAG+="uaccess"
     # /etc/modprobe.d/<name>.conf files
     modprobe_options:
-      - name: curiosity-v4l2loopback
-        content: |
-          options v4l2loopback video_nr=42 card_label="Canon EOS 50D" exclusive_caps=1
       # The patched i915 stays built, but its 4:4:4 path is off by default:
       # with it on (8K30 RGB 8 bpc, DSC 14 bpp over HBR2) the TV dropped the
       # signal about once a minute while the PCON still reported the link up

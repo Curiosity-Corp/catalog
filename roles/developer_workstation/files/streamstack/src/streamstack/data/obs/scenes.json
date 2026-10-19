@@ -1,0 +1,288 @@
+{
+    "name": "StreamStack",
+    "current_scene": "Canon",
+    "current_program_scene": "Canon",
+    "scene_order": [
+        {
+            "name": "Canon"
+        },
+        {
+            "name": "Cam Link"
+        },
+        {
+            "name": "Side by Side"
+        },
+        {
+            "name": "Be Right Back"
+        }
+    ],
+    "sources": [
+        {
+            "id": "v4l2_input",
+            "versioned_id": "v4l2_input",
+            "name": "Canon EOS 50D",
+            "enabled": true,
+            "settings": {
+                "device_id": "@CAMERA_DEVICE@",
+                "buffering": false,
+                "auto_reset": true,
+                "timeout_frames": 10
+            },
+            "filters": [
+                {
+                    "id": "color_filter_v2",
+                    "name": "Lighting & Color",
+                    "enabled": true,
+                    "settings": {}
+                },
+                {
+                    "id": "sharpness_filter_v2",
+                    "name": "Sharpen",
+                    "enabled": false,
+                    "settings": {
+                        "sharpness": 0.08
+                    }
+                },
+                {
+                    "id": "clut_filter",
+                    "name": "Cinematic LUT",
+                    "enabled": false,
+                    "settings": {
+                        "image_path": "/usr/share/obs/obs-plugins/obs-filters/LUTs/teal_lows_orange_highs.png",
+                        "clut_amount": 0.35
+                    }
+                }
+            ],
+            "mixers": 0
+        },
+        {
+            "id": "v4l2_input",
+            "versioned_id": "v4l2_input",
+            "name": "Cam Link 4K",
+            "enabled": true,
+            "settings": {
+                "device_id": "@CAMLINK_DEVICE@",
+                "buffering": false,
+                "auto_reset": true,
+                "timeout_frames": 10
+            },
+            "filters": [
+                {
+                    "id": "color_filter_v2",
+                    "name": "Lighting & Color",
+                    "enabled": true,
+                    "settings": {}
+                },
+                {
+                    "id": "sharpness_filter_v2",
+                    "name": "Sharpen",
+                    "enabled": false,
+                    "settings": {
+                        "sharpness": 0.08
+                    }
+                },
+                {
+                    "id": "clut_filter",
+                    "name": "Cinematic LUT",
+                    "enabled": false,
+                    "settings": {
+                        "image_path": "/usr/share/obs/obs-plugins/obs-filters/LUTs/teal_lows_orange_highs.png",
+                        "clut_amount": 0.35
+                    }
+                }
+            ],
+            "mixers": 0
+        },
+        {
+            "id": "pulse_input_capture",
+            "versioned_id": "pulse_input_capture",
+            "name": "Voice (Easy Effects)",
+            "enabled": true,
+            "settings": {
+                "device_id": "easyeffects_source"
+            },
+            "mixers": 255,
+            "volume": 1.0
+        },
+        {
+            "id": "text_ft2_source",
+            "versioned_id": "text_ft2_source_v2",
+            "name": "Be Right Back Text",
+            "enabled": true,
+            "settings": {
+                "text": "Be right back",
+                "font": {
+                    "face": "Sans Serif",
+                    "size": 96,
+                    "style": "Bold",
+                    "flags": 1
+                },
+                "color1": 4294967295,
+                "color2": 4294967295,
+                "outline": true,
+                "drop_shadow": true
+            }
+        },
+        {
+            "id": "scene",
+            "versioned_id": "scene",
+            "name": "Canon",
+            "enabled": true,
+            "mixers": 0,
+            "settings": {
+                "items": [
+                    {
+                        "name": "Canon EOS 50D",
+                        "visible": true,
+                        "locked": false,
+                        "rot": 0.0,
+                        "align": 5,
+                        "pos": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "scale": {
+                            "x": 1.0,
+                            "y": 1.0
+                        },
+                        "bounds_type": 2,
+                        "bounds_align": 0,
+                        "bounds": {
+                            "x": @WIDTH@,
+                            "y": @HEIGHT@
+                        }
+                    }
+                ],
+                "id_counter": 1
+            }
+        },
+        {
+            "id": "scene",
+            "versioned_id": "scene",
+            "name": "Cam Link",
+            "enabled": true,
+            "mixers": 0,
+            "settings": {
+                "items": [
+                    {
+                        "name": "Cam Link 4K",
+                        "visible": true,
+                        "locked": false,
+                        "rot": 0.0,
+                        "align": 5,
+                        "pos": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "scale": {
+                            "x": 1.0,
+                            "y": 1.0
+                        },
+                        "bounds_type": 2,
+                        "bounds_align": 0,
+                        "bounds": {
+                            "x": @WIDTH@,
+                            "y": @HEIGHT@
+                        }
+                    }
+                ],
+                "id_counter": 1
+            }
+        },
+        {
+            "id": "scene",
+            "versioned_id": "scene",
+            "name": "Side by Side",
+            "enabled": true,
+            "mixers": 0,
+            "settings": {
+                "items": [
+                    {
+                        "name": "Canon EOS 50D",
+                        "visible": true,
+                        "locked": false,
+                        "rot": 0.0,
+                        "align": 5,
+                        "pos": {
+                            "x": 0,
+                            "y": @QUARTER_HEIGHT@
+                        },
+                        "scale": {
+                            "x": 1.0,
+                            "y": 1.0
+                        },
+                        "bounds_type": 2,
+                        "bounds_align": 0,
+                        "bounds": {
+                            "x": @HALF_WIDTH@,
+                            "y": @HALF_HEIGHT@
+                        }
+                    },
+                    {
+                        "name": "Cam Link 4K",
+                        "visible": true,
+                        "locked": false,
+                        "rot": 0.0,
+                        "align": 5,
+                        "pos": {
+                            "x": @HALF_WIDTH@,
+                            "y": @QUARTER_HEIGHT@
+                        },
+                        "scale": {
+                            "x": 1.0,
+                            "y": 1.0
+                        },
+                        "bounds_type": 2,
+                        "bounds_align": 0,
+                        "bounds": {
+                            "x": @HALF_WIDTH@,
+                            "y": @HALF_HEIGHT@
+                        }
+                    }
+                ],
+                "id_counter": 2
+            }
+        },
+        {
+            "id": "scene",
+            "versioned_id": "scene",
+            "name": "Be Right Back",
+            "enabled": true,
+            "mixers": 0,
+            "settings": {
+                "items": [
+                    {
+                        "name": "Be Right Back Text",
+                        "visible": true,
+                        "locked": false,
+                        "rot": 0.0,
+                        "align": 5,
+                        "pos": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "scale": {
+                            "x": 1.0,
+                            "y": 1.0
+                        },
+                        "bounds_type": 2,
+                        "bounds_align": 0,
+                        "bounds": {
+                            "x": @WIDTH@,
+                            "y": @HEIGHT@
+                        }
+                    }
+                ],
+                "id_counter": 1
+            }
+        }
+    ],
+    "groups": [],
+    "transitions": [],
+    "current_transition": "Fade",
+    "transition_duration": 300,
+    "modules": {},
+    "quick_transitions": [],
+    "saved_projectors": [],
+    "preview_locked": false
+}

@@ -507,6 +507,16 @@
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - samsung_tv_cli_enabled | bool
 
+- name: Configure the StreamStack call and stream studio
+  ansible.builtin.include_tasks:
+    file: streamstack.yml
+    apply:
+      tags: [hardware, streamstack]
+  tags: [hardware, streamstack]
+  when:
+    - workstation_profile == 'desktop'
+    - streamstack_enabled | bool
+
 - name: Include the patched i915 module for an HDMI 2.1 PCON
   ansible.builtin.include_tasks: i915-pcon-frl-444.yml
   tags: [hardware, i915]

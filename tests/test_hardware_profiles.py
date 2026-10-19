@@ -106,22 +106,15 @@ def test_deskmeet_b760_udev_rules_cover_the_desk_peripherals() -> None:
         'ENV{UDISKS_IGNORE}="1"',
     ):
         assert fragment in canon
-    loopback = next(c for c in rules.values() if "video4linux" in c)
-    assert 'KERNEL=="video42"' in loopback
-    # ATTR{name} is not populated yet when the add event is processed.
-    active = [l for l in loopback.splitlines() if not l.lstrip().startswith("#")]
-    assert active and not any("ATTR{name}" in line for line in active)
-    assert 'GROUP="video"' in loopback
+    # The loopback camera nodes belong to StreamStack (tests/test_streamstack.py).
+    assert not any("video4linux" in c for c in rules.values())
 
 
-def test_deskmeet_b760_loopback_options_match_the_udev_node() -> None:
+def test_deskmeet_b760_hands_the_loopback_cameras_to_streamstack() -> None:
     profile = _profiles()["deskmeet-b760"]
-    (options,) = [o for o in profile["modprobe_options"] if "v4l2loopback" in o["content"]]
-    assert re.fullmatch(r"[a-z0-9-]+", options["name"])
-    assert (
-        options["content"].strip()
-        == 'options v4l2loopback video_nr=42 card_label="Canon EOS 50D" exclusive_caps=1'
-    )
+    assert profile["streamstack"] is True
+    # Two modprobe files setting v4l2loopback options would fight each other.
+    assert not [o for o in profile["modprobe_options"] if "v4l2loopback" in o["content"]]
 
 
 def test_modprobe_and_module_entries_are_well_formed() -> None:
