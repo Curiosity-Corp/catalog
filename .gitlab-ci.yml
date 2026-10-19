@@ -11,6 +11,10 @@ stages:
   - package
 
 variables:
+  # The Secret-Detection template skips merge request pipelines unless this is
+  # "true"; without it secret_detection would never run now that feature
+  # branches only get MR pipelines.
+  AST_ENABLE_MR_PIPELINES: "true"
   ANSIBLE_FORCE_COLOR: "1"
   ANSIBLE_NOCOLOR: "0"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -28,11 +32,31 @@ variables:
     - python -m pip install ansible-core ansible-lint yamllint pyyaml pytest
     - ansible-galaxy collection install -r requirements.yml
 
+# One pipeline per change: merge request pipelines for feature branches, branch
+# pipelines only for the default branch. A plain push to a branch that has (or
+# will have) a merge request does not start a second, identical pipeline.
 workflow:
+  auto_cancel:
+    on_new_commit: interruptible
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME != $CI_DEFAULT_BRANCH
+      auto_cancel:
+        on_job_failure: all
     - if: $CI_COMMIT_TAG
+      auto_cancel:
+        on_new_commit: none
+    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE =~ /^(schedule|web|api)$/
+
+# Validate/test/security jobs are safe to cancel when a newer commit supersedes
+# them; the package jobs below opt out so artifacts are never half-built.
+default:
+  interruptible: true
+
+# Included template job: set explicitly by name so it stays cancellable even if
+# the template changes. Its own rules (MR and branch pipelines) are untouched.
+secret_detection:
+  interruptible: true
 
 yaml:
   extends: .python_setup
@@ -67,11 +91,13 @@ policy:
       tests/test_healthcheck_disabled_apps.py tests/test_litra_cli.py
       tests/test_minimal_desktop_panel.py tests/test_bitwarden_desktop.py
       tests/test_deskmeet_8k_display.py tests/test_samsung_tv_cli.py
+      tests/test_pro_mimic.py tests/test_firewall_posture.py
       tests/test_streamstack.py
 
 collection:
   extends: .python_setup
   stage: package
+  interruptible: false
   script:
     - ansible-galaxy collection build --force
     - python scripts/normalize_collection_artifact.py "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
@@ -85,6 +111,7 @@ collection:
 sbom:
   extends: .python_setup
   stage: package
+  interruptible: false
   needs:
     - job: collection
       artifacts: true
@@ -99,6 +126,7 @@ sbom:
 provenance:
   extends: .python_setup
   stage: package
+  interruptible: false
   needs:
     - job: collection
       artifacts: true

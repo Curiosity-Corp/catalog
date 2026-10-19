@@ -446,7 +446,10 @@
       workstation_profile in ['thin-client', 'byod-kiosk'] or
       (
         workstation_profile == 'desktop' and
-        (firewall_enabled | default(false))
+        (
+          (firewall_enabled | default(false) | bool) or
+          (hardware_profiles[hardware_profile].firewall | default(false) | bool)
+        )
       )
 
 - name: Include Keycloak SSO (authd + authd-oidc)
