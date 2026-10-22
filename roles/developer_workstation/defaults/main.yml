@@ -1259,7 +1259,8 @@ hardware_profiles:
     disable_sleep: true
     performance_mode: true
     # Litra Beam lightbar (046d:c901): install the `litra` CLI; the hidraw
-    # access it needs is granted by the 60-logitech-litra udev rule below.
+    # access it needs is granted by the 60-logitech-litra udev rule below
+    # (Glow, Beam and Beam LX).
     litra_cli: true
     # Logitech G604 mouse: wheel tilt = copy/paste, a thumb button toggles the
     # Litra lightbar (see logitech_g604_* variables).
@@ -1309,9 +1310,18 @@ hardware_profiles:
           SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", TAG+="uaccess", GROUP="plugdev", MODE="0660"
       - name: 60-logitech-litra
         content: |
-          # Logitech Litra Beam (046d:c901) — allow console-user and plugdev access
+          # Logitech Litra lights (timrogers/litra-rs ids, same set as StreamStack's
+          # 60-streamstack-litra.rules): Glow c900, Beam c901 and b901, Beam LX c903.
+          # Matched by exact product id; other Logitech devices (the Lightspeed
+          # receiver 046d:c539, the G604) are never touched.
+          SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c900", TAG+="uaccess", GROUP="plugdev", MODE="0660"
           SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c901", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+          SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="b901", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+          SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="c903", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c900", TAG+="uaccess", GROUP="plugdev", MODE="0660"
           SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c901", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="b901", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c903", TAG+="uaccess", GROUP="plugdev", MODE="0660"
       - name: 60-canon-eos-50d
         content: |
           # Canon EOS 50D (04a9:319b) — gphoto2 access; keep udisks from mounting it
