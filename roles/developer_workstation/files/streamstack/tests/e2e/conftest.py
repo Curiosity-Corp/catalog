@@ -167,6 +167,8 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             rig.act("video.scene", name=base["scene"])
         if s["video"]["selected_source"] != base["source"]:
             rig.act("video.source", name=base["source"])
+        if not all(engine["available"] for engine in s["audio"]["denoise"]["engines"]):
+            rig.act("audio.demo_deepfilternet", on=True)  # the demo rig may have lost its DeepFilterNet library
         if s["audio"]["chain"]["preset"] != base["preset"] or s["audio"]["tone"]["custom"]:
             rig.act("audio.preset", name=base["preset"])
         for source in s["video"]["sources"]:
@@ -187,6 +189,14 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             rig.act("video.stream", on=False)
         if s["video"]["virtualcam"] != base["virtualcam"]:
             rig.act("video.virtualcam", on=base["virtualcam"])
+        auto = s["lighting"]["automation"]
+        if auto["status"]["session"] or auto["status"]["camera"]["in_use"]:
+            rig.act("lighting.auto.follow", enabled=False)  # a running camera session ends without touching the lights
+            rig.act("lighting.demo.camera", on=False)
+            poll(rig, lambda st: st["lighting"]["automation"]["status"]["session"] is None)
+        rig.act("lighting.demo.director", on=False)
+        rig.act("lighting.auto.defaults", what="all")
+        rig.act("lighting.auto.schedule", enabled=False)  # the demo lights stay where the specs put them
         for light in s["lighting"]["lights"]:
             start = LIGHT_BASELINE.get(light["id"])
             if start is None:

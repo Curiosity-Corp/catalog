@@ -184,6 +184,7 @@ is treble; Pitch: semitones).
 | StreamStack Voice Bright | more presence and air for dark mics |
 | StreamStack Voice Deep | pitch down 2 semitones, extra body |
 | StreamStack Voice Minimal | only high-pass, gentle compression and the limiter |
+| StreamStack Voice DeepFilterNet | the default voice with DeepFilterNet noise removal (about 30 ms more delay); needs the DeepFilterNet LADSPA plugin, see docs/voice-denoise.md |
 
 `streamstack setup` never overwrites your own changes; `streamstack setup
 --force` restores the shipped presets and OBS defaults.

@@ -35,8 +35,8 @@ lint:
   stage: test
   script:
     - python -m pip install "ruff>=0.6"
-    - ruff check src tests
-    - ruff format --check src tests
+    - ruff check src tests tools
+    - ruff format --check src tests tools
 
 test:
   extends: .venv
@@ -46,7 +46,7 @@ test:
       - PYTHON_IMAGE: ["python:3.10-slim", "python:3.13-slim"]
   image: $PYTHON_IMAGE
   script:
-    - python -m pip install -e ".[dev,auto,framing]"
+    - python -m pip install -e ".[dev,auto,framing,bench]"
     # The real-backend framing tests need the face model; they skip, not fail, when the download is unreachable.
     - python -m streamstack framing --fetch || echo "face model not fetched; real-backend framing tests will skip"
     - python -m pytest --cov=streamstack --cov-report=term --cov-report=xml:coverage.xml --junitxml=report.xml

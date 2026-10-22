@@ -442,3 +442,12 @@ def test_api_drives_the_lights_and_reports_errors(server: ConsoleServer) -> None
     assert status == 400 and "percent must be a number" in body["error"]
     status, body = call(server, "POST", "/api/action", {"action": "lighting.power", "id": "ghost", "on": True})
     assert status == 400 and "No light called" in body["error"]
+
+
+def test_a_preset_matches_within_the_light_rounding(bench: Bench, tmp_path: Path) -> None:
+    ctl = controller(bench, tmp_path)
+    ctl.act("lighting.preset", {"name": "Soft"})
+    soft = next(p for p in ctl.state()["presets"] if p["name"] == "Soft")
+    assert ctl.state()["preset"] == "Soft"
+    ctl.act("lighting.brightness", {"id": "c901-a", "percent": soft["brightness"] + 2})
+    assert ctl.state()["preset"] == "Soft"  # a lumen step or two is not a different preset

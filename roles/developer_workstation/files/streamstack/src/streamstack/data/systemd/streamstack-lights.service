@@ -1,0 +1,19 @@
+# StreamStack lights: camera follow and the daylight schedule for Litra lights, with the Console closed.
+# `streamstack lights enable|disable|status`, or the Lighting page.
+[Unit]
+Description=StreamStack lights (camera follow and daylight schedule for Litra lights)
+After=graphical-session.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=@STREAMSTACK@ lights run
+Restart=on-failure
+RestartSec=5
+Nice=5
+CPUWeight=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=graphical-session.target

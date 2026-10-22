@@ -2,7 +2,9 @@
 //
 // Left: the "All lights" master strip. Right: one card per light with a big power pad, a brightness fader and a
 // colour-temperature fader whose track is a warm to cool gradient. Below: presets as pads and "save your own".
-// Keys on this page: none of its own; L (every light on / off) is global. Alt+6 comes here.
+// Below the lights: lighting automation (pages/lighting-auto.js): camera follow, the daylight schedule, per-light
+// names, roles and limits, and the status line that says why the lights are as they are.
+// Keys on this page: F camera follow, S schedule, R resume the schedule; L (every light on / off) is global. Alt+6 comes here.
 //
 // Data flow: one static DOM for the master and presets, keyed cards for the lights (they come and go with the USB
 // bus), fine-grained store subscriptions. Faders stream `lighting.brightness` / `lighting.temperature`; the store
@@ -11,11 +13,13 @@
 import { h, renderList } from '../core/util.js';
 import { iconHTML } from '../components/icons.js';
 import { toggleLights, selectLightPreset } from '../core/ops.js';
+import { mountAutomation, kelvinColor } from './lighting-auto.js';
 
-const WARM_COOL = 'linear-gradient(to top, #ff9d4d, #ffe2bd 30%, #fff4e5 55%, #dbe9ff 80%, #b9d3ff)';
+const WARM_COOL = 'linear-gradient(to right, #ff9d4d, #ffe2bd 30%, #fff4e5 55%, #dbe9ff 80%, #b9d3ff)';
 
 const TEMPLATE = `
 <div class="li">
+  <div class="la-status-host" data-ref="autoStatus"></div>
   <div class="li-notice" role="alert" data-ref="notice" hidden>
     <strong data-ref="noticeTitle"></strong>
     <p data-ref="noticeText"></p>
@@ -28,8 +32,8 @@ const TEMPLATE = `
         <div class="strip">
           <ss-pad big solid tone="amber" row icon="power" label="All lights" sub="Every light together" hotkey="L" data-ref="masterPower"></ss-pad>
           <div class="faders">
-            <ss-fader data-ref="masterBrightness" label="Brightness" unit="%" min="1" max="100" step="1" default="70" accent="amber"></ss-fader>
-            <ss-fader data-ref="masterKelvin" class="kelvin" label="Temperature" unit="K" min="2700" max="6500" step="100" default="4500" accent="amber" ticks="2700,4000,5500,6500"></ss-fader>
+            <ss-fader data-ref="masterBrightness" orientation="horizontal" label="Brightness" unit="%" min="1" max="100" step="1" default="70" accent="amber" ticks="1,25,50,75,100"></ss-fader>
+            <ss-fader data-ref="masterKelvin" orientation="horizontal" class="kelvin" label="Temperature" unit="K" min="2700" max="6500" step="100" default="4500" accent="amber" ticks="2700,3500,4500,5500,6500"></ss-fader>
           </div>
           <p class="hint" data-ref="masterNote">Moves every connected light to the same value.</p>
         </div>
@@ -58,11 +62,13 @@ const TEMPLATE = `
       <p class="hint" data-ref="saveNote" role="status"></p>
     </form>
   </ss-card>
+
+  <div class="la" data-ref="autoPanels"></div>
 </div>`;
 
 const modelLine = (l) => {
   const bits = [l.model];
-  if (l.lumen && l.connected) bits.push(`${l.lumen} lm`);
+  if (l.lumen && l.connected) bits.push(`${Math.round(l.brightness)}% = ${l.lumen} lm`);
   return bits.join(' · ');
 };
 
@@ -78,8 +84,7 @@ export async function mount(host, ctx) {
   const sub = (selector, cb) => off.push(store.subscribe(selector, cb));
   const lighting = () => store.state.lighting;
 
-  R.masterBrightness.style.setProperty('--fader-w', '3rem');
-  for (const f of [R.masterKelvin]) {
+    for (const f of [R.masterKelvin]) {
     f.style.setProperty('--fader-groove', WARM_COOL);
     f.style.setProperty('--fader-fill-opacity', '0');
     f.style.setProperty('--fader-groove-h', '0.9rem');
@@ -137,16 +142,22 @@ export async function mount(host, ctx) {
   // ---------- one card per light ----------
   const create = (l) => {
     const power = h('ss-pad', { big: true, solid: true, row: true, tone: 'amber', icon: 'power', label: 'Power' });
-    const brightness = h('ss-fader', { label: 'Brightness', unit: '%', min: 1, max: 100, step: 1, default: 70, accent: 'amber' });
-    const kelvin = h('ss-fader', { label: 'Temperature', unit: 'K', min: 2700, max: 6500, step: 100, default: 4500, accent: 'amber', ticks: '2700,4000,5500,6500', class: 'kelvin' });
+    const brightness = h('ss-fader', { orientation: 'horizontal', label: 'Brightness', unit: '%', min: 1, max: 100, step: 1, default: 70, accent: 'amber', ticks: '1,25,50,75,100' });
+    const kelvin = h('ss-fader', { orientation: 'horizontal', label: 'Temperature', unit: 'K', min: 2700, max: 6500, step: 100, default: 4500, accent: 'amber', ticks: '2700,3500,4500,5500,6500', class: 'kelvin' });
     kelvin.style.setProperty('--fader-groove', WARM_COOL);
     kelvin.style.setProperty('--fader-fill-opacity', '0');
     kelvin.style.setProperty('--fader-groove-h', '0.9rem');
     const identify = h('ss-button', { size: 'sm', variant: 'ghost', icon: 'lights', title: 'Pulse this light so you can tell which one it is' }, 'Identify');
     const model = h('span', { class: 'dev' });
+    const glow = h('div', { class: 'glow', 'aria-hidden': 'true' });
+    const readPct = h('span', { class: 'read-big' });
+    const readSub = h('span', { class: 'read-sub' });
     const card = h('ss-card', { icon: 'lights' },
       h('span', { slot: 'actions', class: 'dev' }),
-      h('div', { class: 'strip' }, power, h('div', { class: 'faders' }, brightness, kelvin), h('div', { class: 'foot' }, model, identify)));
+      h('div', { class: 'strip' },
+        h('div', { class: 'tile' }, glow, h('div', { class: 'read' }, readPct, readSub), power),
+        h('div', { class: 'faders' }, brightness, kelvin),
+        h('div', { class: 'foot' }, model, identify)));
     const section = h('section', { class: 'li-light', role: 'region' }, card);
     const id = () => section.dataset.key;
     power.addEventListener('click', () => {
@@ -156,11 +167,11 @@ export async function mount(host, ctx) {
     wire(brightness, 'lighting.brightness', 'percent', id, true);
     wire(kelvin, 'lighting.temperature', 'kelvin', id, true);
     identify.addEventListener('click', () => act('lighting.identify', { id: id() }));
-    section.refs = { card, power, brightness, kelvin, identify, model };
+    section.refs = { card, power, brightness, kelvin, identify, model, glow, readPct, readSub };
     return section;
   };
   const update = (section, l) => {
-    const { card, power, brightness, kelvin, identify, model } = section.refs;
+    const { card, power, brightness, kelvin, identify, model, glow, readPct, readSub } = section.refs;
     section.setAttribute('aria-label', l.name);
     card.setAttribute('heading', l.name);
     card.querySelector('[slot="actions"]').textContent = l.connected ? (l.identifying ? 'Blinking' : (l.power ? 'On' : 'Off')) : 'Not available';
@@ -176,6 +187,11 @@ export async function mount(host, ctx) {
     kelvin.setAttribute('max', hi);
     kelvin.setAttribute('step', lighting().kelvin_step);
     model.textContent = modelLine(l);
+    glow.style.setProperty('--glow-c', kelvinColor(l.kelvin));
+    glow.style.setProperty('--glow-a', l.power ? String(0.25 + 0.75 * (l.brightness / 100)) : '0.06');
+    glow.dataset.on = l.power ? 'on' : 'off';
+    readPct.textContent = l.brightness == null ? '–' : `${Math.round(l.brightness)}%`;
+    readSub.textContent = `${l.lumen ? `${l.lumen} lm · ` : ''}${l.kelvin ?? '–'} K`;
     identify.toggleAttribute('disabled', !l.connected || l.identifying);
   };
   sub((s) => [s.lighting.lights, s.lighting.kelvin_range], ([lights]) => {
@@ -225,6 +241,7 @@ export async function mount(host, ctx) {
     if (name) { act('lighting.presets.delete', { name }); R.saveNote.textContent = `Deleted "${name}".`; }
   });
 
+  off.push(mountAutomation(R.autoStatus, R.autoPanels, ctx));
   off.push(registerCommands(() => [
     { id: 'Lighting:rescan', group: 'Lighting', title: 'Look for lights again', icon: 'refresh', keywords: 'lights litra rescan usb', run: () => act('lighting.rescan') },
   ]));

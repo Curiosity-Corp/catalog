@@ -100,6 +100,70 @@ def test_preset_cards_load_a_preset(au: App, rig: Rig) -> None:
     expect(au.region("Voice presets").get_by_role("button", name=re.compile(re.escape(other["blurb"])))).to_be_visible()
 
 
+def engine_pad(au: App, label: str):
+    """One half of the noise removal A/B pad: named "<engine>, <effect>, about N milliseconds of delay"."""
+    return au.region("Noise removal engine").get_by_role("button", name=re.compile(rf"^{re.escape(label)}, "))
+
+
+def test_noise_removal_pad_shows_both_engines_with_their_delay(au: App, rig: Rig) -> None:
+    rnnoise, deep = engine_pad(au, "RNNoise"), engine_pad(au, "DeepFilterNet")
+    expect(rnnoise).to_contain_text("about 10 ms")
+    expect(deep).to_contain_text("about 40 ms")
+    expect(rnnoise).to_have_attribute("aria-pressed", "true")  # RNNoise is the default: lowest latency
+    expect(deep).to_have_attribute("aria-pressed", "false")
+    assert rig.state()["audio"]["denoise"]["engine"] == "rnnoise"
+    expect(au.slider("Attenuation limit")).to_be_visible()
+
+
+def test_noise_removal_ab_switches_engine_and_attenuation_limit(au: App, page: Page, rig: Rig) -> None:
+    engine_pad(au, "DeepFilterNet").click()
+    assert poll(rig, lambda s: s["audio"]["denoise"]["engine"] == "deepfilternet")
+    expect(engine_pad(au, "DeepFilterNet")).to_have_attribute("aria-pressed", "true")
+    expect(engine_pad(au, "RNNoise")).to_have_attribute("aria-pressed", "false")
+    expect(page.get_by_text("Custom", exact=True)).to_be_visible()
+    # the chosen preset stays; only its noise removal changed
+    assert rig.state()["audio"]["chain"]["preset"] == "StreamStack Voice"
+    knob = au.slider("Attenuation limit")
+    expect(knob).to_have_attribute("aria-valuenow", "100")
+    knob.focus()
+    knob.press("ArrowDown")
+    assert poll(rig, lambda s: s["audio"]["denoise"]["atten_limit_db"] < 100)
+    engine_pad(au, "RNNoise").click()
+    assert poll(rig, lambda s: s["audio"]["denoise"]["engine"] == "rnnoise" and not s["audio"]["denoise"]["custom"])
+    expect(page.get_by_text("Custom", exact=True)).to_be_hidden()
+
+
+def test_server_side_engine_change_reaches_the_pad(au: App, rig: Rig) -> None:
+    rig.act("audio.denoise", engine="deepfilternet")
+    expect(engine_pad(au, "DeepFilterNet")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
+
+
+def test_deepfilternet_preset_card_selects_the_engine(au: App, rig: Rig) -> None:
+    preset_card(au, "Voice DeepFilterNet").click()
+    assert poll(rig, lambda s: s["audio"]["chain"]["preset"] == "StreamStack Voice DeepFilterNet")
+    expect(engine_pad(au, "DeepFilterNet")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
+    preset_card(au, "Voice").click()
+    expect(engine_pad(au, "RNNoise")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
+
+
+def test_missing_deepfilternet_library_disables_it_and_says_why(au: App, rig: Rig) -> None:
+    rig.act("audio.demo_deepfilternet", on=False)
+    deep = engine_pad(au, "DeepFilterNet")
+    expect(deep).to_be_disabled(timeout=LOADED)
+    expect(deep).to_have_attribute("title", re.compile("libdeep_filter_ladspa"))
+    expect(au.page.get_by_role("status").filter(has_text="libdeep_filter_ladspa")).to_be_visible()
+    expect(preset_card(au, "Voice DeepFilterNet")).to_be_disabled()
+    expect(engine_pad(au, "RNNoise")).to_be_enabled()
+
+
+def test_noise_removal_commands_are_in_the_palette(au: App, rig: Rig) -> None:
+    au.press("Control+k")
+    expect(au.palette).to_be_visible()
+    au.palette.get_by_role("combobox").fill("deepfilternet")
+    au.palette.get_by_role("option", name=re.compile("Noise removal: DeepFilterNet")).click()
+    assert poll(rig, lambda s: s["audio"]["denoise"]["engine"] == "deepfilternet")
+
+
 def preset_card(au: App, label: str):
     """A voice preset card: named "<label>. <blurb>" (Voice and Voice Warm share a prefix)."""
     return au.region("Voice presets").get_by_role("button", name=re.compile(rf"^{re.escape(label)}\. "))
