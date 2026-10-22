@@ -1,0 +1,13 @@
+# The Openbox session, for systemd --user. Openbox has no systemd integration,
+# so nothing reaches graphical-session.target and every user unit that is
+# WantedBy= it (StreamStack lights and auto mode, the Ziti tunnel UI) never
+# starts. ~/.config/openbox/autostart starts this target once the session's
+# DISPLAY is published; BindsTo pulls graphical-session.target in with it
+# (that target refuses a manual start of its own). See systemd.special(7).
+[Unit]
+Description=Openbox X session
+Documentation=man:systemd.special(7)
+BindsTo=graphical-session.target
+Before=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
