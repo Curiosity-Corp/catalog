@@ -1051,6 +1051,16 @@ streamstack_auto_autostart: false
 # node), so users on other VTs never fight over it. Settings stay per user in
 # ~/.config/streamstack/lighting-automation.json.
 streamstack_lights_autostart: true
+# Where this property is, for the daylight light schedule and the AI Director's
+# time-of-day moods (sunrise and sunset are computed offline from these). Set
+# per host (host_vars or a host-local override): these desktops keep their
+# clock on UTC, so leaving them empty schedules the lights for Greenwich.
+# Latitude and longitude are decimal degrees (north and east positive), set
+# together or not at all; each person can still override them on the
+# Console's Auto page.
+streamstack_property: ""
+streamstack_latitude: ""
+streamstack_longitude: ""
 # The StreamStack menu (start/stop the studio, voice presets, every camera and
 # mode to preview, mic check, the doctor) is always in the application menu as
 # `streamstack-tray --menu`, for a panel button or hotkey. This also starts it

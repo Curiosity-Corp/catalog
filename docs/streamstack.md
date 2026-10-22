@@ -197,6 +197,16 @@ person tunes it on the Console's Lighting page, and only the person at the
 active seat can reach the light. See the app's
 [docs/lighting.md](../roles/developer_workstation/files/streamstack/docs/lighting.md).
 
+The schedule follows the sun at the property. These desktops keep their clock
+on UTC, so set where each property is per host (host_vars or a host-local
+override), or the lights are scheduled for Greenwich:
+
+```yaml
+streamstack_property: "Main office"
+streamstack_latitude: "40.7128"    # decimal degrees, north positive
+streamstack_longitude: "-74.0060"  # decimal degrees, east positive
+```
+
 ## Laptops: graded or raw
 
 The graded **StreamStack Camera** runs OBS on top of the camera feed: it
