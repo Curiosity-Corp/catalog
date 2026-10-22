@@ -23,6 +23,10 @@ DEFAULTS = {
     "STREAMSTACK_WIDTH": "1920",
     "STREAMSTACK_HEIGHT": "1080",
     "STREAMSTACK_FPS": "30",
+    # Cam Link capture mode: "auto" picks the best the HDMI source offers (1080p60 > 1080p50 > 1080p30, raw before
+    # MJPEG) and the OBS canvas follows it; "off" keeps STREAMSTACK_WIDTH/_HEIGHT/_FPS; "1920x1080@60 YUYV" pins one.
+    "STREAMSTACK_CAMLINK_MODE": "auto",
+    "STREAMSTACK_CAMLINK_4K": "false",
     "STREAMSTACK_CAMERA_EXTERNAL": "false",
     "STREAMSTACK_CANON_BRIDGE": "gphoto2",
     "STREAMSTACK_CANON_COMMAND": "",

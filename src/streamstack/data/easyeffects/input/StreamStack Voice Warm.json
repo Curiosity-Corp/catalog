@@ -196,12 +196,12 @@
             "input-gain": 0.0,
             "output-gain": 0.0,
             "mode": "Herm Thin",
-            "oversampling": "None",
+            "oversampling": "True Peak/24 bit",
             "dithering": "None",
             "lookahead": 5.0,
             "attack": 5.0,
             "release": 20.0,
-            "threshold": -1.5
+            "threshold": -1.0
         },
         "plugins_order": [
             "filter#0",

@@ -1,0 +1,11 @@
+Format Video Capture:
+	Width/Height      : 1920/1080
+	Pixel Format      : 'YUYV' (YUYV 4:2:2)
+	Field             : None
+	Bytes per Line    : 3840
+	Size Image        : 4147200
+	Colorspace        : sRGB
+Streaming Parameters Video Capture:
+	Capabilities     : timeperframe
+	Frames per second: 59.940 (60000/1001)
+	Read buffers     : 0

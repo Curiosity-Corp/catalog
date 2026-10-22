@@ -20,7 +20,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from streamstack import cli, config, system
+from streamstack import camlink, cli, config, system
 from streamstack.console.errors import ActionError
 
 APPS = ("obs", "easyeffects", "qpwgraph", "pavucontrol", "qv4l2")
@@ -130,11 +130,14 @@ def probe_studio(cfg: dict[str, str]) -> dict:
     bridge = system.user_unit_active(cli.CANON_UNIT) or (
         config.camera_external(cfg) and bool(system.loopback_has_producer(camera))
     )
+    sources = system.audio_sources()
     return {
         "running": running,
         "camera_for_calls": cli.call_camera(cfg, running),
         "bridge": bool(bridge),
-        "voice_chain": system.EE_SOURCE in system.audio_sources(),
+        "voice_chain": system.EE_SOURCE in sources,
+        # Re-read every cycle: the card's modes follow the HDMI source, so a camera switched on or to 60 fps shows up.
+        "camlink": camlink.probe(cfg, sources).public(),
     }
 
 
@@ -199,7 +202,13 @@ class StudioController:
         self._runner, self._probe, self._checks = runner, probe, checks
         self._lock = threading.Lock()
         self._busy = {"studio": False, "auto": False}
-        self._studio: dict = {"running": None, "camera_for_calls": None, "bridge": None, "voice_chain": None}
+        self._studio: dict = {
+            "running": None,
+            "camera_for_calls": None,
+            "bridge": None,
+            "voice_chain": None,
+            "camlink": None,
+        }
         self._auto: dict = {"running": None, "can_undo": False, "last_note": None, "last_time": None, "journal": []}
         self._health: dict = {"updated": None, "summary": None, "checks": []}
         self._cpu: float | None = None
@@ -492,7 +501,27 @@ class DemoStudio:
                 "1920x1080 YUYV @ 30 fps" if live else "",
                 "" if live else "start it: streamstack studio",
             ),
-            item("video", "camlink", "warn", "no Elgato Cam Link 4K found", hint="plug it into a USB 3 port (blue)"),
+            item(
+                "video",
+                "camlink",
+                "ok",
+                "Elgato Cam Link on /dev/video0: 1080p59.94 YUYV",
+                "offers 1080p59.94 YUYV, 1080p29.97 YUYV",
+            ),
+            item(
+                "video",
+                "encoder",
+                "ok",
+                "OBS encodes with AV1 on the GPU (VA-API)",
+                "av1_ffmpeg_vaapi_tex: /dev/dri/renderD128, Intel iHD driver, low-power mode",
+            ),
+            item(
+                "audio",
+                "camlink-audio",
+                "ok",
+                "Cam Link HDMI audio is the camera's sound, not a call microphone",
+                "Cam Link 4K Digital Stereo",
+            ),
             item("audio", "microphone", "ok", "call microphone", "Wave:3"),
             item("audio", "voice-chain", "ok", "Easy Effects Source (processed voice) is available"),
             item("apps", "app-obs", "ok", "OBS Studio", "installed"),
@@ -518,6 +547,18 @@ class DemoStudio:
                     "camera_label": "Canon EOS 50D",
                     "bridge": True,
                     "voice_chain": True,
+                    "camlink": {
+                        "present": True,
+                        "device": "/dev/video0",
+                        "signal": True,
+                        "state": "ok",
+                        "mode": "1080p59.94 YUYV",
+                        "offered": ["1080p59.94 YUYV", "1080p29.97 YUYV"],
+                        "active": "1920x1080 YUYV @ 59.94 fps",
+                        "audio": "Cam Link 4K Digital Stereo",
+                        "retune": False,
+                        "note": "",
+                    },
                 },
                 "auto": {
                     "running": self._auto_on,

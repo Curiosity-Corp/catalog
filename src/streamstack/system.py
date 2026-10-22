@@ -16,6 +16,9 @@ from typing import Protocol
 CAMLINK_LINK = Path("/dev/streamstack/camlink")
 EE_SOURCE = "easyeffects_source"
 CANON_USB_VENDOR = "04a9"
+# Elgato Cam Link 4K. Capture cards are found by USB id, never by /dev/videoN (the number moves between boots).
+CAMLINK_USB_IDS = (("0fd9", "0066"),)
+SYSFS_VIDEO = Path("/sys/class/video4linux")
 
 # v4l2 fourcc -> ffmpeg -input_format
 FFMPEG_FORMATS = {
@@ -169,9 +172,43 @@ def opened_by(process: str, devices: list[str]) -> list[str]:
     return sorted(held)
 
 
+def usb_ids(node: Path) -> tuple[str, str] | None:
+    """(vendor, product) of the USB device behind a /sys/class/video4linux node; None when it is not USB."""
+    try:
+        here = (node / "device").resolve()
+    except OSError:
+        return None
+    for parent in (here, *here.parents):
+        try:
+            return (parent / "idVendor").read_text().strip().lower(), (parent / "idProduct").read_text().strip().lower()
+        except OSError:
+            continue
+    return None
+
+
+def video_by_usb_id(ids: tuple[tuple[str, str], ...], sysfs: Path = SYSFS_VIDEO) -> list[str]:
+    """The capture nodes of every USB device with one of these (vendor, product) ids, lowest node first.
+
+    A UVC device also registers a metadata node (index 1 and up); only index 0 delivers pictures.
+    """
+    found = []
+    for node in sorted(sysfs.glob("video*"), key=lambda n: (len(n.name), n.name)):
+        try:
+            if (node / "index").read_text().strip() != "0":
+                continue
+        except OSError:
+            continue
+        if usb_ids(node) in ids:
+            found.append(f"/dev/{node.name}")
+    return found
+
+
 def find_camlink() -> str:
+    """The Cam Link's capture node: the udev link, else its USB id, else its name."""
     if CAMLINK_LINK.exists():
         return str(CAMLINK_LINK)
+    if by_id := video_by_usb_id(CAMLINK_USB_IDS):
+        return by_id[0]
     for device, name in video_devices().items():
         if "cam link" in name.lower():
             return device
@@ -224,24 +261,40 @@ def mode_label(mode: Mode) -> str:
     return f"{width}x{height}@{fps:g} {fourcc}"
 
 
-def current_format(device: str) -> str:
-    result = run(["v4l2-ctl", "-d", device, "--get-fmt-video", "--get-parm"])
-    if result is None or result.returncode != 0:
-        return ""
+def parse_current(output: str) -> Mode | None:
+    """(fourcc, width, height, fps) from `v4l2-ctl --get-fmt-video --get-parm`; fps is 0 when not reported."""
     width = height = fourcc = fps = ""
-    for line in result.stdout.splitlines():
+    for line in output.splitlines():
         line = line.strip()
         if line.startswith("Width/Height"):
             width, _, height = line.split(":", 1)[1].strip().partition("/")
         elif line.startswith("Pixel Format"):
-            fourcc = line.split(":", 1)[1].strip().split()[0].strip("'")
+            parts = line.split(":", 1)[1].strip().split()
+            fourcc = parts[0].strip("'") if parts else ""
         elif line.startswith("Frames per second"):
-            fps = line.split(":", 1)[1].strip().split()[0]
-    if not width:
+            parts = line.split(":", 1)[1].strip().split()
+            fps = parts[0] if parts else ""
+    try:
+        return fourcc, int(width), int(height), float(fps) if fps else 0.0
+    except ValueError:
+        return None
+
+
+def current_mode(device: str) -> Mode | None:
+    result = run(["v4l2-ctl", "-d", device, "--get-fmt-video", "--get-parm"])
+    if result is None or result.returncode != 0:
+        return None
+    return parse_current(result.stdout)
+
+
+def current_format(device: str) -> str:
+    mode = current_mode(device)
+    if mode is None:
         return ""
+    fourcc, width, height, fps = mode
     text = f"{width}x{height} {fourcc}"
     if fps:
-        text += f" @ {float(fps):g} fps"
+        text += f" @ {fps:g} fps"
     return text
 
 
@@ -279,17 +332,30 @@ def default_device(kind: str) -> str:
     return result.stdout.strip() if result and result.returncode == 0 else ""
 
 
+def is_capture_card_audio(name: str, description: str = "") -> bool:
+    """HDMI sound from an Elgato Cam Link: it is the camera's audio, never a call microphone."""
+    lowered = f"{name} {description}".lower()
+    return "cam_link" in lowered or "cam link" in lowered
+
+
+def capture_card_audio(sources: dict[str, str]) -> tuple[str, str]:
+    """(source name, description) of the Cam Link's HDMI audio, ("", "") when it has none."""
+    for name, desc in sources.items():
+        if not name.endswith(".monitor") and is_capture_card_audio(name, desc):
+            return name, desc
+    return "", ""
+
+
 def pick_microphone(sources: dict[str, str], wanted: str = "", default: str = "") -> str:
     """The raw call microphone: the configured one, else an Elgato Wave, else the default input.
 
     Monitors, the Easy Effects output and capture-card HDMI audio never qualify.
     """
 
-    def usable(name: str) -> bool:
-        lowered = name.lower()
-        return not (name.endswith(".monitor") or name == EE_SOURCE or "cam_link" in lowered)
+    def usable(name: str, desc: str) -> bool:
+        return not (name.endswith(".monitor") or name == EE_SOURCE or is_capture_card_audio(name, desc))
 
-    candidates = {n: d for n, d in sources.items() if usable(n)}
+    candidates = {n: d for n, d in sources.items() if usable(n, d)}
     needle = (wanted or "wave").lower()
     for name, desc in candidates.items():
         if name.lower() == needle or needle in (name + " " + desc).lower():

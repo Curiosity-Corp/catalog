@@ -5,6 +5,50 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-22
+
+### Added
+
+- `packaging/udev/60-streamstack-litra.rules`: hidraw access for the Litra Glow, Beam and Beam LX by exact VID:PID, installed by `make install` (docs/streamstack.md).
+- `docs/hardware-ai-evaluation.md`: Arc GPU background blur, auto-framing and voice denoise evaluation (issue #19).
+- OBS records and streams on the GPU encoder. `streamstack encoder` lists what this machine can use and
+  `streamstack encoder --apply` writes it into the StreamStack OBS profile (OBS closed); `streamstack setup`
+  does the same for a new profile. Detection runs at runtime: `vainfo` against every DRM render node (no
+  hardcoded path) plus the encoder list OBS prints in its own log. Order: AV1 VA-API, AV1 Quick Sync, H.264
+  VA-API, H.264 Quick Sync, x264. Streaming uses CBR with no B-frames and a two second keyframe interval, the
+  VA-API low-power mode where the GPU only has that; recording uses VBR at twice the live rate. The Video
+  checks (`streamstack doctor` and the Console System page) show the encoder in use and warn when a better one
+  is available or the profile names one this machine lacks.
+- Cam Link: the best mode the HDMI source offers (1080p60, then 1080p50, then
+  1080p30; raw YUYV/NV12 before MJPEG; 4K only with `STREAMSTACK_CAMLINK_4K`).
+  The card is found by its USB id (`0fd9:0066`), its modes are read from
+  `v4l2-ctl --list-formats-ext` and the choice is re-read every few seconds.
+  `streamstack camlink` shows it and `--apply` tunes the running OBS source and
+  canvas to match; `streamstack setup` seeds new profiles with it.
+  `STREAMSTACK_CAMLINK_MODE` (`auto`, `off`, or a pinned `1920x1080@60 YUYV`)
+  controls it. The Camera page shows the HDMI mode on the Cam Link picture and
+  System health reports the signal, the offered modes and the HDMI audio.
+
+### Changed
+
+- Easy Effects limiter in every voice preset: oversampling `True Peak/24 bit` (was None) and a -1 dBTP ceiling
+  (threshold -1.0 dB, was -1.5). Presets seeded earlier keep their old limiter until `streamstack setup --force`.
+  The preset label test now accepts the full Easy Effects 8 limiter label lists (kcfg
+  `easyeffects_db_limiter.kcfg`).
+- OBS profiles seeded by `streamstack setup` use a fractional frame rate
+  (`FPSType=2`), so 59.94 and 29.97 sources are not resampled.
+- Cam Link HDMI audio is recognised by name or description and never offered
+  as the call microphone; the System check says what it is.
+
+### Fixed
+
+- Console: after visiting another page, the Live page's MUTE MIC and PRIVACY
+  pads overlapped and the voice presets stacked into one column. Page
+  stylesheets stay loaded after navigation and leaked class names into other
+  pages; each one is now scoped to its page with `@scope`. A data test checks
+  every page stylesheet is scoped, and a browser test tours every page and
+  checks the Live layout.
+
 ## [0.2.0] - 2026-10-22
 
 The StreamStack Console: a visual control surface for the middle of a call,

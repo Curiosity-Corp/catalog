@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from streamstack import cli, config, micwatch, system
+from streamstack import camlink, cli, config, micwatch, system
 from streamstack.console import studio
 from streamstack.console.errors import ActionError
 from streamstack.console.studio import DemoStudio, StudioController
@@ -102,10 +102,25 @@ def healthy_rig(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "loopback_devices", lambda: list(names))
     monkeypatch.setattr(cli, "opened_by", lambda process, devices: [])
     monkeypatch.setattr(cli, "find_camlink", lambda: "/dev/video4")
+    monkeypatch.setattr(
+        cli.camlink,
+        "probe",
+        lambda cfg=None, sources=None: camlink.Probe(
+            device="/dev/video4",
+            offered=[("YUYV", 1920, 1080, 59.94)],
+            chosen=("YUYV", 1920, 1080, 59.94),
+            audio="Cam Link 4K Digital Stereo",
+        ),
+    )
     monkeypatch.setattr(cli, "audio_sources", lambda: {"alsa_input.wave": "Wave:3", system.EE_SOURCE: "EE"})
     monkeypatch.setattr(system, "default_device", lambda kind: "")
     monkeypatch.setattr(cli, "easyeffects_running", lambda: True)
     monkeypatch.setattr(cli, "have", lambda tool: True)
+    monkeypatch.setattr(
+        cli.encoder,
+        "health_check",
+        lambda cfg: cli.check("video", "encoder", "ok", "OBS encodes with AV1 on the GPU (VA-API)"),
+    )
     monkeypatch.setattr(cli, "_watch_microphone", lambda mic: micwatch.StallProbe(False, "healthy", "scheduled"))
 
 
@@ -126,7 +141,7 @@ def test_run_checks_flags_what_is_missing(healthy_rig: None, monkeypatch: pytest
     monkeypatch.setattr(cli, "video_name", lambda device: "")
     monkeypatch.setattr(cli, "audio_sources", lambda: {})
     monkeypatch.setattr(cli, "easyeffects_running", lambda: False)
-    monkeypatch.setattr(cli, "find_camlink", lambda: "")
+    monkeypatch.setattr(cli.camlink, "probe", lambda cfg=None, sources=None: camlink.Probe())
     checks = {c["id"]: c for c in cli.run_checks()}
     assert checks["camera-node"]["state"] == "fail" and "missing" in checks["camera-node"]["title"]
     assert checks["voice-chain"]["state"] == "fail"

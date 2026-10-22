@@ -1,0 +1,17 @@
+# StreamStack: Logitech Litra lights over hidraw for the desktop user.
+#
+# Exact VID:PID matches only (IDs from timrogers/litra-rs, src/lib.rs):
+#   046d:c900  Litra Glow
+#   046d:c901  Litra Beam
+#   046d:b901  Litra Beam (second product ID)
+#   046d:c903  Litra Beam LX
+# Every other Logitech device (for example the Lightspeed receiver 046d:c539)
+# is deliberately not matched and keeps its default permissions.
+#
+# uaccess gives the logged-in seat user an ACL; GROUP=plugdev, MODE=0660 is the
+# same pattern the workstation role uses for 60-logitech-litra.rules, so the
+# two files are idempotent next to each other.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c900", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c901", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="b901", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c903", TAG+="uaccess", GROUP="plugdev", MODE="0660"

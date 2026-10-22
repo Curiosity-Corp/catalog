@@ -1,0 +1,10 @@
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture
+
+	[0]: 'YUYV' (YUYV 4:2:2)
+		Size: Discrete 1920x1080
+			Interval: Discrete 0.020s (50.000 fps)
+	[1]: 'NV12' (Y/UV 4:2:0)
+		Size: Discrete 1920x1080
+			Interval: Discrete 0.020s (50.000 fps)
+
