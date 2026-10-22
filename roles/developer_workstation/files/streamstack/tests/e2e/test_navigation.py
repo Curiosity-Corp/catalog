@@ -59,3 +59,27 @@ def test_mini_has_no_app_chrome_and_links_back(app: App, page: Page) -> None:
     page.get_by_role("link", name="Open the full console").click()
     app.wait_ready("live")
     expect(page.locator("#rail")).to_be_visible()
+
+
+def test_live_layout_survives_a_tour_of_every_page(app: App, page: Page) -> None:
+    # Page stylesheets stay loaded; a class name shared with another page (audio's .presets) once
+    # restyled the Live voice presets after a visit and squashed the microphone strip.
+    app.goto("live")
+    presets = page.get_by_role("group", name="Voice presets")
+    mute = app.mute_button
+
+    def geometry() -> tuple[int, int, float]:
+        tops = presets.get_by_role("button").evaluate_all(
+            "(els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().top))).size"
+        )
+        box = mute.bounding_box()
+        assert box is not None
+        return tops, len(presets.get_by_role("button").all()), round(box["height"])
+
+    before = geometry()
+    assert before[0] == 1, "voice presets should sit in one row"
+    for route in ("camera", "audio", "auto", "system", "live"):
+        app.hash_to(route)
+    after = geometry()
+    assert after[0] == 1, "voice presets wrapped after visiting the other pages"
+    assert abs(after[2] - before[2]) <= 2, f"mute pad changed height: {before[2]} -> {after[2]}"

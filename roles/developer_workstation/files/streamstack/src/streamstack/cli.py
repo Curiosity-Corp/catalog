@@ -10,6 +10,7 @@ user and never needs root.
     streamstack status          one line (or a panel icon) for what calls receive
     streamstack auto on|off     the auto-cinematographer and auto-audio (Claude)
     streamstack cameras         every live camera and every mode it offers
+    streamstack camlink         the Cam Link's HDMI mode, the best one on offer; --apply tunes OBS to it
     streamstack preview [cam]   watch a camera feed (canon, camlink, program, /dev/videoN)
     streamstack mic-check [s]   record a few seconds and play them back
     streamstack mic-revive      bring back a stalled microphone (suspend/resume, then a card profile cycle)
@@ -17,6 +18,7 @@ user and never needs root.
     streamstack console         the visual control surface: faders, meters, scenes, live picture
     streamstack canon-bridge    run the Canon live view -> loopback camera bridge
     streamstack setup           seed this user's OBS profile and voice presets
+    streamstack encoder         which video encoder OBS can use here (--apply sets it in the profile)
     streamstack call-settings   the Teams and Zoom settings that match this rig
 """
 
@@ -31,9 +33,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
-from streamstack import __version__, config, micwatch, system
+from streamstack import __version__, camlink, config, encoder, micwatch, system
 from streamstack.config import camera_external, load_settings
 from streamstack.system import (
     CAMLINK_LINK,
@@ -88,6 +91,65 @@ def auto_running() -> bool:
 
 def check(group: str, cid: str, state: str, title: str, detail: str = "", hint: str = "") -> dict[str, str]:
     return {"id": cid, "group": group, "state": state, "title": title, "detail": detail, "hint": hint}
+
+
+def camlink_checks(probe: camlink.Probe) -> list[dict[str, str]]:
+    """The Cam Link's health: is it there, is the HDMI source sending, and the best mode it offers."""
+    if not probe.present:
+        return [
+            check(
+                "video",
+                "camlink",
+                "warn",
+                "no Elgato Cam Link 4K found",
+                hint="plug it into a USB 3 port (blue) directly, not through a USB 2 hub",
+            )
+        ]
+    items = []
+    if not probe.signal:
+        items.append(
+            check(
+                "video",
+                "camlink",
+                "ok",
+                f"Elgato Cam Link on {probe.device}: no HDMI signal",
+                "the HDMI source is off, asleep or not connected",
+                "turn on the HDMI camera and disable its on-screen display",
+            )
+        )
+    else:
+        best = probe.chosen
+        detail = "offers " + ", ".join(probe.labels[:6])
+        if probe.active and probe.active[0]:
+            detail += f"; now {system.current_format(probe.device)}"
+        hint = ""
+        if probe.retune:
+            hint = "the HDMI source changed mode: streamstack camlink --apply"
+        elif best and best[3] < 50 and best[2] == 1080:
+            hint = "the camera sends 30 fps; set it to 1080p60 or 1080p50 for smoother motion"
+        items.append(
+            check(
+                "video",
+                "camlink",
+                "ok",
+                f"Elgato Cam Link on {probe.device}: {camlink.short_label(best) if best else 'no usable mode'}",
+                detail,
+                hint,
+            )
+        )
+    if probe.note:
+        items.append(check("video", "camlink-config", "warn", probe.note, hint="use auto, off or WIDTHxHEIGHT@FPS"))
+    if probe.audio:
+        items.append(
+            check(
+                "audio",
+                "camlink-audio",
+                "ok",
+                "Cam Link HDMI audio is the camera's sound, not a call microphone",
+                probe.audio,
+            )
+        )
+    return items
 
 
 def run_checks(cfg: dict[str, str] | None = None, *, stall_probe: bool = True) -> list[dict[str, str]]:
@@ -202,31 +264,9 @@ def run_checks(cfg: dict[str, str] | None = None, *, stall_probe: bool = True) -
             )
         )
 
-    camlink = find_camlink()
-    if camlink:
-        fmt = current_format(camlink)
-        checks.append(
-            check(
-                "video",
-                "camlink",
-                "ok",
-                f"Elgato Cam Link on {camlink}",
-                fmt or "no HDMI signal format reported",
-                "" if fmt else "turn on the HDMI camera and disable its on-screen display",
-            )
-        )
-    else:
-        checks.append(
-            check(
-                "video",
-                "camlink",
-                "warn",
-                "no Elgato Cam Link 4K found",
-                hint="plug it into a USB 3 port (blue) directly, not through a USB 2 hub",
-            )
-        )
-
     sources = audio_sources()
+    checks.extend(camlink_checks(camlink.probe(cfg, sources)))
+
     mic = system.pick_microphone(sources, cfg["STREAMSTACK_MICROPHONE"], system.default_device("source"))
     if mic:
         checks.append(check("audio", "microphone", "ok", "call microphone", sources.get(mic) or mic))
@@ -276,10 +316,8 @@ def run_checks(cfg: dict[str, str] | None = None, *, stall_probe: bool = True) -
                 hint="streamstack studio",
             )
         )
-    if any("cam_link" in name.lower() for name in sources):
-        checks.append(
-            check("audio", "camlink-audio", "ok", "Cam Link HDMI audio exists; never pick it as a call microphone")
-        )
+
+    checks.append(encoder.health_check(cfg))
 
     for tool, why in (
         ("obs", "OBS Studio"),
@@ -462,15 +500,46 @@ Both
     return 0
 
 
+def cmd_camlink(args: argparse.Namespace) -> int:
+    """Show the Cam Link's HDMI modes and the one StreamStack picks; --apply tunes the running OBS to it."""
+    cfg = load_settings()
+    probe = camlink.probe(cfg)
+    if not probe.present:
+        print("No Elgato Cam Link found. Plug it into a USB 3 port; see `streamstack doctor`.")
+        return 1
+    print(f"Cam Link on {probe.device}")
+    if not probe.signal or probe.chosen is None:
+        print("    no HDMI signal: turn on the camera and disable its on-screen display")
+        return 1
+    print("    offers: " + ", ".join(probe.labels))
+    print(f"    best:   {camlink.short_label(probe.chosen)} ({mode_label(probe.chosen)})")
+    if probe.active:
+        print(f"    now:    {current_format(probe.device)}")
+    if probe.note:
+        print(f"    note:   {probe.note}")
+    if probe.audio:
+        print(f"    audio:  {probe.audio} (HDMI sound, never the call microphone)")
+    if not args.apply:
+        print("    run `streamstack camlink --apply` to tune OBS to the best mode")
+        return 0
+    try:
+        for step in camlink.apply_to_obs(cfg, probe.chosen):
+            print(f"    {step}")
+    except camlink.CamlinkError as exc:
+        print(f"streamstack: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_cameras(args: argparse.Namespace) -> int:
     cfg = load_settings()
     roles = {
         str(Path(cfg["STREAMSTACK_CAMERA_DEVICE"]).resolve()): "camera bridge",
         str(Path(cfg["STREAMSTACK_PROGRAM_DEVICE"]).resolve()): "StreamStack Camera (OBS)",
     }
-    camlink = find_camlink()
-    if camlink:
-        roles[str(Path(camlink).resolve())] = "capture card"
+    card = find_camlink()
+    if card:
+        roles[str(Path(card).resolve())] = "capture card"
     devices = capture_devices()
     if not devices:
         print("No camera is delivering video. Check `streamstack doctor`.")
@@ -791,13 +860,21 @@ def cmd_canon_bridge(args: argparse.Namespace) -> int:
     return code or camera.returncode or 0
 
 
-def _seed(src: Path, dest: Path, force: bool, replacements: dict[str, str] | None = None) -> bool:
+def _seed(
+    src: Path,
+    dest: Path,
+    force: bool,
+    replacements: dict[str, str] | None = None,
+    patch: Callable[[str], str] | None = None,
+) -> bool:
     if dest.exists() and not force:
         return False
     dest.parent.mkdir(parents=True, exist_ok=True)
     text = src.read_text()
     for old, new in (replacements or {}).items():
         text = text.replace(old, new)
+    if patch:
+        text = patch(text)
     tmp = dest.with_name(dest.name + ".streamstack-tmp")
     tmp.write_text(text)
     tmp.replace(dest)
@@ -808,26 +885,46 @@ def cmd_setup(args: argparse.Namespace) -> int:
     cfg = load_settings()
     home = Path.home()
     share = config.data_dir()
+    mode = None
+    if cfg["STREAMSTACK_CAMLINK_MODE"].strip().lower() != "off":
+        mode = camlink.probe(cfg).chosen  # the card's best mode; None without a card or HDMI signal
+    width, height, fps_num, fps_den = camlink.video_size(cfg, mode)
     replacements = {
         "@HOME@": str(home),
         "@CAMERA_DEVICE@": cfg["STREAMSTACK_CAMERA_DEVICE"],
         "@CAMERA_LABEL@": cfg["STREAMSTACK_CAMERA_LABEL"],
         "@CAMLINK_DEVICE@": str(CAMLINK_LINK),
-        "@WIDTH@": cfg["STREAMSTACK_WIDTH"],
-        "@HEIGHT@": cfg["STREAMSTACK_HEIGHT"],
-        "@FPS@": cfg["STREAMSTACK_FPS"],
-        "@HALF_WIDTH@": str(int(cfg["STREAMSTACK_WIDTH"]) // 2),
-        "@HALF_HEIGHT@": str(int(cfg["STREAMSTACK_HEIGHT"]) // 2),
-        "@QUARTER_HEIGHT@": str(int(cfg["STREAMSTACK_HEIGHT"]) // 4),
+        "@WIDTH@": str(width),
+        "@HEIGHT@": str(height),
+        "@FPS_NUM@": str(fps_num),
+        "@FPS_DEN@": str(fps_den),
+        "@HALF_WIDTH@": str(width // 2),
+        "@HALF_HEIGHT@": str(height // 2),
+        "@QUARTER_HEIGHT@": str(height // 4),
     }
     seeded = []
     for preset in sorted((share / "easyeffects/input").glob("*.json")):
         if _seed(preset, home / ".local/share/easyeffects/input" / preset.name, args.force):
             seeded.append(f"voice preset {preset.stem}")
     obs = home / ".config/obs-studio/basic"
-    if _seed(share / "obs/basic.ini", obs / "profiles" / OBS_NAME / "basic.ini", args.force, replacements):
+    profile = obs / "profiles" / OBS_NAME
+    if _seed(share / "obs/basic.ini", profile / "basic.ini", args.force, replacements):
         seeded.append("OBS profile StreamStack")
-    if _seed(share / "obs/scenes.json", obs / "scenes" / f"{OBS_NAME}.json", args.force, replacements):
+        try:
+            best = encoder.detect().best
+            encoder.apply_to_profile(
+                profile,
+                best,
+                width,
+                height,
+                fps_num / fps_den,
+                home,
+            )
+            seeded.append(f"OBS encoder: {best.label}")
+        except (encoder.EncoderError, ValueError) as exc:
+            print(f"streamstack: OBS keeps its default encoder: {exc}", file=sys.stderr)
+    patch = (lambda text: camlink.patch_scene_collection(text, mode)) if mode else None
+    if _seed(share / "obs/scenes.json", obs / "scenes" / f"{OBS_NAME}.json", args.force, replacements, patch):
         seeded.append("OBS scene collection StreamStack")
     (home / "Videos/StreamStack").mkdir(parents=True, exist_ok=True)
     if not args.quiet:
@@ -835,6 +932,24 @@ def cmd_setup(args: argparse.Namespace) -> int:
             print(f"seeded {item}")
         if not seeded:
             print("already set up (use --force to restore the StreamStack defaults)")
+    return 0
+
+
+def cmd_encoder(args: argparse.Namespace) -> int:
+    """Show which video encoder OBS can use on this machine; with --apply, set it in the StreamStack profile."""
+    cfg = load_settings()
+    try:
+        detection = encoder.detect()
+        used = encoder.configured_encoders()
+        for line in encoder.summary_lines(detection, used):
+            print(line)
+        if not args.apply:
+            return 0
+        target = encoder.apply(cfg, detection.best)
+    except encoder.EncoderError as exc:
+        print(f"streamstack: {exc}", file=sys.stderr)
+        return 1
+    print(f"OBS profile {target.name} now uses {detection.best.label}; start OBS to use it")
     return 0
 
 
@@ -876,6 +991,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="quit after this long with no window (default: 600 with a window, never without)",
     )
     console.set_defaults(func=cmd_console)
+    link = sub.add_parser("camlink", help="the Cam Link's HDMI modes and the best one")
+    link.add_argument("--apply", action="store_true", help="tune the running OBS source and canvas to the best mode")
+    link.set_defaults(func=cmd_camlink)
     sub.add_parser("cameras", help="every live video device and each mode it offers").set_defaults(func=cmd_cameras)
     mic = sub.add_parser("mic-check", help="record and play back your voice")
     mic.add_argument("seconds", nargs="?", type=float, default=6.0)
@@ -890,6 +1008,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("canon-bridge", help="feed Canon live view into the loopback camera").set_defaults(
         func=cmd_canon_bridge
     )
+    enc = sub.add_parser("encoder", help="which video encoder OBS can use here (GPU first, x264 last)")
+    enc.add_argument(
+        "--apply", action="store_true", help="set the best one in the StreamStack OBS profile (OBS closed)"
+    )
+    enc.set_defaults(func=cmd_encoder)
     setup = sub.add_parser("setup", help="seed OBS and Easy Effects defaults for this user")
     setup.add_argument("--force", action="store_true", help="overwrite with the StreamStack defaults")
     setup.add_argument("--quiet", action="store_true")

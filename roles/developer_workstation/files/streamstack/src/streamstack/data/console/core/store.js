@@ -24,7 +24,7 @@ export const HOLD_MS = 600;
 export function emptyState() {
   return {
     version: '', demo: false,
-    studio: { running: false, busy: false, camera_for_calls: 'off', program_label: null, camera_label: null, bridge: false, voice_chain: false },
+    studio: { running: false, busy: false, camera_for_calls: 'off', program_label: null, camera_label: null, bridge: false, voice_chain: false, camlink: null },
     video: {
       obs: 'offline', obs_error: null, scenes: [], program_scene: null, privacy: false, privacy_scene: 'Be Right Back',
       sources: [], selected_source: null,

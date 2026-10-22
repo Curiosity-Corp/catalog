@@ -164,6 +164,8 @@ def test_mic_check_again_from_the_button_and_r_key(au: App, page: Page, rig: Rig
     assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "recording-raw")
     expect(record).to_have_attribute("aria-pressed", "true")
     assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "done", timeout=25)
+    # R is ignored while the page still sees a recording; wait for the page, not just the server
+    expect(record).to_contain_text("Again", timeout=LOADED)
     au.press("r")
     assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "recording-raw")
     assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "done", timeout=25)

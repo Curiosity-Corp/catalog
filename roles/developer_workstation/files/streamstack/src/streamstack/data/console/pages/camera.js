@@ -258,14 +258,21 @@ export async function mount(host, ctx) {
   R.pvFix.addEventListener('click', () => startStudio());
 
   // ---------- badges + timecode ----------
-  sub((s) => [s.video.streaming, s.video.recording, s.video.virtualcam, s.video.privacy], ([streaming, rec, vcam, privacy]) => {
+  sub((s) => [s.video.streaming, s.video.recording, s.video.virtualcam, s.video.privacy, s.studio.camlink, s.video.selected_source], ([streaming, rec, vcam, privacy, link, selected]) => {
     const chips = [];
     const onAir = streaming.active || vcam;
     chips.push(onAir ? { id: 'air', state: 'live', label: 'ON AIR', icon: 'broadcast', pulse: true } : { id: 'air', state: 'off', label: 'OFF AIR', icon: 'dot' });
     if (rec.active) chips.push({ id: 'rec', state: rec.paused ? 'warn' : 'live', label: rec.paused ? 'REC PAUSED' : 'REC', icon: 'record', pulse: !rec.paused });
     if (privacy) chips.push({ id: 'privacy', state: 'warn', label: 'PRIVACY', icon: 'eye-off' });
+    // The capture card's HDMI mode, while the card's own picture is the one being edited.
+    if (link?.present && /cam link/i.test(selected || '')) {
+      const lbl = link.signal ? link.mode : 'no signal';
+      chips.push({ id: 'camlink', state: !link.signal ? 'off' : link.retune ? 'info' : 'ok', label: 'HDMI', value: link.retune ? `${lbl} · retune OBS` : lbl, icon: 'camera', title: link.active ? `Active: ${link.active}` : '' });
+    }
     renderList(R.badges, chips, (c) => c.id, () => h('ss-status-chip', { size: 'md' }), (el, c) => {
       el.setAttribute('state', c.state); el.setAttribute('label', c.label); el.setAttribute('icon', c.icon); el.toggleAttribute('pulse', !!c.pulse);
+      if (c.value) el.setAttribute('value', c.value); else el.removeAttribute('value');
+      if (c.title) el.setAttribute('title', c.title); else el.removeAttribute('title');
     });
     R.tc.textContent = streaming.active ? (streaming.timecode || '') : (rec.active ? (rec.timecode || '') : '');
     syncPicture();

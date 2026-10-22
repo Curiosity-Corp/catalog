@@ -38,7 +38,7 @@ def test_call_settings_name_the_configured_devices(tmp_path: Path) -> None:
 
 
 def test_setup_seeds_once_and_keeps_user_changes(tmp_path: Path, isolated_home: Path) -> None:
-    env_text = "STREAMSTACK_WIDTH=1280\nSTREAMSTACK_HEIGHT=720\n"
+    env_text = "STREAMSTACK_WIDTH=1280\nSTREAMSTACK_HEIGHT=720\nSTREAMSTACK_CAMLINK_MODE=off\n"
     assert _run("setup", env_text=env_text, tmp=tmp_path).returncode == 0
     scenes = isolated_home / ".config/obs-studio/basic/scenes/StreamStack.json"
     profile = isolated_home / ".config/obs-studio/basic/profiles/StreamStack/basic.ini"
@@ -48,6 +48,7 @@ def test_setup_seeds_once_and_keeps_user_changes(tmp_path: Path, isolated_home: 
     side = next(s for s in doc["sources"] if s["name"] == "Side by Side")
     assert side["settings"]["items"][1]["pos"] == {"x": 640, "y": 180}
     assert "OutputCX=1280" in profile.read_text()
+    assert "FPSNum=30\nFPSDen=1" in profile.read_text()
     assert f"FilePath={isolated_home}/Videos/StreamStack" in profile.read_text()
     voice.write_text("{}")
     assert _run("setup", "--quiet", env_text=env_text, tmp=tmp_path).returncode == 0

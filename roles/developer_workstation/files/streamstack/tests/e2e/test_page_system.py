@@ -43,6 +43,15 @@ def test_recheck_button_and_k_key_ask_for_a_new_check(sysp: App, page: Page) -> 
     assert key.value.status == 200
 
 
+def test_video_checks_show_the_active_obs_encoder(sysp: App, page: Page, rig: Rig) -> None:
+    encoder = next(c for c in rig.state()["health"]["checks"] if c["id"] == "encoder")
+    assert encoder["group"] == "video"
+    card = page.get_by_role("region", name="Video", exact=True).locator(".ck").filter(has_text="OBS encodes with")
+    expect(card).to_have_count(1, timeout=LOADED)
+    expect(card).to_contain_text(encoder["title"])
+    expect(card).to_contain_text("av1_ffmpeg_vaapi_tex")
+
+
 def test_service_tiles_reflect_the_rig(sysp: App, page: Page, rig: Rig) -> None:
     expect(tile(page, "Studio")).to_have_attribute("aria-label", "Studio: Running")
     expect(tile(page, "Voice chain")).to_contain_text("Open Audio")
