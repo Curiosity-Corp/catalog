@@ -36,7 +36,8 @@ class FakeConn:
         if request in self.fail:
             raise RuntimeError(f"{request} refused")
         if request == "GetSourceFilterKindList":
-            return {"filterKinds": list(self.kinds)}
+            # the obs-websocket 5 response field, as a real OBS sends it
+            return {"sourceFilterKinds": list(self.kinds)}
         if request == "GetStats":
             return dict(self.stats)
         key = (data.get("sourceName", ""), data.get("filterName", ""))

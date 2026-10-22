@@ -36,6 +36,15 @@ Easy Effects 8.1.2 research (source: wwmm/easyeffects tag v8.1.2, checked agains
 * Global bypass cannot be read from a running Easy Effects (no ``get_property`` for it and the settings
   file is stale until shutdown). The state is tracked from our own changes, seeded from the settings
   file at start. ``-b 1`` enables bypass and ``-b 2`` disables it; the socket takes ``global_bypass:1|0``.
+* Noise removal is one plugin slot with two engines: ``rnnoise#0`` ("Noise reduction", about 10 ms) or
+  ``deepfilternet#0`` ("Deep noise remover", DeepFilterNet, about 40 ms algorithmic delay). The DeepFilterNet
+  effect is compiled into the 8.1.2 binary (``strings`` shows ``DeepFilterNet`` and its keys) but it loads
+  ``libdeep_filter_ladspa.so`` from the LADSPA path at run time, and the Ubuntu ``easyeffects`` package does not
+  ship that library ("libdeep_filter_ladspa is not installed" is the effect's own message). So choosing it is
+  refused here until the library is found. Preset keys (``src/contents/kcfg/easyeffects_db_deepfilternet.kcfg``):
+  ``attenuation-limit`` (0 to 100 dB, default 100), ``min-processing-threshold``, ``max-erb-processing-threshold``,
+  ``max-df-processing-threshold``, ``min-processing-buffer`` and ``post-filter-beta``. The Attenuation Limit is
+  the "how much noise may be removed" knob: lower leaves more of the room in and sounds more natural.
 * The mapping to the shipped presets: equalizer band0 (Lo-shelf 120 Hz) is bass, band2 (Bell 3.5 kHz)
   is presence, band3 (Hi-shelf 9 kHz) is treble, both channels; pitch semitones, with the plugin
   bypassed while it is 0.
@@ -109,7 +118,47 @@ BLURBS = {
     "StreamStack Voice Bright": "more presence and air for dark mics",
     "StreamStack Voice Deep": "pitch down 2 semitones, extra body",
     "StreamStack Voice Minimal": "only high-pass, gentle compression and the limiter",
+    "StreamStack Voice DeepFilterNet": "the default voice with DeepFilterNet noise removal (about 30 ms more delay)",
 }
+# The noise removal engines: the plugin's name in a preset, what the Console calls it and its algorithmic delay.
+DENOISE_ENGINES: dict[str, dict[str, Any]] = {
+    "rnnoise": {"label": "RNNoise", "effect": "Noise reduction", "delay_ms": 10},
+    "deepfilternet": {"label": "DeepFilterNet", "effect": "Deep noise remover", "delay_ms": 40},
+}
+# Each engine's settings as the shipped presets carry them (the two shipped StreamStack Voice presets).
+_ENGINE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "rnnoise": {
+        "bypass": False,
+        "input-gain": 0.0,
+        "output-gain": 0.0,
+        "use-standard-model": True,
+        "model-name": "",
+        "enable-vad": True,
+        "vad-thres": 50.0,
+        "wet": 0.0,
+        "release": 20.0,
+    },
+    "deepfilternet": {
+        "bypass": False,
+        "input-gain": 0.0,
+        "output-gain": 0.0,
+        "attenuation-limit": 100.0,
+        "min-processing-threshold": -10.0,
+        "max-erb-processing-threshold": 30.0,
+        "max-df-processing-threshold": 20.0,
+        "min-processing-buffer": 0,
+        "post-filter-beta": 0.02,
+    },
+}
+DEFAULT_ENGINE = "rnnoise"  # lowest latency, so it stays the default
+ATTEN_RANGE = (0.0, 100.0)  # DeepFilterNet's Attenuation Limit in dB; 100 is "no limit" (the plugin's own default)
+DEEPFILTERNET_LIB = "libdeep_filter_ladspa.so"
+LADSPA_DIRS = ("/usr/local/lib/ladspa", "/usr/lib/x86_64-linux-gnu/ladspa", "/usr/lib/ladspa", "/usr/lib64/ladspa")
+DEEPFILTERNET_MISSING = (
+    f"DeepFilterNet needs the {DEEPFILTERNET_LIB} LADSPA plugin, which the Easy Effects package does not ship. "
+    "Install it (see docs/voice-denoise.md), then restart Easy Effects."
+)
+DENOISE_KEYS = ("engine", "atten_limit_db")
 LABEL_PREFIX = "StreamStack "
 CLIP_ID = re.compile(r"^[0-9a-f]{16}$")
 
@@ -189,8 +238,17 @@ def preset_label(name: str) -> str:
     return name.removeprefix(LABEL_PREFIX) or name
 
 
-def preset_entry(name: str) -> dict[str, str]:
-    return {"name": name, "label": preset_label(name), "blurb": BLURBS.get(name, "")}
+def preset_entry(name: str, engine: str | None = None, installed: bool | None = None) -> dict[str, Any]:
+    """A preset for the Console; `unavailable` says why it cannot load here (DeepFilterNet without its library)."""
+    have = deepfilternet_installed() if installed is None else installed
+    missing = engine == "deepfilternet" and not have
+    return {
+        "name": name,
+        "label": preset_label(name),
+        "blurb": BLURBS.get(name, ""),
+        "engine": engine,
+        "unavailable": DEEPFILTERNET_MISSING if missing else None,
+    }
 
 
 def _plugin(doc: dict[str, Any], prefix: str) -> dict[str, Any] | None:
@@ -239,6 +297,69 @@ def apply_tone(doc: dict[str, Any], tone: dict[str, float]) -> dict[str, Any]:
         pitch["semitones"] = float(tone["pitch_semitones"])
         pitch["bypass"] = tone["pitch_semitones"] == 0
     return out
+
+
+def _denoise_slot(doc: dict[str, Any]) -> tuple[str, str, dict[str, Any]] | None:
+    """(engine, instance key, settings) of the noise removal plugin in a preset document."""
+    section = doc.get("input")
+    if not isinstance(section, dict):
+        return None
+    for key, value in section.items():
+        engine = key.split("#")[0]
+        if engine in DENOISE_ENGINES and isinstance(value, dict):
+            return engine, key, value
+    return None
+
+
+def read_denoise(doc: dict[str, Any]) -> dict[str, Any] | None:
+    """The noise removal engine and Attenuation Limit of a preset (None when it has neither plugin)."""
+    slot = _denoise_slot(doc)
+    if slot is None:
+        return None
+    engine, _, settings = slot
+    atten = settings.get("attenuation-limit", ATTEN_RANGE[1]) if engine == "deepfilternet" else ATTEN_RANGE[1]
+    value = float(atten) if isinstance(atten, (int, float)) and not isinstance(atten, bool) else ATTEN_RANGE[1]
+    return {"engine": engine, "atten_limit_db": value}
+
+
+def apply_denoise(doc: dict[str, Any], engine: str, atten_limit_db: float) -> dict[str, Any]:
+    """A copy of a preset with the noise removal slot switched to `engine`, in the same place in the chain.
+
+    The other engine's settings are not kept (a preset holds one of them); a DeepFilterNet slot starts from the
+    shipped defaults and takes `atten_limit_db`.
+    """
+    if engine not in DENOISE_ENGINES:
+        raise ValueError(f"unknown noise removal engine {engine!r}")
+    out = copy.deepcopy(doc)
+    slot = _denoise_slot(out)
+    if slot is None:
+        raise ValueError("the preset has no noise removal plugin")
+    current, key, settings = slot
+    if current == engine:
+        if engine == "deepfilternet":
+            settings["attenuation-limit"] = float(atten_limit_db)
+        return out
+    new_key = f"{engine}#{key.split('#')[1]}"
+    section = out["input"]
+    fresh = copy.deepcopy(_ENGINE_DEFAULTS[engine])
+    for gain in ("bypass", "input-gain", "output-gain"):
+        if gain in settings:
+            fresh[gain] = settings[gain]
+    if engine == "deepfilternet":
+        fresh["attenuation-limit"] = float(atten_limit_db)
+    rebuilt = {(new_key if k == key else k): (fresh if k == key else v) for k, v in section.items()}
+    section.clear()
+    section.update(rebuilt)
+    order = section.get("plugins_order")
+    if isinstance(order, list):
+        section["plugins_order"] = [new_key if item == key else item for item in order]
+    return out
+
+
+def deepfilternet_installed() -> bool:
+    """Whether Easy Effects can find the DeepFilterNet LADSPA library (it searches LADSPA_PATH, then these)."""
+    folders = [p for p in os.environ.get("LADSPA_PATH", "").split(":") if p] + list(LADSPA_DIRS)
+    return any((Path(folder) / DEEPFILTERNET_LIB).is_file() for folder in folders)
 
 
 def ee_socket_path() -> Path:
@@ -292,6 +413,13 @@ def load_preset_json(name: str) -> dict[str, Any] | None:
         if isinstance(doc, dict):
             return doc
     return None
+
+
+def engine_of_preset(name: str) -> str | None:
+    """The noise removal engine a stored preset uses (None when unreadable or it has none)."""
+    doc = load_preset_json(name)
+    denoise = read_denoise(doc) if doc else None
+    return denoise["engine"] if denoise else None
 
 
 def list_presets() -> list[str]:
@@ -614,6 +742,56 @@ def _check_seconds(params: dict[str, Any]) -> float:
     return number_param(params, "seconds", low=CHECK_SECONDS[0], high=CHECK_SECONDS[1])
 
 
+def _validate_denoise(params: dict[str, Any]) -> dict[str, Any]:
+    unknown = sorted(set(params) - set(DENOISE_KEYS))
+    if unknown:
+        raise ActionError(f"unknown noise removal setting: {', '.join(unknown)}", 400)
+    if not params:
+        raise ActionError("give at least one of " + ", ".join(DENOISE_KEYS), 400)
+    out: dict[str, Any] = {}
+    if "engine" in params:
+        engine = params["engine"]
+        if not isinstance(engine, str) or engine not in DENOISE_ENGINES:
+            raise ActionError("engine must be one of " + ", ".join(DENOISE_ENGINES), 400)
+        out["engine"] = engine
+    if "atten_limit_db" in params:
+        out["atten_limit_db"] = round(
+            number_param(params, "atten_limit_db", low=ATTEN_RANGE[0], high=ATTEN_RANGE[1]), 1
+        )
+    return out
+
+
+def _denoise_key(denoise: dict[str, Any]) -> tuple[str, float | None]:
+    """What makes two noise removal settings differ: the Attenuation Limit only counts for DeepFilterNet."""
+    engine = denoise["engine"]
+    return engine, denoise["atten_limit_db"] if engine == "deepfilternet" else None
+
+
+def _denoise_state(
+    denoise: dict[str, Any], supported: bool, custom: bool, installed: bool | None = None
+) -> dict[str, Any]:
+    if installed is None:
+        installed = deepfilternet_installed()
+    return {
+        "engine": denoise["engine"],
+        "atten_limit_db": denoise["atten_limit_db"],
+        "atten_range": list(ATTEN_RANGE),
+        "supported": supported,
+        "custom": custom,
+        "engines": [
+            {
+                "id": engine_id,
+                "label": info["label"],
+                "effect": info["effect"],
+                "delay_ms": info["delay_ms"],
+                "available": engine_id != "deepfilternet" or installed,
+                "reason": None if engine_id != "deepfilternet" or installed else DEEPFILTERNET_MISSING,
+            }
+            for engine_id, info in DENOISE_ENGINES.items()
+        ],
+    }
+
+
 def _validate_tone(params: dict[str, Any]) -> dict[str, float]:
     unknown = sorted(set(params) - set(TONE_RANGES))
     if unknown:
@@ -676,6 +854,10 @@ class AudioController:
         self._tone = dict(self._base_tone)
         self._tone_ok = False
         self._custom = False
+        self._base_denoise: dict[str, Any] = {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
+        self._denoise = dict(self._base_denoise)
+        self._denoise_ok = False
+        self._engines: dict[str, str | None] = {}  # preset name -> its noise removal engine
         self._ee_current: str | None = None
         self._hold_until = -math.inf
         self._gain_hold = -math.inf
@@ -743,6 +925,7 @@ class AudioController:
         info = next((i for i in infos if i["name"] == mic), None)
         running = system.easyeffects_running()
         presets = list_presets()
+        engines = {name: engine_of_preset(name) for name in presets}
         current = self._read_current_preset() if running else None
         with self._lock:
             self._sources = sources
@@ -753,6 +936,7 @@ class AudioController:
                 self._gain = self._muted = None
             self._ee_running = running
             self._presets = presets
+            self._engines = engines
             self._adopt_current(current)
             self._sync_readers(mic, EE_SOURCE_NAME in sources)
             muted = self._muted
@@ -785,7 +969,9 @@ class AudioController:
             doc = load_preset_json(LIVE_PRESET)
             tone = read_tone(doc) if doc else None
             if tone and self._base is not None:
-                self._tone, self._custom = tone, tone != self._base_tone
+                self._tone = tone
+                self._denoise = (read_denoise(doc) if doc else None) or dict(self._base_denoise)
+                self._custom = self._is_custom()
         elif current != self._base:
             self._set_base(current)  # changed from Easy Effects itself, or another tool
 
@@ -929,7 +1115,15 @@ class AudioController:
         self._tone_ok = tone is not None
         self._base_tone = tone or {k: 0.0 for k in TONE_RANGES}
         self._tone = dict(self._base_tone)
+        denoise = read_denoise(doc) if doc else None
+        self._denoise_ok = denoise is not None
+        self._base_denoise = denoise or {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
+        self._denoise = dict(self._base_denoise)
         self._custom = False
+
+    def _is_custom(self) -> bool:
+        """Whether tone or noise removal differ from the chosen preset's own (lock held)."""
+        return self._tone != self._base_tone or _denoise_key(self._denoise) != _denoise_key(self._base_denoise)
 
     # -- state --------------------------------------------------------------
 
@@ -952,11 +1146,14 @@ class AudioController:
                     "running": running,
                     "available": self._ee_available,
                     "preset": self._base if running else None,
-                    "presets": [preset_entry(n) for n in self._presets],
+                    "presets": [preset_entry(n, self._engines.get(n)) for n in self._presets],
                     "bypass": self._bypass,
                 },
                 "tone": _tone_state(self._tone, running and self._ee_available and self._tone_ok, self._custom),
                 "tone_ranges": _ranges(),
+                "denoise": _denoise_state(
+                    self._denoise, running and self._ee_available and self._denoise_ok, self._custom
+                ),
                 "mic_check": {**self._check, "clips": self._clips.listing()},
             }
 
@@ -978,6 +1175,7 @@ class AudioController:
             "audio.preset": self._act_preset,
             "audio.bypass": self._act_bypass,
             "audio.tone": self._act_tone,
+            "audio.denoise": self._act_denoise,
             "audio.mic_check": self._act_mic_check,
             "audio.revive": self._act_revive,
             "audio.clip_clear": self._act_clip_clear,
@@ -1039,6 +1237,8 @@ class AudioController:
         if not known:
             raise ActionError(f"Unknown voice preset {name!r}.", 400)
         self._need_ee()
+        if self._engines.get(name) == "deepfilternet" and not deepfilternet_installed():
+            raise ActionError(DEEPFILTERNET_MISSING, 409)
         if not self._ee_load(name):
             raise ActionError("Easy Effects did not accept the preset.", 409)
         with self._lock:
@@ -1068,7 +1268,7 @@ class AudioController:
         with self._cond:
             before = self._tone
             self._tone = {**before, **changes}
-            self._custom = self._tone != self._base_tone
+            self._custom = self._is_custom()
             bands = any(changes.get(k, before[k]) != before[k] for k in BAND_KEYS)
             pitch = changes.get("pitch_semitones", before["pitch_semitones"]) != before["pitch_semitones"]
             if bands:
@@ -1080,6 +1280,26 @@ class AudioController:
                 self._throttle.submit(tone)
                 self._cond.notify_all()
         return None
+
+    def _act_denoise(self, params: dict[str, Any]) -> str | None:
+        """Switch the noise removal engine (RNNoise or DeepFilterNet) or set the Attenuation Limit.
+
+        Goes through the managed live preset like the bands (coalesced, newest wins); the base preset stays chosen.
+        """
+        changes = _validate_denoise(params)
+        with self._lock:
+            supported = self._ee_running and self._ee_available and self._denoise_ok
+        if not supported:
+            raise ActionError("Noise removal control needs Easy Effects running with a StreamStack voice preset.", 409)
+        if changes.get("engine") == "deepfilternet" and not deepfilternet_installed():
+            raise ActionError(DEEPFILTERNET_MISSING, 409)
+        with self._cond:
+            self._denoise = {**self._denoise, **changes}
+            self._custom = self._is_custom()
+            self._throttle.submit(dict(self._tone))
+            self._cond.notify_all()
+            engine = self._denoise["engine"]
+        return f"Noise removal: {DENOISE_ENGINES[engine]['label']}" if "engine" in changes else None
 
     def _set_pitch_live(self, semitones: float) -> bool:
         prefix = f"set_property:{EE_PIPELINE}:pitch:0"
@@ -1104,6 +1324,11 @@ class AudioController:
         if base is None or doc is None:
             raise ActionError("The base voice preset cannot be read.", 409)
         out = apply_tone(doc, tone)
+        with self._lock:
+            denoise = dict(self._denoise)
+            has_slot = self._denoise_ok
+        if has_slot:  # a custom preset without a noise removal plugin keeps whatever it has
+            out = apply_denoise(out, denoise["engine"], denoise["atten_limit_db"])
         target = ee_user_dir() / f"{LIVE_PRESET}.json"
         tmp = target.with_suffix(".json.tmp")
         try:
@@ -1315,6 +1540,9 @@ class DemoAudio:
         self._base = "StreamStack Voice"
         self._base_tone = self._shipped_tone(self._base)
         self._tone = dict(self._base_tone)
+        self._base_denoise = self._shipped_denoise(self._base)
+        self._denoise = dict(self._base_denoise)
+        self._df_installed = True  # the demo rig has the library; audio.demo_deepfilternet takes it away
         self._clips = ClipStore(clock)
         self._check = _empty_check()
         self._check_start = 0.0
@@ -1330,6 +1558,14 @@ class DemoAudio:
         except (OSError, ValueError):
             return {k: 0.0 for k in TONE_RANGES}
         return read_tone(doc) or {k: 0.0 for k in TONE_RANGES}
+
+    @staticmethod
+    def _shipped_denoise(name: str) -> dict[str, Any]:
+        try:
+            doc = json.loads((config.data_dir() / "easyeffects" / EE_PIPELINE / f"{name}.json").read_text())
+        except (OSError, ValueError):
+            return {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
+        return read_denoise(doc) or {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
 
     def start(self) -> None:
         return None
@@ -1353,6 +1589,9 @@ class DemoAudio:
                     self._revive["message"] = "Waiting for the microphone to come back..."
             elif state == "ok" and elapsed > REVIVE_SHOW_S:
                 self._revive.update(state="idle", message=None)
+
+    def _denoise_custom(self) -> bool:
+        return _denoise_key(self._denoise) != _denoise_key(self._base_denoise)
 
     def _advance(self) -> None:
         self._advance_revive()
@@ -1393,11 +1632,16 @@ class DemoAudio:
                     "running": True,
                     "available": True,
                     "preset": self._base,
-                    "presets": [preset_entry(n) for n in self._presets],
+                    "presets": [
+                        preset_entry(n, self._shipped_denoise(n)["engine"], self._df_installed) for n in self._presets
+                    ],
                     "bypass": self._bypass,
                 },
-                "tone": _tone_state(self._tone, True, self._tone != self._base_tone),
+                "tone": _tone_state(self._tone, True, self._tone != self._base_tone or self._denoise_custom()),
                 "tone_ranges": _ranges(),
+                "denoise": _denoise_state(
+                    self._denoise, True, self._tone != self._base_tone or self._denoise_custom(), self._df_installed
+                ),
                 "mic_check": {**self._check, "clips": self._clips.listing()},
             }
 
@@ -1450,8 +1694,12 @@ class DemoAudio:
             if not isinstance(name, str) or name not in self._presets:
                 raise ActionError(f"Unknown voice preset {name!r}.", 400)
             with self._lock:
+                if not self._df_installed and self._shipped_denoise(name)["engine"] == "deepfilternet":
+                    raise ActionError(DEEPFILTERNET_MISSING, 409)
                 self._base, self._base_tone = name, self._shipped_tone(name)
                 self._tone = dict(self._base_tone)
+                self._base_denoise = self._shipped_denoise(name)
+                self._denoise = dict(self._base_denoise)
             return f"Voice preset: {preset_label(name)}"
         if action == "audio.bypass":
             on = bool_param(params)
@@ -1462,6 +1710,20 @@ class DemoAudio:
             changes = _validate_tone(params)
             with self._lock:
                 self._tone.update(changes)
+            return None
+        if action == "audio.denoise":
+            changes = _validate_denoise(params)
+            with self._lock:
+                if changes.get("engine") == "deepfilternet" and not self._df_installed:
+                    raise ActionError(DEEPFILTERNET_MISSING, 409)
+                self._denoise.update(changes)
+                engine = self._denoise["engine"]
+            return f"Noise removal: {DENOISE_ENGINES[engine]['label']}" if "engine" in changes else None
+        if action == "audio.demo_deepfilternet":  # demo only: take the DeepFilterNet library away, for the e2e suite
+            with self._lock:
+                self._df_installed = bool_param(params)
+                if not self._df_installed and self._denoise["engine"] == "deepfilternet":
+                    self._denoise = {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
             return None
         if action == "audio.clip_clear":
             for latch in self._latches.values():

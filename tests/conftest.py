@@ -20,6 +20,7 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local/share"))
     monkeypatch.setenv("STREAMSTACK_ENV_FILE", str(tmp_path / "absent.env"))
     monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("STREAMSTACK_SETUP_SERVICE", "off")  # `streamstack setup` must not touch the real systemd
     for name in ("STREAMSTACK_SHARE", "STREAMSTACK_AUTO_VERBOSE", "STREAMSTACK_AUTO_CLAUDE", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     # No test may read the capture card plugged into the machine that runs it.

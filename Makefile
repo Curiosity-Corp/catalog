@@ -20,8 +20,8 @@ e2e:
 	PYTHONPATH=src $(PYTHON) -m pytest tests/e2e
 
 lint:
-	ruff check src tests
-	ruff format --check src tests
+	ruff check src tests tools
+	ruff format --check src tests tools
 
 build:
 	$(PYTHON) -m build
@@ -49,7 +49,8 @@ uninstall:
 	rm -rf $(LIBDIR)
 	rm -f $(BINDIR)/streamstack $(BINDIR)/streamstack-auto $(BINDIR)/streamstack-console \
 		$(BINDIR)/streamstack-tray
-	rm -f $(USERUNITDIR)/streamstack-auto.service $(USERUNITDIR)/streamstack-canon.service
+	rm -f $(USERUNITDIR)/streamstack-auto.service $(USERUNITDIR)/streamstack-canon.service \
+		$(USERUNITDIR)/streamstack-lights.service
 	rm -f $(SHAREDIR)/applications/streamstack*.desktop $(UDEVDIR)/60-streamstack-litra.rules
 	rm -f $(SHAREDIR)/icons/hicolor/scalable/apps/streamstack.svg $(SHAREDIR)/icons/hicolor/scalable/status/streamstack-*.svg
 

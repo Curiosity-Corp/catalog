@@ -61,7 +61,8 @@ class Rig:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=10) as res:
+            # a starved CI runner stalls the server thread too, so the read deadline scales like every wait
+            with urllib.request.urlopen(req, timeout=10 * SCALE) as res:
                 return res.status, json.loads(res.read() or b"null")
         except urllib.error.HTTPError as err:
             raw = err.read()

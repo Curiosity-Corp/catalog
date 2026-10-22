@@ -24,6 +24,8 @@ classifiers = [
 auto = ["websocket-client>=1.6"]
 canon = ["gphoto2>=2.5"]
 framing = ["numpy>=1.26", "opencv-python-headless>=4.10", "openvino>=2026.1"]
+# tools/bench_ai.py (offline AI benchmark, not shipped in the wheel); the GPU busy figure also needs intel_gpu_top.
+bench = ["numpy>=1.26", "opencv-python-headless>=4.10", "openvino>=2026.1", "onnxruntime>=1.20"]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
 e2e = ["pytest>=8", "playwright>=1.64"]
 

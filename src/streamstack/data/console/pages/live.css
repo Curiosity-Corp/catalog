@@ -54,7 +54,7 @@
   .dev { font-size: var(--fs-xs); color: var(--text-3); max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* voice */
-  .presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-2); }
+  .presets { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--s-2); }  /* one row, however many presets */
   .preset-note { margin: var(--s-3) 0 0; font-size: var(--fs-sm); color: var(--text-2); min-height: 1.4em; }
   .area-voice ss-pad { --pad-min: 3rem; }
 

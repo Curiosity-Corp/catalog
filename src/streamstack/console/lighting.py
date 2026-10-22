@@ -17,7 +17,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from streamstack import cli, config, lighting
+from streamstack import cli, config, lighting, lightplan
+from streamstack.console import lightauto as panel_module
 from streamstack.console.errors import ActionError
 from streamstack.lighting import Found, LightingError, Litra, Transport
 
@@ -70,6 +71,9 @@ def _preset_name(params: dict[str, Any]) -> str:
     if len(name) > MAX_NAME or any(ord(c) < 32 for c in name):
         raise ActionError(f"A preset name is at most {MAX_NAME} characters, without control characters.", 400)
     return name
+
+
+PRESET_PERCENT_TOLERANCE = 3.0  # percent of brightness a light may differ from a preset and still match it
 
 
 class PresetLibrary:
@@ -171,6 +175,7 @@ class LightingController:
         scan: Scan | None = None,
         opener: Opener | None = None,
         library: PresetLibrary | None = None,
+        plan: lightplan.Store | None = None,
         rescan_seconds: float = RESCAN_SECONDS,
         readback_seconds: float = READBACK_SECONDS,
         blink_seconds: float = 0.25,
@@ -180,6 +185,9 @@ class LightingController:
         self._scan = scan or lighting.discover
         self._open = opener or (lambda found: lighting.HidrawTransport(found.node))
         self.library = library or PresetLibrary()
+        self.plan = plan or lightplan.Store()
+        self.panel: panel_module.AutomationPanel | None = panel_module.AutomationPanel(self.plan)
+        self.engine: Any = None  # the in-process automation engine of the demo rig; the real one is a service
         self.rescan_seconds, self.readback_seconds, self.blink_seconds = rescan_seconds, readback_seconds, blink_seconds
         self._clock = clock
         self._slots: dict[str, _Slot] = {}
@@ -315,12 +323,16 @@ class LightingController:
 
     # -- state ----------------------------------------------------------------
 
-    def _view(self, slot: _Slot, label: str) -> dict[str, Any]:
+    def _view(self, slot: _Slot, label: str, plan: dict[str, Any] | None = None) -> dict[str, Any]:
         model = slot.found.model
         brightness = lighting.lumen_to_percent(model, slot.lumen) if slot.lumen is not None else None
+        mine = lightplan.light_settings(plan or lightplan.defaults(), slot.found.id)
         return {
             "id": slot.found.id,
-            "name": label,
+            "name": mine["name"] or label,
+            "default_name": label,
+            "role": mine["role"],
+            "limits": {k: mine[k] for k in ("min_brightness", "max_brightness", "min_kelvin", "max_kelvin")},
             "model": model.name,
             "pid": f"{model.pid:04x}",
             "connected": slot.device is not None,
@@ -367,21 +379,23 @@ class LightingController:
         usable = [x for x in lights if x["connected"]]
         if not usable:
             return None
+        best: tuple[float, str] | None = None
         for preset in presets:
             if not preset["on"]:
                 if all(x["power"] is False for x in usable):
                     return preset["name"]
                 continue
-            if all(
-                x["power"]
-                and x["brightness"] is not None
-                and x["kelvin"] is not None
-                and abs(x["brightness"] - preset["brightness"]) <= 1
-                and abs(x["kelvin"] - preset["kelvin"]) < lighting.KELVIN_STEP
-                for x in usable
-            ):
-                return preset["name"]
-        return None
+            if not all(x["power"] and x["brightness"] is not None and x["kelvin"] is not None for x in usable):
+                continue
+            # A lumen step is about 0.3 %, and a light rounds to its own steps: match within a few percent and one
+            # Kelvin step, and prefer the closest preset when several qualify.
+            gap = max(
+                max(abs(x["brightness"] - preset["brightness"]) / PRESET_PERCENT_TOLERANCE for x in usable),
+                max(abs(x["kelvin"] - preset["kelvin"]) / lighting.KELVIN_STEP for x in usable),
+            )
+            if gap <= 1 and (best is None or gap < best[0]):
+                best = (gap, preset["name"])
+        return best[1] if best else None
 
     def _problem(self, lights: list[dict[str, Any]]) -> dict[str, Any] | None:
         if self._scan_error:
@@ -396,12 +410,16 @@ class LightingController:
 
     def state(self) -> dict[str, Any]:
         presets = self.library.listing()
+        plan = self.plan.load()
         with self._lock:
             labels = self._labels()
-            lights = [self._view(s, labels[s.found.id]) for s in sorted(self._slots.values(), key=lambda s: s.found.id)]
+            lights = [
+                self._view(s, labels[s.found.id], plan) for s in sorted(self._slots.values(), key=lambda s: s.found.id)
+            ]
             scanned = self._scanned
             problem = self._problem(lights)
         return {
+            "automation": self.panel.state(lights) if self.panel is not None else panel_module.empty_automation(),
             "scanned": scanned,
             "lights": lights,
             "master": self._master(lights),
@@ -411,6 +429,21 @@ class LightingController:
             "kelvin_range": [lighting.KELVIN_MIN, lighting.KELVIN_MAX],
             "kelvin_step": lighting.KELVIN_STEP,
         }
+
+    def lights_view(self) -> list[dict[str, Any]]:
+        """Every light as the page sees it (names and roles included), without presets or the automation block."""
+        plan = self.plan.load()
+        with self._lock:
+            labels = self._labels()
+            return [
+                self._view(s, labels[s.found.id], plan) for s in sorted(self._slots.values(), key=lambda s: s.found.id)
+            ]
+
+    def write(
+        self, light_id: str, *, power: bool | None = None, percent: float | None = None, kelvin: float | None = None
+    ) -> None:
+        """Set one light for the automation engine. Raises ActionError when the light cannot be written."""
+        self._write_all({"id": light_id}, power=power, percent=percent, kelvin=kelvin)
 
     def health_checks(self) -> list[dict[str, str]]:
         state = self.state()
@@ -476,7 +509,17 @@ class LightingController:
         if action == "lighting.rescan":
             self._wake.set()
             return "Looking for lights..."
+        if action.startswith(("lighting.auto.", "lighting.light.", "lighting.service.", "lighting.demo.")):
+            if self.panel is None:
+                raise ActionError("Lighting automation is not part of this rig.", 409)
+            return self.panel.act(action, params, self._known_light)
         raise ActionError(f"Unknown action {action!r}.", 400)
+
+    def _known_light(self, light_id: object) -> str:
+        with self._lock:
+            if not isinstance(light_id, str) or light_id not in self._slots:
+                raise ActionError(f"No light called {light_id}.", 400)
+        return light_id
 
     def _targets(self, params: dict[str, Any]) -> list[_Slot]:
         target = params.get("id", "all")
@@ -618,7 +661,12 @@ DEMO_LIGHTS = (
 class DemoLighting(LightingController):
     """Two simulated Litra Beams speaking the real protocol through SimulatedTransport."""
 
-    def __init__(self, blink_seconds: float = 0.05, library: PresetLibrary | None = None) -> None:
+    def __init__(
+        self,
+        blink_seconds: float = 0.05,
+        library: PresetLibrary | None = None,
+        plan: lightplan.Store | None = None,
+    ) -> None:
         found = []
         devices: dict[str, lighting.SimulatedTransport] = {}
         for model, phys, on, percent, kelvin in DEMO_LIGHTS:
@@ -633,12 +681,21 @@ class DemoLighting(LightingController):
             scan=lambda: list(found),
             opener=lambda light: devices[light.id],
             library=library,
+            plan=plan,
             blink_seconds=blink_seconds,
         )
+        panel_module.attach_demo(self)
 
     def start(self) -> None:
         self.poll_once()  # the simulated lights are there from the first snapshot
         super().start()
+        if self.engine is not None:
+            self.engine.start()
+
+    def stop(self) -> None:
+        if self.engine is not None:
+            self.engine.stop()
+        super().stop()
 
 
 def empty_state() -> dict[str, Any]:
@@ -652,4 +709,5 @@ def empty_state() -> dict[str, Any]:
         "problem": None,
         "kelvin_range": [lighting.KELVIN_MIN, lighting.KELVIN_MAX],
         "kelvin_step": lighting.KELVIN_STEP,
+        "automation": panel_module.empty_automation(),
     }

@@ -60,6 +60,78 @@ Notes and caveats:
 - obs-backgroundremoval's blur option and release cadence were not visible in
   the captured README; confirm in #24 before building.
 
+## Benchmark (issue #22)
+
+`tools/bench_ai.py` (not shipped in the wheel; `pip install -e '.[bench]'`) runs the candidates over a RECORDED
+clip of each rig, never a live device. Per model and backend it reports p50 and p95 milliseconds per frame
+(resize, channel order and scaling included), CPU as a percentage of one core at 30 fps (CPU time per frame x
+fps), Arc busy percent from `intel_gpu_top`, and the first-load compile time with OpenVINO `CACHE_DIR` (cold, then
+cached, which is what a restarted StreamStack pays). A backend or device that is missing (no `GPU.0`, no
+`intel_gpu_top`, an operator the plugin rejects) is listed as skipped with the reason, not as an error. Models are
+fetched with pinned URLs and SHA-256 checks, like YuNet; `python tools/bench_ai.py --list-models` prints each
+licence and checksum. Latency only: the outputs are not decoded, so this says nothing about mask or face quality.
+
+| Candidate | Backends | File | Licence |
+| --- | --- | --- | --- |
+| MediaPipe Meet segmentation (`mediapipe-meet`) | ort-cpu, ov-cpu, ov-gpu | obs-backgroundremoval `mediapipe.onnx` | Apache-2.0 |
+| PP-HumanSeg (`pphumanseg`) | same | obs-backgroundremoval `pphumanseg_fp32.onnx` | Apache-2.0 |
+| SINet (`sinet`) | same | obs-backgroundremoval `SINet_Softmax_simple.onnx` | MIT |
+| YuNet 2023mar (`yunet-2023mar`) | same | OpenCV Zoo `face_detection_yunet_2023mar.onnx` | MIT |
+| BlazeFace (`blazeface`) | same | `garavv/blazeface-onnx` `blaze.onnx` (benchmark only) | not stated upstream; network is Apache-2.0 |
+
+Decision gates this table settles (the thresholds are the ones fixed above, before measuring):
+
+| Gate | Passes when | Status |
+| --- | --- | --- |
+| Blur stays on the CPU (#24) | `mediapipe-meet` on `ort-cpu` is PASS on both rigs | OPEN: no recorded numbers yet |
+| Arc build of the blur is worth carrying (#26) | `ov-gpu` is PASS where `ort-cpu` is FAIL, or cuts CPU % at equal p95 | OPEN: no recorded numbers yet |
+| Auto-framing detector runs on Arc (#23) | `ov-gpu` p95 beats `ov-cpu` and is PASS; else `ov-cpu` stays | OPEN: no recorded numbers yet |
+| DG2/A380 is usable through OpenVINO | `ov-gpu` rows are not skipped and `GPU.0` is the Arc, not the iGPU | OPEN: needs a run on the rig |
+
+### Running it on a quiet host
+
+The numbers below are SYNTHETIC PLACEHOLDERS until these steps are done. Do them with no call in progress and OBS
+stopped, because the recorder opens the camera and the GPU runs must not compete with a live encode:
+
+```sh
+tools/record_clip.sh --confirm-no-call /dev/video42 canon.mkv                 # Canon, 1056x704, 20 s
+tools/record_clip.sh --confirm-no-call /dev/video0 camlink.mkv 1920x1080 30   # Cam Link, 1080p, 20 s
+python tools/bench_ai.py --fetch --clip canon=canon.mkv --clip camlink=camlink.mkv \
+    --json bench-ai.json --update-doc docs/hardware-ai-evaluation.md
+```
+
+Check `openvino_devices` in the JSON first: with the i7-14700's iGPU as well as the Arc, `GPU.0` may be the iGPU
+(pass `--gpu-device GPU.1` and `--gpu-top-device drm:/dev/dri/cardN` for the Arc). `intel_gpu_top` needs root or
+`CAP_PERFMON`. A GPU run saturates the device back to back, so its busy percent is an upper bound for 30 fps.
+Then set the gate statuses above from the table and commit the result. Issue #22 closes only when it has real
+numbers.
+
+<!-- bench-ai:begin -->
+<!-- bench-ai:kind=synthetic -->
+> **SYNTHETIC PLACEHOLDER. These are not measurements of the rigs.** They come from generated frames on
+> the CPU of whatever machine ran the harness (`--synthetic`), only prove the harness works, and decide
+> nothing. The gate column is `n/a` on purpose. Replace them by running the quiet-host steps below.
+
+Host: Intel(R) Core(TM) i7-14700, 28 logical CPUs; OpenVINO 2026.4.1, ONNX Runtime 1.31.0; OpenVINO devices: CPU, GPU. 20 timed frames after 3 warm-up, 2 CPU threads, CPU cost scaled to 30 fps.
+
+**synthetic** (640x360, generated)
+
+| Model | Backend | p50 ms | p95 ms | Infer p50 ms | CPU % of 1 core | GPU busy % | Compile cold / cached ms | First frame ms | Gate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mediapipe-meet | ort-cpu | 3.35 | 3.64 | 2.92 | 254.9 | - | 10 (no cache) | 14.7 | n/a |
+| mediapipe-meet | ov-cpu | 1.16 | 1.25 | 0.94 | 6.4 | - | 132 / 35 | 5.6 | n/a |
+| pphumanseg | ort-cpu | 6.76 | 6.99 | 6.49 | 40.7 | - | 12 (no cache) | 8.2 | n/a |
+| pphumanseg | ov-cpu | 6.42 | 6.80 | 6.13 | 37.5 | - | 102 / 28 | 7.5 | n/a |
+| sinet | ort-cpu | 15.68 | 16.35 | 14.98 | 96.4 | - | 9 (no cache) | 18.6 | n/a |
+| sinet | ov-cpu | 8.25 | 8.52 | 7.58 | 48.1 | - | 124 / 36 | 10.9 | n/a |
+| yunet-2023mar | ort-cpu | 6.02 | 7.26 | 4.85 | 43.8 | - | 6 (no cache) | 8.7 | n/a |
+| yunet-2023mar | ov-cpu | 7.38 | 7.84 | 6.15 | 44.6 | - | 80 / 18 | 9.9 | n/a |
+| blazeface | ort-cpu | 0.94 | 1.00 | 0.80 | 5.7 | - | 7 (no cache) | 1.8 | n/a |
+| blazeface | ov-cpu | - | - | - | - | - | - | - | skipped: OpenVINO could not compile blazeface_garavv_a16bb9a.onnx for CPU: Exception from src/inference/src/cpp/core.cpp:117: ... Unexpected: CPU plug-in doesn't support Squeeze operation with dynamic rank.... |
+
+Gate: p95 under 8 ms, under 1 percent total CPU (CPU % of one core divided by the logical CPUs), slowest frame under one frame period. `ov-gpu` runs on the configured OpenVINO GPU device; check the device name in the JSON, because on a host with an iGPU as well as the Arc the Arc may be `GPU.1`.
+<!-- bench-ai:end -->
+
 ## Ranking (RICE)
 
 Reach = share of calls and properties benefiting (0 to 3), Impact = 0.25 to 3,
@@ -152,6 +224,9 @@ Keep the existing Easy Effects chain and RNNoise as default for latency
 (about 10 ms against about 40 ms). Add a Deep noise remover preset variant,
 verify the effect exists in the packaged Easy Effects first, and give the
 Console an A/B pad. Neither engine uses the Arc.
+
+Shipped, with what the check found: see `docs/voice-denoise.md`. The effect exists in Easy Effects 8.1.2, but the
+Ubuntu package does not ship the `libdeep_filter_ladspa.so` it loads, so the option is gated on that file.
 
 ## Risks
 

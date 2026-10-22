@@ -44,6 +44,17 @@
   .ab[data-bypass="true"] button[aria-pressed="true"] { background: var(--amber-soft); border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber) inset; }
   .ab[data-bypass="true"] button[aria-pressed="true"] .ab-k { background: var(--amber); color: #1b1300; border-color: var(--amber); }
 
+  /* noise removal: the Attenuation Limit is the fifth knob; the engine A/B pad sits above the bypass A/B */
+  .knobs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .knobs ss-knob[data-denoise] { transition: opacity var(--dur-1); }
+  .knobs[data-engine="rnnoise"] ss-knob[data-denoise] { opacity: 0.5; }
+  .ab.dn-eng { margin-bottom: var(--s-2); }
+  .ab.dn-eng button { min-height: 3rem; }
+  .dn-eng ~ .ab { margin-top: 0; }
+  .dn-eng small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dn-note { margin: 0 0 var(--s-2); }
+  .dn-note[data-state="warn"] { color: var(--amber); }
+
   /* ---- presets ---- */
   .presets { display: grid; grid-template-columns: 1fr; gap: var(--s-2); flex: 1; min-height: 0; align-content: stretch; grid-auto-rows: minmax(3.4rem, 1fr); }
   .preset {
@@ -111,6 +122,9 @@
   @media (prefers-reduced-motion: reduce) { .ring-fg { transition: none; } }
 
   /* ---- narrower: the strip stays tall on the left, the rest folds ---- */
+  @media (min-width: 1101px) and (max-height: 800px) {
+    .knobs ss-knob { --knob-size: 4.6rem; }
+  }
   @media (max-width: 1100px) {
     .au { grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.2fr); grid-template-rows: auto auto auto auto; grid-template-areas: "strip tone" "strip voice" "hist check" "hist check"; height: auto; overflow-y: auto; }
     .au-hist { min-height: 14rem; }

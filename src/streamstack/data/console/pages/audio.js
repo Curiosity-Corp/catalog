@@ -33,11 +33,12 @@ const TONE = [
 const PROFILES = [
   [/warm/i, { bass_db: 5, presence_db: 1, treble_db: 0 }],
   [/bright/i, { bass_db: 0, presence_db: 4.5, treble_db: 4 }],
+  [/deepfilter/i, null],
   [/deep/i, { bass_db: 4, presence_db: 0.5, treble_db: -1 }],
   [/minimal/i, { bass_db: 0, presence_db: 0, treble_db: 0 }],
 ];
 const DEFAULT_PROFILE = { bass_db: 2, presence_db: 2.5, treble_db: 1.5 };
-const profileFor = (name) => (PROFILES.find(([re]) => re.test(name)) || [null, DEFAULT_PROFILE])[1];
+const profileFor = (name) => (PROFILES.find(([re]) => re.test(name))?.[1]) || DEFAULT_PROFILE;
 
 const TEMPLATE = `
 <div class="au">
@@ -61,6 +62,8 @@ const TEMPLATE = `
     </div>
     <div class="knobs" data-ref="knobs"></div>
     <p class="hint tone-note" data-ref="toneNote" role="status"></p>
+    <div class="ab dn-eng" role="group" aria-label="Noise removal engine" data-ref="engines"></div>
+    <p class="hint dn-note" data-ref="dnNote" role="status" hidden></p>
     <div class="ab" role="group" aria-label="Effects A/B compare" data-ref="ab">
       <button type="button" data-bypass="false" aria-pressed="true"><span class="ab-k">A</span><span class="ab-t"><b>Processed</b><small>What the call hears</small></span></button>
       <button type="button" data-bypass="true" aria-pressed="false"><span class="ab-k">B</span><span class="ab-t"><b>Bypassed</b><small>Raw microphone</small></span></button>
@@ -174,6 +177,9 @@ export async function mount(host, ctx) {
     knobs[t.key] = k;
     R.knobs.append(k);
   }
+  // Attenuation Limit is DeepFilterNet's tone knob: how much of the noise it may take out (lower = more natural)
+  R.atten = h('ss-knob', { label: 'Attenuation limit', unit: 'dB', step: '1', default: '100', decimals: '0', size: 'lg', title: 'How much noise DeepFilterNet may remove. Lower leaves more of the room in and sounds more natural.', 'data-denoise': 'atten_limit_db' });
+  R.knobs.append(R.atten);
   sub((s) => s.audio.tone_ranges, (ranges) => {
     for (const t of TONE) {
       const [lo, hi] = ranges?.[t.key] || (t.key === 'pitch_semitones' ? [-6, 6] : [-12, 12]);
@@ -193,6 +199,43 @@ export async function mount(host, ctx) {
     R.toneCard.toggleAttribute('data-custom', !!tone.custom);
   });
   R.toneReset.addEventListener('click', () => act('audio.preset', { name: store.state.audio.chain.preset }));
+
+  // ---------- noise removal: RNNoise or DeepFilterNet ----------
+  // The A/B pad swaps the engine inside the chosen preset (a live preset, like the tone), so tone and preset stay.
+  R.engines.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-engine]');
+    if (b && !b.disabled && b.getAttribute('aria-pressed') !== 'true') act('audio.denoise', { engine: b.dataset.engine });
+  });
+  R.atten.addEventListener('input', (e) => actStream('audio.denoise', { atten_limit_db: e.detail.value }));
+  R.atten.addEventListener('change', () => flushStream('audio.denoise'));
+  sub((s) => s.audio.denoise, (dn) => {
+    R.knobs.dataset.engine = dn.engine;
+    renderList(R.engines, dn.engines, (en) => en.id, (en) => {
+      const b = h('button', { type: 'button', 'data-engine': '' },
+        h('span', { class: 'ab-k' }), h('span', { class: 'ab-t' }, h('b'), h('small')));
+      return b;
+    }, (b, en) => {
+      b.dataset.engine = en.id;
+      b.querySelector('.ab-k').textContent = dn.engines.indexOf(en) === 0 ? 'A' : 'B';
+      b.querySelector('b').textContent = en.label;
+      b.querySelector('small').textContent = `${en.effect}, about ${en.delay_ms} ms`;
+      b.setAttribute('aria-pressed', String(en.id === dn.engine));
+      b.setAttribute('aria-label', `${en.label}, ${en.effect}, about ${en.delay_ms} milliseconds of delay${en.available ? '' : '. Not installed'}`);
+      b.disabled = !dn.supported || !en.available;
+      if (en.reason) b.title = en.reason; else b.removeAttribute('title');
+    });
+    const [lo, hi] = dn.atten_range || [0, 100];
+    R.atten.setAttribute('min', lo);
+    R.atten.setAttribute('max', hi);
+    if (Number.isFinite(dn.atten_limit_db)) R.atten.value = dn.atten_limit_db;
+    const deep = dn.engine === 'deepfilternet';
+    R.atten.toggleAttribute('disabled', !dn.supported || !deep);
+    const missing = dn.engines.find((en) => !en.available);
+    // only a problem is worth a line: the delay of each engine is on its button
+    R.dnNote.textContent = missing ? missing.reason : '';
+    R.dnNote.hidden = !missing;
+    R.dnNote.dataset.state = missing ? 'warn' : '';
+  });
 
   // ---------- A/B bypass ----------
   R.ab.addEventListener('click', (e) => {
@@ -221,7 +264,8 @@ export async function mount(host, ctx) {
       b.querySelector('.p-name').textContent = p.label.replace(/^Voice (?=\S)/, '');
       b.querySelector('.p-blurb').textContent = p.blurb || '';
       b.setAttribute('aria-pressed', String(active));
-      b.disabled = !chain.available;
+      b.disabled = !chain.available || !!p.unavailable;
+      if (p.unavailable) b.title = p.unavailable; else b.removeAttribute('title');
       b.toggleAttribute('data-active', active);
       b.setAttribute('aria-label', `${p.label}. ${p.blurb || ''}`);
       const values = active && !tone.custom && tone.supported ? tone : profileFor(p.name);
@@ -448,6 +492,8 @@ export async function mount(host, ctx) {
   off.push(registerCommands(() => [
     { id: 'au:check', group: 'Audio', title: 'Start mic check', icon: 'headphones', hint: 'R', keywords: 'mic check record listen test microphone', run: startCheck },
     { id: 'au:reset-tone', group: 'Audio', title: 'Reset tone to the preset', icon: 'undo', keywords: 'tone reset preset bass treble presence pitch', run: () => act('audio.preset', { name: store.state.audio.chain.preset }) },
+    { id: 'au:dn-rnnoise', group: 'Audio', title: 'Noise removal: RNNoise (lowest delay)', icon: 'wave', keywords: 'denoise noise removal rnnoise noise reduction latency', run: () => act('audio.denoise', { engine: 'rnnoise' }) },
+    { id: 'au:dn-deepfilternet', group: 'Audio', title: 'Noise removal: DeepFilterNet (deep noise remover)', icon: 'wave', keywords: 'denoise noise removal deepfilternet deep noise remover', run: () => act('audio.denoise', { engine: 'deepfilternet' }) },
     { id: 'au:gain0', group: 'Audio', title: 'Mic gain to 0 dB', icon: 'sliders', keywords: 'gain reset zero microphone level', run: () => act('audio.gain', { db: 0 }) },
   ]));
 
