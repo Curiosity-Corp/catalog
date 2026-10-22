@@ -1110,6 +1110,71 @@ streamstack_intel_media_packages:
 # NO_HZ_FULL, which is already low-latency; opt in with for example
 # ["threadirqs", "preempt=full"] and reboot.
 streamstack_kernel_args: []
+# StreamStack AI dependencies (tasks/streamstack-background-removal.yml and
+# tasks/streamstack-framing.yml). Each group is optional and degrades by itself:
+# without the plugin StreamStack hides the blur controls, without the framing
+# packages the Console shows Auto-framing disabled. Nothing is restarted (OBS
+# loads plugins at its next start).
+streamstack_background_removal_enabled: true
+streamstack_framing_enabled: true
+
+# obs-backgroundremoval (royshil, GPL-3.0-or-later): OBS filter kind
+# `background_removal`, which StreamStack's "Blur background" needs (1.4.1+).
+# Ubuntu has no package, so the release .deb (built for Debian forky; every
+# soname it needs exists on Ubuntu 26.04) is pinned by version and sha256.
+# Bump version and checksum together (the GitHub release lists each asset's
+# digest). The .deb installs under /usr/local, which OBS also searches.
+streamstack_backgroundremoval_version: "1.4.1"
+streamstack_backgroundremoval_deb_version: "1.4.1~forky"
+streamstack_backgroundremoval_sha256: "116810f21d87297511d35ec99c6a837ee077aee6280d5118f55cbfe4dfb9412b"
+streamstack_backgroundremoval_url: >-
+  https://github.com/royshil/obs-backgroundremoval/releases/download/{{ streamstack_backgroundremoval_version }}/obs-backgroundremoval_{{ streamstack_backgroundremoval_version }}.forky_amd64.deb
+streamstack_backgroundremoval_packages:
+  - libonnxruntime1.23
+  - libopencv-core410
+  - libopencv-imgproc410
+
+# Auto-framing (StreamStack docs/auto-framing.md). The `streamstack` launcher
+# runs /usr/bin/python3 -I and only adds /usr/local/lib/streamstack to
+# sys.path, so OpenVINO (no Ubuntu 26.04 package; PEP 668 blocks system pip)
+# is installed from pinned, checksummed wheels with `pip --target` into that
+# directory, which a StreamStack upgrade never wipes. The wheel is tied to the
+# system Python (cp314 on Ubuntu 26.04); another interpreter skips the install
+# and StreamStack falls back to OpenCV's DNN on the CPU.
+streamstack_framing_packages:
+  - python3-pip
+  - python3-numpy
+  - python3-opencv
+  - python3-packaging
+streamstack_openvino_version: "2026.4.1"
+streamstack_openvino_python_tag: cp314
+streamstack_openvino_wheel: "openvino-2026.4.1-22982-cp314-cp314-manylinux_2_28_x86_64.whl"
+streamstack_openvino_wheel_url: >-
+  https://files.pythonhosted.org/packages/77/cf/830aff97404d73b8ada3ba3f02a626089a384299322cb94b52c37eaebd18/openvino-2026.4.1-22982-cp314-cp314-manylinux_2_28_x86_64.whl
+streamstack_openvino_wheel_sha256: "3631dd889dccf3d5087775948590a6609a662f90c24a9cf85bb4dfa0cdd7fd2f"
+# OpenVINO imports openvino-telemetry; the pure-Python wheel is pinned too.
+streamstack_openvino_telemetry_version: "2025.2.0"
+streamstack_openvino_telemetry_wheel: "openvino_telemetry-2025.2.0-py3-none-any.whl"
+streamstack_openvino_telemetry_wheel_url: >-
+  https://files.pythonhosted.org/packages/3b/ac/5ab0ca0aa269ad3c73f7bfc3801b10e5f56f75a31bf68c1ae8bd51cf70a4/openvino_telemetry-2025.2.0-py3-none-any.whl
+streamstack_openvino_telemetry_wheel_sha256: "bcb667e83a44f202ecf4cfa49281715c6d7e21499daec04ff853b7f964833599"
+streamstack_openvino_target: /usr/local/lib/streamstack
+# Intel GPU compute runtime (OpenCL / Level Zero) so OpenVINO lists GPU.0.
+# Installed only when an Intel GPU is present; hosts without one run on the CPU.
+streamstack_compute_runtime_packages:
+  - intel-opencl-icd
+  - libze-intel-gpu1
+  - libze1
+  - libigdgmm12
+  - ocl-icd-libopencl1
+# YuNet face model (OpenCV Zoo, MIT), pinned to the commit and checksum that
+# StreamStack's own `streamstack framing --fetch` verifies. The role places it
+# where StreamStack looks (~/.local/share/streamstack/models) for each user in
+# dev_users, so it works with any StreamStack release.
+streamstack_framing_model_file: face_detection_yunet_2023mar.onnx
+streamstack_framing_model_url: >-
+  https://github.com/opencv/opencv_zoo/raw/f12e12798e8314f7c074a6656816c048dcc95b7a/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+streamstack_framing_model_sha256: "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
 streamstack_packages:
   - obs-studio
   - easyeffects

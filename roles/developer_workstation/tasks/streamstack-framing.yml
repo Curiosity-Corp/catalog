@@ -1,0 +1,202 @@
+---
+# =============================================================================
+# StreamStack: auto-framing host packages (Curiosity-Corp/catalog#101)
+# =============================================================================
+# Auto-framing (StreamStack docs/auto-framing.md) detects the face with the
+# YuNet model through OpenVINO (Intel GPU when there is one, the CPU
+# otherwise) or, without OpenVINO, through OpenCV's DNN module on the CPU.
+# StreamStack installs no system packages itself; without these the Console
+# shows the control disabled and `streamstack doctor` says "Auto-framing is not
+# installed (optional)". Nothing else breaks.
+#
+# Included from main.yml for StreamStack hosts (streamstack_enabled) while
+# streamstack_framing_enabled is true. Hardware-agnostic: the Intel compute
+# runtime is installed only when an Intel GPU is present, and a host without
+# one runs the same model on the CPU. Never touches a device or a running
+# process.
+#
+#   apt          python3-numpy, python3-opencv, python3-packaging, python3-pip
+#   wheels       openvino + openvino-telemetry, pinned and checksummed, into
+#                /usr/local/lib/streamstack (`python3 -I` ignores the user site
+#                and PEP 668 blocks system pip, and the launcher puts exactly
+#                this directory on sys.path)
+#   Intel GPU    intel-opencl-icd, libze-intel-gpu1, libze1, libigdgmm12,
+#                ocl-icd-libopencl1, and `render` group for the desktop users
+#   model        YuNet face_detection_yunet_2023mar.onnx per user
+# =============================================================================
+
+- name: Install the auto-framing Python packages
+  ansible.builtin.apt:
+    name: "{{ streamstack_framing_packages }}"
+    state: present
+
+# --- Intel GPU compute runtime (only where the hardware exists) -------------
+
+- name: Detect an Intel GPU for auto-framing
+  ansible.builtin.shell:
+    cmd: grep -qx 0x8086 /sys/class/drm/card*/device/vendor
+    executable: /bin/bash
+  register: _streamstack_framing_intel_gpu
+  changed_when: false
+  failed_when: false
+
+- name: Install the Intel GPU compute runtime
+  ansible.builtin.apt:
+    name: "{{ streamstack_compute_runtime_packages }}"
+    state: present
+  when: _streamstack_framing_intel_gpu.rc == 0
+
+# OpenVINO opens /dev/dri/renderD*, which belongs to the render group. Takes
+# effect at the user's next login.
+- name: Let the desktop users open the render node
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    groups: render
+    append: true
+  loop: "{{ dev_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: _streamstack_framing_intel_gpu.rc == 0
+
+# --- OpenVINO runtime --------------------------------------------------------
+
+- name: Read the system Python tag the StreamStack launcher runs
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -I
+      - -c
+      - "import sys; print('cp%d%d' % sys.version_info[:2])"
+  register: _streamstack_python_tag
+  changed_when: false
+
+- name: Skip OpenVINO where its wheel does not match
+  ansible.builtin.debug:
+    msg: >-
+      The pinned OpenVINO wheel is {{ streamstack_openvino_python_tag }} for x86_64; this host has
+      {{ _streamstack_python_tag.stdout }} on {{ ansible_facts['architecture'] }}. Auto-framing uses
+      OpenCV's DNN backend on the CPU until streamstack_openvino_* is updated.
+  when: >-
+    _streamstack_python_tag.stdout != streamstack_openvino_python_tag
+    or ansible_facts['architecture'] != 'x86_64'
+
+- name: Install OpenVINO into the StreamStack library directory
+  when:
+    - _streamstack_python_tag.stdout == streamstack_openvino_python_tag
+    - ansible_facts['architecture'] == 'x86_64'
+  block:
+    - name: Check the installed OpenVINO packages
+      ansible.builtin.stat:
+        path: "{{ streamstack_openvino_target }}/{{ item }}.dist-info"
+      loop:
+        - "openvino-{{ streamstack_openvino_version }}"
+        - "openvino_telemetry-{{ streamstack_openvino_telemetry_version }}"
+      register: _streamstack_openvino_installed
+
+    - name: Install the pinned OpenVINO wheels
+      when: _streamstack_openvino_installed.results | map(attribute='stat.exists') | reject | list | length > 0
+      block:
+        - name: Ensure the verified artifact cache exists
+          ansible.builtin.file:
+            path: "{{ workstation_update_artifact_cache_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0750"
+
+        - name: Download the OpenVINO wheels
+          ansible.builtin.get_url:
+            url: "{{ item.url }}"
+            dest: "{{ workstation_update_artifact_cache_dir }}/{{ item.file }}"
+            checksum: "sha256:{{ item.sha256 }}"
+            owner: root
+            group: root
+            mode: "0644"
+            force: false
+          loop:
+            - url: "{{ streamstack_openvino_wheel_url }}"
+              file: "{{ streamstack_openvino_wheel }}"
+              sha256: "{{ streamstack_openvino_wheel_sha256 }}"
+            - url: "{{ streamstack_openvino_telemetry_wheel_url }}"
+              file: "{{ streamstack_openvino_telemetry_wheel }}"
+              sha256: "{{ streamstack_openvino_telemetry_wheel_sha256 }}"
+          loop_control:
+            label: "{{ item.file }}"
+
+        - name: Find OpenVINO packages of other versions
+          ansible.builtin.find:
+            paths: "{{ streamstack_openvino_target }}"
+            patterns: ["openvino-*.dist-info", "openvino_telemetry-*.dist-info"]
+            file_type: directory
+          register: _streamstack_openvino_stale
+
+        - name: Remove OpenVINO packages of other versions
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: absent
+          loop: "{{ _streamstack_openvino_stale.files }}"
+          loop_control:
+            label: "{{ item.path | basename }}"
+          when: >-
+            (item.path | basename) not in [
+              'openvino-' ~ streamstack_openvino_version ~ '.dist-info',
+              'openvino_telemetry-' ~ streamstack_openvino_telemetry_version ~ '.dist-info']
+
+        - name: Install the OpenVINO wheels with pip --target
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/python3
+              - -I
+              - -m
+              - pip
+              - install
+              - --disable-pip-version-check
+              - --no-input
+              - --no-deps
+              - --no-index
+              - --upgrade
+              - --target
+              - "{{ streamstack_openvino_target }}"
+              - "{{ workstation_update_artifact_cache_dir }}/{{ streamstack_openvino_wheel }}"
+              - "{{ workstation_update_artifact_cache_dir }}/{{ streamstack_openvino_telemetry_wheel }}"
+          environment:
+            PIP_REQUIRE_VIRTUALENV: "false"
+          register: _streamstack_openvino_pip
+          changed_when: "'Successfully installed' in _streamstack_openvino_pip.stdout"
+
+# --- YuNet face model, per desktop user --------------------------------------
+
+- name: Check managed user homes for the face model
+  ansible.builtin.stat:
+    path: "{{ item.home }}"
+  loop: "{{ dev_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _streamstack_framing_homes
+
+- name: Create the StreamStack model directory for each user
+  ansible.builtin.file:
+    path: "{{ item.0.item.home }}/{{ item.1 }}"
+    state: directory
+    owner: "{{ item.0.stat.uid }}"
+    group: "{{ item.0.stat.gid }}"
+    # Adds owner access only: an existing directory keeps its mode, a new one
+    # gets the umask default.
+    mode: u+rwx
+  loop: "{{ _streamstack_framing_homes.results | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir') | product(['.local', '.local/share', '.local/share/streamstack', '.local/share/streamstack/models']) | list }}"
+  loop_control:
+    label: "{{ item.0.item.name }}: {{ item.1 }}"
+
+- name: Fetch the pinned YuNet face model for each user
+  ansible.builtin.get_url:
+    url: "{{ streamstack_framing_model_url }}"
+    dest: "{{ item.item.home }}/.local/share/streamstack/models/{{ streamstack_framing_model_file }}"
+    checksum: "sha256:{{ streamstack_framing_model_sha256 }}"
+    owner: "{{ item.stat.uid }}"
+    group: "{{ item.stat.gid }}"
+    mode: "0644"
+    force: false
+  loop: "{{ _streamstack_framing_homes.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.stat.isdir | default(false)

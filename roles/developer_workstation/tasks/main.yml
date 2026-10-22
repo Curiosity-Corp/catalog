@@ -529,6 +529,30 @@
     - streamstack_enabled | bool
     - streamstack_low_latency | bool
 
+# Separate includes so `--tags streamstack-background-removal` and
+# `--tags streamstack-framing` apply only the AI helper dependencies.
+- name: Install the StreamStack background blur plugin
+  ansible.builtin.include_tasks:
+    file: streamstack-background-removal.yml
+    apply:
+      tags: [hardware, streamstack, streamstack-background-removal]
+  tags: [hardware, streamstack, streamstack-background-removal]
+  when:
+    - workstation_profile == 'desktop'
+    - streamstack_enabled | bool
+    - streamstack_background_removal_enabled | bool
+
+- name: Install the StreamStack auto-framing dependencies
+  ansible.builtin.include_tasks:
+    file: streamstack-framing.yml
+    apply:
+      tags: [hardware, streamstack, streamstack-framing]
+  tags: [hardware, streamstack, streamstack-framing]
+  when:
+    - workstation_profile == 'desktop'
+    - streamstack_enabled | bool
+    - streamstack_framing_enabled | bool
+
 - name: Include the patched i915 module for an HDMI 2.1 PCON
   ansible.builtin.include_tasks: i915-pcon-frl-444.yml
   tags: [hardware, i915]
