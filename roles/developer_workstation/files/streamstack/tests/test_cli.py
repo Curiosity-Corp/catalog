@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from streamstack import __version__, cli, config, system
+from streamstack import __version__, cli, config, micwatch, system
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -212,3 +212,82 @@ def test_user_units_need_no_install_prefix() -> None:
     assert "StartLimitBurst" in auto_unit.split("[Service]")[0]
     assert "NoNewPrivileges=true" in auto_unit
     assert "ExecStart=streamstack canon-bridge" in (units / "streamstack-canon.service").read_text()
+
+
+# -- mic-revive -------------------------------------------------------------------
+
+
+class ReviveRig:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, probe: micwatch.StallProbe) -> None:
+        self.revived: list[str] = []
+        self.result = micwatch.ReviveResult(True, "Microphone is back (suspend and resume).", ["suspend/resume"])
+        monkeypatch.setattr(cli, "have", lambda tool: True)
+        monkeypatch.setattr(cli, "audio_sources", lambda: {"alsa_input.wave": "Wave:3"})
+        monkeypatch.setattr(system, "default_device", lambda kind: "")
+        monkeypatch.setattr(cli, "_watch_microphone", lambda mic: probe)
+        monkeypatch.setattr(micwatch, "revive_mic", self.revive)
+
+    def revive(self, mic: str, **kwargs: object) -> micwatch.ReviveResult:
+        self.revived.append(mic)
+        return self.result
+
+
+def revive_args(force: bool = False) -> object:
+    return cli.build_parser().parse_args(["mic-revive", *(["--force"] if force else [])])
+
+
+def test_mic_revive_leaves_a_healthy_microphone_alone(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(False, "healthy", "scheduled (quantum 1024, rate 48000)"))
+    assert cli.main(["mic-revive"]) == 0
+    assert rig.revived == []
+    assert "nothing to revive" in capsys.readouterr().out
+
+
+def test_mic_revive_refuses_when_it_cannot_tell(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(None, "unsupported", "not an ALSA device"))
+    assert cli.main(["mic-revive"]) == 0
+    assert rig.revived == [] and "left alone" in capsys.readouterr().out
+
+
+def test_mic_revive_force_cycles_a_healthy_microphone(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(False, "healthy", "scheduled"))
+    assert cli.main(["mic-revive", "--force"]) == 0
+    assert rig.revived == ["alsa_input.wave"]
+
+
+def test_mic_revive_revives_a_stalled_microphone_and_says_what_it_did(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(True, "stalled", "running but not scheduled"))
+    assert cli.main(["mic-revive"]) == 0
+    out = capsys.readouterr().out
+    assert rig.revived == ["alsa_input.wave"]
+    assert "Microphone: Wave:3" in out and "not scheduled" in out
+    assert "Did: suspend/resume" in out and "Microphone is back" in out
+
+
+def test_mic_revive_exit_code_is_one_when_it_did_not_help(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(True, "stalled", "stalled"))
+    rig.result = micwatch.ReviveResult(False, micwatch.REPLUG_HINT, ["suspend/resume", "manual help needed"])
+    assert cli.main(["mic-revive"]) == 1
+    captured = capsys.readouterr()
+    assert "manual help needed" in captured.out and "wireplumber" in captured.err
+
+
+def test_mic_revive_without_a_microphone_or_pactl(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    ReviveRig(monkeypatch, micwatch.StallProbe(None))
+    monkeypatch.setattr(cli, "audio_sources", lambda: {})
+    assert cli.main(["mic-revive"]) == 1
+    assert "no microphone" in capsys.readouterr().err
+    monkeypatch.setattr(cli, "have", lambda tool: False)
+    assert cli.main(["mic-revive"]) == 1
+    assert "pactl is missing" in capsys.readouterr().err
+
+
+def test_mic_check_playback_has_a_deadline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    played: list[tuple[list[str], float]] = []
+    monkeypatch.setattr(cli, "have", lambda tool: True)
+    monkeypatch.setattr(cli, "audio_sources", lambda: {system.EE_SOURCE: "EE"})
+    monkeypatch.setattr(system, "record", lambda source, seconds, path: True)
+    monkeypatch.setattr(system, "run", lambda argv, timeout=10: played.append((argv, timeout)) or None)
+    assert cli.main(["mic-check", "3"]) == 0
+    (paplay,) = [call for call in played if call[0][0] == "paplay"]
+    assert paplay[1] == 3 + 20  # the recording length plus a fixed allowance

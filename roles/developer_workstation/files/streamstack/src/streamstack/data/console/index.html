@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b0d10">
+  <title>StreamStack Console</title>
+  <link rel="icon" href="static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="static/theme.css">
+  <link rel="stylesheet" href="static/shell.css">
+  <script type="module" src="static/app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand">
+        <span class="brand-mark" data-icon="logo"></span>
+        <span class="brand-name">StreamStack<small>Console</small></span>
+      </div>
+      <div class="top-center" id="top-center" aria-live="polite"></div>
+      <div class="top-right" id="top-right"></div>
+    </header>
+    <div id="banner" role="status" aria-live="polite"></div>
+    <nav id="rail" aria-label="Pages"></nav>
+    <main id="main"><div id="page"><div class="boot">Connecting to StreamStack…</div></div></main>
+  </div>
+  <ss-toast></ss-toast>
+  <ss-palette></ss-palette>
+  <ss-shortcuts></ss-shortcuts>
+  <noscript>The StreamStack Console needs JavaScript.</noscript>
+</body>
+</html>

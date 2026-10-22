@@ -1,13 +1,15 @@
-"""StreamStack panel menu: start/stop the studio, pick voice presets, preview.
+"""StreamStack panel menu: open the Console, start/stop the studio, pick voice presets, preview.
 
 A desktop front end for the `streamstack` command, so a call can be prepared
-without a terminal. Two ways to put it on the panel:
+without a terminal. The Console (`streamstack console`) is the main surface;
+this menu stays for panels and quick one-offs. Two ways to put it on the panel:
 
   streamstack-tray --menu   pop the menu up at the pointer and exit when done;
                             bind it to a panel button, launcher or hotkey
                             (with `streamstack status --icon` as the button)
   streamstack-tray          a system tray icon (Ayatana AppIndicator, falling
-                            back to an XEmbed status icon)
+                            back to an XEmbed status icon); a left click opens
+                            the Console, the menu is on the right click
 
 The icon shows what Teams and Zoom receive:
   red dot    the graded StreamStack Camera (OBS virtual camera) is live
@@ -145,11 +147,14 @@ class Tray:
             self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
             self.indicator.set_title("StreamStack")
             self.indicator.set_menu(self.menu)
+            # Most trays show the menu on a left click and offer no way to change that;
+            # a middle click (where the tray supports it) goes straight to the Console.
+            self.indicator.set_secondary_activate_target(self.console_item)
             self.icon = None
         else:
             self.icon = Gtk.StatusIcon.new_from_file(str(ICONS / "streamstack-off.svg"))
             self.icon.set_title("StreamStack")
-            self.icon.connect("activate", self._popup)
+            self.icon.connect("activate", lambda _icon: self.open_console())
             self.icon.connect("popup-menu", self._popup)
         self.refresh()
         GLib.timeout_add_seconds(POLL_SECONDS, self.refresh)
@@ -174,6 +179,9 @@ class Tray:
 
     def _build_menu(self) -> Gtk.Menu:
         menu = Gtk.Menu()
+        self.console_item = self._item(menu, "Open StreamStack Console", self.open_console)
+        self._item(menu, "Open the compact Console", self.open_console, "--mini")
+        menu.append(Gtk.SeparatorMenuItem())
         self.camera_status = self._item(menu, "Calls camera: checking...")
         self.voice_status = self._item(menu, "Microphone: checking...")
         menu.append(Gtk.SeparatorMenuItem())
@@ -359,6 +367,10 @@ class Tray:
 
     def cli_detached(self, *args: str) -> None:
         detach([CLI, *args])
+
+    def open_console(self, *options: str) -> None:
+        """Open the Console: the detached command is the server when none runs yet, else it just opens a window."""
+        self.cli_detached("console", *options)
 
     def toggle_studio(self) -> None:
         self.busy = True

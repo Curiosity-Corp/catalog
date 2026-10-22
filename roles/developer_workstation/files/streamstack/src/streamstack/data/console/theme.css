@@ -1,0 +1,187 @@
+/* theme.css — StreamStack Console design tokens + base.
+ *
+ * Direction: a broadcast console at night. Near-black graphite surfaces, one calm blue accent for
+ * "selected / active", and a strict traffic-light vocabulary that is never decorative:
+ *   red   = on air / recording / muted / program tally (something the audience can hear or see)
+ *   amber = attention (privacy, warnings, clipping risk)
+ *   green = healthy / signal OK
+ * Every size is in rem and rem scales with the window (see html font-size), so the same layout
+ * is crisp at 1280×720 and at 4K. Components read only these tokens. Light theme: [data-theme="light"].
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces (elevation by lightness, not by shadow alone) */
+  --bg: #090b0f;
+  --bg-glow: rgba(70, 120, 255, 0.07);
+  --surface-1: #12161d;
+  --surface-2: #1a1f29;
+  --surface-3: #242b38;
+  --surface-inset: #0b0e13;
+  --scrim: rgba(4, 6, 10, 0.72);
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  /* text */
+  --text: #eaeef5;
+  --text-2: #a9b4c5;
+  --text-3: #8591a4;
+
+  /* accent = selection and focus; never a status colour */
+  --accent: #5ea4ff;
+  --accent-strong: #8cc0ff;
+  --accent-ink: #04101f;
+  --accent-soft: rgba(94, 164, 255, 0.16);
+  --accent-glow: rgba(94, 164, 255, 0.5);
+  --focus: #9ccaff;
+
+  /* status */
+  --red: #ff4a5c;               /* text / icon on dark */
+  --red-solid: #e5283b;         /* fills carrying white text (4.8:1) */
+  --red-soft: rgba(255, 74, 92, 0.16);
+  --red-glow: rgba(255, 74, 92, 0.55);
+  --amber: #ffb83d;
+  --amber-ink: #231500;
+  --amber-soft: rgba(255, 184, 61, 0.15);
+  --green: #38d884;
+  --green-soft: rgba(56, 216, 132, 0.14);
+  --on-solid: #ffffff;
+
+  /* meters */
+  --meter-low: #2fd47a;
+  --meter-mid: #ffc23a;
+  --meter-hi: #ff4a5c;
+  --meter-off: rgba(255, 255, 255, 0.07);
+  --meter-target: rgba(94, 164, 255, 0.11);
+
+  /* elevation */
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 10px 28px rgba(0, 0, 0, 0.38);
+  --shadow-pop: 0 24px 70px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--line-strong);
+
+  /* type */
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --fs-2xs: 0.66rem;
+  --fs-xs: 0.74rem;
+  --fs-sm: 0.84rem;
+  --fs-md: 0.96rem;
+  --fs-lg: 1.16rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: 2.1rem;
+  --fs-hero: 3rem;
+  --tracking-caps: 0.09em;
+
+  /* space (4px at 16px root; scales with root) */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --s-7: 3rem;
+
+  /* radii */
+  --r-1: 0.4rem;
+  --r-2: 0.65rem;
+  --r-3: 0.9rem;
+  --r-4: 1.25rem;
+  --r-pill: 999px;
+
+  /* motion */
+  --dur-1: 90ms;
+  --dur-2: 180ms;
+  --dur-3: 320ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* layout */
+  --rail-w: 4.9rem;
+  --top-h: 3.4rem;
+  --tab-h: 3.8rem;
+  --touch: 2.75rem;             /* minimum comfortable target */
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #e8ebf1;
+  --bg-glow: rgba(40, 90, 220, 0.06);
+  --surface-1: #ffffff;
+  --surface-2: #f1f3f8;
+  --surface-3: #e4e8f0;
+  --surface-inset: #dde2eb;
+  --scrim: rgba(20, 26, 38, 0.45);
+  --line: rgba(20, 30, 50, 0.1);
+  --line-strong: rgba(20, 30, 50, 0.22);
+  --text: #10151d;
+  --text-2: #444f62;
+  --text-3: #596579;
+  --accent: #1a62df;
+  --accent-strong: #0f4dbb;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(26, 98, 223, 0.12);
+  --accent-glow: rgba(26, 98, 223, 0.38);
+  --focus: #1a62df;
+  --red: #c91a2e;
+  --red-solid: #d4202f;
+  --red-soft: rgba(212, 32, 47, 0.12);
+  --red-glow: rgba(212, 32, 47, 0.4);
+  --amber: #8f5300;
+  --amber-ink: #231500;
+  --amber-soft: rgba(224, 140, 0, 0.17);
+  --green: #0b7a43;
+  --green-soft: rgba(11, 122, 67, 0.12);
+  --meter-low: #1fb468;
+  --meter-mid: #f0a800;
+  --meter-hi: #d4202f;
+  --meter-off: rgba(20, 30, 50, 0.09);
+  --meter-target: rgba(26, 98, 223, 0.1);
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 1px 2px rgba(20, 30, 50, 0.12);
+  --shadow-2: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 8px 22px rgba(20, 30, 50, 0.12);
+  --shadow-pop: 0 24px 60px rgba(20, 30, 50, 0.28), 0 0 0 1px var(--line-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-1: 1ms; --dur-2: 1ms; --dur-3: 1ms; }
+}
+
+/* The root size follows the window so 4K is as comfortable as 720p; capped so a phone stays readable. */
+html {
+  font-size: clamp(13px, min(calc(0.45vw + 8.2px), calc(1.05vh + 6.4px)), 26px);
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
+::selection { background: var(--accent-soft); }
+a { color: inherit; text-decoration: none; }
+[hidden] { display: none !important; }
+
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}
+
+/* Shared small text roles for pages */
+.eyebrow { font-size: var(--fs-2xs); font-weight: 650; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-3); }
+.mono { font-family: var(--font-mono); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

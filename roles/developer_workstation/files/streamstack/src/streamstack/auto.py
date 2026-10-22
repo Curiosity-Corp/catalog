@@ -50,6 +50,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -333,12 +334,25 @@ def current_look(obs: OBS, source: str) -> dict:
     return look
 
 
-def ramp(obs: OBS, source: str, start: dict, target: dict, seconds: float = 3.0, steps: int = 12) -> None:
-    """Move the colour filter from start to target in small steps, so no frame jumps."""
+def ramp(
+    obs: OBS,
+    source: str,
+    start: dict,
+    target: dict,
+    seconds: float = 3.0,
+    steps: int = 12,
+    cancel: threading.Event | None = None,
+) -> None:
+    """Move the colour filter from start to target in small steps, so no frame jumps.
+
+    Setting `cancel` (the Console does, when a newer look arrives) stops after the current step.
+    """
     keys = [k for k in COLOR_KEYS if k in target and k in start]
     if not any(target[k] != start[k] for k in keys):
         return
     for step in range(1, steps + 1):
+        if cancel is not None and cancel.is_set():
+            return
         mix = step / steps
         mix = mix * mix * (3 - 2 * mix)  # smoothstep
         values = {}
@@ -349,7 +363,11 @@ def ramp(obs: OBS, source: str, start: dict, target: dict, seconds: float = 3.0,
             else:
                 values[key] = round(value, 4)
         obs.set_filter(source, COLOR_FILTER, values)
-        time.sleep(seconds / steps)
+        if cancel is not None:
+            if cancel.wait(seconds / steps):
+                return
+        else:
+            time.sleep(seconds / steps)
 
 
 def apply_look(obs: OBS, source: str, look: dict, target: dict, seconds: float = 4.0) -> bool:

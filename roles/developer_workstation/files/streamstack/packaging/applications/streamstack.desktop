@@ -2,8 +2,18 @@
 Type=Application
 Name=StreamStack
 GenericName=Call and stream studio
-Comment=Start the studio, pick a voice preset and preview cameras from the panel
-Exec=streamstack-tray --menu
+Comment=Faders, meters, scenes and the live picture for calls and streams
+Exec=streamstack-console
 Icon=streamstack
 Terminal=false
+StartupWMClass=StreamStack
 Categories=AudioVideo;Video;
+Actions=Mini;Menu;
+
+[Desktop Action Mini]
+Name=Compact window
+Exec=streamstack-console --mini
+
+[Desktop Action Menu]
+Name=Panel menu
+Exec=streamstack-tray --menu

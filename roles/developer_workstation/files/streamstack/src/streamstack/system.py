@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import shutil
 import signal
 import subprocess
+import sys
 from pathlib import Path
+from typing import Protocol
 
 CAMLINK_LINK = Path("/dev/streamstack/camlink")
 EE_SOURCE = "easyeffects_source"
@@ -30,11 +33,64 @@ FFMPEG_FORMATS = {
 Mode = tuple[str, int, int, float]
 
 
+GRACE = (2.0, 2.0, 3.0)  # seconds to wait after SIGINT, after SIGTERM and after SIGKILL
+
+
+class Reapable(Protocol):
+    """The slice of subprocess.Popen that `reap` uses (so tests can pass a process that cannot be killed)."""
+
+    pid: int
+
+    def poll(self) -> int | None: ...
+
+    def send_signal(self, sig: int) -> None: ...
+
+    def wait(self, timeout: float | None = None) -> int: ...
+
+
+def reap(proc: Reapable, grace: tuple[float, float, float] = GRACE) -> bool:
+    """Stop a child for good: SIGINT, then SIGTERM, then SIGKILL, waiting `grace` seconds after each.
+
+    A client of a wedged audio server can ignore polite signals (or sit in an uninterruptible
+    read), so the last step cannot be skipped. Returns False only when even SIGKILL left a
+    process nobody could wait for (it is then abandoned, never waited on forever).
+    """
+    for sig, wait in zip((signal.SIGINT, signal.SIGTERM, signal.SIGKILL), grace, strict=False):
+        if proc.poll() is not None:
+            return True
+        try:
+            proc.send_signal(sig)
+        except ProcessLookupError:
+            return True
+        except OSError as exc:
+            print(f"streamstack: cannot signal pid {proc.pid}: {exc}", file=sys.stderr)
+        try:
+            proc.wait(timeout=wait)
+            return True
+        except subprocess.TimeoutExpired:
+            continue
+    return proc.poll() is not None
+
+
 def run(argv: list[str], timeout: float = 10) -> subprocess.CompletedProcess[str] | None:
+    """Run a helper with a hard deadline; None when it cannot start, fails to finish or has to be killed.
+
+    On a timeout the child is reaped (SIGINT, SIGTERM, SIGKILL) so nothing lingers on a wedged server.
+    """
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
-    except (OSError, subprocess.TimeoutExpired):
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+    except OSError:
         return None
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        reap(proc, (0.0, 1.0, 3.0))
+        with contextlib.suppress(OSError, ValueError, subprocess.TimeoutExpired):
+            proc.communicate(timeout=1)
+        return None
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
 def have(tool: str) -> bool:
@@ -264,13 +320,29 @@ def ee_presets() -> list[str]:
     return sorted(p.stem for p in local.glob("*.json"))
 
 
-def record(source: str, seconds: float, path: str) -> bool:
-    proc = subprocess.Popen(
-        ["parecord", f"--device={source}", "--file-format=wav", path], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
-    )
+def record(source: str, seconds: float, path: str, *, grace: tuple[float, float, float] = GRACE) -> bool:
+    """Record `seconds` of `source` into a WAV file; True when real audio arrived.
+
+    The capture has a hard deadline: after `seconds` it is asked to finish (SIGINT lets parecord close
+    the file), and if the audio server is wedged and it does not, it is terminated and killed. A
+    capture that never delivers data is therefore never left running.
+    """
+    try:
+        proc = subprocess.Popen(
+            ["parecord", f"--device={source}", "--file-format=wav", path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
     try:
         proc.wait(timeout=seconds)
     except subprocess.TimeoutExpired:
-        proc.send_signal(signal.SIGINT)
-        proc.wait(timeout=5)
-    return Path(path).exists() and Path(path).stat().st_size > 1024
+        pass
+    finally:
+        reap(proc, grace)
+    try:
+        return Path(path).stat().st_size > 1024
+    except OSError:
+        return False
