@@ -261,6 +261,102 @@ The bridge is the `streamstack-canon` user service. `streamstack studio`
 starts it; set `streamstack_canon_bridge_autostart: true` to start it at
 login.
 
+## Low latency
+
+`streamstack_low_latency` (default `true` on StreamStack hosts) applies
+`tasks/streamstack-low-latency.yml`. Every rule matches by USB id, PipeWire
+node name or detected GPU, so a property with a Focusrite Scarlett 2i2 instead
+of the Wave XLR, or without the Arc card, gets only what applies and nothing
+fails when a device is absent. Nothing is restarted by the role: PipeWire and
+WirePlumber pick the files up the next time they start (log out and in, or
+`systemctl --user restart pipewire wireplumber pipewire-pulse` between calls).
+
+Apply only this part: `ansible-playbook playbooks/site.yml --tags streamstack-low-latency`
+(with the host's usual `-e workstation_profile=desktop -e hardware_profile=...`).
+
+### Audio clock and interface
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `default.clock.rate` / `allowed-rates` | 48000 | every StreamStack device runs 48 kHz natively, so there is never a resample |
+| `default.clock.quantum` | 256 (5.3 ms, was 1024 = 21 ms) | USB audio moves in 1 ms (full-speed) or 125 us (high-speed) packets and the two-period ALSA buffer needs a few packets of slack to stay free of xruns; Easy Effects' RNNoise works on 10 ms (480 sample) frames and buffers internally below that size whatever the quantum |
+| `default.clock.min-quantum` | 128 (2.7 ms) | a client may ask for it with `PIPEWIRE_QUANTUM=128/48000` |
+| `default.clock.max-quantum` | 1024 (was 2048) | one greedy client can no longer drag the graph back to 43 ms |
+| `pulse.default.req` / `pulse.min.req` | 256/48000, 128/48000 | the browser, Teams and Zoom speak the PulseAudio protocol |
+| `api.alsa.period-size` / `api.alsa.headroom` | 128 / 64 frames | pinned on the audio interface only (Focusrite and Elgato Wave XLR nodes) |
+| `session.suspend-timeout-seconds`, `node.pause-on-idle` | 0, false | the interface never suspends when idle, so a call never starts with a wake-up dropout |
+
+Files: `/etc/pipewire/pipewire.conf.d/50-curiosity-streamstack-low-latency.conf`,
+`/etc/pipewire/pipewire-pulse.conf.d/50-...conf` and
+`/etc/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-alsa.conf`.
+Override with `streamstack_audio_rate`, `_quantum`, `_min_quantum`,
+`_max_quantum`, `_period_size`, `_headroom` and `_node_patterns` (anchored
+regexes on the node name), or with a later-sorting drop-in of your own. If a
+property hears crackles, raise `streamstack_audio_headroom` first, then the
+quantum; verify with `pw-top` (ERR column) or `pw-metadata -n settings`.
+
+### Realtime
+
+`rtkit` is installed and the `audio` group gets `rtprio 95`, `memlock
+unlimited` and `nice -19` (`/etc/security/limits.d/95-curiosity-streamstack-realtime.conf`).
+The `pipewire` package already ships the equivalent for the `pipewire` group.
+Managed users (`dev_users`) that exist on the host join `audio`; the role never
+creates an account. Group membership and limits apply at the next login.
+
+### USB power
+
+`/etc/udev/rules.d/60-curiosity-streamstack-usb-power.rules` writes
+`power/control=on` (no autosuspend) for Focusrite `1235:*`, Elgato Wave XLR
+`0fd9:007d`, Cam Link 4K `0fd9:0066` and Canon `04a9:*`, and the role writes
+the same value to devices that are plugged in now. It replays no udev events,
+so nothing rebinds or re-enumerates. Edit `streamstack_usb_no_autosuspend_ids`
+to change the list.
+
+### Intel Arc media stack
+
+On a host with an Intel GPU the role keeps these current from the Ubuntu
+archive (`streamstack_media_package_state: latest`; `present` stops upgrades):
+`linux-firmware` (GuC/HuC), `intel-media-va-driver` (iHD), `libvpl2`,
+`libmfx-gen1.2` (the oneVPL GPU runtime), `vainfo`, `intel-gpu-tools`,
+`intel-opencl-icd` and `libze-intel-gpu1`. Set `streamstack_intel_media_non_free: true`
+for `intel-media-va-driver-non-free` (HEVC encode, VC-1 decode; it replaces the
+free build). Check with `vainfo` and `clinfo`. i915 stays the driver:
+the `xe` module is installed on Ubuntu 26.04 but the Arc A380 is bound to
+i915, and the role never switches, blacklists or force-probes either one
+(switching also drops the patched-i915 PCON work). Intel ships newer media
+and compute releases upstream than Ubuntu packages; the archive build is what
+the role installs, and a newer one arrives with the next Ubuntu update.
+
+### Scarlett, firmware and v4l2loopback
+
+The Scarlett 2i2 mixer driver (`scarlett2`) is part of the kernel's
+`snd-usb-audio`; the module exposes no Scarlett-specific option, so none is
+set. `alsa-scarlett-gui` is installed by the hardware profile. Interface
+firmware is deliberately not flashed by the role: use the *Firmware* section
+of `alsa-scarlett-gui` (needs the Scarlett firmware files, which Ubuntu's
+`linux-firmware` does not carry) at a time no call is planned.
+v4l2loopback options (`devices=2 video_nr=42,43 exclusive_caps=1,1`) are owned
+by `streamstack.yml` and untouched here; Ubuntu ships 0.15.3 (upstream tags
+0.15.4).
+
+### CPU and kernel
+
+The desktop `performance_mode` hardware-profile flag already selects
+power-profiles-daemon's `performance` profile (reversible with
+`powerprofilesctl set balanced`); nothing more is added. The stock kernel is
+`PREEMPT_DYNAMIC` with `PREEMPT_LAZY`, `HZ=1000` and `NO_HZ_FULL`, which is
+already low latency. `streamstack_kernel_args: [threadirqs, preempt=full]`
+opts in to extra arguments through
+`/etc/default/grub.d/93-curiosity-streamstack.cfg` (appended to the existing
+line, `update-grub` run, active after a reboot); an empty list removes the file.
+
+Sources: PipeWire documentation (`pipewire.conf(5)`, `pipewire-pulse.conf(5)`,
+`pipewire-props(7)`, the Config-ALSA and Performance-tuning wiki pages);
+WirePlumber 0.5 `monitor.alsa.rules`; Intel `media-driver` (intel-media-26.3.5),
+`compute-runtime` (26.35.39758.10) and `libvpl` (v2.17.0) releases; Geoffrey
+Bennett's `alsa-scarlett-gui` (1.0beta9) and scarlett2 driver; the
+v4l2loopback releases; Ubuntu 26.04 package archive.
+
 ## Notes
 
 - If `streamstack doctor` reports a loopback device with the wrong name,

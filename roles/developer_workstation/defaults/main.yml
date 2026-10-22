@@ -1053,6 +1053,63 @@ streamstack_tray_autostart: false
 # USB vendor:product ids that get the /dev/streamstack/camlink symlink.
 streamstack_camlink_usb_ids:
   - "0fd9:0066"  # Elgato Cam Link 4K
+# Low-latency audio/video tuning and current Intel media drivers
+# (tasks/streamstack-low-latency.yml, docs/streamstack.md "Low latency"). Runs
+# on StreamStack hosts only and is hardware-gated: every rule matches by USB
+# id or PipeWire node name, so a property with a Scarlett 2i2 instead of the
+# Wave XLR (or without an Intel GPU) simply gets the rules that apply to it.
+streamstack_low_latency: true
+# PipeWire graph clock. 48 kHz is what every StreamStack device runs natively
+# (no resampling). Quantum 256 = 5.3 ms per graph cycle, down from 21 ms: USB
+# audio moves in 1 ms (full-speed) or 125 us (high-speed) packets and the
+# two-period ALSA buffer needs a few packets of slack to stay free of xruns,
+# while Easy Effects' RNNoise works on 10 ms (480 sample) frames and adds its
+# own buffering below that size whatever the quantum. 128 (2.7 ms) stays
+# allowed for a client that asks (PIPEWIRE_QUANTUM=128/48000); the maximum
+# drops from 2048 to 1024 so one greedy client cannot pull the whole graph
+# back to 43 ms.
+streamstack_audio_rate: 48000
+streamstack_audio_quantum: 256
+streamstack_audio_min_quantum: 128
+streamstack_audio_max_quantum: 1024
+# WirePlumber ALSA rules for the audio interface (anchored regexes on the
+# PipeWire node name). Idle interfaces are never suspended (suspending a USB
+# interface mid-call is audible as a dropout while it wakes), and the ALSA
+# period/headroom are pinned in frames.
+streamstack_audio_node_patterns:
+  - "alsa_(input|output)\\.usb-Focusrite_.*"
+  - "alsa_(input|output)\\.usb-Elgato_Systems_Elgato_Wave_XLR.*"
+streamstack_audio_period_size: 128
+streamstack_audio_headroom: 64
+# Realtime scheduling for the audio group (PipeWire's own @pipewire group is
+# already covered by the pipewire package's limits.d file).
+streamstack_realtime_group: audio
+streamstack_realtime_rtprio: 95
+# USB devices that never autosuspend. "vendor:product", product may be "*".
+streamstack_usb_no_autosuspend_ids:
+  - "1235:*"       # Focusrite (Scarlett, Clarett)
+  - "0fd9:007d"    # Elgato Wave XLR
+  - "0fd9:0066"    # Elgato Cam Link 4K
+  - "04a9:*"       # Canon cameras
+# Intel media stack. latest follows the Ubuntu archive; present never upgrades.
+streamstack_media_package_state: latest
+# The -non-free iHD build adds HEVC encode and VC-1 decode; it replaces the
+# free build, needs multiverse, and changes nothing for H.264/AV1 calls.
+streamstack_intel_media_non_free: false
+streamstack_intel_media_packages:
+  - linux-firmware
+  - libvpl2
+  - libmfx-gen1.2
+  - vainfo
+  - intel-gpu-tools
+  - intel-opencl-icd
+  - libze-intel-gpu1
+# Extra kernel command-line arguments appended through
+# /etc/default/grub.d/93-curiosity-streamstack.cfg (empty: no drop-in). The
+# stock Ubuntu kernel is PREEMPT_DYNAMIC with PREEMPT_LAZY, HZ=1000 and
+# NO_HZ_FULL, which is already low-latency; opt in with for example
+# ["threadirqs", "preempt=full"] and reboot.
+streamstack_kernel_args: []
 streamstack_packages:
   - obs-studio
   - easyeffects

@@ -517,6 +517,18 @@
     - workstation_profile == 'desktop'
     - streamstack_enabled | bool
 
+# Separate include so `--tags streamstack-low-latency` applies only the tuning.
+- name: Tune the StreamStack host for low latency
+  ansible.builtin.include_tasks:
+    file: streamstack-low-latency.yml
+    apply:
+      tags: [hardware, streamstack, streamstack-low-latency]
+  tags: [hardware, streamstack, streamstack-low-latency]
+  when:
+    - workstation_profile == 'desktop'
+    - streamstack_enabled | bool
+    - streamstack_low_latency | bool
+
 - name: Include the patched i915 module for an HDMI 2.1 PCON
   ansible.builtin.include_tasks: i915-pcon-frl-444.yml
   tags: [hardware, i915]
