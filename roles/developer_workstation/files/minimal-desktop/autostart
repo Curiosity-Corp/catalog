@@ -23,6 +23,18 @@ if command -v dbus-update-activation-environment >/dev/null 2>&1; then
 fi
 unset activation_env_vars activation_env_var activation_env_value activation_env_timeout
 
+# Reach graphical-session.target, so the user services that belong to the
+# desktop session (WantedBy=graphical-session.target, e.g. StreamStack's
+# camera-follow lights) start now that DISPLAY is published. --no-block: the
+# session never waits on them. Starting it again is a no-op.
+if command -v systemctl >/dev/null 2>&1; then
+    session_target_timeout=
+    command -v timeout >/dev/null 2>&1 && session_target_timeout="timeout 10"
+    $session_target_timeout systemctl --user start --no-block openbox-session.target \
+        || echo "could not start openbox-session.target; desktop user services may not start." >&2
+    unset session_target_timeout
+fi
+
 # X resources (Xft.dpi, Xcursor.size): LightDM sessions merge ~/.Xresources
 # themselves, startx sessions do not. Merging twice is harmless.
 if [ -r "$HOME/.Xresources" ] && command -v xrdb >/dev/null 2>&1; then

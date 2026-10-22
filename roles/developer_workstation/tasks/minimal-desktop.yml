@@ -39,6 +39,15 @@
       tags: [minimal-desktop, lightdm, display]
   tags: [minimal-desktop, lightdm, display]
 
+- name: Install the Openbox session target for systemd --user
+  ansible.builtin.copy:
+    src: minimal-desktop/openbox-session.target
+    dest: /etc/systemd/user/openbox-session.target
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [minimal-desktop, openbox]
+
 - name: Deploy Openbox configuration
   ansible.builtin.include_tasks:
     file: minimal-desktop-openbox.yml
