@@ -553,6 +553,17 @@
     - streamstack_enabled | bool
     - streamstack_framing_enabled | bool
 
+- name: Install the StreamStack DeepFilterNet noise remover library
+  ansible.builtin.include_tasks:
+    file: streamstack-deepfilter.yml
+    apply:
+      tags: [hardware, streamstack, streamstack-deepfilter]
+  tags: [hardware, streamstack, streamstack-deepfilter]
+  when:
+    - workstation_profile == 'desktop'
+    - streamstack_enabled | bool
+    - streamstack_deepfilter_enabled | bool
+
 - name: Include the patched i915 module for an HDMI 2.1 PCON
   ansible.builtin.include_tasks: i915-pcon-frl-444.yml
   tags: [hardware, i915]

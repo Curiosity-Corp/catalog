@@ -1,7 +1,8 @@
-"""StreamStack AI helper dependencies: background-removal plugin, OpenVINO, face model.
+"""StreamStack AI helper dependencies: background-removal plugin, OpenVINO, face model,
+DeepFilterNet LADSPA library.
 
 Static checks of the pinned artifacts and of the hardware gating; nothing is
-downloaded or installed (catalog#100, catalog#101).
+downloaded or installed (catalog#100, catalog#101, catalog#102).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 MAIN = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
 BLUR = yaml.safe_load((ROLE / "tasks/streamstack-background-removal.yml").read_text())
 FRAMING = yaml.safe_load((ROLE / "tasks/streamstack-framing.yml").read_text())
+DEEPFILTER = yaml.safe_load((ROLE / "tasks/streamstack-deepfilter.yml").read_text())
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -42,6 +44,7 @@ def test_every_pinned_artifact_carries_a_sha256() -> None:
         "streamstack_openvino_wheel_sha256",
         "streamstack_openvino_telemetry_wheel_sha256",
         "streamstack_framing_model_sha256",
+        "streamstack_deepfilter_sha256",
     ):
         assert SHA256.match(DEFAULTS[key]), key
 
@@ -68,7 +71,7 @@ def test_pinned_urls_name_the_pinned_files() -> None:
 
 
 def test_every_download_is_checksummed_and_never_forced() -> None:
-    for tasks in (BLUR, FRAMING):
+    for tasks in (BLUR, FRAMING, DEEPFILTER):
         for task in _walk(tasks):
             module = task.get("ansible.builtin.get_url")
             if module:
@@ -123,9 +126,65 @@ def test_main_includes_both_groups_for_streamstack_desktops_only() -> None:
     for file, tag, flag in (
         ("streamstack-background-removal.yml", "streamstack-background-removal", "streamstack_background_removal_enabled"),
         ("streamstack-framing.yml", "streamstack-framing", "streamstack_framing_enabled"),
+        ("streamstack-deepfilter.yml", "streamstack-deepfilter", "streamstack_deepfilter_enabled"),
     ):
         include = next(t for t in MAIN if isinstance(t.get("ansible.builtin.include_tasks"), dict)
                        and t["ansible.builtin.include_tasks"]["file"] == file)
         assert {"hardware", "streamstack", tag} <= set(include["tags"])
         assert {"workstation_profile == 'desktop'", "streamstack_enabled | bool", f"{flag} | bool"} <= set(include["when"])
         assert DEFAULTS[flag] is True
+
+
+def test_deepfilter_pin_names_the_x86_64_release_asset() -> None:
+    release = DEFAULTS["streamstack_deepfilter_release"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", release)
+    assert _render(DEFAULTS["streamstack_deepfilter_url"]) == (
+        f"https://github.com/Rikorose/DeepFilterNet/releases/download/v{release}/"
+        f"libdeep_filter_ladspa-{release}-x86_64-unknown-linux-gnu.so")
+
+
+def test_deepfilter_lands_where_easy_effects_searches() -> None:
+    # Easy Effects 8.1.2 searches LADSPA_PATH, /usr/local/lib/ladspa,
+    # /usr/lib/x86_64-linux-gnu/ladspa, /usr/lib/ladspa and /usr/lib64/ladspa
+    # for exactly this file name (streamstack docs/voice-denoise.md).
+    assert DEFAULTS["streamstack_deepfilter_dest"] == "/usr/local/lib/ladspa/libdeep_filter_ladspa.so"
+    # The release record must not sit in a directory LADSPA hosts scan.
+    assert "ladspa" not in str(Path(DEFAULTS["streamstack_deepfilter_marker"]).parent)
+    copy = _named(DEEPFILTER, "Install libdeep_filter_ladspa {{")["ansible.builtin.copy"]
+    assert copy["dest"] == "{{ streamstack_deepfilter_dest }}"
+    assert copy["remote_src"] is True and copy["mode"] == "0644"
+    assert copy["src"].endswith("{{ streamstack_deepfilter_sha256 }}.so")
+
+
+def test_deepfilter_install_is_idempotent_and_never_downgrades() -> None:
+    decide = _named(DEEPFILTER, "Decide whether to install")["ansible.builtin.set_fact"]
+    expr = decide["_streamstack_deepfilter_install"]
+    assert "not _streamstack_deepfilter_lib.stat.exists" in expr
+    assert "is version(streamstack_deepfilter_release, '<')" in expr
+    assert "length > 0" in expr, "an unrecorded library must be left alone"
+    install = _named(DEEPFILTER, "Download and install the pinned")
+    assert install["when"] == "_streamstack_deepfilter_install | bool"
+    record = _named(DEEPFILTER, "Record the installed")["ansible.builtin.copy"]
+    assert record["content"] == "{{ streamstack_deepfilter_release }}\n"
+    assert record["dest"] == "{{ streamstack_deepfilter_marker }}"
+    # Every branch of the decision, rendered with the real expression.
+    env = jinja2.Environment()
+    env.tests["version"] = lambda a, b, op: tuple(map(int, a.split("."))) < tuple(map(int, b.split(".")))
+    template = env.from_string(expr)
+    for exists, installed, want in (
+        (False, "", True), (True, "", False), (True, "0.5.5", True),
+        (True, DEFAULTS["streamstack_deepfilter_release"], False), (True, "9.9.9", False),
+    ):
+        got = template.render(
+            _streamstack_deepfilter_lib={"stat": {"exists": exists}},
+            _streamstack_deepfilter_installed=installed,
+            streamstack_deepfilter_release=DEFAULTS["streamstack_deepfilter_release"],
+        ).strip()
+        assert (got == "True") is want, (exists, installed)
+
+
+def test_deepfilter_never_restarts_audio_or_obs() -> None:
+    text = str(DEEPFILTER)
+    for word in ("systemd", "service", "easyeffects", "pipewire", "wireplumber", "obs-studio", "notify"):
+        assert word not in text.lower().replace("streamstack", ""), word
+    assert _named(DEEPFILTER, "Install the DeepFilterNet LADSPA")["when"] == "ansible_facts['architecture'] == 'x86_64'"

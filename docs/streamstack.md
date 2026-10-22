@@ -263,8 +263,8 @@ login.
 
 ## AI helper dependencies
 
-StreamStack's background blur and auto-framing need packages it never installs
-itself. The role installs them as two optional groups; without them StreamStack
+StreamStack's background blur, auto-framing and DeepFilterNet voice option need packages it never installs
+itself. The role installs them as three optional groups; without them StreamStack
 works as before and says what is missing (`streamstack doctor`, the Console
 System page).
 
@@ -272,6 +272,7 @@ System page).
 |---|---|---|---|
 | Background blur | `streamstack_background_removal_enabled` (`true`) | `streamstack-background-removal` | The OBS plugin [obs-backgroundremoval](https://github.com/royshil/obs-backgroundremoval) (GPL-3.0-or-later, a separate package that StreamStack only reaches through obs-websocket), the upstream release `.deb` pinned by version and sha256 (`streamstack_backgroundremoval_*`), plus `libonnxruntime1.23` and `libopencv-core410`/`-imgproc410` from the archive. It installs under `/usr/local/lib/obs-plugins` and `/usr/local/share/obs/obs-plugins`. Skipped when the pinned version or a newer one is already installed. |
 | Auto-framing | `streamstack_framing_enabled` (`true`) | `streamstack-framing` | `python3-numpy`, `python3-opencv`, `python3-packaging`, `python3-pip`; the OpenVINO runtime and `openvino-telemetry` from pinned, checksummed wheels installed with `pip --target /usr/local/lib/streamstack` (the one directory the isolated `python3 -I` launcher adds; Ubuntu has no OpenVINO package and PEP 668 blocks system pip); and, per user in `dev_users`, the YuNet face model in `~/.local/share/streamstack/models/` (commit-pinned URL, sha256 checked, the same file `streamstack framing --fetch` verifies). |
+| Noise remover | `streamstack_deepfilter_enabled` (`true`) | `streamstack-deepfilter` | `libdeep_filter_ladspa.so` from [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) (MIT or Apache-2.0), the upstream x86_64 release asset pinned by version and sha256 (`streamstack_deepfilter_*`), installed to `/usr/local/lib/ladspa/`, one of the directories Easy Effects 8.1.2's Deep Noise Remover searches; Ubuntu does not ship it. The release is recorded in `/usr/local/share/streamstack/libdeep_filter_ladspa.release`; a newer or unrecorded library is left alone. Easy Effects is not restarted: it looks for the library when the effect loads. |
 
 The Intel GPU compute runtime (`intel-opencl-icd`, `libze-intel-gpu1`,
 `libze1`, `libigdgmm12`, `ocl-icd-libopencl1`) is installed, and the desktop
@@ -287,12 +288,13 @@ group applies at the next login. To check a host (read-only):
 
 ```
 dpkg -s obs-backgroundremoval | grep Version
+cat /usr/local/share/streamstack/libdeep_filter_ladspa.release; nm -D /usr/local/lib/ladspa/libdeep_filter_ladspa.so | grep ladspa_descriptor
 /usr/bin/python3 -I -c "import sys; sys.path.insert(0,'/usr/local/lib/streamstack'); import openvino, numpy, cv2; print(openvino.Core().available_devices)"
 streamstack doctor
 ```
 
 To bump a pinned artifact, change its version, URL and sha256 together
-(`streamstack_backgroundremoval_*`, `streamstack_openvino_*`); the role
+(`streamstack_backgroundremoval_*`, `streamstack_openvino_*`, `streamstack_deepfilter_*`); the role
 re-downloads, verifies the checksum, and replaces the old version.
 
 ## Low latency

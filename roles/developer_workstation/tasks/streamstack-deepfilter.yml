@@ -1,0 +1,120 @@
+---
+# =============================================================================
+# StreamStack: DeepFilterNet LADSPA plugin for Easy Effects (catalog#102)
+# =============================================================================
+# StreamStack's "Noise removal engine: DeepFilterNet" drives Easy Effects'
+# Deep Noise Remover (Easy Effects 8.1.2 from Ubuntu). That effect is a wrapper
+# that loads libdeep_filter_ladspa.so at run time from LADSPA_PATH or
+# /usr/local/lib/ladspa, /usr/lib/x86_64-linux-gnu/ladspa, /usr/lib/ladspa,
+# /usr/lib64/ladspa; Ubuntu does not ship it, so without this file the effect
+# does nothing and StreamStack keeps the DeepFilterNet pad disabled.
+#
+# Included from main.yml for StreamStack hosts (streamstack_enabled) while
+# streamstack_deepfilter_enabled is true. The upstream release asset (a single
+# ELF shared object, MIT or Apache-2.0) is pinned by version and sha256 and
+# installed to /usr/local/lib/ladspa. The library carries no version string, so
+# the installed release is recorded in a marker file outside the LADSPA
+# directories; a newer or unrecorded library is never replaced (no downgrade).
+# Easy Effects, PipeWire and OBS are never restarted: Easy Effects scans for the
+# library when the effect is loaded. See docs/streamstack.md, "AI helpers".
+# =============================================================================
+
+- name: Check the host can take the DeepFilterNet x86_64 library
+  ansible.builtin.debug:
+    msg: >-
+      libdeep_filter_ladspa is only pinned for x86_64; {{ ansible_facts['architecture'] }}
+      keeps StreamStack on the RNNoise noise remover.
+  when: ansible_facts['architecture'] != 'x86_64'
+
+- name: Install the DeepFilterNet LADSPA library
+  when: ansible_facts['architecture'] == 'x86_64'
+  block:
+    - name: Stat the installed DeepFilterNet LADSPA library
+      ansible.builtin.stat:
+        path: "{{ streamstack_deepfilter_dest }}"
+        get_checksum: false
+      register: _streamstack_deepfilter_lib
+
+    - name: Read the recorded DeepFilterNet release
+      ansible.builtin.slurp:
+        src: "{{ streamstack_deepfilter_marker }}"
+      register: _streamstack_deepfilter_marker_raw
+      failed_when: false
+
+    - name: Work out the installed DeepFilterNet release
+      ansible.builtin.set_fact:
+        _streamstack_deepfilter_installed: >-
+          {{ (_streamstack_deepfilter_marker_raw.content | default('') | b64decode | trim)
+             if _streamstack_deepfilter_marker_raw.content is defined else '' }}
+
+    # Install when the library is absent or recorded older than the pin. A
+    # library with no record (installed by hand) or a newer one is left alone.
+    - name: Decide whether to install the pinned DeepFilterNet library
+      ansible.builtin.set_fact:
+        _streamstack_deepfilter_install: >-
+          {{ not _streamstack_deepfilter_lib.stat.exists
+             or (_streamstack_deepfilter_installed | length > 0
+                 and _streamstack_deepfilter_installed is version(streamstack_deepfilter_release, '<')) }}
+
+    - name: Keep an unrecorded DeepFilterNet library as it is
+      ansible.builtin.debug:
+        msg: >-
+          {{ streamstack_deepfilter_dest }} exists without a release record in
+          {{ streamstack_deepfilter_marker }}; it is left alone.
+      when:
+        - _streamstack_deepfilter_lib.stat.exists
+        - _streamstack_deepfilter_installed | length == 0
+
+    - name: Download and install the pinned DeepFilterNet library
+      when: _streamstack_deepfilter_install | bool
+      block:
+        - name: Ensure the verified artifact cache exists
+          ansible.builtin.file:
+            path: "{{ workstation_update_artifact_cache_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0750"
+
+        - name: Download libdeep_filter_ladspa {{ streamstack_deepfilter_release }}
+          ansible.builtin.get_url:
+            url: "{{ streamstack_deepfilter_url }}"
+            dest: "{{ workstation_update_artifact_cache_dir }}/libdeep_filter_ladspa-{{ streamstack_deepfilter_sha256 }}.so"
+            checksum: "sha256:{{ streamstack_deepfilter_sha256 }}"
+            owner: root
+            group: root
+            mode: "0644"
+            force: false
+
+        - name: Ensure the LADSPA directory exists
+          ansible.builtin.file:
+            path: "{{ streamstack_deepfilter_dest | dirname }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Install libdeep_filter_ladspa {{ streamstack_deepfilter_release }}
+          ansible.builtin.copy:
+            src: "{{ workstation_update_artifact_cache_dir }}/libdeep_filter_ladspa-{{ streamstack_deepfilter_sha256 }}.so"
+            dest: "{{ streamstack_deepfilter_dest }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0644"
+
+        - name: Ensure the release record directory exists
+          ansible.builtin.file:
+            path: "{{ streamstack_deepfilter_marker | dirname }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Record the installed DeepFilterNet release
+          ansible.builtin.copy:
+            content: "{{ streamstack_deepfilter_release }}\n"
+            dest: "{{ streamstack_deepfilter_marker }}"
+            owner: root
+            group: root
+            mode: "0644"

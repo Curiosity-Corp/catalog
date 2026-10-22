@@ -1117,6 +1117,7 @@ streamstack_kernel_args: []
 # loads plugins at its next start).
 streamstack_background_removal_enabled: true
 streamstack_framing_enabled: true
+streamstack_deepfilter_enabled: true
 
 # obs-backgroundremoval (royshil, GPL-3.0-or-later): OBS filter kind
 # `background_removal`, which StreamStack's "Blur background" needs (1.4.1+).
@@ -1138,6 +1139,21 @@ streamstack_backgroundremoval_packages:
   - libonnxruntime1.23
   - libopencv-core410
   - libopencv-imgproc410
+
+# DeepFilterNet LADSPA plugin (Rikorose/DeepFilterNet, MIT or Apache-2.0, at
+# your option): the library Easy Effects 8.1.2's Deep Noise Remover loads at run
+# time; StreamStack's DeepFilterNet voice option needs it (catalog#102). The
+# release's x86_64 glibc build is a single ELF shared object (exports
+# ladspa_descriptor), pinned by version and sha256 (checked by downloading the
+# asset). The install never replaces a newer or unrecorded library. Variables
+# are named *_release because the update policy reserves *_version. Bump
+# release, URL and checksum together.
+streamstack_deepfilter_release: "0.5.6"
+streamstack_deepfilter_sha256: "2ca3205c2911d389604a826a240e745597d50252b5cab81c8248252b335e2236"
+streamstack_deepfilter_url: >-
+  https://github.com/Rikorose/DeepFilterNet/releases/download/v{{ streamstack_deepfilter_release }}/libdeep_filter_ladspa-{{ streamstack_deepfilter_release }}-x86_64-unknown-linux-gnu.so
+streamstack_deepfilter_dest: /usr/local/lib/ladspa/libdeep_filter_ladspa.so
+streamstack_deepfilter_marker: /usr/local/share/streamstack/libdeep_filter_ladspa.release
 
 # Auto-framing (StreamStack docs/auto-framing.md). The `streamstack` launcher
 # runs /usr/bin/python3 -I and only adds /usr/local/lib/streamstack to
