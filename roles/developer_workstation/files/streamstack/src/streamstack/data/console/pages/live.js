@@ -233,9 +233,9 @@ export async function mount(host, ctx) {
       return pad;
     }, (pad, p) => {
       pad.setAttribute('label', p.label.replace(/^Voice (?=\S)/, ''));
-      pad.setAttribute('title', p.blurb || '');
+      pad.setAttribute('title', p.unavailable || p.blurb || '');
       pad.toggleAttribute('active', p.name === chain.preset);
-      pad.toggleAttribute('disabled', !chain.available);
+      pad.toggleAttribute('disabled', !chain.available || !!p.unavailable);
     });
     const active = chain.presets.find((p) => p.name === chain.preset);
     R.presetNote.textContent = chain.bypass

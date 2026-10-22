@@ -43,6 +43,10 @@ export const OPTIMISTIC = {
   'audio.preset': (p) => ({ 'audio.chain.preset': p.name }),
   'audio.bypass': (p) => ({ 'audio.chain.bypass': !!p.on }),
   'audio.tone': (p) => Object.fromEntries(Object.entries(p).map(([k, v]) => [`audio.tone.${k}`, v])),
+  'audio.denoise': (p) => ({
+    ...(p.engine !== undefined ? { 'audio.denoise.engine': p.engine } : {}),
+    ...(p.atten_limit_db !== undefined ? { 'audio.denoise.atten_limit_db': Number(p.atten_limit_db) } : {}),
+  }),
   'video.scene': (p, s) => ({
     'video.scenes': s.video.scenes.map((sc) => ({ ...sc, active: sc.name === p.name })),
     'video.program_scene': p.name,

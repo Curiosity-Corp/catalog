@@ -1044,6 +1044,13 @@ streamstack_auto_video: true
 streamstack_auto_audio: true
 streamstack_auto_notify: true
 streamstack_auto_autostart: false
+# Camera follow and the daylight schedule for Litra lights (StreamStack
+# docs/lighting.md): the lights come on while any app uses the camera and go
+# off after the grace period. Started at login for every desktop user; only
+# the person at the active seat can reach the light (uaccess on its hidraw
+# node), so users on other VTs never fight over it. Settings stay per user in
+# ~/.config/streamstack/lighting-automation.json.
+streamstack_lights_autostart: true
 # The StreamStack menu (start/stop the studio, voice presets, every camera and
 # mode to preview, mic check, the doctor) is always in the application menu as
 # `streamstack-tray --menu`, for a panel button or hotkey. This also starts it

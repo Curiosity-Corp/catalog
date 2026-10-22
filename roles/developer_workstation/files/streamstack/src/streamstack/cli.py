@@ -18,6 +18,7 @@ user and never needs root.
     streamstack console         the visual control surface: faders, meters, scenes, live picture
     streamstack canon-bridge    run the Canon live view -> loopback camera bridge
     streamstack canon status    the bridge's GPU path, rates and the camera's settings (also: get, set, af, focus)
+    streamstack lights          camera follow and daylight schedule for Litra lights (run|status|enable|disable)
     streamstack setup           seed this user's OBS profile and voice presets
     streamstack encoder         which video encoder OBS can use here (--apply sets it in the profile)
     streamstack framing         auto-framing: backends, face model (--fetch downloads and verifies it)
@@ -36,7 +37,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from streamstack import __version__, blur, camlink, config, encoder, micwatch, system
+from streamstack import __version__, blur, camlink, config, encoder, lightservice, micwatch, system
 from streamstack.canon import run as canon_run
 from streamstack.config import camera_external, load_settings
 from streamstack.framing import cli as framing_cli
@@ -861,6 +862,20 @@ def _seed(
     return True
 
 
+def _setup_lights_service() -> list[str]:
+    """Install and start the lights user service (camera follow). A machine without systemd just skips it."""
+    try:
+        outcome = lightservice.install_unit()
+        if outcome in ("installed", "updated") or not lightservice.is_active():
+            lightservice.enable()
+    except lightservice.ServiceError as exc:
+        print(
+            f"streamstack: lights service not started ({exc}); retry with `streamstack lights enable`", file=sys.stderr
+        )
+        return []
+    return [f"lights service ({outcome})"] if outcome in ("installed", "updated") else []
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     cfg = load_settings()
     home = Path.home()
@@ -907,11 +922,45 @@ def cmd_setup(args: argparse.Namespace) -> int:
     if _seed(share / "obs/scenes.json", obs / "scenes" / f"{OBS_NAME}.json", args.force, replacements, patch):
         seeded.append("OBS scene collection StreamStack")
     (home / "Videos/StreamStack").mkdir(parents=True, exist_ok=True)
+    if not args.no_service and os.environ.get("STREAMSTACK_SETUP_SERVICE", "").lower() not in ("off", "0", "no"):
+        seeded.extend(_setup_lights_service())
     if not args.quiet:
         for item in seeded:
             print(f"seeded {item}")
         if not seeded:
             print("already set up (use --force to restore the StreamStack defaults)")
+    return 0
+
+
+def cmd_lights(args: argparse.Namespace) -> int:
+    """Camera follow and the daylight schedule: the service, its status, and the switch."""
+    from streamstack import lightauto
+
+    if args.action == "run":
+        return lightauto.run_service(load_settings())
+    if args.action in ("enable", "disable"):
+        try:
+            outcome = lightservice.enable() if args.action == "enable" else lightservice.disable()
+        except lightservice.ServiceError as exc:
+            print(f"streamstack: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"Lights service {outcome}."
+            if args.action == "disable"
+            else "Lights service running: the lights follow the camera."
+        )
+        return 0
+    status = lightauto.read_status()
+    active = lightservice.is_active()
+    if status is None or not status.get("running"):
+        state = "running but silent" if active else "not running"
+        print(f"Lights service {state}. Start it with `streamstack lights enable`.")
+        return 0 if active else 1
+    print(f"Lights service running ({status.get('where', 'service')}). {status.get('summary', '')}")
+    camera = status.get("camera", {})
+    print(f"Camera: {camera.get('reason') or 'not in use'}")
+    for light_id, light in status.get("lights", {}).items():
+        print(f"  {light_id}: {light.get('state')}{' (held by hand)' if light.get('held') else ''}")
     return 0
 
 
@@ -1003,9 +1052,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     enc.set_defaults(func=cmd_encoder)
     framing_cli.add_parser(sub)
+    lights = sub.add_parser("lights", help="camera follow and daylight schedule for Litra lights")
+    lights.add_argument("action", nargs="?", default="status", choices=("run", "status", "enable", "disable"))
+    lights.set_defaults(func=cmd_lights)
     setup = sub.add_parser("setup", help="seed OBS and Easy Effects defaults for this user")
     setup.add_argument("--force", action="store_true", help="overwrite with the StreamStack defaults")
     setup.add_argument("--quiet", action="store_true")
+    setup.add_argument("--no-service", action="store_true", help="do not install the lights service")
     setup.set_defaults(func=cmd_setup)
     return parser
 

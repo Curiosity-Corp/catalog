@@ -34,6 +34,20 @@ EE_LABELS = {
     },
     ("limiter", "dithering"): {"None", "7bit", "8bit", "11bit", "12bit", "15bit", "16bit", "23bit", "24bit"},
 }
+# The Deep noise remover (DeepFilterNet) keys and ranges, from easyeffects_db_deepfilternet.kcfg at tag v8.1.2
+# (https://github.com/wwmm/easyeffects/blob/v8.1.2/src/contents/kcfg/easyeffects_db_deepfilternet.kcfg); the kebab-case
+# names are the ones the 8.1.2 binary carries. A wrong key is silently ignored on load, a value out of range is clamped.
+EE_DEEPFILTERNET_KEYS = {
+    "bypass": bool,
+    "input-gain": (-36.0, 36.0),
+    "output-gain": (-36.0, 36.0),
+    "attenuation-limit": (0.0, 100.0),
+    "min-processing-threshold": (-15.0, 35.0),
+    "max-erb-processing-threshold": (-15.0, 35.0),
+    "max-df-processing-threshold": (-15.0, 35.0),
+    "min-processing-buffer": (0, 10),
+    "post-filter-beta": (0.0, 0.05),
+}
 EE_BAND_TYPES = {"Off", "Bell", "Hi-pass", "Hi-shelf", "Lo-pass", "Lo-shelf", "Notch"}
 EE_BAND_MODES = EE_LABELS[("filter", "mode")]
 
@@ -190,3 +204,36 @@ def test_blur_stylesheet_is_scoped_to_the_pages_that_mount_it() -> None:
     body = re.sub(r"/\*.*?\*/", "", css, flags=re.S).strip()
     assert body.startswith('@scope ([data-page="camera"], [data-page="live"]) {')
     assert body.endswith("}")
+
+
+def test_deepfilternet_preset_uses_valid_deep_noise_remover_keys() -> None:
+    pipeline = json.loads((SHARE / "easyeffects/input/StreamStack Voice DeepFilterNet.json").read_text())["input"]
+    settings = pipeline["deepfilternet#0"]
+    assert set(settings) == set(EE_DEEPFILTERNET_KEYS)
+    for key, rule in EE_DEEPFILTERNET_KEYS.items():
+        if rule is bool:
+            assert isinstance(settings[key], bool), key
+        else:
+            low, high = rule
+            assert not isinstance(settings[key], bool) and low <= settings[key] <= high, key
+    assert isinstance(settings["min-processing-buffer"], int)
+    assert not any(instance.startswith("rnnoise#") for instance in pipeline), "one noise removal engine per preset"
+
+
+def test_deepfilternet_preset_is_the_default_voice_with_only_the_denoiser_swapped() -> None:
+    base = json.loads((SHARE / "easyeffects/input/StreamStack Voice.json").read_text())["input"]
+    deep = json.loads((SHARE / "easyeffects/input/StreamStack Voice DeepFilterNet.json").read_text())["input"]
+    assert deep["plugins_order"] == ["deepfilternet#0" if i == "rnnoise#0" else i for i in base["plugins_order"]]
+    assert {k: v for k, v in deep.items() if k not in ("deepfilternet#0", "plugins_order")} == {
+        k: v for k, v in base.items() if k not in ("rnnoise#0", "plugins_order")
+    }
+
+
+def test_rnnoise_stays_the_default_denoiser() -> None:
+    default = DEFAULTS["STREAMSTACK_VOICE_PRESET"]
+    pipeline = json.loads((SHARE / "easyeffects/input" / f"{default}.json").read_text())["input"]
+    assert "rnnoise#0" in pipeline and "deepfilternet#0" not in pipeline
+    others = [p for p in (SHARE / "easyeffects/input").glob("*.json") if "DeepFilterNet" not in p.stem]
+    assert others
+    for path in others:
+        assert "rnnoise#0" in json.loads(path.read_text())["input"], path.name

@@ -396,7 +396,7 @@
     owner: root
     group: root
     mode: "0755"
-  when: streamstack_auto_autostart | bool
+  when: (streamstack_auto_autostart | bool) or (streamstack_lights_autostart | bool)
 
 # Off by default: auto mode sends a camera still to Claude every few minutes,
 # so each person turns it on (`streamstack auto on`, or the panel menu).
@@ -415,6 +415,32 @@
     path: /etc/systemd/user/graphical-session.target.wants/streamstack-auto.service
     state: absent
   when: not (streamstack_auto_autostart | bool)
+
+# The packaged unit names the launcher as @STREAMSTACK@ (`streamstack lights
+# enable` fills it in per user); the system-wide copy points at /usr/local/bin.
+- name: Install the StreamStack lights user service
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.file', 'streamstack/src/streamstack/data/systemd/streamstack-lights.service') | replace('@STREAMSTACK@', '/usr/local/bin/streamstack') }}\n"
+    dest: /etc/systemd/user/streamstack-lights.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start StreamStack camera follow and the light schedule at login
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants/streamstack-lights.service
+    src: /etc/systemd/user/streamstack-lights.service
+    state: link
+    owner: root
+    group: root
+    force: true
+  when: streamstack_lights_autostart | bool
+
+- name: Leave StreamStack camera follow to `streamstack lights enable`
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants/streamstack-lights.service
+    state: absent
+  when: not (streamstack_lights_autostart | bool)
 
 - name: Start the StreamStack panel icon at login
   ansible.builtin.copy:

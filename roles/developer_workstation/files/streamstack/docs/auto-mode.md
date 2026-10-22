@@ -183,7 +183,9 @@ setting (`STREAMSTACK_AUTO_CANON`, `STREAMSTACK_AUTO_LIGHTS`,
   warmer, dawn +15 and 250 K, evening +12 and 350 K), the afternoon trims it
   (-10 points, 200 K cooler). Once you set the lights by hand in a slot, that
   level is learned and replaces the baseline for that slot. With several lights
-  the balance you set between them (a dimmer fill) is kept.
+  the balance you set between them (a dimmer fill) is kept. The Lighting page's daylight schedule (`docs/lighting.md`)
+  uses the same slots; while auto mode drives the lights the schedule steps aside so the two never fight, and the
+  director still never touches power (camera follow does that).
 * **Preamp gain comes before software gain.** Boosting a quiet microphone in
   software raises its noise too. The Scarlett 2i2 Gen 4 has a software gain;
   the Gen 3 has analogue knobs only; the Wave XLR's gain is only used when

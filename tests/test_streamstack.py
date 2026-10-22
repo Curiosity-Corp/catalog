@@ -255,3 +255,20 @@ def test_auto_mode_is_off_until_turned_on_and_installed_for_everyone() -> None:
     env = _env()
     for key in ("BACKEND", "MODEL", "INTERVAL", "AI_INTERVAL", "VIDEO", "AUDIO", "NOTIFY"):
         assert f"STREAMSTACK_AUTO_{key}=" in env
+
+
+def test_lights_follow_the_camera_at_login_for_every_desktop_user() -> None:
+    assert DEFAULTS["streamstack_lights_autostart"] is True
+    unit = (APP / "src/streamstack/data/systemd/streamstack-lights.service").read_text()
+    assert "ExecStart=@STREAMSTACK@ lights run" in unit
+    assert "WantedBy=graphical-session.target" in unit
+    install = _task("Install the StreamStack lights user service")["ansible.builtin.copy"]
+    assert install["dest"] == "/etc/systemd/user/streamstack-lights.service"
+    assert "replace('@STREAMSTACK@', '/usr/local/bin/streamstack')" in install["content"]
+    link = _task("Start StreamStack camera follow and the light schedule at login")
+    assert link["ansible.builtin.file"]["src"] == "/etc/systemd/user/streamstack-lights.service"
+    assert link["when"] == "streamstack_lights_autostart | bool"
+    wants = _task("Ensure the global user graphical-session.target.wants directory exists")
+    assert "streamstack_lights_autostart" in wants["when"]
+    assert _task("Leave StreamStack camera follow to `streamstack lights enable`")["when"] == \
+        "not (streamstack_lights_autostart | bool)"

@@ -187,6 +187,16 @@ mode-600 `~/.config/streamstack/auto.env`; `local` never calls Claude.
 The limits, what leaves the host and the backends are documented in the app's
 [docs/auto-mode.md](../roles/developer_workstation/files/streamstack/docs/auto-mode.md).
 
+## Lights: camera follow and the daylight schedule
+
+`streamstack-lights.service` (a user service in `/etc/systemd/user`) switches
+the Litra lights on while any app uses the camera, off after a grace period,
+and sets brightness and colour temperature by time of day. It starts at every
+desktop login while `streamstack_lights_autostart` is true (the default); each
+person tunes it on the Console's Lighting page, and only the person at the
+active seat can reach the light. See the app's
+[docs/lighting.md](../roles/developer_workstation/files/streamstack/docs/lighting.md).
+
 ## Laptops: graded or raw
 
 The graded **StreamStack Camera** runs OBS on top of the camera feed: it

@@ -173,6 +173,11 @@ values in OBS's own units.
     "tone": {"bass_db": 2.0, "presence_db": 2.5, "treble_db": 1.5, "pitch_semitones": 0.0,
              "supported": true},       // false when Easy Effects cannot be driven live
     "tone_ranges": {"bass_db": [-12, 12], "presence_db": [-12, 12], "treble_db": [-12, 12], "pitch_semitones": [-6, 6]},
+    "denoise": {"engine": "rnnoise", "atten_limit_db": 100.0, "atten_range": [0, 100], "supported": true, "custom": false,
+                "engines": [{"id": "rnnoise", "label": "RNNoise", "effect": "Noise reduction", "delay_ms": 10,
+                             "available": true, "reason": null},
+                            {"id": "deepfilternet", "label": "DeepFilterNet", "effect": "Deep noise remover",
+                             "delay_ms": 40, "available": false, "reason": "DeepFilterNet needs the …"}]},
     "mic_check": {"state": "idle", "seconds": 6, "clips": [{"id": "…", "label": "raw microphone", "url": "api/clips/….wav"}]}
                                        // state: idle | recording-raw | recording-processed | done | error
   },
@@ -285,6 +290,7 @@ take seconds (studio start, mic check, auto once) return at once with
 | `audio.preset` | `name` | load a voice preset |
 | `audio.bypass` | `on` | Easy Effects global bypass |
 | `audio.tone` | any of `bass_db`, `presence_db`, `treble_db`, `pitch_semitones` | voice tone, live |
+| `audio.denoise` | `engine` (`rnnoise` or `deepfilternet`) and/or `atten_limit_db` (0 to 100) | noise removal engine and DeepFilterNet's Attenuation Limit, live; 409 for DeepFilterNet without its library |
 | `audio.revive` | | restart a stalled microphone: suspend/resume the source, then cycle the card profile; 409 while one is running |
 | `audio.demo_stall` | `on` | demo only: put the demo microphone into (or out of) the stalled state |
 | `audio.clip_clear` | | clear the clip latch (every window shows it cleared) |

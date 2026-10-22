@@ -40,6 +40,11 @@ class Conn(Protocol):
     def call(self, request: str, **data: Any) -> dict: ...
 
 
+def _filter_kinds(conn: Conn) -> list[str]:
+    """The filter kinds the running OBS offers (GetSourceFilterKindList answers `sourceFilterKinds`)."""
+    return list(conn.call("GetSourceFilterKindList").get("sourceFilterKinds") or [])
+
+
 def empty_state() -> dict:
     return {
         "available": None,
@@ -166,7 +171,7 @@ class BlurControl:
         now = self._clock()
         if structural or self._kind is None or now - self._kind_at > KIND_REFRESH_SECONDS:
             try:
-                kinds = conn.call("GetSourceFilterKindList").get("filterKinds", [])
+                kinds = _filter_kinds(conn)
                 self._kind = FILTER_KIND in kinds
                 self._kind_at = now
             except RuntimeError:
@@ -259,7 +264,7 @@ class BlurControl:
         if on is False:
             return
         try:
-            kinds = conn.call("GetSourceFilterKindList").get("filterKinds", [])
+            kinds = _filter_kinds(conn)
         except RuntimeError as exc:
             raise ActionError(f"OBS would not list its filters: {exc}", 409) from exc
         present = FILTER_KIND in kinds

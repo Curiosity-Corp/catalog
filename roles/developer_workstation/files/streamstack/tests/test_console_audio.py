@@ -494,6 +494,215 @@ def test_probe_after_live_load_keeps_the_base_preset(ctl: AudioController, rig: 
     assert again.state()["tone"]["custom"] is True
 
 
+# ---------------------------------------------------------------------------
+# Noise removal: RNNoise or DeepFilterNet
+# ---------------------------------------------------------------------------
+def doc_of(name: str) -> dict[str, Any]:
+    return json.loads((SHIPPED / f"{name}.json").read_text())
+
+
+def test_read_denoise_on_the_shipped_presets() -> None:
+    assert audio.read_denoise(doc_of("StreamStack Voice")) == {"engine": "rnnoise", "atten_limit_db": 100.0}
+    assert audio.read_denoise(doc_of("StreamStack Voice DeepFilterNet")) == {
+        "engine": "deepfilternet",
+        "atten_limit_db": 100.0,
+    }
+    assert audio.read_denoise({"input": {"pitch#0": {}}}) is None
+    assert audio.read_denoise({}) is None
+
+
+def test_rnnoise_is_the_default_engine_everywhere() -> None:
+    assert audio.DEFAULT_ENGINE == "rnnoise"
+    for name in audio.BLURBS:
+        expected = "deepfilternet" if name.endswith("DeepFilterNet") else "rnnoise"
+        assert audio.read_denoise(doc_of(name))["engine"] == expected, name
+    from streamstack.config import DEFAULTS
+
+    assert audio.read_denoise(doc_of(DEFAULTS["STREAMSTACK_VOICE_PRESET"]))["engine"] == "rnnoise"
+
+
+def test_apply_denoise_swaps_the_slot_in_place_and_keeps_the_rest() -> None:
+    doc = doc_of("StreamStack Voice")
+    out = audio.apply_denoise(doc, "deepfilternet", 35.0)
+    section = out["input"]
+    assert "rnnoise#0" not in section and "rnnoise#0" not in section["plugins_order"]
+    order = doc["input"]["plugins_order"]
+    assert section["plugins_order"] == [*order[:1], "deepfilternet#0", *order[2:]]
+    assert list(section)[2] == "deepfilternet#0"  # same position in the file too
+    assert section["deepfilternet#0"]["attenuation-limit"] == 35.0
+    rest = {k: v for k, v in section.items() if k not in ("deepfilternet#0", "plugins_order")}
+    assert rest == {k: v for k, v in doc["input"].items() if k not in ("rnnoise#0", "plugins_order")}
+    assert "rnnoise#0" in doc["input"]  # the input is not modified
+
+
+def test_apply_denoise_back_to_rnnoise_and_keeps_the_bypass() -> None:
+    deep = doc_of("StreamStack Voice DeepFilterNet")
+    deep["input"]["deepfilternet#0"]["bypass"] = True
+    out = audio.apply_denoise(deep, "rnnoise", 100.0)
+    assert out["input"]["rnnoise#0"]["bypass"] is True
+    assert out["input"]["rnnoise#0"]["use-standard-model"] is True
+    assert out["input"]["plugins_order"][1] == "rnnoise#0"
+    same = audio.apply_denoise(deep, "deepfilternet", 20.0)
+    assert same["input"]["deepfilternet#0"]["attenuation-limit"] == 20.0
+
+
+def test_apply_denoise_rejects_unknown_engines_and_presets_without_a_slot() -> None:
+    with pytest.raises(ValueError, match="unknown"):
+        audio.apply_denoise(doc_of("StreamStack Voice"), "krisp", 100.0)
+    with pytest.raises(ValueError, match="no noise removal"):
+        audio.apply_denoise({"input": {"plugins_order": []}}, "rnnoise", 100.0)
+
+
+@pytest.mark.parametrize("path", sorted(SHIPPED.glob("*.json")), ids=lambda p: p.stem)
+def test_denoise_swap_round_trips_on_every_shipped_preset(path: Path) -> None:
+    doc = json.loads(path.read_text())
+    original = audio.read_denoise(doc)
+    assert original is not None
+    there = audio.apply_denoise(doc, "deepfilternet" if original["engine"] == "rnnoise" else "rnnoise", 50.0)
+    back = audio.apply_denoise(there, original["engine"], original["atten_limit_db"])
+    assert audio.read_tone(back) == audio.read_tone(doc)
+    assert audio.read_denoise(back) == original
+    assert back["input"]["plugins_order"] == doc["input"]["plugins_order"]
+
+
+@pytest.fixture
+def library(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(audio, "deepfilternet_installed", lambda: True)
+
+
+def test_deepfilternet_installed_looks_in_the_ladspa_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(audio, "LADSPA_DIRS", ())
+    monkeypatch.setenv("LADSPA_PATH", str(tmp_path))
+    assert audio.deepfilternet_installed() is False
+    (tmp_path / audio.DEEPFILTERNET_LIB).write_bytes(b"\x7fELF")
+    assert audio.deepfilternet_installed() is True
+    monkeypatch.setenv("LADSPA_PATH", "")
+    assert audio.deepfilternet_installed() is False
+
+
+def test_state_reports_the_engines_and_their_delay(ctl: AudioController, library: None) -> None:
+    dn = ctl.state()["denoise"]
+    assert dn["engine"] == "rnnoise" and dn["supported"] is True and dn["custom"] is False
+    assert dn["atten_range"] == [0.0, 100.0]
+    assert [(e["id"], e["delay_ms"], e["available"]) for e in dn["engines"]] == [
+        ("rnnoise", 10, True),
+        ("deepfilternet", 40, True),
+    ]
+    entries = {p["name"]: p for p in ctl.state()["chain"]["presets"]}
+    assert entries["StreamStack Voice DeepFilterNet"]["engine"] == "deepfilternet"
+    assert entries["StreamStack Voice DeepFilterNet"]["unavailable"] is None
+
+
+def test_without_the_library_deepfilternet_is_offered_but_refused(
+    ctl: AudioController, rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(audio, "deepfilternet_installed", lambda: False)
+    state = ctl.state()
+    deep = next(e for e in state["denoise"]["engines"] if e["id"] == "deepfilternet")
+    assert deep["available"] is False and "libdeep_filter_ladspa.so" in deep["reason"]
+    entry = next(p for p in state["chain"]["presets"] if p["engine"] == "deepfilternet")
+    assert entry["unavailable"] == audio.DEEPFILTERNET_MISSING
+    for action, params in (
+        ("audio.denoise", {"engine": "deepfilternet"}),
+        ("audio.preset", {"name": "StreamStack Voice DeepFilterNet"}),
+    ):
+        with pytest.raises(ActionError) as err:
+            ctl.act(action, params)
+        assert err.value.status == 409
+    assert rig.ee.loads == []
+    assert ctl._throttle.ready_in() is None  # nothing was queued either
+
+
+def test_choosing_deepfilternet_loads_the_live_preset_with_the_swapped_slot(
+    ctl: AudioController, rig: Rig, library: None
+) -> None:
+    assert ctl.act("audio.denoise", {"engine": "deepfilternet"}) == "Noise removal: DeepFilterNet"
+    tone = ctl._throttle.take()
+    assert tone is not None
+    ctl._load_live(tone)
+    assert rig.ee.loads == [audio.LIVE_PRESET]
+    live = json.loads((Path.home() / ".local/share/easyeffects/input/StreamStack Live.json").read_text())
+    assert "deepfilternet#0" in live["input"] and "rnnoise#0" not in live["input"]
+    assert live["input"]["plugins_order"][1] == "deepfilternet#0"
+    state = ctl.state()
+    assert state["chain"]["preset"] == "StreamStack Voice"  # the chosen preset is unchanged
+    assert state["denoise"]["engine"] == "deepfilternet" and state["denoise"]["custom"] is True
+    assert state["tone"]["custom"] is True
+    # a restarted console recovers the engine from the live preset
+    again = AudioController(config.load_settings(), clock=rig.clock)
+    again._probe()
+    assert again.state()["denoise"]["engine"] == "deepfilternet"
+
+
+def test_attenuation_limit_is_coalesced_and_clamped_by_validation(
+    ctl: AudioController, rig: Rig, library: None
+) -> None:
+    ctl.act("audio.denoise", {"engine": "deepfilternet"})
+    for value in (90, 70, 40):
+        assert ctl.act("audio.denoise", {"atten_limit_db": value}) is None
+        rig.clock.advance(0.02)
+    tone = ctl._throttle.take()
+    assert tone is not None
+    ctl._load_live(tone)
+    assert rig.ee.loads == [audio.LIVE_PRESET]
+    live = json.loads((Path.home() / ".local/share/easyeffects/input/StreamStack Live.json").read_text())
+    assert live["input"]["deepfilternet#0"]["attenuation-limit"] == 40.0
+    for bad in (101, -1, "x", True):
+        with pytest.raises(ActionError) as err:
+            ctl.act("audio.denoise", {"atten_limit_db": bad})
+        assert err.value.status == 400
+
+
+@pytest.mark.parametrize("params", [{}, {"engine": "krisp"}, {"engine": 3}, {"mode": "x"}])
+def test_bad_denoise_parameters_are_400(ctl: AudioController, params: dict[str, Any]) -> None:
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.denoise", params)
+    assert err.value.status == 400
+
+
+def test_denoise_needs_easy_effects_running(ctl: AudioController, rig: Rig, library: None) -> None:
+    rig.ee_running = False
+    ctl._probe()
+    assert ctl.state()["denoise"]["supported"] is False
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.denoise", {"engine": "deepfilternet"})
+    assert err.value.status == 409
+
+
+def test_back_to_the_presets_engine_is_not_custom(ctl: AudioController, library: None) -> None:
+    ctl.act("audio.denoise", {"engine": "deepfilternet"})
+    ctl.act("audio.denoise", {"atten_limit_db": 30})
+    assert ctl.state()["denoise"]["custom"] is True
+    ctl.act("audio.denoise", {"engine": "rnnoise"})  # the leftover limit means nothing to RNNoise
+    assert ctl.state()["denoise"]["custom"] is False
+
+
+def test_loading_the_deepfilternet_preset_sets_the_engine(ctl: AudioController, rig: Rig, library: None) -> None:
+    assert ctl.act("audio.preset", {"name": "StreamStack Voice DeepFilterNet"}) == "Voice preset: Voice DeepFilterNet"
+    dn = ctl.state()["denoise"]
+    assert dn["engine"] == "deepfilternet" and dn["custom"] is False
+    ctl.act("audio.preset", {"name": "StreamStack Voice"})
+    assert ctl.state()["denoise"]["engine"] == "rnnoise"
+
+
+def test_a_preset_without_a_noise_plugin_is_left_alone(ctl: AudioController, rig: Rig, library: None) -> None:
+    path = Path.home() / ".local/share/easyeffects/input/Custom.json"
+    doc = doc_of("StreamStack Voice")
+    del doc["input"]["rnnoise#0"]
+    doc["input"]["plugins_order"].remove("rnnoise#0")
+    path.write_text(json.dumps(doc))
+    ctl._probe()
+    ctl.act("audio.preset", {"name": "Custom"})
+    state = ctl.state()
+    assert state["denoise"]["supported"] is False
+    ctl.act("audio.tone", {"bass_db": 5})
+    tone = ctl._throttle.take()
+    assert tone is not None
+    ctl._load_live(tone)  # must not raise for the missing slot
+    live = json.loads((Path.home() / ".local/share/easyeffects/input/StreamStack Live.json").read_text())
+    assert "rnnoise#0" not in live["input"] and "deepfilternet#0" not in live["input"]
+
+
 def test_pitch_is_set_live_over_the_socket_without_a_preset_load(ctl: AudioController, rig: Rig) -> None:
     ctl.act("audio.tone", {"pitch_semitones": -2.0})
     assert "set_property:input:pitch:0:semitones:-2.0" in rig.ee.log
@@ -580,13 +789,19 @@ def test_bypass_seed_from_saved_settings(isolated_home: Path) -> None:
 def test_presets_listing_has_labels_and_blurbs(ctl: AudioController) -> None:
     presets = ctl.state()["chain"]["presets"]
     assert [p["name"] for p in presets] == list(audio.BLURBS)
-    assert presets[0] == {"name": "StreamStack Voice", "label": "Voice", "blurb": "default broadcast voice"}
+    assert presets[0] == {
+        "name": "StreamStack Voice",
+        "label": "Voice",
+        "blurb": "default broadcast voice",
+        "engine": "rnnoise",
+        "unavailable": None,
+    }
     assert presets[3]["blurb"] == "pitch down 2 semitones, extra body"
     custom = Path.home() / ".local/share/easyeffects/input/My Podcast.json"
     custom.write_text("{}")
     ctl._probe()
     mine = ctl.state()["chain"]["presets"][-1]
-    assert mine == {"name": "My Podcast", "label": "My Podcast", "blurb": ""}
+    assert mine == {"name": "My Podcast", "label": "My Podcast", "blurb": "", "engine": None, "unavailable": None}
 
 
 def test_tone_is_unsupported_when_easy_effects_is_not_running(ctl: AudioController, rig: Rig) -> None:
@@ -713,12 +928,47 @@ def test_bad_parameters_are_400(ctl: AudioController, action: str, params: dict[
     assert err.value.status == 400
 
 
+def test_demo_denoise_switches_engine_and_follows_the_preset() -> None:
+    demo = DemoAudio()
+    assert demo.state()["denoise"]["engine"] == "rnnoise"
+    assert demo.act("audio.denoise", {"engine": "deepfilternet"}) == "Noise removal: DeepFilterNet"
+    demo.act("audio.denoise", {"atten_limit_db": 25})
+    dn = demo.state()["denoise"]
+    assert dn["engine"] == "deepfilternet" and dn["atten_limit_db"] == 25.0 and dn["custom"] is True
+    assert demo.state()["tone"]["custom"] is True
+    demo.act("audio.preset", {"name": "StreamStack Voice"})
+    assert demo.state()["denoise"]["engine"] == "rnnoise"
+    demo.act("audio.preset", {"name": "StreamStack Voice DeepFilterNet"})
+    assert demo.state()["denoise"]["engine"] == "deepfilternet"
+    assert demo.state()["denoise"]["custom"] is False
+
+
+def test_demo_without_the_library_refuses_deepfilternet() -> None:
+    demo = DemoAudio()
+    demo.act("audio.denoise", {"engine": "deepfilternet"})
+    demo.act("audio.demo_deepfilternet", {"on": False})
+    state = demo.state()
+    assert state["denoise"]["engine"] == "rnnoise"  # falls back, as a missing plugin would
+    assert next(e for e in state["denoise"]["engines"] if e["id"] == "deepfilternet")["available"] is False
+    for action, params in (
+        ("audio.denoise", {"engine": "deepfilternet"}),
+        ("audio.preset", {"name": "StreamStack Voice DeepFilterNet"}),
+    ):
+        with pytest.raises(ActionError) as err:
+            demo.act(action, params)
+        assert err.value.status == 409
+    demo.act("audio.demo_deepfilternet", {"on": True})
+    assert demo.act("audio.denoise", {"engine": "deepfilternet"}) == "Noise removal: DeepFilterNet"
+
+
 @pytest.mark.parametrize(
     ("action", "bad"),
     [
         ("audio.gain", {"db": "x"}),
         ("audio.mute", {"on": 1}),
         ("audio.tone", {"bass_db": 99}),
+        ("audio.denoise", {"engine": "krisp"}),
+        ("audio.denoise", {"atten_limit_db": 101}),
         ("audio.mic_check", {"seconds": 99}),
         ("audio.preset", {"name": "Nope"}),
     ],
@@ -922,6 +1172,8 @@ def test_demo_state_has_the_same_shape_as_the_real_one(ctl: AudioController) -> 
         "name": "StreamStack Voice",
         "label": "Voice",
         "blurb": "default broadcast voice",
+        "engine": "rnnoise",
+        "unavailable": None,
     }
 
 

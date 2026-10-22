@@ -51,6 +51,7 @@ export function emptyState() {
       gain_range: [-30, 12],
       chain: { running: false, available: false, preset: null, presets: [], bypass: false },
       tone: { bass_db: 0, presence_db: 0, treble_db: 0, pitch_semitones: 0, supported: false },
+      denoise: { engine: 'rnnoise', atten_limit_db: 100, atten_range: [0, 100], supported: false, custom: false, engines: [] },
       tone_ranges: { bass_db: [-12, 12], presence_db: [-12, 12], treble_db: [-12, 12], pitch_semitones: [-6, 6] },
       mic_check: { state: 'idle', seconds: 6, clips: [] },
     },
@@ -64,6 +65,29 @@ export function emptyState() {
     lighting: {
       scanned: false, lights: [], master: { on: false, all_on: false, brightness: 50, kelvin: 4500 },
       presets: [], preset: null, problem: null, kelvin_range: [2700, 6500], kelvin_step: 100,
+      automation: {
+        available: false, demo: false,
+        settings: {
+          follow: {
+            enabled: true, grace_seconds: 120, start_delay_seconds: 3, turn_off: true,
+            apps: true, virtualcam: true, stream: true, record: true, ignore: [], devices: [],
+          },
+          schedule: {
+            enabled: true, mode: 'sun', slots: {}, hours: null, fade_seconds: 3, hold_minutes: 90, fill_percent: 60,
+          },
+          lights: {},
+        },
+        limits: {}, roles: [], modes: [], slots: [], sources: [],
+        status: {
+          running: false, where: 'none', owner: 'none', owner_label: '', summary: '',
+          camera: { in_use: false, reason: '', apps: [], obs: [], obs_known: false, grace_left: null, since: null },
+          session: null, lights: {}, events: [],
+        },
+        service: { state: 'missing', installed: false, message: '', command: '' },
+        location: { name: '', latitude: 0, longitude: 0, source: 'timezone' },
+        sun: {}, now: { minute: 0, brightness: 50, kelvin: 4800, slot: 'morning', slot_label: 'Morning' },
+        curve: { step: 15, brightness: [], kelvin: [] }, hours: [],
+      },
     },
     interface: {
       present: false, checked: false, setting: 'auto', profile: null, label: null, usb: null, card: null, mode: null,

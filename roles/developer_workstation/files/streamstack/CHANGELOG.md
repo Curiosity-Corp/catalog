@@ -5,6 +5,38 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-22
+
+### Fixed
+
+- Background blur works with a real OBS (#34): the Console read the filter-kind list from
+  `filterKinds` instead of obs-websocket's `sourceFilterKinds`, so it always reported the
+  plugin as not loaded and refused to switch the blur on.
+
+### Added
+
+- Offline AI benchmark harness for the hardware evaluation (#22): `tools/bench_ai.py`
+  (not shipped in the wheel; extra `bench`) runs MediaPipe Meet, PP-HumanSeg, SINet, YuNet
+  and BlazeFace over a recorded clip of each rig on ONNX Runtime CPU and OpenVINO CPU and
+  Arc (`GPU.0`), and reports p50/p95 ms per frame, CPU percent of one core, Arc busy
+  percent from `intel_gpu_top` and first-compile time with `CACHE_DIR`, as a markdown
+  table, JSON and the decision-gate block of `docs/hardware-ai-evaluation.md`. Models are
+  fetched from pinned URLs with SHA-256 checks and their licences recorded; a missing
+  backend, device or tool is skipped with the reason. `--synthetic` generates the frames
+  for CI. `tools/record_clip.sh` records the 20 s clip from a V4L2 device and refuses to
+  run without `--confirm-no-call`. The numbers in the doc are synthetic placeholders until
+  the clips are recorded and the harness is run on a quiet host.
+- Lighting automation (issue #33). **Camera follow:** the Litra lights switch on when an app uses the camera (found read-only
+  from `/proc/*/fd`, never by opening `/dev/video*`) or when OBS starts the virtual camera, streaming or recording, and
+  switch off after a configurable grace period, only the lights StreamStack switched on. It runs in a new user service,
+  `streamstack-lights.service` (`streamstack lights run|enable|disable|status`, installed by `streamstack setup`), so it
+  works with the Console closed. **Daylight schedule:** brightness and colour temperature follow the sun (the Director's
+  offline sunrise and sunset code) or a 24 hour table, with fades, per-light roles (key, fill, manual), names and limits;
+  a manual change wins until the hold runs out or the next camera session, and the schedule yields to the AI Director so
+  the two never fight. The Lighting page gains the status line ("Camera in use since 14:02: Teams opened the camera"), the
+  Camera follow, Daylight schedule (with a 24 hour graph) and Light settings cards, an event log and the keys `F`, `S`
+  and `R`. Settings live in `~/.config/streamstack/lighting-automation.json` (mode 600). See `docs/lighting.md`.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added
@@ -74,6 +106,14 @@ All notable changes are recorded here. The project follows
   install it when it is missing, and a cost guard reads OBS's stats and warns when the blur adds 8 ms or more
   per frame, 1 percent or more CPU or any dropped frame. The demo rig simulates all of it
   (`video.blur`, `video.blur.plugin`); the plugin itself is installed by Curiosity-Corp/catalog#100.
+- Voice denoise option (issue #25): a `StreamStack Voice DeepFilterNet` preset (the default voice with Easy Effects'
+  Deep noise remover in place of RNNoise) and, on the Console's Audio page, a noise removal A/B pad (RNNoise, about
+  10 ms, against DeepFilterNet, about 40 ms algorithmic delay) with the Attenuation Limit as a fifth tone knob. The
+  pad swaps the engine inside whichever preset is chosen, through the same live preset as the tone knobs
+  (`audio.denoise`, `denoise` in the audio state, two palette commands). RNNoise stays the default everywhere for the
+  lowest latency. The Deep noise remover is built into Easy Effects 8.1.2 but needs `libdeep_filter_ladspa.so`, which
+  the Ubuntu package does not ship: without it the DeepFilterNet pad and preset are disabled with the reason instead
+  of loading a chain that would silently not denoise (`docs/voice-denoise.md`). Unverified on real hardware.
 
 ### Notes
 
