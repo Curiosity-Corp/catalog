@@ -11,8 +11,11 @@
 # Included from main.yml for StreamStack hosts (streamstack_enabled) while
 # streamstack_background_removal_enabled is true. Ubuntu has no package, so
 # the upstream release .deb is pinned by version and sha256. It installs under
-# /usr/local/lib/obs-plugins and /usr/local/share/obs/obs-plugins, which OBS
-# also searches. OBS loads plugins when it starts: this never restarts OBS, a
+# /usr/local/lib/obs-plugins and /usr/local/share/obs/obs-plugins, which
+# Ubuntu's libobs never searches (its module paths are compiled in as
+# /usr/lib/x86_64-linux-gnu/obs-plugins and /usr/share/obs/obs-plugins/%module%),
+# so the module and its data are linked into those (Curiosity-Corp/catalog#103).
+# OBS loads plugins when it starts: this never restarts OBS, a
 # running OBS picks the plugin up at its next start. Inference is CPU only
 # (upstream has no OpenVINO backend). See docs/streamstack.md, "AI helpers".
 # =============================================================================
@@ -84,3 +87,20 @@
           ansible.builtin.apt:
             deb: "{{ workstation_update_artifact_cache_dir }}/obs-backgroundremoval-{{ streamstack_backgroundremoval_sha256 }}.deb"
             state: present
+
+    # Links, not copies: a later package upgrade replaces the targets in place.
+    - name: Link the obs-backgroundremoval module where OBS loads modules from
+      ansible.builtin.file:
+        src: "{{ streamstack_backgroundremoval_installed_module }}"
+        dest: "{{ streamstack_obs_module_dir }}/obs-backgroundremoval.so"
+        state: link
+        owner: root
+        group: root
+
+    - name: Link the obs-backgroundremoval data where OBS looks for module data
+      ansible.builtin.file:
+        src: "{{ streamstack_backgroundremoval_installed_data }}"
+        dest: "{{ streamstack_obs_data_dir }}/obs-backgroundremoval"
+        state: link
+        owner: root
+        group: root

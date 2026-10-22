@@ -86,6 +86,22 @@ def test_the_plugin_install_skips_when_the_pinned_version_is_present() -> None:
     assert not any("systemd" in str(t) or "obs-studio" in str(t.get("ansible.builtin.command", "")) for t in _walk(BLUR))
 
 
+def test_the_plugin_is_linked_where_ubuntus_obs_searches() -> None:
+    # Ubuntu's libobs only searches its compiled-in system paths, never /usr/local (catalog#103).
+    assert DEFAULTS["streamstack_obs_module_dir"] == "/usr/lib/x86_64-linux-gnu/obs-plugins"
+    assert DEFAULTS["streamstack_obs_data_dir"] == "/usr/share/obs/obs-plugins"
+    module = _named(BLUR, "Link the obs-backgroundremoval module")["ansible.builtin.file"]
+    data = _named(BLUR, "Link the obs-backgroundremoval data")["ansible.builtin.file"]
+    assert module["state"] == data["state"] == "link"
+    assert _render(module["src"]) == "/usr/local/lib/obs-plugins/obs-backgroundremoval.so"
+    assert _render(module["dest"]) == "/usr/lib/x86_64-linux-gnu/obs-plugins/obs-backgroundremoval.so"
+    assert _render(data["src"]) == "/usr/local/share/obs/obs-plugins/obs-backgroundremoval"
+    # libobs resolves a module's data as <data dir>/%module%, and %module% is the .so name without .so
+    assert _render(data["dest"]) == "/usr/share/obs/obs-plugins/obs-backgroundremoval"
+    install = _named(BLUR, "Install obs-backgroundremoval")
+    assert any(t["name"].startswith("Link the obs-backgroundremoval module") for t in install["block"])
+
+
 def test_openvino_goes_where_the_isolated_launcher_looks() -> None:
     assert DEFAULTS["streamstack_openvino_target"] == "/usr/local/lib/streamstack"
     pip = _named(FRAMING, "Install the OpenVINO wheels with pip")["ansible.builtin.command"]["argv"]
