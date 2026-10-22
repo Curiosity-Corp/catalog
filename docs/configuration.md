@@ -241,11 +241,12 @@ Auto mode (off until `streamstack auto on`) is set by `streamstack_auto_backend`
 `streamstack_auto_interval` (seconds, at least 5), `streamstack_auto_ai_interval`
 (seconds, at least 60), `streamstack_auto_video`, `streamstack_auto_audio`,
 `streamstack_auto_notify` and `streamstack_auto_autostart`.
-`streamstack_background_removal_enabled` and `streamstack_framing_enabled` (both
-`true`) install the obs-backgroundremoval OBS plugin and the auto-framing
+`streamstack_background_removal_enabled`, `streamstack_framing_enabled` and
+`streamstack_deepfilter_enabled` (all `true`) install the obs-backgroundremoval
+OBS plugin, the DeepFilterNet LADSPA library for Easy Effects, and the auto-framing
 dependencies (OpenVINO, OpenCV, the Intel GPU compute runtime where an Intel GPU
 exists, the YuNet face model); the pinned versions and checksums are the
-`streamstack_backgroundremoval_*`, `streamstack_openvino_*` and
+`streamstack_backgroundremoval_*`, `streamstack_openvino_*`, `streamstack_deepfilter_*` and
 `streamstack_framing_model_*` variables.
 See [`streamstack.md`](streamstack.md) for the Teams and Zoom setup.
 
