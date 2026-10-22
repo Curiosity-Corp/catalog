@@ -185,7 +185,9 @@ def test_panel_menu_is_installed_and_the_tray_icon_is_opt_in() -> None:
     assert DEFAULTS["streamstack_tray_autostart"] is False
     menu = _task("List StreamStack in the application menu")["ansible.builtin.copy"]
     assert menu["src"] == "streamstack/packaging/applications/streamstack.desktop"
-    assert "Exec=streamstack-tray --menu" in (ROLE / "files" / menu["src"]).read_text()
+    entry = (ROLE / "files" / menu["src"]).read_text()
+    assert "Exec=streamstack-console" in entry  # the Console; the old menu stays as a desktop action
+    assert "Exec=streamstack-tray --menu" in entry
     autostart = _task("Start the StreamStack panel icon at login")
     assert autostart["when"] == "streamstack_tray_autostart | bool"
     assert (ROLE / "files" / autostart["ansible.builtin.copy"]["src"]).is_file()
@@ -213,7 +215,7 @@ def test_the_package_installs_self_contained_and_runs(tmp_path: Path) -> None:
 
     shutil.copytree(APP / "src/streamstack", tmp_path / "lib/streamstack/streamstack")
     (tmp_path / "bin").mkdir()
-    for name in ("streamstack", "streamstack-auto", "streamstack-tray"):
+    for name in ("streamstack", "streamstack-auto", "streamstack-console", "streamstack-tray"):
         shutil.copy2(APP / "packaging/bin" / name, tmp_path / "bin" / name)
     env_file = tmp_path / "streamstack.env"
     env_file.write_text(_env(streamstack_program_label="Studio Cam"))

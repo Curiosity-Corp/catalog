@@ -1,0 +1,40 @@
+/* common.css — small pieces shared by the Camera, Audio, Auto and System pages (segmented control, pills, tiles). */
+
+/* ---- segmented control: a radio group of buttons (aria-pressed) ---- */
+.seg { display: inline-flex; padding: 0.18rem; gap: 0.18rem; border-radius: var(--r-pill); background: var(--surface-inset); border: 1px solid var(--line); max-width: 100%; }
+.seg button {
+  display: inline-flex; align-items: center; gap: 0.4rem; min-height: 1.85rem; padding: 0 var(--s-3); border-radius: var(--r-pill);
+  font-size: var(--fs-xs); font-weight: 650; color: var(--text-2); background: transparent; border: 0; cursor: pointer; white-space: nowrap;
+  transition: background var(--dur-1), color var(--dur-1); touch-action: manipulation;
+}
+.seg button:hover { color: var(--text); background: var(--surface-3); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent) inset; }
+.seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+.seg .icon { width: 1rem; height: 1rem; }
+.seg[data-tone="amber"] button[aria-pressed="true"] { background: var(--amber-soft); color: var(--amber); box-shadow: 0 0 0 1px var(--amber) inset; }
+
+/* ---- pills: a tiny status read-out with a word, never colour alone ---- */
+.pill { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.6rem; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 650; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
+.pill .icon { width: 0.95rem; height: 0.95rem; }
+.pill[data-state="ok"] { color: var(--green); background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+.pill[data-state="warn"] { color: var(--amber); background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+.pill[data-state="fail"] { color: var(--red); background: var(--red-soft); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.pill[data-state="info"] { color: var(--accent-strong); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* ---- generic page frames ---- */
+.page-scroll { height: 100%; overflow-y: auto; }
+.hint { font-size: var(--fs-xs); color: var(--text-3); margin: 0; }
+.hint[data-state="error"] { color: var(--red); }
+.hint[data-state="warn"] { color: var(--amber); }
+
+/* ---- input ---- */
+.text-input {
+  min-height: 2.5rem; padding: 0 var(--s-3); border-radius: var(--r-2); background: var(--surface-inset); color: var(--text);
+  border: 1px solid var(--line-strong); font-size: var(--fs-sm); min-width: 0;
+}
+.text-input::placeholder { color: var(--text-3); }
+.text-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.text-input[aria-invalid="true"] { border-color: var(--red); }
+
+/* ---- kbd hint inline ---- */
+.keycap { font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1; padding: 0.16rem 0.36rem; border-radius: 0.3rem; background: var(--surface-inset); color: var(--text-3); border: 1px solid var(--line); }

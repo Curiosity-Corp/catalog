@@ -56,10 +56,48 @@ the first and leave the second to users.
 
 ## Daily use
 
+### The Console
+
+The Console is the place to go mid-call. It is a visual control surface with
+faders, meters, pads and the live picture, not a menu. Open it from
+**StreamStack** in the application menu, a left click on the tray icon, or a
+terminal:
+
+```bash
+streamstack console          # the full Console in its own window
+streamstack console --mini   # a compact strip to keep beside the call
+streamstack console --demo   # try every control without a camera or microphone
+```
+
+| Page | What it is for |
+| --- | --- |
+| **Live** | The one screen for a call in progress. Program picture with an on-air tally, mic fader and live meter, big MUTE and PRIVACY pads, scene pads, voice presets, and the auto director switch. |
+| **Camera** | Picture grade: brightness, contrast, gamma, saturation and a warmth slider, sharpen and LUT, histogram and RGB parade or waveform scopes, thirds/safe/centre/zebra overlays, saved looks, scenes, virtual camera, record and stream. |
+| **Audio** | A channel strip: raw mic and processed voice meters side by side, the gain fader and a big mute, tone knobs (bass, presence, treble, pitch), voice presets with A/B bypass, a 60-second loudness history, and a mic check that records raw then processed audio for you to compare. |
+| **Auto** | The Claude director: on/off, ask it now, its latest note and confidence, a timeline of every change it made, and one-press undo. |
+| **System** | Health checks with fixes, running services, shortcuts to OBS, Easy Effects, qpwgraph, pavucontrol and qv4l2, and the Teams and Zoom settings for this rig. |
+| **Mini** | MUTE, PRIVACY, the meter and the scenes in a window small enough to sit beside the call. |
+
+Everything works from the keyboard. `M` mutes, `P` turns on privacy, `B`
+bypasses the voice effects, `1`…`9` switch scenes, `Alt`+a number changes
+page, `Ctrl K` opens the command palette and `?` lists every shortcut. If the
+mic watchdog sees a stalled microphone (its ALSA capture counters stop
+moving), a banner with **Revive mic** appears and `Shift R` restarts it. It
+never does this on its own.
+
+The Console listens on `127.0.0.1` only, with a fresh token each launch. It
+opens as a Chrome or Edge app window, or in the default browser when neither
+is installed. [docs/console.md](docs/console.md) describes its architecture,
+state and actions.
+
 ### From the panel
 
-**StreamStack** in the application menu (`streamstack-tray --menu`) opens the
-studio menu at the pointer: what calls receive right now, Start/Stop studio,
+**StreamStack** in the application menu opens the Console (`streamstack
+console`, or `streamstack-console`; `--mini` for the compact window beside a
+call, `--demo` to try it without a rig). The tray icon opens it on a left
+click, and its first menu item does too. The older panel menu lives on as
+`streamstack-tray --menu` (also an action of the application-menu entry) and
+opens the studio menu at the pointer: what calls receive right now, Start/Stop studio,
 auto mode, voice presets and effect bypass, mic check, previews of every live
 camera in every mode it offers, shortcuts to OBS, Easy Effects, qpwgraph,
 pavucontrol and qv4l2, the doctor and the Teams/Zoom settings.
@@ -94,6 +132,7 @@ streamstack preview canon   # raw Canon feed (also: camlink, program); --grid fo
 streamstack cameras         # every live camera and every mode it offers
 streamstack preview /dev/video0 --mode '1920x1080@30 MJPG'
 streamstack stop            # stop OBS (and the bridge): calls use the raw camera
+streamstack mic-revive      # restart a stalled microphone (refuses a healthy one)
 streamstack mic-check --raw # hear the raw mic, then the processed voice
 streamstack voice           # list voice presets; `streamstack voice "StreamStack Voice Warm"`
 streamstack auto on|off     # the Claude auto-cinematographer and auto-audio
@@ -222,9 +261,27 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 
 ```bash
 make test        # pytest (PYTHONPATH=src)
+streamstack console --demo --no-window   # the Console against a simulated rig
 make lint        # ruff check + ruff format --check
 make build       # sdist and wheel
+make e2e         # Console browser tests against the demo rig (Playwright)
 ```
+
+### Console e2e
+
+`tests/e2e` drives the Console in real browsers against its simulated rig (`streamstack console --demo`, started
+on a free port with a throwaway HOME): shell, Live, Camera, Audio, Auto, System, Mini, shortcuts, palette, reconnect,
+mic revive, phone layout and an accessibility smoke. It is not part of `make test`. Set it up once in a venv:
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e ".[e2e]" && playwright install --with-deps chromium firefox
+make e2e                    # E2E_BROWSERS=chromium to skip Firefox, E2E_ARTIFACTS=dir for the screenshots
+```
+
+CI runs the same suite in the `e2e` job (pinned `mcr.microsoft.com/playwright/python` image) and keeps the
+screenshots and the JUnit report for 14 days. Page suites live in `tests/e2e/test_page_<name>.py`; slow runners can set
+`E2E_TIMEOUT_SCALE`. A new page gets its suite the same way, using the `app` fixture (see `tests/e2e/conftest.py` and `support.py`).
 
 Releases follow [semantic versioning](https://semver.org); see
 [CHANGELOG.md](CHANGELOG.md). Licensed under Apache-2.0.

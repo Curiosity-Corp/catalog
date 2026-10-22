@@ -16,7 +16,7 @@ In Teams and Zoom, pick **StreamStack Camera** and **Easy Effects Source**.
 
 ## Where it lives
 
-The application (the `streamstack` command, the panel menu, auto mode, the
+The application (the `streamstack` command, the Console, the panel menu, auto mode, the
 voice presets and OBS templates) is its own project, StreamStack, with its own
 tests and releases. This role vendors a release tag at
 [`roles/developer_workstation/files/streamstack`](../roles/developer_workstation/files/streamstack/README.md)
@@ -24,7 +24,7 @@ as a squashed `git subtree` and wires it into the host:
 
 | The role does | The app does |
 | --- | --- |
-| apt packages, the v4l2loopback module and its two nodes, udev access, `/etc/streamstack/streamstack.env` from role variables, the install under `/usr/local`, user units, autostart entries, per-user seeding | everything a user runs: doctor, studio, previews, voice presets, auto mode, the panel menu |
+| apt packages, the v4l2loopback module and its two nodes, udev access, `/etc/streamstack/streamstack.env` from role variables, the install under `/usr/local`, user units, autostart entries, per-user seeding | everything a user runs: the Console, doctor, studio, previews, voice presets, auto mode, the panel menu |
 
 To move to a newer StreamStack release:
 
@@ -52,7 +52,7 @@ installs:
 | qpwgraph, pavucontrol | see and patch PipeWire routing; per-app levels |
 | v4l-utils, qv4l2, guvcview | camera formats and UVC controls (exposure, white balance) |
 | gphoto2, ffmpeg | Canon live view bridge, `ffplay` previews |
-| StreamStack | `/usr/local/lib/streamstack`, with `streamstack`, `streamstack-auto` and `streamstack-tray` in `/usr/local/bin` |
+| StreamStack | `/usr/local/lib/streamstack`, with `streamstack`, `streamstack-auto`, `streamstack-console` and `streamstack-tray` in `/usr/local/bin` |
 
 Two v4l2loopback devices are created with `exclusive_caps=1` (brought up
 by `/usr/local/sbin/curiosity-streamstack-loopback`, at boot through
@@ -68,16 +68,26 @@ table). Users can override any of them in
 
 ## Daily use
 
+### The Console
+
+**StreamStack** in the application menu (`streamstack-console`) opens the
+Console: a visual control surface with the live picture, faders, meters, scene
+and preset pads, and pages for Camera, Audio, Auto and System. Its **Compact
+window** action (`streamstack-console --mini`) is a small strip to keep beside
+a call. It opens as a Chrome or Edge app window, falling back to the default
+browser, and listens only on `127.0.0.1` with a per-launch token. See the app
+README for the pages and shortcuts.
+
 ### From the panel
 
-**StreamStack** in the application menu (`streamstack-tray --menu`) opens the
+The entry's **Panel menu** action (`streamstack-tray --menu`) opens the older
 studio menu at the pointer: what calls receive right now, Start/Stop studio,
 voice presets and effect bypass, mic check, previews of every live camera in
 every mode it offers, shortcuts to OBS, Easy Effects, qpwgraph, pavucontrol and
 qv4l2, the doctor and the Teams/Zoom settings.
 
-For a panel button, show `streamstack status --icon` and open the menu on
-click. It prints a camera icon (red dot: graded camera live, green: raw camera,
+For a panel button, show `streamstack status --icon` and open the Console on
+click (the menu on a right click). It prints a camera icon (red dot: graded camera live, green: raw camera,
 amber: needs attention, grey: off) and the details for the tooltip;
 `streamstack status --short` gives the same as text. In tint2:
 
@@ -89,7 +99,8 @@ execp_interval = 3
 execp_has_icon = 1
 execp_icon_w = 22
 execp_icon_h = 22
-execp_lclick_command = streamstack-tray --menu
+execp_lclick_command = streamstack-console
+execp_rclick_command = streamstack-tray --menu
 execp_mclick_command = streamstack preview canon
 ```
 

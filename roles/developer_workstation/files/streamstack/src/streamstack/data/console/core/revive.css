@@ -1,0 +1,29 @@
+/* revive.css — the stalled-microphone banner. Calm, never flashing; theme tokens only. */
+.revive {
+  position: absolute; inset: 0; z-index: 5; display: grid; align-content: center; justify-items: center; gap: var(--s-3);
+  padding: var(--s-5); text-align: center; border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-1) 90%, var(--red) 10%);
+  backdrop-filter: blur(3px);
+}
+.revive[hidden] { display: none; }
+.revive[data-state="reviving"] { background: color-mix(in srgb, var(--surface-1) 90%, var(--amber) 10%); }
+.revive[data-state="ok"] { background: color-mix(in srgb, var(--surface-1) 90%, var(--green) 10%); }
+.revive[data-state="failed"] { background: color-mix(in srgb, var(--surface-1) 88%, var(--red) 12%); }
+.rv-icon { display: grid; place-items: center; width: 3rem; height: 3rem; border-radius: 50%; color: var(--red); background: var(--red-soft); }
+.revive[data-state="reviving"] .rv-icon { color: var(--amber); background: var(--amber-soft); }
+.revive[data-state="reviving"] .rv-icon .icon { animation: rv-spin 1.1s linear infinite; }
+.revive[data-state="ok"] .rv-icon { color: var(--green); background: var(--green-soft); }
+.rv-icon .icon { width: 1.6rem; height: 1.6rem; }
+.rv-text { display: grid; gap: var(--s-1); max-width: 28rem; }
+.rv-title { font-size: var(--fs-lg, 1.15rem); line-height: 1.25; color: var(--text); }
+.rv-msg { margin: 0; font-size: var(--fs-sm); color: var(--text-2); line-height: 1.45; }
+.rv-msg:empty { display: none; }
+.rv-btn { min-width: 12rem; }
+.rv-btn[hidden] { display: none; }
+.revive-compact { gap: var(--s-2); padding: var(--s-3); }
+.revive-compact .rv-icon { width: 2.2rem; height: 2.2rem; }
+.revive-compact .rv-icon .icon { width: 1.2rem; height: 1.2rem; }
+.revive-compact .rv-title { font-size: var(--fs-md); }
+.revive-compact .rv-btn { min-width: 10rem; }
+@keyframes rv-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .revive[data-state="reviving"] .rv-icon .icon { animation: none; } }

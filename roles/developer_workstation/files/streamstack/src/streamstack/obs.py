@@ -6,6 +6,8 @@ import base64
 import hashlib
 import json
 import os
+import threading
+from collections import deque
 from pathlib import Path
 
 from streamstack import system
@@ -13,6 +15,12 @@ from streamstack import system
 COLOR_FILTER = "Lighting & Color"
 LUT_FILTER = "Cinematic LUT"
 SHARPEN_FILTER = "Sharpen"
+
+# obs-websocket event subscription bits (EventSubscription in the protocol docs).
+EVENTS_SCENES = 1 << 2
+EVENTS_FILTERS = 1 << 5
+EVENTS_OUTPUTS = 1 << 6
+EVENTS_SCENE_ITEMS = 1 << 7
 
 
 def websocket_config() -> Path:
@@ -59,13 +67,19 @@ def auth_response(password: str, salt: str, challenge: str) -> str:
 class OBS:
     """A small synchronous obs-websocket 5 client (python3-websocket)."""
 
-    def __init__(self, timeout: float = 10) -> None:
+    def __init__(self, timeout: float = 10, events: int = 0) -> None:
         import websocket
+
+        # One lock per connection: a request and its reply must not interleave
+        # with another thread's, and events (when subscribed) queue in `backlog`.
+        self.lock = threading.RLock()
+        self.timeout = timeout
+        self.backlog: deque[dict] = deque(maxlen=512)
 
         config = json.loads(websocket_config().read_text())
         self.ws = websocket.create_connection(f"ws://127.0.0.1:{config.get('server_port', 4455)}", timeout=timeout)
         hello = json.loads(self.ws.recv())["d"]
-        identify: dict = {"rpcVersion": 1, "eventSubscriptions": 0}
+        identify: dict = {"rpcVersion": 1, "eventSubscriptions": events}
         if "authentication" in hello:
             auth = hello["authentication"]
             identify["authentication"] = auth_response(config["server_password"], auth["salt"], auth["challenge"])
@@ -76,16 +90,40 @@ class OBS:
         self.counter = 0
 
     def call(self, request: str, **data) -> dict:
-        self.counter += 1
-        rid = str(self.counter)
-        self.ws.send(json.dumps({"op": 6, "d": {"requestType": request, "requestId": rid, "requestData": data}}))
-        while True:
-            message = json.loads(self.ws.recv())
-            if message.get("op") == 7 and message["d"].get("requestId") == rid:
-                status = message["d"]["requestStatus"]
-                if not status.get("result"):
-                    raise RuntimeError(f"{request}: {status.get('comment', status.get('code'))}")
-                return message["d"].get("responseData", {})
+        with self.lock:
+            self.counter += 1
+            rid = str(self.counter)
+            self.ws.send(json.dumps({"op": 6, "d": {"requestType": request, "requestId": rid, "requestData": data}}))
+            while True:
+                message = json.loads(self.ws.recv())
+                if message.get("op") == 5:
+                    self.backlog.append(message["d"])
+                elif message.get("op") == 7 and message["d"].get("requestId") == rid:
+                    status = message["d"]["requestStatus"]
+                    if not status.get("result"):
+                        raise RuntimeError(f"{request}: {status.get('comment', status.get('code'))}")
+                    return message["d"].get("responseData", {})
+
+    def wait_event(self, timeout: float) -> dict | None:
+        """The next subscribed event, or None after `timeout` seconds. Raises when the socket is gone."""
+        import websocket
+
+        with self.lock:
+            if self.backlog:
+                return self.backlog.popleft()
+            self.ws.settimeout(timeout)
+            try:
+                while True:
+                    message = json.loads(self.ws.recv())
+                    if message.get("op") == 5:
+                        return message["d"]
+            except (websocket.WebSocketTimeoutException, TimeoutError):
+                return None
+            finally:
+                try:
+                    self.ws.settimeout(self.timeout)
+                except (OSError, ValueError, AttributeError):
+                    pass  # the socket is closed; the caller sees that on its next call
 
     def close(self) -> None:
         try:
