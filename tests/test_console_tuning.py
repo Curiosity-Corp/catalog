@@ -31,6 +31,12 @@ NEW_FILES = (
 )
 
 
+
+def _include_file(task: dict) -> str | None:
+    """The file an include_tasks loads, in its plain or `file:`/`apply:` form."""
+    include = task.get("ansible.builtin.include_tasks")
+    return include.get("file") if isinstance(include, dict) else include
+
 def _load_helper():
     loader = importlib.machinery.SourceFileLoader("curiosity_console_tuning", str(HELPER))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -78,7 +84,7 @@ def test_main_includes_console_tuning_behind_the_opt_in() -> None:
     entry = next(
         task
         for task in main
-        if task.get("ansible.builtin.include_tasks") == "console-tuning.yml"
+        if _include_file(task) == "console-tuning.yml"
     )
     assert entry["tags"] == ["console", "display"]
     conditions = "\n".join(entry["when"])

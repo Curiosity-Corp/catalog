@@ -27,6 +27,12 @@ TEMPLATES = ROLE / "templates"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 
 
+
+def _include_file(task: dict) -> str | None:
+    """The file an include_tasks loads, in its plain or `file:`/`apply:` form."""
+    include = task.get("ansible.builtin.include_tasks")
+    return include.get("file") if isinstance(include, dict) else include
+
 def _render(name: str, **overrides: object) -> str:
     # Ansible's template module defaults to trim_blocks=True.
     env = jinja2.Environment(
@@ -87,7 +93,7 @@ def test_main_includes_tmp_hygiene_on_systemd_machines_only() -> None:
     entry = next(
         task
         for task in main
-        if task.get("ansible.builtin.include_tasks") == "tmp-hygiene.yml"
+        if _include_file(task) == "tmp-hygiene.yml"
     )
     assert entry["tags"] == ["tmp-hygiene", "system"]
     conditions = "\n".join(entry["when"])

@@ -287,7 +287,7 @@ def test_xdg_autostart_is_looped_over_dev_users_and_never_references_the_primary
     text = (TASKS / "minimal-desktop-xdg-autostart.yml").read_text()
     assert re.search(r"\bdev_user(_home)?\b", text) is None
     includes = {
-        task["ansible.builtin.include_tasks"]: task for task in _tasks("minimal-desktop.yml") if "ansible.builtin.include_tasks" in task
+        task["ansible.builtin.include_tasks"]["file"]: task for task in _tasks("minimal-desktop.yml") if "ansible.builtin.include_tasks" in task
     }
     task = includes["minimal-desktop-xdg-autostart.yml"]
     assert task["loop"] == "{{ dev_users }}"

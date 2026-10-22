@@ -26,6 +26,12 @@ PROFILES = DEFAULTS["hardware_profiles"]
 BUILD_SCRIPT = I915 / "i915-pcon-frl-444-build"
 
 
+
+def _include_file(task: dict) -> str | None:
+    """The file an include_tasks loads, in its plain or `file:`/`apply:` form."""
+    include = task.get("ansible.builtin.include_tasks")
+    return include.get("file") if isinstance(include, dict) else include
+
 def _tasks(name: str) -> list[dict]:
     return yaml.safe_load((TASKS / name).read_text())
 
@@ -122,7 +128,7 @@ def test_derived_variables_follow_the_profile_and_default_off() -> None:
 
 def test_the_i915_tasks_are_included_for_hardware_workstations() -> None:
     include = _named(_tasks("main.yml"), "Include the patched i915 module")
-    assert include["ansible.builtin.include_tasks"] == "i915-pcon-frl-444.yml"
+    assert include["ansible.builtin.include_tasks"]["file"] == "i915-pcon-frl-444.yml"
     assert include["when"] == "workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']"
 
 
@@ -364,7 +370,7 @@ def test_autostart_merges_xresources_before_anything_draws() -> None:
 def test_display_scale_is_wired_per_user() -> None:
     include = next(
         task for task in _tasks("minimal-desktop.yml")
-        if task.get("ansible.builtin.include_tasks") == "minimal-desktop-display-scale.yml"
+        if _include_file(task) == "minimal-desktop-display-scale.yml"
     )
     assert include["loop"] == "{{ dev_users }}"
     assert include["loop_control"]["loop_var"] == "dw_user"
@@ -626,7 +632,7 @@ def test_main_includes_console_video_on_the_same_hosts_as_grub_autoboot() -> Non
     tasks = _tasks("main.yml")
     include = _named(tasks, "Include console video")
     autoboot = _named(tasks, "Include GRUB autoboot")
-    assert include["ansible.builtin.include_tasks"] == "console-video.yml"
+    assert include["ansible.builtin.include_tasks"]["file"] == "console-video.yml"
     # Not gated on console_video itself: an empty value must reach the removal task.
     assert not any("console_video" in str(condition) for condition in include["when"])
     assert [c for c in include["when"]] == [c for c in autoboot["when"] if "grub_autoboot_enabled" not in c]

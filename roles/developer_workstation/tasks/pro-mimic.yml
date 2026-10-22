@@ -20,33 +20,57 @@
 # =============================================================================
 
 - name: Include explicit unattended-upgrades origins (no auto-reboot)
-  ansible.builtin.include_tasks: pro-mimic-unattended-origins.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic-unattended-origins.yml
+    apply:
+      tags: [pro-mimic, security, updates]
   tags: [pro-mimic, security, updates]
 
 - name: Include needrestart automatic-restart policy
-  ansible.builtin.include_tasks: pro-mimic-needrestart.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic-needrestart.yml
+    apply:
+      tags: [pro-mimic, security, updates]
   tags: [pro-mimic, security, updates]
 
 - name: Include minimal hardened sshd subset
-  ansible.builtin.include_tasks: pro-mimic-ssh.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic-ssh.yml
+    apply:
+      tags: [pro-mimic, security, ssh]
   tags: [pro-mimic, security, ssh]
 
 - name: Include MOTD security visibility
-  ansible.builtin.include_tasks: pro-mimic-motd.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic-motd.yml
+    apply:
+      tags: [pro-mimic, security, motd]
   tags: [pro-mimic, security, motd]
 
 - name: Include ESM/security-status visibility (report-only)
-  ansible.builtin.include_tasks: pro-mimic-esm.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic-esm.yml
+    apply:
+      tags: [pro-mimic, security]
   tags: [pro-mimic, security]
 
 - name: Include GA kernel pinning (surface reboot, never reboot)
-  ansible.builtin.include_tasks: pro-mimic-kernel.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic-kernel.yml
+    apply:
+      tags: [pro-mimic, security, kernel]
   tags: [pro-mimic, security, kernel]
 
 - name: Include display-manager mode control
-  ansible.builtin.include_tasks: pro-mimic-display-manager.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic-display-manager.yml
+    apply:
+      tags: [pro-mimic, security, display]
   tags: [pro-mimic, security, display]
 
 - name: Include ansible-pull convergence status record
-  ansible.builtin.include_tasks: pro-mimic-pull-status.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic-pull-status.yml
+    apply:
+      tags: [pro-mimic, security]
   tags: [pro-mimic, security]

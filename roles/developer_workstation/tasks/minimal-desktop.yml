@@ -11,24 +11,39 @@
 # =============================================================================
 
 - name: Install minimal desktop packages
-  ansible.builtin.include_tasks: minimal-desktop-packages.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-packages.yml
+    apply:
+      tags: [minimal-desktop, packages]
   tags: [minimal-desktop, packages]
 
 - name: Configure PAM-aware graphical and TTY locking
-  ansible.builtin.include_tasks: minimal-desktop-locking.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-locking.yml
+    apply:
+      tags: [minimal-desktop, locking]
   tags: [minimal-desktop, locking]
   when: workstation_profile != 'byod-kiosk'
 
 - name: Configure LightDM greeter
-  ansible.builtin.include_tasks: minimal-desktop-lightdm.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-lightdm.yml
+    apply:
+      tags: [minimal-desktop, lightdm]
   tags: [minimal-desktop, lightdm]
 
 - name: Install the display setup helper and its LightDM hook
-  ansible.builtin.include_tasks: minimal-desktop-display-setup.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-display-setup.yml
+    apply:
+      tags: [minimal-desktop, lightdm, display]
   tags: [minimal-desktop, lightdm, display]
 
 - name: Deploy Openbox configuration
-  ansible.builtin.include_tasks: minimal-desktop-openbox.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-openbox.yml
+    apply:
+      tags: [minimal-desktop, openbox]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
@@ -36,18 +51,27 @@
   tags: [minimal-desktop, openbox]
 
 - name: Configure pinned per-user VT sessions
-  ansible.builtin.include_tasks: minimal-desktop-pinned-vt.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-pinned-vt.yml
+    apply:
+      tags: [minimal-desktop, pinned-vt]
   tags: [minimal-desktop, pinned-vt]
 
 - name: Validate optional FocusPass screen lock settings
-  ansible.builtin.include_tasks: minimal-desktop-focuspass-preflight.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-focuspass-preflight.yml
+    apply:
+      tags: [minimal-desktop, locking, focuspass]
   tags: [minimal-desktop, locking, focuspass]
   when:
     - workstation_profile != 'byod-kiosk'
     - focuspass_screenlock_enabled | default(false) | bool
 
 - name: Install optional FocusPass screen lock package
-  ansible.builtin.include_tasks: minimal-desktop-focuspass.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-focuspass.yml
+    apply:
+      tags: [minimal-desktop, locking, focuspass]
   tags: [minimal-desktop, locking, focuspass]
   when:
     - workstation_profile != 'byod-kiosk'
@@ -56,7 +80,10 @@
     - not ansible_check_mode
 
 - name: Deploy picom compositor config
-  ansible.builtin.include_tasks: minimal-desktop-picom.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-picom.yml
+    apply:
+      tags: [minimal-desktop, picom]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
@@ -73,7 +100,10 @@
   tags: [minimal-desktop, tint2]
 
 - name: Render the display scale X resources
-  ansible.builtin.include_tasks: minimal-desktop-display-scale.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-display-scale.yml
+    apply:
+      tags: [minimal-desktop, display]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
@@ -81,7 +111,10 @@
   tags: [minimal-desktop, display]
 
 - name: Deploy tint2 panel config
-  ansible.builtin.include_tasks: minimal-desktop-tint2.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-tint2.yml
+    apply:
+      tags: [minimal-desktop, tint2]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
@@ -89,7 +122,10 @@
   tags: [minimal-desktop, tint2]
 
 - name: Hide XDG autostart entries the Openbox autostart already starts
-  ansible.builtin.include_tasks: minimal-desktop-xdg-autostart.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-xdg-autostart.yml
+    apply:
+      tags: [minimal-desktop, openbox, xdg-autostart]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
@@ -98,7 +134,10 @@
   when: workstation_profile != 'byod-kiosk'
 
 - name: Deploy dunst notification config
-  ansible.builtin.include_tasks: minimal-desktop-dunst.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-dunst.yml
+    apply:
+      tags: [minimal-desktop, dunst]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
@@ -106,7 +145,10 @@
   tags: [minimal-desktop, dunst]
 
 - name: Deploy rofi launcher config
-  ansible.builtin.include_tasks: minimal-desktop-rofi.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-rofi.yml
+    apply:
+      tags: [minimal-desktop, rofi]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
@@ -114,11 +156,17 @@
   tags: [minimal-desktop, rofi]
 
 - name: Deploy touchpad configuration (tap-to-click, natural scroll)
-  ansible.builtin.include_tasks: minimal-desktop-touchpad.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-touchpad.yml
+    apply:
+      tags: [minimal-desktop, touchpad]
   tags: [minimal-desktop, touchpad]
 
 - name: Configure GTK dark theme
-  ansible.builtin.include_tasks: minimal-desktop-gtk-theme.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-gtk-theme.yml
+    apply:
+      tags: [minimal-desktop, gtk]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user
@@ -126,7 +174,10 @@
   tags: [minimal-desktop, gtk]
 
 - name: Deploy Firefox performance profile
-  ansible.builtin.include_tasks: minimal-desktop-firefox.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-firefox.yml
+    apply:
+      tags: [minimal-desktop, firefox]
   loop: "{{ dev_users }}"
   loop_control:
     loop_var: dw_user

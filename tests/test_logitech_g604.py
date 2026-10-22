@@ -19,6 +19,12 @@ DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 SCRIPT = ROLE / "files/curiosity-g604"
 
 
+
+def _include_file(task: dict) -> str | None:
+    """The file an include_tasks loads, in its plain or `file:`/`apply:` form."""
+    include = task.get("ansible.builtin.include_tasks")
+    return include.get("file") if isinstance(include, dict) else include
+
 def _environment() -> jinja2.Environment:
     from ansible.plugins.filter.core import FilterModule
     from ansible.plugins.test.core import TestModule
@@ -83,7 +89,7 @@ def test_tasks_and_autostart_wire_the_launcher() -> None:
     modules = {key for task in tasks for key in task if key.startswith("ansible.builtin.")}
     assert {"ansible.builtin.assert", "ansible.builtin.apt", "ansible.builtin.template", "ansible.builtin.copy"} <= modules
     main = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
-    include = next(t for t in main if t.get("ansible.builtin.include_tasks") == "logitech-g604.yml")
+    include = next(t for t in main if _include_file(t) == "logitech-g604.yml")
     assert "logitech_g604_enabled | bool" in include["when"]
     autostart = (ROLE / "files/minimal-desktop/autostart").read_text()
     assert "curiosity-g604 &" in autostart

@@ -25,6 +25,12 @@ DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 SECRET = "98765432"
 
 
+
+def _include_file(task: dict) -> str | None:
+    """The file an include_tasks loads, in its plain or `file:`/`apply:` form."""
+    include = task.get("ansible.builtin.include_tasks")
+    return include.get("file") if isinstance(include, dict) else include
+
 def _load() -> ModuleType:
     loader = importlib.machinery.SourceFileLoader("curiosity_tv", str(SCRIPT))
     spec = importlib.util.spec_from_loader("curiosity_tv", loader)
@@ -672,7 +678,7 @@ def test_role_installs_the_cli_and_its_dependency() -> None:
     copy = by_name["Install the Samsung TV remote-control CLI"]["ansible.builtin.copy"]
     assert copy == {"src": "curiosity-tv", "dest": "/usr/local/bin/curiosity-tv", "owner": "root", "group": "root", "mode": "0755"}
     main = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
-    include = next(t for t in main if t.get("ansible.builtin.include_tasks") == "samsung-tv-cli.yml")
+    include = next(t for t in main if _include_file(t) == "samsung-tv-cli.yml")
     assert "samsung_tv_cli_enabled | bool" in include["when"]
     assert "samsung_tv_cli_enabled" in DEFAULTS
     # The vault name is private: the repository ships it empty.

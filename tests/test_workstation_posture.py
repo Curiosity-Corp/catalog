@@ -586,7 +586,7 @@ def test_focuspass_screenlock_is_opt_in_verified_and_profile_scoped() -> None:
     preflight_include = desktop[preflight_index]
     assert "minimal-desktop-focuspass-preflight.yml" in preflight_include[
         "ansible.builtin.include_tasks"
-    ]
+    ]["file"]
     assert "workstation_profile != 'byod-kiosk'" in preflight_include["when"]
     assert "focuspass_screenlock_enabled | default(false) | bool" in preflight_include[
         "when"
@@ -596,7 +596,7 @@ def test_focuspass_screenlock_is_opt_in_verified_and_profile_scoped() -> None:
     focuspass_include = desktop[focuspass_index]
     assert "minimal-desktop-focuspass.yml" in focuspass_include[
         "ansible.builtin.include_tasks"
-    ]
+    ]["file"]
     assert "workstation_profile != 'byod-kiosk'" in focuspass_include["when"]
     assert "focuspass_screenlock_enabled | default(false) | bool" in focuspass_include[
         "when"
@@ -963,7 +963,7 @@ def test_grub_autoboot_is_gated_on_grub_defaults_and_never_edits_them():
 def test_grub_autoboot_include_gating():
     main = _tasks(TASKS / "main.yml")
     include = _named(main, "Include GRUB autoboot")
-    assert include["ansible.builtin.include_tasks"] == "grub-autoboot.yml"
+    assert include["ansible.builtin.include_tasks"]["file"] == "grub-autoboot.yml"
     conditions = include["when"]
     assert "grub_autoboot_enabled | default(true) | bool" in conditions
     assert "workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']" in conditions

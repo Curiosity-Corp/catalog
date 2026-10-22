@@ -144,7 +144,10 @@
     label: "{{ dw_user.name }}"
 
 - name: Enable systemd lingering for the configured users
-  ansible.builtin.include_tasks: user-linger.yml
+  ansible.builtin.include_tasks:
+    file: user-linger.yml
+    apply:
+      tags: [systemd, user-systemd]
   tags: [systemd, user-systemd]
   when: workstation_user_linger | length > 0
 
@@ -175,46 +178,73 @@
 # Task Includes
 # =============================================================================
 - name: Include log rotation hardening
-  ansible.builtin.include_tasks: logrotate.yml
+  ansible.builtin.include_tasks:
+    file: logrotate.yml
+    apply:
+      tags: [logrotate, logging]
   tags: [logrotate, logging]
 
 - name: Include APT repository setup (desktop)
-  ansible.builtin.include_tasks: repos.yml
+  ansible.builtin.include_tasks:
+    file: repos.yml
+    apply:
+      tags: [repos]
   tags: [repos]
   when: workstation_profile == 'desktop'
 
 - name: Include APT repository setup (workspace)
-  ansible.builtin.include_tasks: repos-workspace.yml
+  ansible.builtin.include_tasks:
+    file: repos-workspace.yml
+    apply:
+      tags: [repos]
   tags: [repos]
   when: workstation_profile == 'workspace'
 
 - name: Include APT repository setup (thin client)
-  ansible.builtin.include_tasks: repos-thin-client.yml
+  ansible.builtin.include_tasks:
+    file: repos-thin-client.yml
+    apply:
+      tags: [repos]
   tags: [repos]
   when: workstation_profile == 'thin-client'
 
 - name: Include APT repository setup (byod-kiosk)
-  ansible.builtin.include_tasks: repos-thin-client.yml
+  ansible.builtin.include_tasks:
+    file: repos-thin-client.yml
+    apply:
+      tags: [repos]
   tags: [repos]
   when: workstation_profile == 'byod-kiosk'
 
 - name: Include APT package installation (desktop)
-  ansible.builtin.include_tasks: packages.yml
+  ansible.builtin.include_tasks:
+    file: packages.yml
+    apply:
+      tags: [packages]
   tags: [packages]
   when: workstation_profile == 'desktop'
 
 - name: Include APT package installation (workspace)
-  ansible.builtin.include_tasks: packages-workspace.yml
+  ansible.builtin.include_tasks:
+    file: packages-workspace.yml
+    apply:
+      tags: [packages]
   tags: [packages]
   when: workstation_profile == 'workspace'
 
 - name: Include APT package installation (thin client)
-  ansible.builtin.include_tasks: packages-thin-client.yml
+  ansible.builtin.include_tasks:
+    file: packages-thin-client.yml
+    apply:
+      tags: [packages]
   tags: [packages]
   when: workstation_profile == 'thin-client'
 
 - name: Include APT package installation (byod-kiosk)
-  ansible.builtin.include_tasks: packages-thin-client.yml
+  ansible.builtin.include_tasks:
+    file: packages-thin-client.yml
+    apply:
+      tags: [packages]
   tags: [packages]
   when: workstation_profile == 'byod-kiosk'
 
@@ -284,12 +314,18 @@
         msg: "Upstream release resolution failed; no stale fallback was installed"
 
 - name: Include internal CA trust
-  ansible.builtin.include_tasks: internal-cas.yml
+  ansible.builtin.include_tasks:
+    file: internal-cas.yml
+    apply:
+      tags: [security, certificates]
   tags: [security, certificates]
   when: workstation_profile in ['thin-client', 'byod-kiosk']
 
 - name: Run workstation software update transaction
-  ansible.builtin.include_tasks: update-transaction.yml
+  ansible.builtin.include_tasks:
+    file: update-transaction.yml
+    apply:
+      tags: "{{ workstation_update_transaction_tags }}"
   # Select the transaction wrapper from the requested component tag, but do
   # not apply those tags to every task inside it. The wrapper file gives the
   # managed component includes their own tags while health/rollback/manifest
@@ -297,32 +333,50 @@
   tags: "{{ workstation_update_transaction_tags }}"
 
 - name: Include system tuning (swap, earlyoom, sysctl)
-  ansible.builtin.include_tasks: system-tuning.yml
+  ansible.builtin.include_tasks:
+    file: system-tuning.yml
+    apply:
+      tags: [tuning, system]
   tags: [tuning, system]
   when:
     - workstation_profile == 'desktop'
     - system_tuning_enabled | default(false)
 
 - name: Include Git configuration
-  ansible.builtin.include_tasks: git-config.yml
+  ansible.builtin.include_tasks:
+    file: git-config.yml
+    apply:
+      tags: [git]
   tags: [git]
 
 - name: Include Coder workspace helpers (credential helper, profile.d, bash_profile)
-  ansible.builtin.include_tasks: coder-workspace-helpers.yml
+  ansible.builtin.include_tasks:
+    file: coder-workspace-helpers.yml
+    apply:
+      tags: [coder, workspace, git]
   tags: [coder, workspace, git]
   when: workstation_profile == 'workspace'
 
 - name: Include hyper-workspace helpers
-  ansible.builtin.include_tasks: hyper-workspace.yml
+  ansible.builtin.include_tasks:
+    file: hyper-workspace.yml
+    apply:
+      tags: [mosh, workspace]
   tags: [mosh, workspace]
   when: workstation_profile == 'workspace'
 
 - name: Include user environment (system-level setup)
-  ansible.builtin.include_tasks: user-env.yml
+  ansible.builtin.include_tasks:
+    file: user-env.yml
+    apply:
+      tags: [user]
   tags: [user]
 
 - name: Include T460 console support
-  ansible.builtin.include_tasks: t460-console.yml
+  ansible.builtin.include_tasks:
+    file: t460-console.yml
+    apply:
+      tags: [t460, console, display]
   tags: [t460, console, display]
   when:
     - hardware_profile in ['t460', 'x86-byod-laptop']
@@ -330,7 +384,10 @@
     - t460_console_diagnostics_enabled | default(true) | bool
 
 - name: Include console tuning (full-screen fbcon, bitmap font, soft palette)
-  ansible.builtin.include_tasks: console-tuning.yml
+  ansible.builtin.include_tasks:
+    file: console-tuning.yml
+    apply:
+      tags: [console, display]
   tags: [console, display]
   # Opt-in and machine-level: a text console only exists on a real Linux host,
   # so skip containers and the workspace/kiosk profiles. The helper itself
@@ -342,7 +399,10 @@
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
 - name: Include GRUB autoboot (never wait at the boot menu)
-  ansible.builtin.include_tasks: grub-autoboot.yml
+  ansible.builtin.include_tasks:
+    file: grub-autoboot.yml
+    apply:
+      tags: [grub, boot, system]
   tags: [grub, boot, system]
   # Machine-level bootloader policy: skip containers, non-x86_64 hosts and the
   # container-safe workspace profile. The task file also skips hosts that have
@@ -355,7 +415,10 @@
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
 - name: Include console video (kernel video= argument for a native-mode console)
-  ansible.builtin.include_tasks: console-video.yml
+  ansible.builtin.include_tasks:
+    file: console-video.yml
+    apply:
+      tags: [grub, boot, console, display]
   tags: [grub, boot, console, display]
   # Same machine-level scope as GRUB autoboot. Always included on these hosts so
   # a profile that stops setting console_video has its drop-in removed.
@@ -366,7 +429,10 @@
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
 - name: Include /tmp hygiene (age-based cleanup and pressure relief)
-  ansible.builtin.include_tasks: tmp-hygiene.yml
+  ansible.builtin.include_tasks:
+    file: tmp-hygiene.yml
+    apply:
+      tags: [tmp-hygiene, system]
   tags: [tmp-hygiene, system]
   # Machine-level systemd policy: skip the container-safe workspace profile and
   # containers. The task file itself retires the managed files when the feature
@@ -378,24 +444,36 @@
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
 - name: Include shell RC fallback
-  ansible.builtin.include_tasks: user-shell-fallback.yml
+  ansible.builtin.include_tasks:
+    file: user-shell-fallback.yml
+    apply:
+      tags: [user, shell]
   tags: [user, shell]
   when:
     - workstation_profile != 'thin-client'
     - user_dotfiles_repo | default('') | length == 0
 
 - name: Include chezmoi dotfiles bootstrap
-  ansible.builtin.include_tasks: dotfiles.yml
+  ansible.builtin.include_tasks:
+    file: dotfiles.yml
+    apply:
+      tags: [dotfiles, user]
   tags: [dotfiles, user]
   when: user_dotfiles_repo | default('') | length > 0
 
 - name: Restore saved workstation state when leaving the kiosk profile
-  ansible.builtin.include_tasks: kiosk-cleanup.yml
+  ansible.builtin.include_tasks:
+    file: kiosk-cleanup.yml
+    apply:
+      tags: [kiosk, lockdown]
   tags: [kiosk, lockdown]
   when: workstation_profile != 'byod-kiosk'
 
 - name: Include display configuration (GDM, VNC, GNOME)
-  ansible.builtin.include_tasks: display-config.yml
+  ansible.builtin.include_tasks:
+    file: display-config.yml
+    apply:
+      tags: [display]
   tags: [display]
   when:
     - workstation_profile == 'desktop'
@@ -403,7 +481,10 @@
     - not (minimal_desktop_enabled | default(false))
 
 - name: Include minimal desktop (Openbox, LightDM, Firefox)
-  ansible.builtin.include_tasks: minimal-desktop.yml
+  ansible.builtin.include_tasks:
+    file: minimal-desktop.yml
+    apply:
+      tags: [minimal-desktop, focuspass]
   tags: [minimal-desktop, focuspass]
   when:
     - >-
@@ -415,31 +496,46 @@
       )
 
 - name: Include keyboard layout enforcement (US physical keyboards)
-  ansible.builtin.include_tasks: keyboard.yml
+  ansible.builtin.include_tasks:
+    file: keyboard.yml
+    apply:
+      tags: [keyboard, system]
   tags: [keyboard, system]
   when: workstation_profile in ['thin-client', 'byod-kiosk']
 
 - name: Include free Ubuntu-Pro equivalents (origins, ssh, MOTD, kernel, display)
-  ansible.builtin.include_tasks: pro-mimic.yml
+  ansible.builtin.include_tasks:
+    file: pro-mimic.yml
+    apply:
+      tags: [pro-mimic, security]
   tags: [pro-mimic, security]
   # Machine-level plane: systemd units, MOTD, and default-target changes have
   # no meaning in the container-safe workspace profile (no systemd there).
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
 - name: Include kiosk session lockdown (Chromium kiosk, no shell, no idle lock)
-  ansible.builtin.include_tasks: kiosk-session.yml
+  ansible.builtin.include_tasks:
+    file: kiosk-session.yml
+    apply:
+      tags: [kiosk, lockdown]
   tags: [kiosk, lockdown]
   when: workstation_profile == 'byod-kiosk'
 
 - name: Include Sunshine remote streaming
-  ansible.builtin.include_tasks: streaming.yml
+  ansible.builtin.include_tasks:
+    file: streaming.yml
+    apply:
+      tags: [streaming, sunshine]
   tags: [streaming, sunshine]
   when:
     - workstation_profile == 'desktop'
     - sunshine_enabled | default(false)
 
 - name: Include firewall (UFW)
-  ansible.builtin.include_tasks: firewall.yml
+  ansible.builtin.include_tasks:
+    file: firewall.yml
+    apply:
+      tags: [firewall]
   tags: [firewall]
   when:
     - >-
@@ -453,7 +549,10 @@
       )
 
 - name: Include Keycloak SSO (authd + authd-oidc)
-  ansible.builtin.include_tasks: keycloak-sso.yml
+  ansible.builtin.include_tasks:
+    file: keycloak-sso.yml
+    apply:
+      tags: [keycloak, sso]
   tags: [keycloak, sso]
   when:
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
@@ -482,26 +581,38 @@
     - ziti_intercept_domains | default([]) | length > 0
 
 - name: Include profile cleanup timer
-  ansible.builtin.include_tasks: profile-cleanup.yml
+  ansible.builtin.include_tasks:
+    file: profile-cleanup.yml
+    apply:
+      tags: [profile-cleanup]
   tags: [profile-cleanup]
   when:
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - profile_cleanup_enabled | default(false)
 
 - name: Include hardware-specific drivers
-  ansible.builtin.include_tasks: hardware-drivers.yml
+  ansible.builtin.include_tasks:
+    file: hardware-drivers.yml
+    apply:
+      tags: [hardware]
   tags: [hardware]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
 - name: Configure the Logitech G604 button profile
-  ansible.builtin.include_tasks: logitech-g604.yml
+  ansible.builtin.include_tasks:
+    file: logitech-g604.yml
+    apply:
+      tags: [hardware, logitech-g604]
   tags: [hardware, logitech-g604]
   when:
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - logitech_g604_enabled | bool
 
 - name: Install the Samsung TV remote-control CLI
-  ansible.builtin.include_tasks: samsung-tv-cli.yml
+  ansible.builtin.include_tasks:
+    file: samsung-tv-cli.yml
+    apply:
+      tags: [hardware, samsung-tv]
   tags: [hardware, samsung-tv]
   when:
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
@@ -565,16 +676,25 @@
     - streamstack_deepfilter_enabled | bool
 
 - name: Include the patched i915 module for an HDMI 2.1 PCON
-  ansible.builtin.include_tasks: i915-pcon-frl-444.yml
+  ansible.builtin.include_tasks:
+    file: i915-pcon-frl-444.yml
+    apply:
+      tags: [hardware, i915]
   tags: [hardware, i915]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
 - name: Include fonts
-  ansible.builtin.include_tasks: fonts.yml
+  ansible.builtin.include_tasks:
+    file: fonts.yml
+    apply:
+      tags: [fonts]
   tags: [fonts]
   when: workstation_profile == 'desktop'
 
 - name: Include ansible-pull timer
-  ansible.builtin.include_tasks: ansible-pull-timer.yml
+  ansible.builtin.include_tasks:
+    file: ansible-pull-timer.yml
+    apply:
+      tags: [ansible-pull]
   tags: [ansible-pull]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
