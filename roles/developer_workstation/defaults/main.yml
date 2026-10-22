@@ -1129,7 +1129,9 @@ streamstack_deepfilter_enabled: true
 # The install never replaces a newer installed version (no rollback). The
 # variables are named *_release because the update policy reserves *_version.
 # Bump release and checksum together (the GitHub release lists each asset's
-# digest). The .deb installs under /usr/local, which OBS also searches.
+# digest). The .deb installs under /usr/local, which Ubuntu's libobs does NOT
+# search (it only looks in the system paths below), so the role links the
+# module and its data there (Curiosity-Corp/catalog#103).
 streamstack_backgroundremoval_release: "1.4.1"
 streamstack_backgroundremoval_deb_release: "1.4.1~forky"
 streamstack_backgroundremoval_sha256: "116810f21d87297511d35ec99c6a837ee077aee6280d5118f55cbfe4dfb9412b"
@@ -1139,6 +1141,10 @@ streamstack_backgroundremoval_packages:
   - libonnxruntime1.23
   - libopencv-core410
   - libopencv-imgproc410
+streamstack_backgroundremoval_installed_module: /usr/local/lib/obs-plugins/obs-backgroundremoval.so
+streamstack_backgroundremoval_installed_data: /usr/local/share/obs/obs-plugins/obs-backgroundremoval
+streamstack_obs_module_dir: /usr/lib/x86_64-linux-gnu/obs-plugins
+streamstack_obs_data_dir: /usr/share/obs/obs-plugins
 
 # DeepFilterNet LADSPA plugin (Rikorose/DeepFilterNet, MIT or Apache-2.0, at
 # your option): the library Easy Effects 8.1.2's Deep Noise Remover loads at run
