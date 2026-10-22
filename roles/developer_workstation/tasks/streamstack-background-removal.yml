@@ -43,8 +43,24 @@
       changed_when: false
       failed_when: false
 
+    # Install when absent or older than the pin; a newer version is left alone.
+    - name: Compare the installed obs-backgroundremoval with the pin
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --compare-versions
+          - "{{ _streamstack_bgremoval_installed.stdout }}"
+          - lt
+          - "{{ streamstack_backgroundremoval_deb_release }}"
+      register: _streamstack_bgremoval_older
+      changed_when: false
+      failed_when: _streamstack_bgremoval_older.rc not in [0, 1]
+      when: _streamstack_bgremoval_installed.stdout | default('') | length > 0
+
     - name: Download and install the pinned obs-backgroundremoval package
-      when: _streamstack_bgremoval_installed.stdout | default('') != streamstack_backgroundremoval_deb_version
+      when: >-
+        _streamstack_bgremoval_installed.stdout | default('') | length == 0
+        or _streamstack_bgremoval_older.rc | default(1) == 0
       block:
         - name: Ensure the verified artifact cache exists
           ansible.builtin.file:
@@ -54,7 +70,7 @@
             group: root
             mode: "0750"
 
-        - name: Download obs-backgroundremoval {{ streamstack_backgroundremoval_version }}
+        - name: Download obs-backgroundremoval {{ streamstack_backgroundremoval_release }}
           ansible.builtin.get_url:
             url: "{{ streamstack_backgroundremoval_url }}"
             dest: "{{ workstation_update_artifact_cache_dir }}/obs-backgroundremoval-{{ streamstack_backgroundremoval_sha256 }}.deb"
@@ -64,7 +80,7 @@
             mode: "0644"
             force: false
 
-        - name: Install obs-backgroundremoval {{ streamstack_backgroundremoval_version }}
+        - name: Install obs-backgroundremoval {{ streamstack_backgroundremoval_release }}
           ansible.builtin.apt:
             deb: "{{ workstation_update_artifact_cache_dir }}/obs-backgroundremoval-{{ streamstack_backgroundremoval_sha256 }}.deb"
             state: present

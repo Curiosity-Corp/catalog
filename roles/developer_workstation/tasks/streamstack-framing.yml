@@ -89,8 +89,8 @@
       ansible.builtin.stat:
         path: "{{ streamstack_openvino_target }}/{{ item }}.dist-info"
       loop:
-        - "openvino-{{ streamstack_openvino_version }}"
-        - "openvino_telemetry-{{ streamstack_openvino_telemetry_version }}"
+        - "openvino-{{ streamstack_openvino_release }}"
+        - "openvino_telemetry-{{ streamstack_openvino_telemetry_release }}"
       register: _streamstack_openvino_installed
 
     - name: Install the pinned OpenVINO wheels
@@ -139,8 +139,8 @@
             label: "{{ item.path | basename }}"
           when: >-
             (item.path | basename) not in [
-              'openvino-' ~ streamstack_openvino_version ~ '.dist-info',
-              'openvino_telemetry-' ~ streamstack_openvino_telemetry_version ~ '.dist-info']
+              'openvino-' ~ streamstack_openvino_release ~ '.dist-info',
+              'openvino_telemetry-' ~ streamstack_openvino_telemetry_release ~ '.dist-info']
 
         - name: Install the OpenVINO wheels with pip --target
           ansible.builtin.command:

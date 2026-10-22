@@ -48,19 +48,19 @@ def test_every_pinned_artifact_carries_a_sha256() -> None:
 
 def test_pinned_urls_name_the_pinned_files() -> None:
     deb = _render(DEFAULTS["streamstack_backgroundremoval_url"])
-    assert deb.endswith(f"/{DEFAULTS['streamstack_backgroundremoval_version']}/"
-                        f"obs-backgroundremoval_{DEFAULTS['streamstack_backgroundremoval_version']}.forky_amd64.deb")
+    assert deb.endswith(f"/{DEFAULTS['streamstack_backgroundremoval_release']}/"
+                        f"obs-backgroundremoval_{DEFAULTS['streamstack_backgroundremoval_release']}.forky_amd64.deb")
     assert deb.startswith("https://github.com/royshil/obs-backgroundremoval/releases/download/")
-    assert DEFAULTS["streamstack_backgroundremoval_deb_version"].startswith(DEFAULTS["streamstack_backgroundremoval_version"])
+    assert DEFAULTS["streamstack_backgroundremoval_deb_release"].startswith(DEFAULTS["streamstack_backgroundremoval_release"])
     for wheel, url in (("streamstack_openvino_wheel", "streamstack_openvino_wheel_url"),
                        ("streamstack_openvino_telemetry_wheel", "streamstack_openvino_telemetry_wheel_url")):
         assert _render(DEFAULTS[url]).startswith("https://files.pythonhosted.org/packages/")
         assert _render(DEFAULTS[url]).endswith("/" + DEFAULTS[wheel])
     wheel = DEFAULTS["streamstack_openvino_wheel"]
-    assert wheel.startswith(f"openvino-{DEFAULTS['streamstack_openvino_version']}-")
+    assert wheel.startswith(f"openvino-{DEFAULTS['streamstack_openvino_release']}-")
     assert f"-{DEFAULTS['streamstack_openvino_python_tag']}-" in wheel
     assert DEFAULTS["streamstack_openvino_telemetry_wheel"].startswith(
-        f"openvino_telemetry-{DEFAULTS['streamstack_openvino_telemetry_version']}-")
+        f"openvino_telemetry-{DEFAULTS['streamstack_openvino_telemetry_release']}-")
     model = _render(DEFAULTS["streamstack_framing_model_url"])
     assert model.startswith("https://github.com/opencv/opencv_zoo/raw/")
     assert re.search(r"/raw/[0-9a-f]{40}/", model), "the model must be pinned to a commit"
@@ -78,7 +78,9 @@ def test_every_download_is_checksummed_and_never_forced() -> None:
 
 def test_the_plugin_install_skips_when_the_pinned_version_is_present() -> None:
     install = _named(BLUR, "Download and install the pinned")
-    assert "streamstack_backgroundremoval_deb_version" in install["when"]
+    assert "_streamstack_bgremoval_older.rc" in install["when"]
+    compare = _named(BLUR, "Compare the installed")["ansible.builtin.command"]["argv"]
+    assert "streamstack_backgroundremoval_deb_release" in compare[-1] and compare[-2] == "lt"
     apt = _named(BLUR, "Install obs-backgroundremoval {{")["ansible.builtin.apt"]
     assert apt["deb"].endswith("{{ streamstack_backgroundremoval_sha256 }}.deb")
     assert not any("systemd" in str(t) or "obs-studio" in str(t.get("ansible.builtin.command", "")) for t in _walk(BLUR))

@@ -1122,13 +1122,18 @@ streamstack_framing_enabled: true
 # `background_removal`, which StreamStack's "Blur background" needs (1.4.1+).
 # Ubuntu has no package, so the release .deb (built for Debian forky; every
 # soname it needs exists on Ubuntu 26.04) is pinned by version and sha256.
-# Bump version and checksum together (the GitHub release lists each asset's
+# Deliberately pinned, unlike the runtime-discovered application releases: the
+# plugin links against the archive's onnxruntime/OpenCV sonames, so a newer
+# upstream build is only taken after it is checked against Ubuntu's libraries.
+# The install never replaces a newer installed version (no rollback). The
+# variables are named *_release because the update policy reserves *_version.
+# Bump release and checksum together (the GitHub release lists each asset's
 # digest). The .deb installs under /usr/local, which OBS also searches.
-streamstack_backgroundremoval_version: "1.4.1"
-streamstack_backgroundremoval_deb_version: "1.4.1~forky"
+streamstack_backgroundremoval_release: "1.4.1"
+streamstack_backgroundremoval_deb_release: "1.4.1~forky"
 streamstack_backgroundremoval_sha256: "116810f21d87297511d35ec99c6a837ee077aee6280d5118f55cbfe4dfb9412b"
 streamstack_backgroundremoval_url: >-
-  https://github.com/royshil/obs-backgroundremoval/releases/download/{{ streamstack_backgroundremoval_version }}/obs-backgroundremoval_{{ streamstack_backgroundremoval_version }}.forky_amd64.deb
+  https://github.com/royshil/obs-backgroundremoval/releases/download/{{ streamstack_backgroundremoval_release }}/obs-backgroundremoval_{{ streamstack_backgroundremoval_release }}.forky_amd64.deb
 streamstack_backgroundremoval_packages:
   - libonnxruntime1.23
   - libopencv-core410
@@ -1146,14 +1151,14 @@ streamstack_framing_packages:
   - python3-numpy
   - python3-opencv
   - python3-packaging
-streamstack_openvino_version: "2026.4.1"
+streamstack_openvino_release: "2026.4.1"
 streamstack_openvino_python_tag: cp314
 streamstack_openvino_wheel: "openvino-2026.4.1-22982-cp314-cp314-manylinux_2_28_x86_64.whl"
 streamstack_openvino_wheel_url: >-
   https://files.pythonhosted.org/packages/77/cf/830aff97404d73b8ada3ba3f02a626089a384299322cb94b52c37eaebd18/openvino-2026.4.1-22982-cp314-cp314-manylinux_2_28_x86_64.whl
 streamstack_openvino_wheel_sha256: "3631dd889dccf3d5087775948590a6609a662f90c24a9cf85bb4dfa0cdd7fd2f"
 # OpenVINO imports openvino-telemetry; the pure-Python wheel is pinned too.
-streamstack_openvino_telemetry_version: "2025.2.0"
+streamstack_openvino_telemetry_release: "2025.2.0"
 streamstack_openvino_telemetry_wheel: "openvino_telemetry-2025.2.0-py3-none-any.whl"
 streamstack_openvino_telemetry_wheel_url: >-
   https://files.pythonhosted.org/packages/3b/ac/5ab0ca0aa269ad3c73f7bfc3801b10e5f56f75a31bf68c1ae8bd51cf70a4/openvino_telemetry-2025.2.0-py3-none-any.whl
