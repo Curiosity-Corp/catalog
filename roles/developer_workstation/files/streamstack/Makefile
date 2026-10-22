@@ -5,6 +5,7 @@ LIBDIR = $(DESTDIR)$(PREFIX)/lib/streamstack
 BINDIR = $(DESTDIR)$(PREFIX)/bin
 SHAREDIR = $(DESTDIR)$(PREFIX)/share
 USERUNITDIR ?= $(DESTDIR)$(PREFIX)/lib/systemd/user
+UDEVDIR ?= $(DESTDIR)$(PREFIX)/lib/udev/rules.d
 
 .PHONY: all test e2e lint build install uninstall clean
 
@@ -36,6 +37,7 @@ install:
 		packaging/bin/streamstack-tray $(BINDIR)/
 	install -m 644 packaging/systemd/user/*.service $(USERUNITDIR)/
 	install -m 644 packaging/applications/*.desktop $(SHAREDIR)/applications/
+	install -D -m 644 packaging/udev/60-streamstack-litra.rules $(UDEVDIR)/60-streamstack-litra.rules
 	install -D -m 644 src/streamstack/data/icons/streamstack-live.svg \
 		$(SHAREDIR)/icons/hicolor/scalable/apps/streamstack.svg
 	for state in live raw warn off; do \
@@ -48,7 +50,7 @@ uninstall:
 	rm -f $(BINDIR)/streamstack $(BINDIR)/streamstack-auto $(BINDIR)/streamstack-console \
 		$(BINDIR)/streamstack-tray
 	rm -f $(USERUNITDIR)/streamstack-auto.service $(USERUNITDIR)/streamstack-canon.service
-	rm -f $(SHAREDIR)/applications/streamstack*.desktop
+	rm -f $(SHAREDIR)/applications/streamstack*.desktop $(UDEVDIR)/60-streamstack-litra.rules
 	rm -f $(SHAREDIR)/icons/hicolor/scalable/apps/streamstack.svg $(SHAREDIR)/icons/hicolor/scalable/status/streamstack-*.svg
 
 clean:

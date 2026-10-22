@@ -137,12 +137,25 @@ streamstack mic-check --raw # hear the raw mic, then the processed voice
 streamstack voice           # list voice presets; `streamstack voice "StreamStack Voice Warm"`
 streamstack auto on|off     # the Claude auto-cinematographer and auto-audio
 streamstack call-settings   # the Teams and Zoom toggles that match this rig
+streamstack encoder         # which video encoder OBS can use here; --apply sets it (OBS closed)
 ```
+
+### Video encoder
+
+OBS records and streams on the GPU when it can. `streamstack setup` and
+`streamstack encoder --apply` ask the machine what it has (`vainfo` on every
+DRM render node, and the encoder list OBS writes to its log) and pick, best
+first: AV1 VA-API, AV1 Quick Sync, H.264 VA-API, H.264 Quick Sync, x264. No
+render node path is stored; the VA-API encoders find theirs. Live settings are
+CBR, no B-frames and a two second keyframe interval; recordings use VBR at
+twice the bitrate. The active encoder shows in `streamstack doctor` and on
+the Console System page, which warns when a better one is available. Start
+OBS once before the first `encoder --apply` so it has listed its encoders.
 
 ### Voice presets
 
 All presets share one chain (high-pass, noise removal, gate, compressor,
-bass/presence/treble EQ, de-esser, pitch, limiter), so bass, treble and pitch
+bass/presence/treble EQ, de-esser, pitch, limiter with a -1 dBTP true-peak ceiling), so bass, treble and pitch
 are always one slider away in Easy Effects (Equalizer: band 0 is bass, band 3
 is treble; Pitch: semitones).
 
@@ -204,6 +217,20 @@ The Cam Link 4K delivers uncompressed frames from the camera's HDMI output, so
 there is no decode on the CPU (USB live view is MJPEG). It needs a clean HDMI
 output, mains power for long calls, and a USB 3 port (not a USB 2 hub).
 
+The Cam Link has no modes of its own: it offers whatever the camera sends over
+HDMI. StreamStack reads that list (found by USB id `0fd9:0066`, never by
+`/dev/videoN`) and picks the best mode: 1080p60 over 1080p50 over 1080p30, raw
+YUYV/NV12 before MJPEG (no decode, least latency), and 4K only with
+`STREAMSTACK_CAMLINK_4K=true`. Set the camera's HDMI output to 1080p60 (or 50)
+and turn off its on-screen display. `streamstack camlink` shows the offer and
+the pick; `streamstack camlink --apply` tunes the running OBS Cam Link source
+and, while nothing is on air, the canvas to match. `streamstack setup` seeds the
+same mode into a new OBS profile. The Console re-reads the offer every few
+seconds, so a camera switched on or to another mode appears on the Camera page
+(HDMI chip on the Cam Link picture) and in the System health checks. The card's
+HDMI audio is the camera's sound: it is listed as such and never offered as the
+call microphone.
+
 ## Teams and Zoom
 
 Start `streamstack studio` **before** joining, so the virtual camera is already
@@ -234,7 +261,9 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 | --- | --- | --- |
 | `STREAMSTACK_CAMERA_DEVICE` / `_LABEL` | `/dev/video42`, `Canon EOS 50D` | the camera loopback node |
 | `STREAMSTACK_PROGRAM_DEVICE` / `_LABEL` | `/dev/video43`, `StreamStack Camera` | the OBS virtual camera node |
-| `STREAMSTACK_WIDTH`, `_HEIGHT`, `_FPS` | `1920`, `1080`, `30` | bridge output and OBS canvas |
+| `STREAMSTACK_WIDTH`, `_HEIGHT`, `_FPS` | `1920`, `1080`, `30` | Canon bridge output, and the OBS canvas when `STREAMSTACK_CAMLINK_MODE=off` |
+| `STREAMSTACK_CAMLINK_MODE` | `auto` | `auto`: the best mode the HDMI source offers, and the OBS canvas follows it; `off`: keep the three settings above; `1920x1080@60 YUYV`: pin one mode (falls back to `auto` when the source does not offer it) |
+| `STREAMSTACK_CAMLINK_4K` | `false` | let `auto` pick 4K |
 | `STREAMSTACK_CAMERA_EXTERNAL` | `false` | another tool feeds the camera node |
 | `STREAMSTACK_CANON_BRIDGE` | `gphoto2` | `gphoto2`, `command` or `none` |
 | `STREAMSTACK_CANON_COMMAND` | | the bridge command for `command` |

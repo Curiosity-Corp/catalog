@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from streamstack import cli, system
+
 
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -18,6 +20,9 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("NO_COLOR", "1")
     for name in ("STREAMSTACK_SHARE", "STREAMSTACK_AUTO_VERBOSE", "STREAMSTACK_AUTO_CLAUDE", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(name, raising=False)
+    # No test may read the capture card plugged into the machine that runs it.
+    monkeypatch.setattr(system, "find_camlink", lambda: "")
+    monkeypatch.setattr(cli, "find_camlink", lambda: "")
     return home
 
 

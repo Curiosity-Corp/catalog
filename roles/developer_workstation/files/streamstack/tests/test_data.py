@@ -10,8 +10,11 @@ from streamstack.config import DEFAULTS, data_dir
 SHARE = data_dir()
 
 # Enum labels Easy Effects 8 accepts in presets (src/contents/kcfg/*.kcfg).
+# The limiter lists are copied from src/contents/kcfg/easyeffects_db_limiter.kcfg (modeLabels, oversamplingLabels,
+# ditheringLabels): https://github.com/wwmm/easyeffects/blob/master/src/contents/kcfg/easyeffects_db_limiter.kcfg
 # An unknown label is silently ignored on load, so a typo would ship a preset
 # that quietly keeps the previous setting.
+LIMITER_KINDS = ("Thin", "Wide", "Tail", "Duck")
 EE_LABELS = {
     ("filter", "type"): {"Low-pass", "High-pass", "Low-shelf", "High-shelf", "Bell", "Band-pass", "Notch"},
     ("filter", "mode"): {"RLC (BT)", "RLC (MT)", "BWC (BT)", "BWC (MT)", "LRX (BT)", "LRX (MT)", "APO (DR)"},
@@ -22,9 +25,14 @@ EE_LABELS = {
     ("equalizer", "mode"): {"IIR", "FIR", "FFT", "SPM"},
     ("deesser", "detection"): {"RMS", "Peak"},
     ("deesser", "mode"): {"Wide", "Split"},
-    ("limiter", "mode"): {"Herm Thin", "Herm Wide", "Herm Tail", "Herm Duck", "Exp Thin", "Exp Wide"},
-    ("limiter", "oversampling"): {"None"},
-    ("limiter", "dithering"): {"None"},
+    ("limiter", "mode"): {f"{shape} {kind}" for shape in ("Herm", "Exp", "Line") for kind in LIMITER_KINDS},
+    ("limiter", "oversampling"): {
+        "None",
+        *(f"{scope} x{n}/{bits} bit" for scope in ("Half", "Full") for n in (2, 3, 4, 6, 8) for bits in (16, 24)),
+        "True Peak/16 bit",
+        "True Peak/24 bit",
+    },
+    ("limiter", "dithering"): {"None", "7bit", "8bit", "11bit", "12bit", "15bit", "16bit", "23bit", "24bit"},
 }
 EE_BAND_TYPES = {"Off", "Bell", "Hi-pass", "Hi-shelf", "Lo-pass", "Lo-shelf", "Notch"}
 EE_BAND_MODES = EE_LABELS[("filter", "mode")]
@@ -53,7 +61,24 @@ def test_voice_presets_are_valid_easy_effects_presets() -> None:
         types = [b["type"] for b in eq["left"].values()]
         assert "Lo-shelf" in types and "Hi-shelf" in types
         assert "pitch#0" in order and -12 <= pipeline["pitch#0"]["semitones"] <= 12
-        assert order[-1] == "limiter#0" and pipeline["limiter#0"]["threshold"] < 0
+        assert order[-1] == "limiter#0"
+
+
+def test_limiter_label_sets_match_the_kcfg_counts() -> None:
+    assert len(EE_LABELS[("limiter", "mode")]) == 12
+    assert len(EE_LABELS[("limiter", "oversampling")]) == 23
+    assert len(EE_LABELS[("limiter", "dithering")]) == 9
+
+
+def test_every_limiter_oversamples_to_a_true_peak_ceiling() -> None:
+    """The limiter is the last stage, so its threshold is the ceiling of the voice that leaves the chain."""
+    presets = sorted((SHARE / "easyeffects/input").glob("*.json"))
+    assert presets
+    for path in presets:
+        limiter = json.loads(path.read_text())["input"]["limiter#0"]
+        assert limiter["oversampling"] == "True Peak/24 bit", path.name
+        assert limiter["threshold"] == -1.0, path.name  # -1 dBTP, the usual streaming headroom
+        assert limiter["output-gain"] <= 0, path.name  # make-up gain after the limiter would break the ceiling
 
 
 def test_obs_scene_collection_is_consistent_once_rendered() -> None:
@@ -77,7 +102,7 @@ def test_obs_scene_collection_is_consistent_once_rendered() -> None:
         for item in sources[scene["name"]]["settings"]["items"]:
             assert item["name"] in sources
     ini = (SHARE / "obs/basic.ini").read_text()
-    assert "OutputCX=@WIDTH@" in ini and "FPSInt=@FPS@" in ini
+    assert "OutputCX=@WIDTH@" in ini and "FPSNum=@FPS_NUM@" in ini and "FPSDen=@FPS_DEN@" in ini
 
 
 def test_auto_mode_filters_exist_on_the_camera_sources() -> None:
@@ -92,3 +117,28 @@ def test_every_panel_icon_ships_as_svg_and_png() -> None:
     for state in ("off", "raw", "live", "warn"):
         for suffix in ("svg", "png"):
             assert (SHARE / f"icons/streamstack-{state}.{suffix}").is_file()
+
+
+def test_page_stylesheets_are_scoped_to_their_page() -> None:
+    # Page stylesheets stay loaded after navigation, so an unscoped rule leaks into every later page
+    # (audio.css once stacked the Live page's voice presets into one column and squashed the mic strip).
+    pages = SHARE / "console" / "pages"
+    routes = re.findall(r"id: '([a-z]+)'", (pages / "index.js").read_text())
+    assert routes
+    for route in routes:
+        css = (pages / f"{route}.css").read_text()
+        body = re.sub(r"/\*.*?\*/", "", css, flags=re.S).strip()
+        opener = f'@scope ([data-page="{route}"]) {{'
+        assert body.startswith(opener), f"{route}.css must open with {opener}"
+        depth, end = 0, None
+        for i, ch in enumerate(body):
+            depth += {"{": 1, "}": -1}.get(ch, 0)
+            if depth == 0 and ch == "}":
+                end = i
+                break
+        assert end is not None, f"{route}.css: unbalanced braces"
+        # after the scope block only rules aimed outside the page root may follow
+        for rule in re.findall(r"^\S[^{]*", body[end + 1 :], flags=re.M):
+            assert rule.startswith(("@keyframes", "@media")), f"{route}.css: unscoped rule {rule.strip()!r}"
+            if rule.startswith("@media"):
+                assert "#main:has(" in body[end + 1 :], f"{route}.css: unscoped @media rule"
