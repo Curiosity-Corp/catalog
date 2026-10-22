@@ -48,12 +48,18 @@
       - streamstack_auto_interval | int >= 5
       - streamstack_auto_ai_interval | int >= 60
       - streamstack_camlink_usb_ids | select('match', '^[0-9a-f]{4}:[0-9a-f]{4}$') | list | length == streamstack_camlink_usb_ids | length
+      - streamstack_property is not search("['\n]")
+      - (streamstack_latitude | string | length == 0) == (streamstack_longitude | string | length == 0)
+      - streamstack_latitude | string | length == 0 or (streamstack_latitude | string is match('^-?[0-9]+(\.[0-9]+)?$') and streamstack_latitude | float >= -90 and streamstack_latitude | float <= 90)
+      - streamstack_longitude | string | length == 0 or (streamstack_longitude | string is match('^-?[0-9]+(\.[0-9]+)?$') and streamstack_longitude | float >= -180 and streamstack_longitude | float <= 180)
     fail_msg: >-
       StreamStack needs two different loopback device numbers, labels without
       commas or quotes, a width/height divisible by 4, a numeric frame rate,
       a bridge of gphoto2, command (with streamstack_canon_bridge_command)
       or none, and an auto backend of claude-cli, api or local with a local
-      interval of at least 5 s and a Claude interval of at least 60 s.
+      interval of at least 5 s and a Claude interval of at least 60 s. A
+      property location needs both a decimal latitude (-90 to 90) and
+      longitude (-180 to 180), or neither.
 
 - name: Install the StreamStack studio packages
   ansible.builtin.apt:
@@ -209,6 +215,9 @@
       STREAMSTACK_AUTO_VIDEO={{ streamstack_auto_video | bool | lower }}
       STREAMSTACK_AUTO_AUDIO={{ streamstack_auto_audio | bool | lower }}
       STREAMSTACK_AUTO_NOTIFY={{ streamstack_auto_notify | bool | lower }}
+      STREAMSTACK_PROPERTY='{{ streamstack_property }}'
+      STREAMSTACK_LATITUDE={{ streamstack_latitude }}
+      STREAMSTACK_LONGITUDE={{ streamstack_longitude }}
 
 - name: Install the StreamStack loopback bring-up
   ansible.builtin.copy:

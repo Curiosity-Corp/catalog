@@ -272,3 +272,27 @@ def test_lights_follow_the_camera_at_login_for_every_desktop_user() -> None:
     assert "streamstack_lights_autostart" in wants["when"]
     assert _task("Leave StreamStack camera follow to `streamstack lights enable`")["when"] == \
         "not (streamstack_lights_autostart | bool)"
+
+
+def _location_ok(**values) -> bool:
+    checks = _task("Validate the StreamStack settings")["ansible.builtin.assert"]["that"]
+    rules = [c for c in checks if "streamstack_latitude" in c or "streamstack_longitude" in c or "streamstack_property" in c]
+    assert len(rules) == 4
+    return all(_render("{{ " + rule + " }}", **values).strip() == "True" for rule in rules)
+
+
+def test_the_property_location_reaches_the_settings_and_is_validated() -> None:
+    assert DEFAULTS["streamstack_latitude"] == DEFAULTS["streamstack_longitude"] == ""
+    env = _env(streamstack_property="Main office", streamstack_latitude="40.7128", streamstack_longitude="-74.006")
+    assert "STREAMSTACK_PROPERTY='Main office'" in env
+    assert "STREAMSTACK_LATITUDE=40.7128" in env
+    assert "STREAMSTACK_LONGITUDE=-74.006" in env
+    assert "STREAMSTACK_LATITUDE=\n" in _env()
+    assert _location_ok()
+    assert _location_ok(streamstack_latitude="40.7128", streamstack_longitude="-74.006")
+    assert _location_ok(streamstack_latitude=-33.9, streamstack_longitude=151.2)
+    assert not _location_ok(streamstack_latitude="40.7")  # half a location
+    assert not _location_ok(streamstack_latitude="91", streamstack_longitude="0")
+    assert not _location_ok(streamstack_latitude="0", streamstack_longitude="-181")
+    assert not _location_ok(streamstack_latitude="40N", streamstack_longitude="74W")
+    assert not _location_ok(streamstack_property="Bob's place")
