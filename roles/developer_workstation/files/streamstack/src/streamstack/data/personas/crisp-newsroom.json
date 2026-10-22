@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "id": "crisp-newsroom",
+  "name": "Crisp newsroom",
+  "tagline": "Sharp, neutral and authoritative",
+  "description": "Cool-neutral and clean with firm contrast, a bright even face, and a tight, articulate voice.",
+  "mood": [
+    "authoritative",
+    "crisp",
+    "clean",
+    "professional",
+    "alert"
+  ],
+  "avoid": [
+    "orange cast",
+    "soft or hazy picture",
+    "flat low contrast",
+    "mumbled or boomy voice",
+    "room echo"
+  ],
+  "swatch": [
+    "#1c2b3f",
+    "#8fb8de"
+  ],
+  "picture": {
+    "look": {
+      "brightness": 0.0,
+      "contrast": 0.16,
+      "gamma": 0.02,
+      "saturation": 0.02,
+      "warmth": -0.06
+    },
+    "face_luma": [
+      120,
+      155
+    ],
+    "frame_luma": [
+      105,
+      145
+    ],
+    "warmth_k": 6000,
+    "saturation": [
+      0.12,
+      0.28
+    ],
+    "contrast_spread": [
+      135,
+      220
+    ],
+    "max_clipped": 0.01
+  },
+  "voice": {
+    "preset": "StreamStack Voice Bright",
+    "speech_peak_db": [
+      -22,
+      -10
+    ],
+    "lufs": [
+      -26,
+      -15
+    ],
+    "targets": {
+      "depth": [
+        0.3,
+        0.65
+      ],
+      "clarity": [
+        0.5,
+        0.9
+      ],
+      "sibilance": [
+        0.0,
+        0.5
+      ]
+    },
+    "min_snr_db": 38,
+    "max_rt60_s": 0.45
+  },
+  "light": {
+    "brightness": 0.75,
+    "kelvin": 6000
+  }
+}

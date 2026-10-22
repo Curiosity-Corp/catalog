@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import array
 import json
+import math
 import os
 import shutil
 import socket
@@ -141,38 +142,16 @@ def ctl(rig: Rig) -> AudioController:
 # ---------------------------------------------------------------------------
 
 
-def test_frame_levels_full_scale_clips() -> None:
-    peak, rms, clipped = audio.frame_levels(array.array("h", [32767, -32768] * 400))
-    assert peak == 0.0
-    assert rms == 0.0
-    assert clipped
-
-
-def test_frame_levels_half_scale() -> None:
-    peak, rms, clipped = audio.frame_levels(array.array("h", [16384, -16384] * 400))
-    assert peak == -6.0
-    assert rms == -6.0
-    assert not clipped
-
-
-def test_frame_levels_peak_is_not_rms() -> None:
-    samples = array.array("h", [0] * 799 + [16384])
-    peak, rms, _ = audio.frame_levels(samples)
-    assert peak == -6.0
-    assert rms < -30
-
-
-def test_frame_levels_negative_extreme_and_silence() -> None:
-    assert audio.frame_levels(array.array("h", [-32768] * 10))[0] == 0.0
-    assert audio.frame_levels(array.array("h", [0] * 800)) == (-90.0, -90.0, False)
-    assert audio.frame_levels(array.array("h")) == (-90.0, -90.0, False)
-
-
-def test_clip_threshold_is_minus_half_db() -> None:
-    just_under = int(32768 * 10 ** (-0.6 / 20))
-    just_over = int(32768 * 10 ** (-0.4 / 20))
-    assert not audio.frame_levels(array.array("h", [just_under] * 10))[2]
-    assert audio.frame_levels(array.array("h", [just_over] * 10))[2]
+def test_meter_frame_has_every_field() -> None:
+    assert audio.meter_frame() == {
+        "peak_db": -90.0,
+        "sample_db": -90.0,
+        "rms_db": -90.0,
+        "clip": False,
+        "latched": False,
+        "lufs_m": -90.0,
+        "lufs_s": -90.0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -205,38 +184,85 @@ def test_parse_sources_survives_garbage() -> None:
 # ---------------------------------------------------------------------------
 
 
-def frame(value: int) -> bytes:
-    return array.array("h", [value, -value] * 400).tobytes()
+def frame(value: float, count: int = 960) -> bytes:
+    """One 20 ms frame of float32 alternating +value/-value (a fs/2 tone: its true peak is the sample peak)."""
+    return array.array("f", [value, -value] * (count // 2)).tobytes()
+
+
+def silent_frames(reader: LevelReader, n: int) -> None:
+    for _ in range(n):
+        reader.feed(frame(0.0))
 
 
 def test_level_reader_frames_across_chunk_boundaries() -> None:
     clock = Clock()
     reader = LevelReader("src", clock)
-    data = frame(16384)
+    data = frame(0.5)
     reader.feed(data[:700])
     assert reader.take()["peak_db"] == -90.0  # no complete frame yet
     reader.feed(data[700:])
-    assert reader.take() == {"peak_db": -6.0, "rms_db": -6.0, "clip": False}
+    taken = reader.take()
+    assert taken["sample_db"] == -6.0
+    assert taken["rms_db"] == -6.0
+    assert taken["peak_db"] >= -6.0  # a true peak is never below the sample peak
+    assert taken["clip"] is False
+    assert taken["latched"] is False
 
 
 def test_level_reader_keeps_the_loudest_peak_between_polls() -> None:
     clock = Clock()
     reader = LevelReader("src", clock)
-    reader.feed(frame(32767) + frame(1000) + frame(2000))
+    reader.feed(frame(1.0) + frame(0.03) + frame(0.06))
     taken = reader.take()
     assert taken["clip"] is True
-    assert taken["peak_db"] == 0.0
-    assert taken["rms_db"] == audio.to_db(2000 / 32768)  # the latest frame's RMS
+    assert taken["peak_db"] >= 0.0
+    assert taken["sample_db"] == 0.0
+    assert taken["rms_db"] == audio.to_db(0.06)  # the latest frame's RMS
     # nothing new: the last frame's own values, no lingering clip
-    assert reader.take() == {"peak_db": audio.to_db(2000 / 32768), "rms_db": audio.to_db(2000 / 32768), "clip": False}
+    again = reader.take()
+    assert again["clip"] is False
+    assert again["sample_db"] == audio.to_db(0.06)
+
+
+def test_level_reader_latches_a_clip_until_cleared() -> None:
+    clock = Clock()
+    reader = LevelReader("src", clock)
+    reader.feed(frame(0.9) + frame(0.1))  # 0.9 is -0.9 dBFS: over the -1 dBTP ceiling
+    assert reader.take()["latched"] is True
+    silent_frames(reader, 3)
+    assert reader.take()["latched"] is True  # stays lit long after the peak is gone
+    clock.advance(5.0)
+    assert reader.take()["latched"] is True  # and through a silent, stale reader
+    reader.latch.clear()
+    assert reader.take()["latched"] is False
+
+
+def test_level_reader_ignores_a_non_finite_frame() -> None:
+    clock = Clock()
+    reader = LevelReader("src", clock)
+    reader.feed(array.array("f", [float("nan")] * 960).tobytes() + frame(0.25))
+    taken = reader.take()
+    assert taken["sample_db"] == pytest.approx(-12.0, abs=0.1)
+    assert taken["clip"] is False
+
+
+def test_level_reader_reports_loudness() -> None:
+    clock = Clock()
+    reader = LevelReader("src", clock)
+    tone = array.array("f", (0.1 * math.sin(2 * math.pi * 997 * i / 48000) for i in range(48000)))
+    for start in range(0, len(tone), 960):
+        reader.feed(tone[start : start + 960].tobytes())
+    taken = reader.take()
+    assert taken["lufs_m"] == pytest.approx(-23.0, abs=0.1)  # -20 dBFS mono sine: -23.0 LUFS
+    assert taken["lufs_s"] == pytest.approx(-23.0, abs=0.1)
 
 
 def test_level_reader_goes_silent_when_frames_stop() -> None:
     clock = Clock()
     reader = LevelReader("src", clock)
-    reader.feed(frame(16384))
+    reader.feed(frame(0.5))
     clock.advance(0.6)
-    assert reader.take() == {"peak_db": -90.0, "rms_db": -90.0, "clip": False}
+    assert reader.take() == audio.meter_frame()
 
 
 class FakeProc:
@@ -269,14 +295,15 @@ def test_level_reader_reads_a_process_and_stops_it() -> None:
     reader = LevelReader("mysrc", spawn=spawn)
     assert reader.start()
     assert "--device=mysrc" in argv_seen[0]
-    assert "--latency-msec=50" in argv_seen[0]
-    assert "--rate=16000" in argv_seen[0]
-    proc.write(frame(8192))
+    assert "--latency-msec=20" in argv_seen[0]  # 20 ms frames
+    assert "--rate=48000" in argv_seen[0]  # the sources' native rate, no resampling before the meter
+    assert "--format=float32le" in argv_seen[0]
+    proc.write(array.array("f", (0.25 * math.sin(2 * math.pi * 1000 * i / 48000) for i in range(960))).tobytes())
     for _ in range(100):
         if reader.take()["peak_db"] > -90:
             break
         threading.Event().wait(0.02)
-    assert reader.take()["peak_db"] == pytest.approx(-12.0, abs=0.1)
+    assert reader.take()["peak_db"] == pytest.approx(-12.0, abs=0.2)
     reader.stop()
     assert proc.killed
     assert reader.dead
@@ -939,8 +966,44 @@ def test_demo_meters_speak_pause_and_mute() -> None:
     assert max(voice_peaks) - mean([v for _, v in loud]) < max(mic_peaks) - mean([m for m, _ in loud])  # and squashed
     demo.act("audio.mute", {"on": True})
     frame_ = demo.meters()
-    assert frame_["mic"] == {"peak_db": -90.0, "rms_db": -90.0, "clip": False}
+    assert frame_["mic"] == audio.meter_frame()
     assert frame_["voice"]["peak_db"] == -90.0
+
+
+def test_demo_meters_carry_loudness_and_a_clip_latch() -> None:
+    clock = Clock()
+    demo = DemoAudio(clock=clock)
+    clock.advance(0.9)
+    mic = demo.meters()["mic"]
+    assert set(mic) == set(audio.meter_frame())
+    assert mic["sample_db"] <= mic["peak_db"]  # a true peak is never below the sample peak
+    assert -90.0 <= mic["lufs_s"] <= 0.0 and -90.0 <= mic["lufs_m"] <= 0.0
+    assert mic["latched"] is False
+    demo.act("audio.demo_clip", {})
+    assert demo.meters()["mic"]["latched"] is True
+    demo.act("audio.mute", {"on": True})
+    assert demo.meters()["mic"]["latched"] is True  # muting does not forget a clip
+    demo.act("audio.clip_clear", {})
+    assert demo.meters()["mic"]["latched"] is False
+
+
+def test_demo_hot_gain_clips_and_latches() -> None:
+    clock = Clock()
+    demo = DemoAudio(clock=clock)
+    demo.act("audio.gain", {"db": 12})
+    for _ in range(200):
+        clock.advance(0.05)
+        demo.meters()
+    assert demo.meters()["mic"]["latched"] is True
+
+
+def test_controller_clip_clear_drops_every_latch(ctl: AudioController) -> None:
+    for latch in ctl._latches.values():
+        latch.trip(0.0, 0.0)
+    assert ctl.meters()["mic"]["latched"] is True
+    ctl.act("audio.clip_clear", {})
+    assert ctl.meters()["mic"]["latched"] is False
+    assert not any(latch.latched for latch in ctl._latches.values())
 
 
 def test_demo_gain_moves_the_mic_meter() -> None:

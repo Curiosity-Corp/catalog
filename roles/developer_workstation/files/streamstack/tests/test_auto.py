@@ -147,9 +147,27 @@ def test_audio_levels_speech_but_never_room_noise(monkeypatch) -> None:
     take(peak_db=-0.2, rms_peak_db=-8, rms_db=-20)  # clipping
     assert gains[-1] == -1.0
     current["db"] = 5.5
+    a.governor.committed("mic-gain", "mic", {"gain_db": 5.5}, ["gain_db"])  # as if auto mode had set it
     take(peak_db=-20, rms_peak_db=-30, rms_db=-42)
     assert gains[-1] == auto.MIC_GAIN_DB[1]  # boost capped relative to the start
     assert auto.load_baseline()["mic"] == {"mic": 0.0}
+
+
+def test_a_gain_the_person_set_by_hand_is_left_alone(monkeypatch) -> None:
+    a = quiet()
+    a.mic, a.mic_start_db = "mic", 0.0
+    current = {"db": 0.0}
+    gains: list[float] = []
+    monkeypatch.setattr(auto, "source_gain_db", lambda source: current["db"])
+    monkeypatch.setattr(auto, "set_source_gain_db", lambda source, db: (gains.append(db), current.update(db=db)))
+    monkeypatch.setattr(auto, "voice_stats", lambda source: {"peak_db": -20, "rms_peak_db": -30, "rms_db": -42})
+    a.audio_tick()
+    assert gains == [1.0]
+    current["db"] = -4.0  # the person turned it down
+    a.audio_tick()
+    a.audio_tick()
+    assert gains == [1.0]
+    assert any(e["event"] == "override" and e["keys"] == ["gain_db"] for e in journal())
 
 
 def test_astats_parsing_reads_the_overall_section() -> None:
@@ -207,7 +225,10 @@ def test_a_confident_proposal_is_applied_bounded_and_can_be_undone(monkeypatch) 
     a.ai_tick(force=True)  # low confidence: logged, not applied, and the next pass waits longer
     assert len(obs.writes) == writes and color["contrast"] == 0.1
     assert a.ai_backoff == 2
-    assert [e["event"] for e in journal()] == ["ai", "ai"]
+    events = [e["event"] for e in journal()]
+    assert events.count("ai") == 2 and set(events) == {"ai", "change"}
+    reasons = {(e["actuator"], e["key"]): e["reason"] for e in journal() if e["event"] == "change"}
+    assert reasons[("obs-look", "contrast")] and reasons[("voice-preset", "voice_preset")]
     cache = config.cache_dir() / "auto"
     assert (cache / "last-ai.jpg").is_file() and cache.stat().st_mode & 0o077 == 0
     assert (cache / "last-ai.jpg").stat().st_mode & 0o077 == 0

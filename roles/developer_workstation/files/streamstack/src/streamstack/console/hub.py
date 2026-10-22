@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from streamstack.console.rig import Rig
 
-METERS_HZ = 20
+METERS_HZ = 30
 STATE_POLL_SECONDS = 1.0
 STATE_MIN_GAP = 0.25  # at most four state pushes a second, however fast actions arrive
 CLIENT_QUEUE = 64

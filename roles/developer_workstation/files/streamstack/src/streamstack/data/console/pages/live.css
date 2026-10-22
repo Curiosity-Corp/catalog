@@ -9,6 +9,9 @@
   .col-main { grid-template-rows: minmax(0, 1fr) auto auto; }
   .col-side { grid-template-rows: minmax(0, 1fr) auto auto; }
   .status-rail { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+  .status-rail .lq { display: flex; align-items: center; gap: var(--s-3); padding-left: var(--s-2); }
+  .status-rail .lq[hidden] { display: none; }
+  .status-rail .lq ss-fader { width: 8rem; --fader-w: 1.6rem; --fader-cap-len: 1.3rem; --fader-groove-h: 0.4rem; }
   .status-rail .ver { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); }
 
   /* picture */
@@ -28,6 +31,7 @@
 
   /* scenes */
   .scene-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s-3); align-items: center; }
+  .framing-row { margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--line); }
   .scene-pads { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: var(--s-2); }
 
   /* look */

@@ -183,6 +183,7 @@ function bindKeys() {
     { key: 'p', desc: 'Privacy: camera to Be Right Back', group: 'Live', run: () => ops.togglePrivacy() },
     { key: 'b', desc: 'Voice effects bypass (A/B)', group: 'Live', run: () => ops.toggleBypass() },
     { key: 'g', desc: 'Thirds grid on the picture', group: 'Live', run: () => setUi('grid', !ui.grid) },
+    { key: 'l', desc: 'Lights on / off (every Litra)', group: 'Lighting', run: () => ops.toggleLights() },
     ...sceneKeys,
     ...pageKeys,
     { key: 'ctrl+k', desc: 'Command palette', group: 'Console', run: () => $('ss-palette').toggle() },
@@ -208,6 +209,11 @@ function bindKeys() {
     add('Camera', s.video.virtualcam ? 'Stop virtual camera' : 'Start virtual camera', ops.toggleVirtualcam, { icon: 'vcam', keywords: 'virtual camera vcam' });
     if (s.video.recording.active) add('Camera', 'Stop recording', () => ops.confirmThen('Stop the recording?', 'Stop recording', () => ops.setRecord(false)), { icon: 'stop', danger: true });
     else add('Camera', 'Start recording', () => ops.setRecord(true), { icon: 'record' });
+    const lit = s.lighting.master.on;
+    if (s.lighting.lights.length) {
+      add('Lighting', lit ? 'Turn the lights off' : 'Turn the lights on', ops.toggleLights, { icon: 'lights', hint: 'L', keywords: 'lights lighting litra lamp on off power' });
+      s.lighting.presets.forEach((p) => add('Lighting', `Lights: ${p.name}`, () => ops.selectLightPreset(p.name), { icon: 'lights', keywords: `lighting light preset litra ${p.blurb || ''}` }));
+    }
     add('Studio', 'Start studio', ops.startStudio, { icon: 'play', keywords: 'start studio obs' });
     add('Studio', 'Stop studio', () => ops.confirmThen('Stop the studio? Calls fall back to the raw camera.', 'Stop studio', ops.stopStudio), { icon: 'power', danger: true, keywords: 'stop studio obs' });
     add('Auto', s.auto.running ? 'Turn auto director off' : 'Turn auto director on', ops.toggleAuto, { icon: 'auto', keywords: 'auto director claude' });

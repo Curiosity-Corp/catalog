@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "id": "late-night-calm",
+  "name": "Late-night calm",
+  "tagline": "Low, warm and intimate",
+  "description": "A hushed, cosy feel for evenings and after midnight: dimmer, warmer, softer contrast, a close deep voice.",
+  "mood": [
+    "calm",
+    "intimate",
+    "warm",
+    "relaxed",
+    "low-key"
+  ],
+  "avoid": [
+    "cold blue screen glow on the face",
+    "harsh overhead light",
+    "noisy grainy shadows",
+    "loud or punchy voice",
+    "sharp sibilance"
+  ],
+  "swatch": [
+    "#161a33",
+    "#c47a4a"
+  ],
+  "picture": {
+    "look": {
+      "brightness": -0.01,
+      "contrast": 0.04,
+      "gamma": 0.06,
+      "saturation": 0.0,
+      "warmth": 0.24
+    },
+    "face_luma": [
+      95,
+      130
+    ],
+    "frame_luma": [
+      85,
+      120
+    ],
+    "warmth_k": 3800,
+    "saturation": [
+      0.12,
+      0.28
+    ],
+    "contrast_spread": [
+      90,
+      170
+    ],
+    "max_clipped": 0.005
+  },
+  "voice": {
+    "preset": "StreamStack Voice Deep",
+    "speech_peak_db": [
+      -28,
+      -16
+    ],
+    "lufs": [
+      -32,
+      -20
+    ],
+    "targets": {
+      "depth": [
+        0.55,
+        0.95
+      ],
+      "clarity": [
+        0.2,
+        0.55
+      ],
+      "sibilance": [
+        0.0,
+        0.4
+      ]
+    },
+    "min_snr_db": 30,
+    "max_rt60_s": 0.5
+  },
+  "light": {
+    "brightness": 0.35,
+    "kelvin": 3200
+  }
+}

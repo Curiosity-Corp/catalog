@@ -142,3 +142,51 @@ def test_page_stylesheets_are_scoped_to_their_page() -> None:
             assert rule.startswith(("@keyframes", "@media")), f"{route}.css: unscoped rule {rule.strip()!r}"
             if rule.startswith("@media"):
                 assert "#main:has(" in body[end + 1 :], f"{route}.css: unscoped @media rule"
+
+
+def test_every_shipped_persona_is_a_valid_document_named_after_its_id() -> None:
+    import json
+
+    from streamstack.director import personas
+
+    files = sorted(personas.shipped_dir().glob("*.json"))
+    assert len(files) >= 4
+    for path in files:
+        saved = personas.validate(json.loads(path.read_text()))
+        assert saved["id"] == path.stem, path.name
+        assert len(saved["mood"]) >= 3 and saved["voice"]["preset"]
+
+
+def test_a_page_template_never_reuses_a_data_ref() -> None:
+    # Pages collect elements into one map by data-ref, so a second element with the same ref silently takes the
+    # first one's event handlers (the Auto page's "Ask Claude now" button once went dead this way).
+    import collections
+    import re
+
+    for path in sorted((SHARE / "console" / "pages").glob("*.js")):
+        refs = collections.Counter(re.findall(r'(?<!\[)data-ref="([A-Za-z0-9_-]+)"', path.read_text()))
+        assert [r for r, n in refs.items() if n > 1] == [], path.name
+
+
+def test_background_blur_filter_ships_disabled_on_both_cameras_with_the_low_latency_settings() -> None:
+    from streamstack import blur
+
+    text = (SHARE / "obs/scenes.json").read_text()
+    for token in ("@WIDTH@", "@HEIGHT@", "@HALF_WIDTH@", "@HALF_HEIGHT@", "@QUARTER_HEIGHT@"):
+        text = text.replace(token, "1")
+    doc = json.loads(text)
+    sources = {s["name"]: s for s in doc["sources"]}
+    for camera in ("Canon EOS 50D", "Cam Link 4K"):
+        found = [f for f in sources[camera]["filters"] if f["name"] == blur.FILTER_NAME]
+        assert len(found) == 1, camera
+        assert found[0]["id"] == blur.FILTER_KIND
+        assert found[0]["enabled"] is False  # opt-in: costs CPU, so never on by default
+        assert found[0]["settings"] == blur.LOW_LATENCY
+        assert sources[camera]["filters"][-1] is found[0]  # after the colour chain it sits on the graded picture
+
+
+def test_blur_stylesheet_is_scoped_to_the_pages_that_mount_it() -> None:
+    css = (SHARE / "console" / "pages" / "blur.css").read_text()
+    body = re.sub(r"/\*.*?\*/", "", css, flags=re.S).strip()
+    assert body.startswith('@scope ([data-page="camera"], [data-page="live"]) {')
+    assert body.endswith("}")

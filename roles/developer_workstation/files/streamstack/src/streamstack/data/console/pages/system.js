@@ -10,6 +10,7 @@ import { h, renderList } from '../core/util.js';
 import { icon } from '../components/icons.js';
 import { startStudio, stopStudio } from '../core/ops.js';
 import { relTime } from '../core/time.js';
+import { mountBridgePanel } from './system-bridge.js';
 
 const GROUPS = [
   { id: 'video', title: 'Video', icon: 'camera' },
@@ -320,5 +321,11 @@ export async function mount(host, ctx) {
     { id: 'sys:zoom', group: 'System', title: 'Call setup: Zoom', icon: 'headphones', keywords: 'zoom call settings checklist', run: () => { callApp = 'zoom'; renderCall(); navigate('system'); } },
   ]));
 
-  return () => off.forEach((fn) => fn());
+  // The Canon bridge panel mounts last and in the background, so it never delays the page's own keys.
+  let gone = false;
+  mountBridgePanel(host.querySelector('.sys'), ctx).then(
+    (unmount) => { if (gone) unmount(); else off.push(unmount); },
+    (err) => { console.error('Canon bridge panel failed to mount', err); },
+  );
+  return () => { gone = true; off.forEach((fn) => fn()); };
 }

@@ -293,7 +293,10 @@ def test_state_snapshot_has_every_section(server: ConsoleServer) -> None:
     status, headers, body = request(server, "GET", "/api/state")
     state = json.loads(body)
     assert status == 200 and headers["content-type"] == "application/json"
-    assert set(state) == {"version", "demo", "studio", "video", "audio", "auto", "health", "system"}
+    assert set(state) == {
+        "version", "demo", "studio", "video", "audio", "auto", "framing", "health", "system", "lighting",
+        "interface",
+    }  # fmt: skip
     assert state["audio"]["mic"]["gain_db"] == 0.0
     assert state["studio"]["running"] is True
 
@@ -473,6 +476,16 @@ def test_preview_jpg(server: ConsoleServer) -> None:
     assert request(server, "GET", "/api/preview.jpg?source=" + "x" * 200)[0] == 400
     assert request(server, "GET", "/api/preview.mjpg?source=none")[0] == 503
     assert request(server, "GET", "/api/preview.jpg", token=False)[0] == 401
+
+
+def test_director_sheet_is_served_to_the_page_only(
+    server: ConsoleServer, rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    status, headers, body = request(server, "GET", "/api/director/sheet.jpg?v=1")
+    assert (status, headers["content-type"]) == (200, "image/jpeg") and body[:2] == b"\xff\xd8"
+    assert request(server, "GET", "/api/director/sheet.jpg", token=False)[0] == 401
+    monkeypatch.setattr(rig.studio, "sheet", lambda: None)
+    assert request(server, "GET", "/api/director/sheet.jpg")[0] == 404
 
 
 def test_preview_stream_is_multipart_and_stops_with_the_client(server: ConsoleServer, rig: Rig) -> None:

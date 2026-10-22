@@ -11,6 +11,14 @@ from typing import Any
 
 from streamstack import __version__
 from streamstack.console.errors import ActionError
+from streamstack.console.interface import empty_state as no_interface
+
+
+def _no_lighting() -> dict:
+    from streamstack.console.lighting import empty_state
+
+    return empty_state()
+
 
 ACTION_NAME = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+")
 Notify = Callable[[str, str], None]
@@ -26,14 +34,27 @@ class Rig:
     open window.
     """
 
-    def __init__(self, audio: Any, video: Any, studio: Any, demo: bool = False) -> None:
+    def __init__(
+        self,
+        audio: Any,
+        video: Any,
+        studio: Any,
+        demo: bool = False,
+        lighting: Any = None,
+        interface: Any = None,
+        framing: Any = None,
+    ) -> None:
         self.audio, self.video, self.studio = audio, video, studio
+        self.lighting = lighting  # optional: a rig without lights reports an empty lighting object
+        self.interface = interface  # optional: a rig without an audio interface profile reports none present
+        self.framing = framing  # optional: auto-framing (framing.* actions, "framing" state)
         self.demo = demo
         self.on_toast: Notify | None = None  # the hub sets this
         self._started = False
         self._lock = threading.Lock()
-        for controller in (audio, video, studio):
-            controller.notify = self.notify
+        for controller in (audio, video, studio, lighting, interface, framing):
+            if controller is not None:
+                controller.notify = self.notify
 
     # -- construction ---------------------------------------------------------
 
@@ -42,25 +63,50 @@ class Rig:
         """The real rig. The domain modules are imported here so a broken one cannot stop `streamstack --version`."""
         from streamstack import config
         from streamstack.console.audio import AudioController
+        from streamstack.console.framing import FramingController
+        from streamstack.console.interface import InterfaceController
+        from streamstack.console.lighting import LightingController
         from streamstack.console.studio import StudioController
         from streamstack.console.video import VideoController
 
         cfg = cfg or config.load_settings()
-        return cls(AudioController(cfg), VideoController(cfg), StudioController(cfg))
+        video = VideoController(cfg)
+        return cls(
+            AudioController(cfg),
+            video,
+            StudioController(cfg),
+            lighting=LightingController(),
+            interface=InterfaceController(cfg),
+            framing=FramingController(cfg, video),
+        )
 
     @classmethod
     def demo(cls) -> Rig:
         """A simulated rig: nothing is probed or touched, every action works."""
         from streamstack.console.audio import DemoAudio
+        from streamstack.console.framing import DemoFraming
+        from streamstack.console.interface import DemoInterface
+        from streamstack.console.lighting import DemoLighting
         from streamstack.console.studio import DemoStudio
         from streamstack.console.video import DemoVideo
 
-        return cls(DemoAudio(), DemoVideo(), DemoStudio(), demo=True)
+        return cls(
+            DemoAudio(),
+            DemoVideo(),
+            DemoStudio(),
+            demo=True,
+            lighting=DemoLighting(),
+            interface=DemoInterface(),
+            framing=DemoFraming(),
+        )
 
     # -- lifecycle ------------------------------------------------------------
 
     def _controllers(self) -> tuple[Any, ...]:
-        return (self.studio, self.video, self.audio)
+        # started in this order, stopped in reverse: framing needs the video link, so it stops first
+        controllers = (self.studio, self.video, self.audio)
+        controllers = (*controllers, *(c for c in (self.lighting, self.interface) if c is not None))
+        return controllers if self.framing is None else (*controllers, self.framing)
 
     def start(self) -> None:
         with self._lock:
@@ -89,19 +135,46 @@ class Rig:
 
     # -- state ----------------------------------------------------------------
 
+    @staticmethod
+    def _live_checks(controller: Any) -> list[dict]:
+        live = getattr(controller, "health_checks", None)
+        return live() if callable(live) else []
+
     def _health(self, health: dict) -> dict:
-        """The studio's health list plus the audio controller's live checks (they replace same-id entries)."""
-        live = getattr(self.audio, "health_checks", None)
-        extra = live() if callable(live) else []
-        if not extra:
+        """The studio's health list plus the controllers' live checks (they replace same-id entries)."""
+        extra = self._live_checks(self.audio)
+        lights = self._live_checks(self.lighting)
+        blurs = self._live_checks(self.video)
+        if not (extra or lights or blurs):
             return health
-        ids = {c["id"] for c in extra}
+        ids = {c["id"] for c in extra + lights + blurs}
         checks = [c for c in health["checks"] if c["id"] not in ids]
         at = next((i + 1 for i, c in enumerate(checks) if c["id"] == "microphone"), len(checks))
         checks[at:at] = extra
+        # video-group checks go right after the encoder (blur) or the last video check (lights)
+        at = next((i + 1 for i, c in enumerate(checks) if c["id"] == "encoder"), len(checks))
+        checks[at:at] = blurs
+        after = max((i + 1 for i, c in enumerate(checks) if c.get("group") == "video"), default=len(checks))
+        checks[after:after] = lights
         states = {c["state"] for c in checks}
         summary = "fail" if "fail" in states else "warn" if "warn" in states else "ok"
         return {**health, "summary": summary, "checks": checks}
+
+    def _framing_health(self, health: dict) -> dict:
+        """The framing controller's live check replaces the static "Auto-framing" one (it shows device and speed)."""
+        live = getattr(self.framing, "health_checks", None)
+        extra = live() if callable(live) else []
+        if not extra:
+            return health
+        checks = [c for c in health["checks"] if c["id"] != "framing"]
+        at = next((i + 1 for i, c in enumerate(checks) if c["id"] == "encoder"), len(checks))
+        checks[at:at] = extra
+        states = {c["state"] for c in checks}
+        return {
+            **health,
+            "summary": "fail" if "fail" in states else "warn" if "warn" in states else "ok",
+            "checks": checks,
+        }
 
     def snapshot(self) -> dict:
         studio = self.studio.state()
@@ -112,8 +185,11 @@ class Rig:
             "video": self.video.state(),
             "audio": self.audio.state(),
             "auto": studio["auto"],
-            "health": self._health(studio["health"]),
+            "health": self._framing_health(self._health(studio["health"])),
+            "framing": self.framing.state() if self.framing is not None else None,
             "system": studio["system"],
+            "lighting": self.lighting.state() if self.lighting is not None else _no_lighting(),
+            "interface": self.interface.state() if self.interface is not None else no_interface(),
         }
 
     def meters(self) -> dict:
@@ -137,6 +213,14 @@ class Rig:
             controller = self.video
         elif prefix in ("studio", "auto", "health", "open"):
             controller = self.studio
+        elif prefix == "lighting" and self.lighting is not None:
+            controller = self.lighting
+        elif prefix == "interface" and self.interface is not None:
+            controller = self.interface
+        elif prefix == "framing":
+            if self.framing is None:
+                raise ActionError("Auto-framing is not part of this rig.", 409)
+            controller = self.framing
         else:
             raise ActionError(f"Unknown action {action!r}.", 400)
         return controller.act(action, params)
@@ -145,6 +229,11 @@ class Rig:
 
     def frame(self, source: str, width: int) -> bytes | None:
         return self.video.frame(source, width)
+
+    def director_sheet(self) -> bytes | None:
+        """The contact sheet Claude was last shown (a JPEG), or None before the first pass."""
+        sheet = getattr(self.studio, "sheet", None)
+        return sheet() if callable(sheet) else None
 
     def clip_path(self, clip_id: str) -> Path | None:
         return self.audio.clip_path(clip_id)

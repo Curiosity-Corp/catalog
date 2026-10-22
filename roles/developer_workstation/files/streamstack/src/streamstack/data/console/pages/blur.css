@@ -1,0 +1,22 @@
+/* blur.css — the background blur control, shared by the Camera grade card and the Live cockpit row. */
+/* Scoped to the two pages that use it: page stylesheets stay loaded after navigation. */
+@scope ([data-page="camera"], [data-page="live"]) {
+  .bl { display: grid; gap: var(--s-2); min-width: 0; }
+  .fx-blur { grid-column: 1 / -1; }
+  .bl-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+  .bl-ctl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-3) var(--s-5); align-items: center; }
+  .bl-strength { --fader-w: 1.5rem; --fader-cap-len: 1.3rem; --fader-groove: color-mix(in srgb, var(--text) 13%, var(--surface-inset)); }
+  .bl-smooth { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+  .bl-info { min-height: 1.1em; }
+  .bl-info[data-state="warn"] { color: var(--amber); }
+  .bl-pill[hidden] { display: none; }
+
+  /* Live: one pad and a strength fader under the look faders */
+  .bl-row { display: grid; grid-template-columns: minmax(7rem, 9rem) minmax(0, 1fr); gap: var(--s-3) var(--s-5); align-items: center; margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--line); }
+  .bl-row[hidden] { display: none; }
+  .bl-row .bl-strength[hidden] { display: none; }
+  @media (max-width: 40rem) {
+    .bl-row { grid-template-columns: minmax(0, 1fr); }
+    .bl-ctl { grid-template-columns: minmax(0, 1fr); }
+  }
+}

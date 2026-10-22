@@ -30,6 +30,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from streamstack import auto, config, system
+from streamstack.console import blur as blurctl
+from streamstack.console.canon import CanonLink, DemoCanon, empty_canon
 from streamstack.console.errors import ActionError
 from streamstack.obs import (
     COLOR_FILTER,
@@ -449,6 +451,7 @@ def empty_state() -> dict:
         "virtualcam": False,
         "recording": {"active": False, "paused": False, "timecode": None},
         "streaming": {"active": False, "timecode": None},
+        "canon": empty_canon(),
     }
 
 
@@ -506,6 +509,8 @@ class VideoController:
         device = cfg.get("STREAMSTACK_CAMERA_DEVICE") or config.DEFAULTS["STREAMSTACK_CAMERA_DEVICE"]
         self._camera = CameraStream(str(device))
         self._camera_grabbed = 0.0
+        self.canon = CanonLink(cfg, notify)
+        self.blur = blurctl.BlurControl(self.notify)  # the background blur filter (console/blur.py)
 
     # -- notifications ----------------------------------------------------
 
@@ -530,6 +535,7 @@ class VideoController:
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name="streamstack-obs")
         self._thread.start()
+        self.canon.start()
         self._writer = threading.Thread(target=self._write_loop, daemon=True, name="streamstack-look")
         self._writer.start()
 
@@ -540,6 +546,7 @@ class VideoController:
             self._pending_cond.notify_all()
         self._drop_all()
         self._camera.stop()
+        self.canon.stop()
         for thread in (self._thread, self._writer, self._ramp_thread):
             if thread and thread.is_alive() and thread is not threading.current_thread():
                 thread.join(timeout=3)
@@ -550,7 +557,13 @@ class VideoController:
         with self.lock:
             snapshot = copy.deepcopy(self._state)
         snapshot["looks"] = self.library.listing()
+        snapshot["canon"] = self.canon.state()
+        snapshot["blur"] = self.blur.state()
         return snapshot
+
+    def health_checks(self) -> list[dict[str, str]]:
+        """Live checks the Console merges into the health list (they replace same-id entries)."""
+        return self.blur.health_checks()
 
     def _set_obs(self, state: str, error: str | None = None) -> None:
         with self.lock:
@@ -564,6 +577,8 @@ class VideoController:
                         self._state[key] = fresh[key]
                 self._scene_sources = {}
                 self._sources_checked = 0.0
+        if state != "connected":
+            self.blur.reset()
         if was != state:
             if state == "connected":
                 self.notify("ok", "OBS connected")
@@ -617,6 +632,17 @@ class VideoController:
 
     def routed(self) -> OBS:
         return _Routed(self)
+
+    def scene_view(self) -> tuple[bool, str | None, list[str], set[str]]:
+        """(connected, program scene, scene names, camera sources) without copying the whole state; for framing."""
+        with self.lock:
+            st = self._state
+            return (
+                st["obs"] == "connected",
+                st["program_scene"],
+                [s["name"] for s in st["scenes"]],
+                set(st["sources"]),
+            )
 
     # -- the state thread -------------------------------------------------
 
@@ -709,6 +735,14 @@ class VideoController:
                 },
             )
             holding = self._look_busy()
+        try:
+            self.blur.refresh(conn, sources, structural)
+        except (
+            RuntimeError,
+            KeyError,
+            TypeError,
+        ) as exc:  # a surprise in the blur reply must not stop the state thread
+            log.warning("background blur state not refreshed: %s", exc)
         if selected and not holding:
             try:
                 look = auto.current_look(conn, selected)
@@ -775,6 +809,8 @@ class VideoController:
     # -- actions ----------------------------------------------------------
 
     def act(self, action: str, params: dict) -> str | None:
+        if action.startswith("video.canon_"):
+            return self.canon.act(action, params)
         handler = {
             "video.scene": self._scene,
             "video.privacy": self._privacy,
@@ -784,6 +820,7 @@ class VideoController:
             "video.looks.apply": self._looks_apply,
             "video.looks.save": self._looks_save,
             "video.looks.delete": self._looks_delete,
+            "video.blur": self._blur_action,
             "video.virtualcam": lambda p: self._output("virtualcam", p),
             "video.record": lambda p: self._output("record", p),
             "video.stream": lambda p: self._output("stream", p),
@@ -868,6 +905,13 @@ class VideoController:
         with self.lock:
             self._state["look"] = {**self._state["look"], **self._clean_look(look)}
         return f"Editing {name}"
+
+    def _blur_action(self, params: dict) -> str | None:
+        self._need_obs()
+        with self.lock:
+            sources = list(self._state["sources"])
+            selected = self._state["selected_source"]
+        return self.blur.act(self.routed(), params, sources, selected)
 
     def _target(self, params: dict) -> str:
         """The source a look action edits: params["source"], else the selected one."""
@@ -1160,10 +1204,15 @@ class DemoVideo:
         self.virtualcam = True
         self.started: dict[str, float | None] = {"record": None, "stream": None}
         self.cards: dict[str, bytes] = {}
+        self.canon = DemoCanon(notify)
+        self.blur = blurctl.DemoBlur(DEMO_SOURCES, self.notify)
 
     def notify(self, level: str, text: str) -> None:
         if self._notify:
             self._notify(level, text)
+
+    def health_checks(self) -> list[dict[str, str]]:
+        return self.blur.health_checks()
 
     def start(self) -> None:
         """Nothing runs in the background; the demo rig is computed on demand."""
@@ -1198,10 +1247,14 @@ class DemoVideo:
                     "timecode": self._clock("record"),
                 },
                 streaming={"active": self.started["stream"] is not None, "timecode": self._clock("stream")},
+                canon=self.canon.state(),
             )
+            state["blur"] = self.blur.state()
             return state
 
     def act(self, action: str, params: dict) -> str | None:
+        if action.startswith("video.canon_"):
+            return self.canon.act(action, params)
         with self.lock:
             return self._act(action, params)
 
@@ -1241,6 +1294,10 @@ class DemoVideo:
             name = required_name(params)
             self.library.delete(name)
             return f"Deleted look {name}"
+        if action == "video.blur":
+            return self.blur.act(params)
+        if action == "video.blur.plugin":  # demo only: show the install hint without removing a real plugin
+            return self.blur.set_installed(required_flag(params, "installed"))
         if action in ("video.virtualcam", "video.record", "video.stream"):
             return self._output(action.split(".")[1], required_flag(params))
         raise ActionError(f"unknown action: {action}", 400)
