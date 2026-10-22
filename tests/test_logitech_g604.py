@@ -182,6 +182,87 @@ def test_launcher_binds_only_while_the_mouse_is_present(tmp_path: Path) -> None:
         launcher.wait(timeout=5)
 
 
+def test_launcher_leaves_no_stale_watcher_when_the_mouse_comes_back(tmp_path: Path) -> None:
+    """A mouse that drops out and returns must end with exactly one watcher (catalog#99).
+
+    The watcher used to be killed without its `xinput test | while read` pipeline, so the
+    old pipeline kept running and every later press fired once per stale watcher.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    present = tmp_path / "present"
+    watchers = tmp_path / "watchers"
+    toggled = tmp_path / "toggled"
+    (bin_dir / "xinput").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            case "$1" in
+              float) exit 0;;
+              test) echo $$ >> {watchers}; printf 'key press   12 \\n'; exec sleep 30;;
+              list)
+                if [ "$2" = "--name-only" ]; then
+                  [ -e {present} ] && echo "Logitech G604"
+                else
+                  [ -e {present} ] && printf '    Logitech G604   id=15\\t[slave  keyboard (3)]\\n'
+                fi
+                exit 0;;
+            esac
+            exit 0
+            """
+        )
+    )
+    (bin_dir / "xbindkeys").write_text("#!/bin/sh\ntrap 'exit 0' TERM\nwhile :; do sleep 0.1; done\n")
+    for tool in ("xinput", "xbindkeys"):
+        (bin_dir / tool).chmod(0o755)
+    conf = tmp_path / "g604.rc"
+    conf.write_text("# test\n")
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CURIOSITY_G604_CONF": str(conf),
+        "CURIOSITY_G604_INTERVAL": "0.2",
+        "CURIOSITY_G604_LOCK": str(tmp_path / "lock"),
+        "CURIOSITY_G604_ENV": "/dev/null",
+        "DISPLAY": ":99",
+        "XDG_SESSION_TYPE": "x11",
+        "CURIOSITY_G604_LIGHTBAR_COMMAND": f"echo toggled >> {toggled}",
+    }
+    launcher = subprocess.Popen(["sh", str(SCRIPT)], env=env)
+    try:
+        present.touch()
+        _wait_for(watchers)
+        first = int(watchers.read_text().split()[0])
+
+        present.unlink()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _alive(first):
+            time.sleep(0.05)
+        assert not _alive(first), "the old xinput test outlived its watcher"
+
+        present.touch()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(watchers.read_text().split()) < 2:
+            time.sleep(0.05)
+        time.sleep(0.5)
+        pids = [int(p) for p in watchers.read_text().split()]
+        assert len(pids) == 2
+        assert [p for p in pids if _alive(p)] == [pids[1]]
+        # one press per watcher start: nothing fired twice
+        assert toggled.read_text().splitlines() == ["toggled", "toggled"]
+    finally:
+        launcher.terminate()
+        launcher.wait(timeout=5)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0] != "Z"
+
+
 def _wait_for(path: Path, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
