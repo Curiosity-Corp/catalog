@@ -1,0 +1,1417 @@
+"""Console audio: level maths, pactl parsing, tone mapping, coalescing, mic check and the demo twin."""
+
+from __future__ import annotations
+
+import array
+import json
+import os
+import shutil
+import socket
+import subprocess
+import tempfile
+import threading
+import wave
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from streamstack import config, micwatch, system
+from streamstack.console import audio
+from streamstack.console.audio import AudioController, DemoAudio, LevelReader, Throttle
+from streamstack.console.errors import ActionError
+
+SHIPPED = Path(__file__).resolve().parents[1] / "src/streamstack/data/easyeffects/input"
+MIC = "alsa_input.usb-Elgato_Wave"
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def pactl_json(gain: str = "-3.00 dB", mute: bool = False, with_ee: bool = True) -> str:
+    sources = [
+        {
+            "name": MIC,
+            "description": "Wave:3",
+            "mute": mute,
+            "volume": {"mono": {"value": 46000, "value_percent": "70%", "db": gain}},
+        },
+        {"name": "alsa_output.x.monitor", "description": "Monitor", "mute": False, "volume": {}},
+    ]
+    if with_ee:
+        sources.append({"name": system.EE_SOURCE, "description": "Easy Effects Source", "mute": False, "volume": {}})
+    return json.dumps(sources)
+
+
+class FakeEE:
+    """Stands in for the Easy Effects local socket."""
+
+    def __init__(self) -> None:
+        self.socket = True
+        self.current = "StreamStack Voice"
+        self.log: list[str] = []
+        self.loads: list[str] = []
+
+    def request(self, lines: list[str], replies: int = 0, timeout: float = 1.0) -> list[str] | None:
+        if not self.socket:
+            return None
+        answers = []
+        for line in lines:
+            self.log.append(line)
+            if line.startswith("load_preset:input:"):
+                name = line.split(":", 2)[2]
+                self.loads.append(name)
+                exists = (Path.home() / ".local/share/easyeffects/input" / f"{name}.json").exists()
+                self.current = name if exists else ""
+            elif line.startswith("get_last_loaded_preset"):
+                answers.append(self.current)
+        return answers[: max(replies, 0)] if replies else []
+
+
+class Rig:
+    def __init__(self) -> None:
+        self.ee = FakeEE()
+        self.clock = Clock()
+        self.commands: list[list[str]] = []
+        self.ee_running = True
+        self.pactl_out = pactl_json()
+        self.have = {"pactl", "parec", "parecord", "easyeffects"}
+        self.recorded: list[tuple[str, float]] = []
+        self.record_ok = True
+        self.procs: list[FakeProc] = []
+
+    def spawn(self, argv: list[str], **_: Any) -> FakeProc:
+        """Every parec the code under test starts is a fake: tests never read the real microphone."""
+        proc = FakeProc()
+        self.procs.append(proc)
+        return proc
+
+    def run(self, argv: list[str], timeout: float = 10) -> subprocess.CompletedProcess[str] | None:
+        self.commands.append(argv)
+        if argv[0] == "pactl" and "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, self.pactl_out, "")
+        if argv[0] == "pactl" and argv[1] == "get-default-source":
+            return subprocess.CompletedProcess(argv, 0, MIC + "\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def record(self, source: str, seconds: float, path: str) -> bool:
+        self.recorded.append((source, seconds))
+        if self.record_ok:
+            Path(path).write_bytes(b"RIFF" + b"\0" * 4000)
+        return self.record_ok
+
+
+@pytest.fixture
+def rig(monkeypatch: pytest.MonkeyPatch, isolated_home: Path) -> Iterator[Rig]:
+    r = Rig()
+    presets = isolated_home / ".local/share/easyeffects/input"
+    presets.mkdir(parents=True)
+    for path in SHIPPED.glob("*.json"):
+        shutil.copy(path, presets)
+    monkeypatch.setattr(system, "run", r.run)
+    monkeypatch.setattr(system, "have", lambda tool: tool in r.have)
+    monkeypatch.setattr(system, "easyeffects_running", lambda: r.ee_running)
+    monkeypatch.setattr(system, "default_device", lambda kind: MIC)
+    monkeypatch.setattr(system, "record", r.record)
+    monkeypatch.setattr(audio, "ee_request", r.ee.request)
+    monkeypatch.setattr(subprocess, "Popen", r.spawn)
+    yield r
+    for proc in r.procs:
+        proc.kill()
+
+
+@pytest.fixture
+def ctl(rig: Rig) -> AudioController:
+    controller = AudioController(config.load_settings(), clock=rig.clock)
+    controller._probe()
+    return controller
+
+
+# ---------------------------------------------------------------------------
+# dB maths
+# ---------------------------------------------------------------------------
+
+
+def test_frame_levels_full_scale_clips() -> None:
+    peak, rms, clipped = audio.frame_levels(array.array("h", [32767, -32768] * 400))
+    assert peak == 0.0
+    assert rms == 0.0
+    assert clipped
+
+
+def test_frame_levels_half_scale() -> None:
+    peak, rms, clipped = audio.frame_levels(array.array("h", [16384, -16384] * 400))
+    assert peak == -6.0
+    assert rms == -6.0
+    assert not clipped
+
+
+def test_frame_levels_peak_is_not_rms() -> None:
+    samples = array.array("h", [0] * 799 + [16384])
+    peak, rms, _ = audio.frame_levels(samples)
+    assert peak == -6.0
+    assert rms < -30
+
+
+def test_frame_levels_negative_extreme_and_silence() -> None:
+    assert audio.frame_levels(array.array("h", [-32768] * 10))[0] == 0.0
+    assert audio.frame_levels(array.array("h", [0] * 800)) == (-90.0, -90.0, False)
+    assert audio.frame_levels(array.array("h")) == (-90.0, -90.0, False)
+
+
+def test_clip_threshold_is_minus_half_db() -> None:
+    just_under = int(32768 * 10 ** (-0.6 / 20))
+    just_over = int(32768 * 10 ** (-0.4 / 20))
+    assert not audio.frame_levels(array.array("h", [just_under] * 10))[2]
+    assert audio.frame_levels(array.array("h", [just_over] * 10))[2]
+
+
+# ---------------------------------------------------------------------------
+# pactl parsing
+# ---------------------------------------------------------------------------
+
+
+def test_parse_sources_reads_gain_and_mute() -> None:
+    found = audio.parse_sources(pactl_json(gain="4.50 dB", mute=True))
+    mic = next(s for s in found if s["name"] == MIC)
+    assert mic == {"name": MIC, "description": "Wave:3", "gain_db": 4.5, "muted": True}
+
+
+def test_parse_volume_falls_back_to_cubic_value() -> None:
+    assert audio.parse_volume_db({"mono": {"value": 65536}}) == 0.0
+    assert audio.parse_volume_db({"mono": {"value": 32768}}) == pytest.approx(-18.06, abs=0.01)
+    assert audio.parse_volume_db({"mono": {"value": 0, "db": "-inf dB"}}) is None
+    assert audio.parse_volume_db({}) is None
+    assert audio.parse_volume_db("nonsense") is None
+
+
+def test_parse_sources_survives_garbage() -> None:
+    assert audio.parse_sources("not json") == []
+    assert audio.parse_sources('{"a": 1}') == []
+    assert audio.parse_sources('[1, {"description": "no name"}]') == []
+
+
+# ---------------------------------------------------------------------------
+# Level readers
+# ---------------------------------------------------------------------------
+
+
+def frame(value: int) -> bytes:
+    return array.array("h", [value, -value] * 400).tobytes()
+
+
+def test_level_reader_frames_across_chunk_boundaries() -> None:
+    clock = Clock()
+    reader = LevelReader("src", clock)
+    data = frame(16384)
+    reader.feed(data[:700])
+    assert reader.take()["peak_db"] == -90.0  # no complete frame yet
+    reader.feed(data[700:])
+    assert reader.take() == {"peak_db": -6.0, "rms_db": -6.0, "clip": False}
+
+
+def test_level_reader_keeps_the_loudest_peak_between_polls() -> None:
+    clock = Clock()
+    reader = LevelReader("src", clock)
+    reader.feed(frame(32767) + frame(1000) + frame(2000))
+    taken = reader.take()
+    assert taken["clip"] is True
+    assert taken["peak_db"] == 0.0
+    assert taken["rms_db"] == audio.to_db(2000 / 32768)  # the latest frame's RMS
+    # nothing new: the last frame's own values, no lingering clip
+    assert reader.take() == {"peak_db": audio.to_db(2000 / 32768), "rms_db": audio.to_db(2000 / 32768), "clip": False}
+
+
+def test_level_reader_goes_silent_when_frames_stop() -> None:
+    clock = Clock()
+    reader = LevelReader("src", clock)
+    reader.feed(frame(16384))
+    clock.advance(0.6)
+    assert reader.take() == {"peak_db": -90.0, "rms_db": -90.0, "clip": False}
+
+
+class FakeProc:
+    def __init__(self) -> None:
+        self._r, self._w = os.pipe()
+        self.stdout = os.fdopen(self._r, "rb", buffering=0)
+        self.killed = False
+
+    def write(self, data: bytes) -> None:
+        os.write(self._w, data)
+
+    def kill(self) -> None:
+        self.killed = True
+        if self._w >= 0:
+            os.close(self._w)
+            self._w = -1
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+def test_level_reader_reads_a_process_and_stops_it() -> None:
+    proc = FakeProc()
+    argv_seen: list[list[str]] = []
+
+    def spawn(argv: list[str], **_: Any) -> FakeProc:
+        argv_seen.append(argv)
+        return proc
+
+    reader = LevelReader("mysrc", spawn=spawn)
+    assert reader.start()
+    assert "--device=mysrc" in argv_seen[0]
+    assert "--latency-msec=50" in argv_seen[0]
+    assert "--rate=16000" in argv_seen[0]
+    proc.write(frame(8192))
+    for _ in range(100):
+        if reader.take()["peak_db"] > -90:
+            break
+        threading.Event().wait(0.02)
+    assert reader.take()["peak_db"] == pytest.approx(-12.0, abs=0.1)
+    reader.stop()
+    assert proc.killed
+    assert reader.dead
+
+
+def test_level_reader_start_failure_marks_dead() -> None:
+    def spawn(argv: list[str], **_: Any) -> None:
+        raise FileNotFoundError("parec")
+
+    reader = LevelReader("s", spawn=spawn)
+    assert not reader.start()
+    assert reader.dead
+
+
+def test_controller_manages_readers_as_sources_come_and_go(rig: Rig) -> None:
+    procs: list[FakeProc] = []
+    devices: list[str] = []
+
+    def spawn(argv: list[str], **_: Any) -> FakeProc:
+        devices.append(argv[-1].removeprefix("--device="))
+        procs.append(FakeProc())
+        return procs[-1]
+
+    ctl = AudioController(config.load_settings(), clock=rig.clock, spawn=spawn)
+    ctl._probe()
+    assert sorted(devices) == sorted([MIC, system.EE_SOURCE])
+    assert ctl.meters()["voice"] is not None
+
+    rig.pactl_out = pactl_json(with_ee=False)  # Easy Effects went away
+    ctl._probe()
+    assert ctl.meters()["voice"] is None
+    assert sum(p.killed for p in procs) == 1
+
+    rig.pactl_out = "[]"  # microphone unplugged
+    ctl._probe()
+    assert ctl.state()["mic"]["present"] is False
+    assert ctl.meters()["mic"]["peak_db"] == -90.0
+
+    rig.pactl_out = pactl_json()  # back
+    ctl._probe()
+    assert devices.count(MIC) == 2
+    ctl.stop()
+    assert all(p.killed for p in procs)
+
+
+def test_dead_reader_restarts_no_faster_than_every_two_seconds(rig: Rig) -> None:
+    spawned: list[FakeProc] = []
+
+    def spawn(argv: list[str], **_: Any) -> FakeProc:
+        spawned.append(FakeProc())
+        return spawned[-1]
+
+    ctl = AudioController(config.load_settings(), clock=rig.clock, spawn=spawn)
+    ctl._probe()
+    first = len(spawned)
+    for reader in ctl._readers.values():
+        assert reader is not None
+        reader.dead = True
+    ctl._probe()
+    assert len(spawned) == first  # too soon
+    rig.clock.advance(2.5)
+    ctl._probe()
+    assert len(spawned) == first * 2
+
+
+def test_no_parec_means_silent_meters_not_a_crash(rig: Rig) -> None:
+    rig.have.discard("parec")
+    ctl = AudioController(config.load_settings(), clock=rig.clock)
+    ctl.start()
+    try:
+        assert ctl.meters()["mic"]["peak_db"] == -90.0
+        assert ctl.state()["mic"]["present"] is True
+    finally:
+        ctl.stop()
+
+
+# ---------------------------------------------------------------------------
+# Tone mapping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", sorted(SHIPPED.glob("*.json")), ids=lambda p: p.stem)
+def test_tone_round_trips_on_every_shipped_preset(path: Path) -> None:
+    doc = json.loads(path.read_text())
+    tone = audio.read_tone(doc)
+    assert tone is not None
+    assert audio.apply_tone(doc, tone) == {
+        **doc,
+        "input": {
+            **doc["input"],
+            "pitch#0": {**doc["input"]["pitch#0"], "bypass": tone["pitch_semitones"] == 0},
+        },
+    }
+
+
+def test_read_tone_maps_bands_and_pitch() -> None:
+    voice = audio.read_tone(json.loads((SHIPPED / "StreamStack Voice.json").read_text()))
+    assert voice == {"bass_db": 2.0, "presence_db": 2.5, "treble_db": 1.5, "pitch_semitones": 0.0}
+    deep = audio.read_tone(json.loads((SHIPPED / "StreamStack Voice Deep.json").read_text()))
+    assert deep == {"bass_db": 4.0, "presence_db": 2.0, "treble_db": 1.0, "pitch_semitones": -2.0}
+
+
+def test_apply_tone_edits_both_channels_and_only_the_tone() -> None:
+    doc = json.loads((SHIPPED / "StreamStack Voice.json").read_text())
+    out = audio.apply_tone(doc, {"bass_db": -3.0, "presence_db": 4.5, "treble_db": 6.0, "pitch_semitones": 1.5})
+    eq = out["input"]["equalizer#0"]
+    for channel in ("left", "right"):
+        assert eq[channel]["band0"]["gain"] == -3.0
+        assert eq[channel]["band1"]["gain"] == doc["input"]["equalizer#0"][channel]["band1"]["gain"]
+        assert eq[channel]["band2"]["gain"] == 4.5
+        assert eq[channel]["band3"]["gain"] == 6.0
+    assert out["input"]["pitch#0"]["semitones"] == 1.5
+    assert out["input"]["pitch#0"]["bypass"] is False
+    assert doc["input"]["equalizer#0"]["left"]["band0"]["gain"] == 2.0  # the original is untouched
+    assert out["input"]["compressor#0"] == doc["input"]["compressor#0"]
+
+
+def test_read_tone_without_an_equalizer() -> None:
+    assert audio.read_tone({"input": {"pitch#0": {}}}) is None
+    assert audio.read_tone({}) is None
+    with pytest.raises(ValueError):
+        audio.apply_tone({"input": {}}, {k: 0.0 for k in audio.TONE_RANGES})
+
+
+# ---------------------------------------------------------------------------
+# Coalescing
+# ---------------------------------------------------------------------------
+
+
+def test_throttle_fires_at_once_when_idle_then_trailing_newest_wins() -> None:
+    clock = Clock()
+    throttle = Throttle(0.4, clock)
+    assert throttle.ready_in() is None
+    throttle.submit(1)
+    assert throttle.take() == 1  # idle: leading edge
+    for value in (2, 3, 4):
+        clock.advance(0.05)
+        throttle.submit(value)
+        assert throttle.take() is None
+    assert throttle.ready_in() == pytest.approx(0.25)
+    clock.advance(0.25)
+    assert throttle.take() == 4  # trailing edge carries the newest
+    assert throttle.take() is None
+    assert throttle.ready_in() is None
+
+
+def test_throttle_cancel() -> None:
+    throttle = Throttle(0.4, Clock())
+    throttle.submit(1)
+    throttle.cancel()
+    assert throttle.ready_in() is None
+    assert throttle.take() is None
+
+
+def test_band_drag_coalesces_into_one_live_preset_load(ctl: AudioController, rig: Rig) -> None:
+    for i in range(8):
+        ctl.act("audio.tone", {"bass_db": float(i)})
+        rig.clock.advance(0.02)
+    tone = ctl._throttle.take()
+    assert tone is not None and tone["bass_db"] == 7.0
+    ctl._load_live(tone)
+    assert rig.ee.loads == [audio.LIVE_PRESET]
+    live = json.loads((Path.home() / ".local/share/easyeffects/input/StreamStack Live.json").read_text())
+    assert live["input"]["equalizer#0"]["left"]["band0"]["gain"] == 7.0
+    # the user's chosen preset is still the one shown, flagged as customised
+    state = ctl.state()
+    assert state["chain"]["preset"] == "StreamStack Voice"
+    assert state["tone"]["bass_db"] == 7.0
+    assert state["tone"]["custom"] is True
+    assert audio.LIVE_PRESET not in [p["name"] for p in state["chain"]["presets"]]
+    assert ctl._throttle.ready_in() is None
+
+
+def test_probe_after_live_load_keeps_the_base_preset(ctl: AudioController, rig: Rig) -> None:
+    ctl.act("audio.tone", {"treble_db": 6.0})
+    tone = ctl._throttle.take()
+    ctl._load_live(tone)
+    rig.clock.advance(3)
+    ctl._probe()  # Easy Effects now reports "StreamStack Live"
+    state = ctl.state()
+    assert state["chain"]["preset"] == "StreamStack Voice"
+    assert state["tone"]["treble_db"] == 6.0
+    # a fresh controller (restart of the console) recovers base and tone from the sidecar + live preset
+    again = AudioController(config.load_settings(), clock=rig.clock)
+    again._probe()
+    assert again.state()["chain"]["preset"] == "StreamStack Voice"
+    assert again.state()["tone"]["treble_db"] == 6.0
+    assert again.state()["tone"]["custom"] is True
+
+
+def test_pitch_is_set_live_over_the_socket_without_a_preset_load(ctl: AudioController, rig: Rig) -> None:
+    ctl.act("audio.tone", {"pitch_semitones": -2.0})
+    assert "set_property:input:pitch:0:semitones:-2.0" in rig.ee.log
+    assert "set_property:input:pitch:0:bypass:false" in rig.ee.log
+    assert ctl._throttle.ready_in() is None
+    assert ctl.state()["tone"]["pitch_semitones"] == -2.0
+    ctl.act("audio.tone", {"pitch_semitones": 0.0})
+    assert "set_property:input:pitch:0:bypass:true" in rig.ee.log
+
+
+def test_pitch_falls_back_to_the_preset_when_there_is_no_socket(ctl: AudioController, rig: Rig) -> None:
+    rig.ee.socket = False
+    ctl.act("audio.tone", {"pitch_semitones": 1.0})
+    assert ctl._throttle.ready_in() is not None
+
+
+def test_loading_a_preset_resets_the_tone_to_that_preset(ctl: AudioController, rig: Rig) -> None:
+    ctl.act("audio.tone", {"bass_db": -9.0})
+    message = ctl.act("audio.preset", {"name": "StreamStack Voice Deep"})
+    assert message == "Voice preset: Voice Deep"
+    state = ctl.state()
+    assert state["chain"]["preset"] == "StreamStack Voice Deep"
+    assert state["tone"] == {
+        "bass_db": 4.0,
+        "presence_db": 2.0,
+        "treble_db": 1.0,
+        "pitch_semitones": -2.0,
+        "supported": True,
+        "custom": False,
+    }
+    assert ctl._throttle.ready_in() is None  # the pending bass change was dropped
+    rig.clock.advance(3)
+    ctl._probe()
+    assert ctl.state()["chain"]["preset"] == "StreamStack Voice Deep"
+
+
+def test_preset_changed_in_easy_effects_is_picked_up(ctl: AudioController, rig: Rig) -> None:
+    rig.ee.current = "StreamStack Voice Warm"
+    ctl._probe()
+    assert ctl.state()["chain"]["preset"] == "StreamStack Voice Warm"
+    assert ctl.state()["tone"]["bass_db"] == 5.0
+
+
+def test_failed_preset_load_is_a_409(ctl: AudioController, monkeypatch: pytest.MonkeyPatch) -> None:
+    (Path.home() / ".local/share/easyeffects/input/Ghost.json").write_text("{}")
+    ctl._probe()
+
+    def refuse(lines: list[str], replies: int = 0, timeout: float = 1.0) -> list[str]:
+        return ["" for _ in range(replies)]  # Easy Effects answers with no last loaded preset
+
+    monkeypatch.setattr(audio, "ee_request", refuse)
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.preset", {"name": "Ghost"})
+    assert err.value.status == 409
+    assert ctl.state()["chain"]["preset"] == "StreamStack Voice"
+
+
+def test_preset_falls_back_to_the_cli_without_a_socket(ctl: AudioController, rig: Rig) -> None:
+    rig.ee.socket = False
+    ctl.act("audio.preset", {"name": "StreamStack Voice Warm"})
+    assert ["easyeffects", "-l", "StreamStack Voice Warm"] in rig.commands
+
+
+def test_bypass_socket_and_cli(ctl: AudioController, rig: Rig) -> None:
+    assert ctl.state()["chain"]["bypass"] is False
+    assert ctl.act("audio.bypass", {"on": True}) == "Voice effects bypassed"
+    assert "global_bypass:1" in rig.ee.log
+    assert ctl.state()["chain"]["bypass"] is True
+    rig.ee.socket = False
+    ctl.act("audio.bypass", {"on": False})
+    assert ["easyeffects", "-b", "2"] in rig.commands
+    assert ctl.state()["chain"]["bypass"] is False
+
+
+def test_bypass_seed_from_saved_settings(isolated_home: Path) -> None:
+    rc = isolated_home / ".config/easyeffects/db/easyeffectsrc"
+    rc.parent.mkdir(parents=True)
+    rc.write_text("[Other]\nbypass=true\n[EffectsPipelines]\nbypass=true\n")
+    assert audio.stored_bypass() is True
+    rc.write_text("[EffectsPipelines]\nprocessAllOutputs=true\n")
+    assert audio.stored_bypass() is False
+
+
+def test_presets_listing_has_labels_and_blurbs(ctl: AudioController) -> None:
+    presets = ctl.state()["chain"]["presets"]
+    assert [p["name"] for p in presets] == list(audio.BLURBS)
+    assert presets[0] == {"name": "StreamStack Voice", "label": "Voice", "blurb": "default broadcast voice"}
+    assert presets[3]["blurb"] == "pitch down 2 semitones, extra body"
+    custom = Path.home() / ".local/share/easyeffects/input/My Podcast.json"
+    custom.write_text("{}")
+    ctl._probe()
+    mine = ctl.state()["chain"]["presets"][-1]
+    assert mine == {"name": "My Podcast", "label": "My Podcast", "blurb": ""}
+
+
+def test_tone_is_unsupported_when_easy_effects_is_not_running(ctl: AudioController, rig: Rig) -> None:
+    rig.ee_running = False
+    ctl._probe()
+    state = ctl.state()
+    assert state["tone"]["supported"] is False
+    assert state["chain"]["running"] is False
+    assert state["chain"]["preset"] is None
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.tone", {"bass_db": 1.0})
+    assert err.value.status == 409
+    for action, params in (("audio.preset", {"name": "StreamStack Voice"}), ("audio.bypass", {"on": True})):
+        with pytest.raises(ActionError) as err:
+            ctl.act(action, params)
+        assert err.value.status == 409
+
+
+# ---------------------------------------------------------------------------
+# Gain, mute and state
+# ---------------------------------------------------------------------------
+
+
+def test_state_shape_and_mic_readback(ctl: AudioController) -> None:
+    state = ctl.state()
+    assert state["mic"] == {
+        "name": MIC,
+        "description": "Wave:3",
+        "present": True,
+        "gain_db": -3.0,
+        "muted": False,
+        "stalled": False,
+        "stalled_since": None,
+        "revive": {"state": "idle", "message": None},
+    }
+    assert state["gain_range"] == [-30.0, 12.0]
+    assert set(state["chain"]) == {"running", "available", "preset", "presets", "bypass"}
+    assert state["tone_ranges"]["pitch_semitones"] == [-6.0, 6.0]
+    assert state["mic_check"] == {"state": "idle", "seconds": 6.0, "error": None, "clips": []}
+    json.dumps(state)
+
+
+def test_gain_is_clamped_sent_to_pactl_and_optimistic(ctl: AudioController, rig: Rig) -> None:
+    ctl.act("audio.gain", {"db": 40})
+    assert ["pactl", "set-source-volume", MIC, "12.0dB"] in rig.commands
+    assert ctl.state()["mic"]["gain_db"] == 12.0
+    ctl.act("audio.gain", {"db": -99})
+    assert ["pactl", "set-source-volume", MIC, "-30.0dB"] in rig.commands
+    ctl.act("audio.gain", {"db": 2.345})
+    assert ["pactl", "set-source-volume", MIC, "2.35dB"] in rig.commands or [
+        "pactl",
+        "set-source-volume",
+        MIC,
+        "2.34dB",
+    ] in rig.commands
+
+
+def test_probe_does_not_clobber_a_fresh_gain_change(ctl: AudioController, rig: Rig) -> None:
+    ctl.act("audio.gain", {"db": 6.0})
+    ctl._probe()  # pactl still reports -3 dB for a moment
+    assert ctl.state()["mic"]["gain_db"] == 6.0
+    rig.clock.advance(2)
+    ctl._probe()
+    assert ctl.state()["mic"]["gain_db"] == -3.0
+
+
+def test_mute(ctl: AudioController, rig: Rig) -> None:
+    ctl.act("audio.mute", {"on": True})
+    assert ["pactl", "set-source-mute", MIC, "1"] in rig.commands
+    assert ctl.state()["mic"]["muted"] is True
+    ctl.act("audio.mute", {"on": False})
+    assert ["pactl", "set-source-mute", MIC, "0"] in rig.commands
+
+
+def test_gain_and_mute_need_a_microphone(rig: Rig) -> None:
+    rig.pactl_out = "[]"
+    ctl = AudioController(config.load_settings(), clock=rig.clock)
+    ctl._probe()
+    for action, params in (("audio.gain", {"db": 1}), ("audio.mute", {"on": True})):
+        with pytest.raises(ActionError) as err:
+            ctl.act(action, params)
+        assert err.value.status == 409
+
+
+def test_pactl_failure_is_a_409(ctl: AudioController, rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(system, "run", lambda argv, timeout=10: subprocess.CompletedProcess(argv, 1, "", "boom"))
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.mute", {"on": True})
+    assert err.value.status == 409
+    assert ctl.state()["mic"]["muted"] is False  # no optimistic change when it failed
+
+
+@pytest.mark.parametrize(
+    ("action", "params"),
+    [
+        ("audio.gain", {}),
+        ("audio.gain", {"db": "3"}),
+        ("audio.gain", {"db": True}),
+        ("audio.gain", {"db": float("nan")}),
+        ("audio.gain", {"db": float("inf")}),
+        ("audio.mute", {"on": "yes"}),
+        ("audio.mute", {}),
+        ("audio.bypass", {"on": 1}),
+        ("audio.preset", {"name": 3}),
+        ("audio.preset", {"name": "Nope"}),
+        ("audio.preset", {"name": "../../etc/passwd"}),
+        ("audio.tone", {}),
+        ("audio.tone", {"bass_db": 13}),
+        ("audio.tone", {"pitch_semitones": -7}),
+        ("audio.tone", {"treble_db": "loud"}),
+        ("audio.tone", {"bass_db": None}),
+        ("audio.tone", {"bogus": 1}),
+        ("audio.tone", {"bass_db": 1, "bogus": 1}),
+        ("audio.mic_check", {"seconds": 1}),
+        ("audio.mic_check", {"seconds": 16}),
+        ("audio.mic_check", {"seconds": "6"}),
+        ("audio.mic_check", {"seconds": False}),
+        ("audio.nope", {}),
+    ],
+)
+def test_bad_parameters_are_400(ctl: AudioController, action: str, params: dict[str, Any]) -> None:
+    with pytest.raises(ActionError) as err:
+        ctl.act(action, params)
+    assert err.value.status == 400
+
+
+@pytest.mark.parametrize(
+    ("action", "bad"),
+    [
+        ("audio.gain", {"db": "x"}),
+        ("audio.mute", {"on": 1}),
+        ("audio.tone", {"bass_db": 99}),
+        ("audio.mic_check", {"seconds": 99}),
+        ("audio.preset", {"name": "Nope"}),
+    ],
+)
+def test_demo_validates_like_the_real_thing(action: str, bad: dict[str, Any]) -> None:
+    with pytest.raises(ActionError) as err:
+        DemoAudio().act(action, bad)
+    assert err.value.status == 400
+
+
+# ---------------------------------------------------------------------------
+# Mic check
+# ---------------------------------------------------------------------------
+
+
+def wait_check(ctl: AudioController) -> None:
+    thread = ctl._check_thread
+    assert thread is not None
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_mic_check_runs_raw_then_processed_and_publishes_clips(
+    rig: Rig, ctl: AudioController, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str] = []
+    toasts: list[tuple[str, str]] = []
+    ctl.notify = lambda level, text: toasts.append((level, text))
+    original = rig.record
+
+    def record(source: str, seconds: float, path: str) -> bool:
+        seen.append(ctl.state()["mic_check"]["state"])
+        return original(source, seconds, path)
+
+    monkeypatch.setattr(system, "record", record)
+    assert ctl.act("audio.mic_check", {"seconds": 3}) == "Recording 3 s - talk now"
+    wait_check(ctl)
+    assert seen == ["recording-raw", "recording-processed"]
+    assert rig.recorded == [(MIC, 3.0), (system.EE_SOURCE, 3.0)]
+    check = ctl.state()["mic_check"]
+    assert check["state"] == "done"
+    assert [c["label"] for c in check["clips"]] == ["raw microphone", "processed voice"]
+    for clip in check["clips"]:
+        assert clip["url"] == f"api/clips/{clip['id']}.wav"
+        path = ctl.clip_path(clip["id"])
+        assert path is not None and path.is_file()
+        assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert toasts[-1][0] == "ok"
+    ctl.stop()
+    assert ctl.clip_path(check["clips"][0]["id"]) is None
+
+
+def test_mic_check_without_easy_effects_records_only_the_raw_mic(rig: Rig) -> None:
+    rig.pactl_out = pactl_json(with_ee=False)
+    ctl = AudioController(config.load_settings(), clock=rig.clock)
+    ctl._probe()
+    ctl.act("audio.mic_check", {})
+    wait_check(ctl)
+    assert rig.recorded == [(MIC, 6.0)]
+    assert [c["label"] for c in ctl.state()["mic_check"]["clips"]] == ["raw microphone"]
+    ctl.stop()
+
+
+def test_mic_check_that_captures_nothing_ends_in_error(rig: Rig, ctl: AudioController) -> None:
+    rig.record_ok = False
+    toasts: list[tuple[str, str]] = []
+    ctl.notify = lambda level, text: toasts.append((level, text))
+    ctl.act("audio.mic_check", {})
+    wait_check(ctl)
+    check = ctl.state()["mic_check"]
+    assert check["state"] == "error"
+    assert check["error"]
+    assert check["clips"] == []
+    assert toasts[-1][0] == "error"
+
+
+def test_mic_check_survives_a_recorder_crash(rig: Rig, ctl: AudioController, monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(source: str, seconds: float, path: str) -> bool:
+        raise OSError("parecord vanished")
+
+    monkeypatch.setattr(system, "record", boom)
+    ctl.act("audio.mic_check", {})
+    wait_check(ctl)
+    assert ctl.state()["mic_check"]["state"] == "error"
+
+
+def test_mic_check_refuses_overlap_and_missing_tools(rig: Rig, ctl: AudioController) -> None:
+    ctl._check["state"] = "recording-raw"
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.mic_check", {})
+    assert err.value.status == 409
+    ctl._check["state"] = "idle"
+    rig.have.discard("parecord")
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.mic_check", {})
+    assert err.value.status == 409
+
+
+def test_clip_path_rejects_anything_but_known_ids(rig: Rig, ctl: AudioController) -> None:
+    ctl.act("audio.mic_check", {})
+    wait_check(ctl)
+    good = ctl.state()["mic_check"]["clips"][0]["id"]
+    assert ctl.clip_path(good) is not None
+    for bad in (
+        "",
+        "../" + good,
+        good + "/../x",
+        good.upper(),
+        good[:-1],
+        good + "0",
+        "0123456789abcdef",
+        "..",
+        "/etc/passwd",
+        good + ".wav",
+        None,
+        7,
+    ):
+        assert ctl.clip_path(bad) is None  # type: ignore[arg-type]
+    ctl.stop()
+
+
+def test_clips_expire_after_ten_minutes_and_are_capped_at_four() -> None:
+    clock = Clock()
+    store = audio.ClipStore(clock)
+    ids = []
+    for i in range(6):
+        clip_id, path = store.reserve()
+        path.write_bytes(b"x")
+        store.add(clip_id, f"clip {i}")
+        ids.append(clip_id)
+    assert [c["id"] for c in store.listing()] == ids[2:]
+    assert store.path(ids[0]) is None
+    clock.advance(599)
+    assert len(store.listing()) == 4
+    clock.advance(2)
+    assert store.listing() == []
+    assert store.path(ids[5]) is None
+    assert not list(store.reserve()[1].parent.glob("*.wav"))
+    store.close()
+
+
+# ---------------------------------------------------------------------------
+# Easy Effects socket
+# ---------------------------------------------------------------------------
+
+
+def test_ee_request_speaks_the_line_protocol(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = tempfile.mkdtemp(prefix="ss")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", runtime)
+    received: list[str] = []
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(audio.ee_socket_path()))
+    server.listen(1)
+
+    def serve() -> None:
+        conn, _ = server.accept()
+        with conn:
+            buffer = b""
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    return
+                buffer += chunk
+                *lines, buffer = buffer.split(b"\n")
+                for line in map(bytes.decode, lines):
+                    received.append(line)
+                    if line.startswith("get_last_loaded_preset"):
+                        conn.sendall(b"StreamStack Voice\n")
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        assert audio.ee_request(["global_bypass:1"]) == []
+        assert received == ["global_bypass:1", "get_last_loaded_preset:input"]  # the barrier read
+    finally:
+        thread.join(timeout=3)
+        server.close()
+        shutil.rmtree(runtime, ignore_errors=True)
+
+
+def test_ee_request_without_a_server_is_none(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    assert audio.ee_request(["x"]) is None
+    with pytest.raises(ValueError):
+        audio.ee_request(["a\nb"])
+
+
+# ---------------------------------------------------------------------------
+# Demo twin
+# ---------------------------------------------------------------------------
+
+
+def test_demo_state_has_the_same_shape_as_the_real_one(ctl: AudioController) -> None:
+    real, demo = ctl.state(), DemoAudio().state()
+    assert real.keys() == demo.keys()
+    assert real["mic"].keys() == demo["mic"].keys()
+    assert real["chain"].keys() == demo["chain"].keys()
+    assert real["tone"].keys() == demo["tone"].keys()
+    assert real["mic_check"].keys() == demo["mic_check"].keys()
+    assert demo["chain"]["presets"][0] == {
+        "name": "StreamStack Voice",
+        "label": "Voice",
+        "blurb": "default broadcast voice",
+    }
+
+
+def test_demo_actions_change_state() -> None:
+    demo = DemoAudio()
+    demo.act("audio.gain", {"db": 5})
+    demo.act("audio.gain", {"db": 99})
+    assert demo.state()["mic"]["gain_db"] == 12.0
+    demo.act("audio.mute", {"on": True})
+    assert demo.state()["mic"]["muted"] is True
+    assert demo.act("audio.preset", {"name": "StreamStack Voice Deep"}) == "Voice preset: Voice Deep"
+    state = demo.state()
+    assert state["chain"]["preset"] == "StreamStack Voice Deep"
+    assert state["tone"]["pitch_semitones"] == -2.0
+    demo.act("audio.tone", {"bass_db": 9})
+    assert demo.state()["tone"]["bass_db"] == 9.0
+    assert demo.state()["tone"]["custom"] is True
+    demo.act("audio.bypass", {"on": True})
+    assert demo.state()["chain"]["bypass"] is True
+    with pytest.raises(ActionError):
+        demo.act("audio.preset", {"name": "Nope"})
+    with pytest.raises(ActionError):
+        demo.act("audio.nope", {})
+
+
+def test_demo_meters_speak_pause_and_mute() -> None:
+    clock = Clock()
+    demo = DemoAudio(clock=clock)
+    mic_peaks, voice_peaks = [], []
+    for _ in range(400):
+        clock.advance(0.05)
+        frame_ = demo.meters()
+        assert -90 <= frame_["mic"]["peak_db"] <= 0
+        assert frame_["mic"]["rms_db"] <= frame_["mic"]["peak_db"]
+        mic_peaks.append(frame_["mic"]["peak_db"])
+        voice_peaks.append(frame_["voice"]["peak_db"])
+    assert max(mic_peaks) > -25  # speech
+    assert min(mic_peaks) < -50  # pauses
+    mean = lambda xs: sum(xs) / len(xs)  # noqa: E731
+    loud = [(m, v) for m, v in zip(mic_peaks, voice_peaks, strict=True) if m > -45]
+    assert mean([v for _, v in loud]) > mean([m for m, _ in loud])  # the voice is hotter
+    assert max(voice_peaks) - mean([v for _, v in loud]) < max(mic_peaks) - mean([m for m, _ in loud])  # and squashed
+    demo.act("audio.mute", {"on": True})
+    frame_ = demo.meters()
+    assert frame_["mic"] == {"peak_db": -90.0, "rms_db": -90.0, "clip": False}
+    assert frame_["voice"]["peak_db"] == -90.0
+
+
+def test_demo_gain_moves_the_mic_meter() -> None:
+    clock = Clock()
+    demo = DemoAudio(clock=clock)
+    clock.advance(0.9)
+    quiet = demo.meters()["mic"]["peak_db"]
+    demo.act("audio.gain", {"db": 10})
+    assert demo.meters()["mic"]["peak_db"] == pytest.approx(min(0.0, quiet + 10), abs=0.11)
+
+
+def test_demo_mic_check_progresses_with_the_clock_and_makes_real_wavs() -> None:
+    clock = Clock()
+    toasts: list[tuple[str, str]] = []
+    demo = DemoAudio(lambda level, text: toasts.append((level, text)), clock=clock)
+    assert demo.act("audio.mic_check", {"seconds": 2}) == "Recording 2 s - talk now"
+    assert demo.state()["mic_check"]["state"] == "recording-raw"
+    with pytest.raises(ActionError):
+        demo.act("audio.mic_check", {})
+    clock.advance(1.0)
+    assert demo.state()["mic_check"]["clips"] == []
+    clock.advance(1.5)
+    check = demo.state()["mic_check"]
+    assert check["state"] == "recording-processed"
+    assert [c["label"] for c in check["clips"]] == ["raw microphone"]
+    clock.advance(2.0)
+    check = demo.state()["mic_check"]
+    assert check["state"] == "done"
+    assert len(check["clips"]) == 2
+    assert toasts == [("ok", "Mic check ready - play it back")]
+    for clip in check["clips"]:
+        path = demo.clip_path(clip["id"])
+        assert path is not None
+        with wave.open(str(path), "rb") as wav:
+            assert wav.getnchannels() == 1
+            assert wav.getsampwidth() == 2
+            assert wav.getnframes() == 2 * wav.getframerate()
+            samples = array.array("h")
+            samples.frombytes(wav.readframes(wav.getnframes()))
+            assert max(samples) > 1000  # audible, not silence
+    assert demo.clip_path("../../x") is None
+    # a new check replaces the old clips
+    demo.act("audio.mic_check", {})
+    assert demo.state()["mic_check"]["clips"] == []
+    demo.stop()
+
+
+def test_demo_meters_never_touch_the_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*_: object, **__: object) -> None:
+        raise AssertionError("the demo must not run helpers")
+
+    monkeypatch.setattr(system, "run", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    demo = DemoAudio()
+    demo.start()
+    demo.meters()
+    demo.state()
+    demo.act("audio.mic_check", {"seconds": 2})
+    demo.stop()
+
+
+def test_controller_start_stop_is_clean(rig: Rig) -> None:
+    ctl = AudioController(config.load_settings(), clock=rig.clock)
+    ctl.start()
+    ctl.start()  # idempotent
+    assert ctl.state()["mic"]["present"] is True
+    ctl.stop()
+    assert not any(t.name.startswith("audio-") and t.is_alive() for t in threading.enumerate())
+
+
+def test_toast_callback_errors_do_not_escape(rig: Rig, ctl: AudioController) -> None:
+    def explode(level: str, text: str) -> None:
+        raise RuntimeError("ui gone")
+
+    ctl.notify = explode
+    ctl.act("audio.mic_check", {})
+    wait_check(ctl)
+    assert ctl.state()["mic_check"]["state"] == "done"
+
+
+# ---------------------------------------------------------------------------
+# Mic watchdog: stall detection and revive
+# ---------------------------------------------------------------------------
+
+STALLED = micwatch.StallProbe(True, "stalled", "the device's hw_ptr is not advancing")
+HEALTHY = micwatch.StallProbe(False, "healthy", "the microphone is captured and consumed")
+
+
+class Probe:
+    """A scripted stall probe (the real one reads /proc/asound; see test_micwatch for that signal)."""
+
+    def __init__(self, probe: micwatch.StallProbe = HEALTHY) -> None:
+        self.probe = probe
+        self.calls = 0
+        self.silent: list[bool] = []
+
+    def __call__(self, mic: str, listing: str, silent: bool = False) -> micwatch.StallProbe:
+        self.calls += 1
+        self.silent.append(silent)
+        return self.probe
+
+
+class Verify:
+    """A scripted re-verification after a revive step: True = still stalled."""
+
+    def __init__(self, results: list[bool | None]) -> None:
+        self.results = list(results)
+        self.calls = 0
+
+    def __call__(self, mic: str) -> bool | None:
+        self.calls += 1
+        return self.results.pop(0) if len(self.results) > 1 else self.results[0]
+
+
+def watcher(
+    rig: Rig, probe: Probe, verify: Verify | None = None, **kw: Any
+) -> tuple[AudioController, list[tuple[str, str]]]:
+    toasts: list[tuple[str, str]] = []
+    controller = AudioController(
+        config.load_settings(),
+        lambda level, text: toasts.append((level, text)),
+        clock=rig.clock,
+        stall_probe=probe,
+        verify=verify or Verify([False]),
+        sleep=lambda seconds: None,
+        **kw,
+    )
+    controller._probe()
+    return controller, toasts
+
+
+def tick(rig: Rig, ctl: AudioController, seconds: float, step: float = 1.0) -> None:
+    for _ in range(int(seconds / step)):
+        rig.clock.advance(step)
+        ctl._probe()
+
+
+def feed_mic(ctl: AudioController) -> None:
+    """Pretend parec delivered bytes just now (the real reader thread would call feed())."""
+    reader = ctl._readers["mic"]
+    assert reader is not None
+    reader.feed(frame(1000))
+
+
+def test_level_reader_idle_clock_counts_from_the_last_byte() -> None:
+    clock = Clock()
+    reader = LevelReader("src", clock)
+    clock.advance(3)
+    assert reader.idle_for() == 3
+    reader.feed(b"\0\0")  # even a partial frame proves the source is alive
+    clock.advance(1)
+    assert reader.idle_for() == 1
+    inherited = LevelReader("src", clock, idle_since=reader.idle_since() - 10)
+    assert inherited.idle_for() == 11  # a restart does not forget how long the silence has lasted
+
+
+def test_a_silent_reader_is_restarted_but_keeps_counting_the_silence(rig: Rig) -> None:
+    ctl = AudioController(config.load_settings(), clock=rig.clock, stall_probe=Probe(), sleep=lambda s: None)
+    ctl._probe()
+    first = ctl._readers["mic"]
+    assert first is not None
+    rig.clock.advance(audio.READER_IDLE_RESTART + 0.5)
+    ctl._probe()
+    second = ctl._readers["mic"]
+    assert second is not None and second is not first
+    assert rig.procs[0].killed
+    assert second.idle_for() >= audio.READER_IDLE_RESTART  # not reset to zero by the restart
+
+
+def test_a_stalled_pcm_is_flagged_with_one_warn_toast_and_nothing_acts_alone(rig: Rig) -> None:
+    probe = Probe(STALLED)
+    ctl, toasts = watcher(rig, probe)
+    for _ in range(5):
+        feed_mic(ctl)  # parec still delivers: the PCM signal speaks alone
+        tick(rig, ctl, 1)
+    mic = ctl.state()["mic"]
+    assert mic["stalled"] is True
+    assert mic["stalled_since"] is not None
+    assert mic["revive"] == {"state": "idle", "message": None}
+    warns = [t for t in toasts if t[0] == "warn"]
+    assert len(warns) == 1 and "nobody can hear you" in warns[0][1]
+    assert pactl_mutations(rig) == []  # never revives by itself
+
+
+def test_the_pcm_is_sampled_on_every_probe(rig: Rig) -> None:
+    probe = Probe(HEALTHY)
+    ctl, _ = watcher(rig, probe)
+    tick(rig, ctl, 10)
+    assert probe.calls == 11
+
+
+def test_a_healthy_pcm_never_flags(rig: Rig) -> None:
+    ctl, toasts = watcher(rig, Probe(HEALTHY))
+    for _ in range(20):
+        feed_mic(ctl)
+        tick(rig, ctl, 1)
+    assert ctl.state()["mic"]["stalled"] is False
+    assert toasts == []
+
+
+def test_a_silent_reader_alone_never_flags_but_is_passed_as_corroboration(rig: Rig) -> None:
+    probe = Probe(HEALTHY)  # the PCM moves; parec hears nothing (it does that in some sandboxes)
+    ctl, toasts = watcher(rig, probe)
+    tick(rig, ctl, 12)
+    assert ctl.state()["mic"]["stalled"] is False and toasts == []
+    assert probe.silent[-1] is True and probe.silent[0] is False
+
+
+def test_an_unjudgeable_source_has_no_flag_and_no_check(rig: Rig) -> None:
+    ctl, toasts = watcher(rig, Probe(micwatch.StallProbe(None, "unsupported", "not an ALSA device")))
+    tick(rig, ctl, 20)
+    assert ctl.state()["mic"]["stalled"] is False and toasts == []
+    assert ctl.health_checks() == []
+
+
+def test_a_muted_microphone_is_not_a_stall(rig: Rig) -> None:
+    rig.pactl_out = pactl_json(mute=True)
+    ctl, toasts = watcher(rig, Probe(STALLED))
+    tick(rig, ctl, 20)
+    assert ctl.state()["mic"]["stalled"] is False
+    assert toasts == []
+
+
+def test_no_microphone_is_not_a_stall(rig: Rig) -> None:
+    rig.pactl_out = "[]"
+    ctl, _ = watcher(rig, Probe(STALLED))
+    tick(rig, ctl, 20)
+    assert ctl.state()["mic"]["stalled"] is False
+
+
+def test_stall_clears_after_recovery_and_says_so(rig: Rig) -> None:
+    probe = Probe(STALLED)
+    ctl, toasts = watcher(rig, probe)
+    tick(rig, ctl, 3)
+    assert ctl.state()["mic"]["stalled"] is True
+    probe.probe = HEALTHY
+    for _ in range(4):
+        feed_mic(ctl)
+        tick(rig, ctl, 1)
+    assert ctl.state()["mic"]["stalled"] is False
+    assert ctl.state()["mic"]["stalled_since"] is None
+    assert toasts[-1] == ("ok", "Microphone is delivering audio again")
+
+
+def test_health_check_follows_the_flag(rig: Rig) -> None:
+    probe = Probe(HEALTHY)
+    ctl, _ = watcher(rig, probe)
+    tick(rig, ctl, 2)
+    assert ctl.health_checks()[0]["state"] == "ok"
+    probe.probe = STALLED
+    tick(rig, ctl, 2)
+    (item,) = ctl.health_checks()
+    assert (item["id"], item["state"]) == ("mic-stall", "fail")
+    assert "nobody can hear you" in item["title"]
+
+
+def test_health_check_stays_quiet_without_evidence_or_a_microphone(rig: Rig) -> None:
+    ctl, _ = watcher(rig, Probe(micwatch.StallProbe(None, "watching", "watching")))
+    assert ctl.health_checks() == []
+    rig.pactl_out = "[]"
+    ctl._probe()
+    assert ctl.health_checks() == []
+
+
+def test_the_real_monitor_reads_the_pcm_from_the_pactl_listing(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End to end through the default probe: pactl's source properties -> procfs status -> verdict."""
+    listing = json.loads(pactl_json())
+    listing[0].update(
+        state="RUNNING",
+        properties={"device.api": "alsa", "alsa.card": "1", "alsa.device": "0", "alsa.subdevice": "0"},
+    )
+    rig.pactl_out = json.dumps(listing)
+    reads: list[Path] = []
+
+    def frozen(pcm: micwatch.AlsaPcm, clock: Any = None) -> micwatch.PcmSample:
+        reads.append(pcm.path)
+        return micwatch.PcmSample("RUNNING", 1000, 900, rig.clock())  # nothing advances: a stalled mic
+
+    monkeypatch.setattr(micwatch, "read_pcm_status", frozen)
+    toasts: list[tuple[str, str]] = []
+    ctl = AudioController(
+        config.load_settings(), lambda level, text: toasts.append((level, text)), clock=rig.clock, sleep=lambda s: None
+    )
+    ctl._probe()
+    tick(rig, ctl, 8)
+    assert reads and str(reads[0]) == "/proc/asound/card1/pcm0c/sub0/status"
+    assert ctl.state()["mic"]["stalled"] is True
+    assert [t[0] for t in toasts] == ["warn"]
+
+
+def wait_revive(ctl: AudioController, states: tuple[str, ...] = ("ok", "failed")) -> dict[str, Any]:
+    deadline = threading.Event()
+    for _ in range(300):
+        revive = ctl.state()["mic"]["revive"]
+        if revive["state"] in states:
+            return revive
+        deadline.wait(0.02)
+    pytest.fail("the revive did not finish")
+
+
+def pactl_mutations(rig: Rig) -> list[list[str]]:
+    return [c[1:] for c in rig.commands if c[0] == "pactl" and c[1].startswith(("suspend", "set-"))]
+
+
+def test_revive_action_suspends_resumes_and_reports(rig: Rig) -> None:
+    probe = Probe(STALLED)
+    verify = Verify([False])  # the same PCM signal says audio flows after the suspend/resume
+    ctl, toasts = watcher(rig, probe, verify)
+    tick(rig, ctl, 3)
+    assert ctl.state()["mic"]["stalled"] is True
+    probe.probe = HEALTHY
+    assert ctl.act("audio.revive", {}) == "Reviving the microphone..."
+    revive = wait_revive(ctl)
+    assert revive["state"] == "ok" and "suspend and resume" in revive["message"]
+    assert verify.calls == 1
+    assert pactl_mutations(rig) == [["suspend-source", MIC, "1"], ["suspend-source", MIC, "0"]]
+    mic = ctl.state()["mic"]
+    assert mic["stalled"] is False and mic["stalled_since"] is None
+    assert toasts[-1][0] == "ok"
+    assert len([r for r in rig.procs if r.killed]) >= 2  # the meter readers were replaced
+    rig.clock.advance(audio.REVIVE_SHOW_S + 1)
+    assert ctl.state()["mic"]["revive"] == {"state": "idle", "message": None}
+
+
+def test_revive_refuses_a_microphone_that_is_delivering_audio(rig: Rig) -> None:
+    ctl, _ = watcher(rig, Probe(HEALTHY))
+    tick(rig, ctl, 5)
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.revive", {})
+    assert err.value.status == 409 and "nothing to revive" in str(err.value)
+    assert pactl_mutations(rig) == []
+
+
+def test_revive_with_force_cycles_a_healthy_microphone(rig: Rig) -> None:
+    ctl, _ = watcher(rig, Probe(HEALTHY))
+    ctl.act("audio.revive", {"force": True})
+    assert wait_revive(ctl)["state"] == "ok"
+    assert pactl_mutations(rig)[0] == ["suspend-source", MIC, "1"]
+
+
+def test_revive_that_does_not_help_ends_failed_with_the_manual_advice(rig: Rig) -> None:
+    ctl, toasts = watcher(rig, Probe(STALLED), Verify([True]))
+    tick(rig, ctl, 3)
+    ctl.act("audio.revive", {})
+    revive = wait_revive(ctl)
+    assert revive["state"] == "failed"
+    assert "replug" in revive["message"].lower() and "wireplumber" in revive["message"]
+    assert ctl.state()["mic"]["stalled"] is True  # still stalled: the banner must stay up
+    assert toasts[-1][0] == "error"
+    assert not any(c[0] == "systemctl" for c in rig.commands)
+
+
+def test_a_failed_revive_can_be_retried_and_forgotten_when_the_mic_recovers(rig: Rig) -> None:
+    probe = Probe(STALLED)
+    ctl, _ = watcher(rig, probe, Verify([True]))
+    tick(rig, ctl, 3)
+    ctl.act("audio.revive", {})
+    assert wait_revive(ctl)["state"] == "failed"
+    probe.probe = HEALTHY
+    for _ in range(4):
+        feed_mic(ctl)
+        tick(rig, ctl, 1)
+    assert ctl.state()["mic"]["stalled"] is False
+    assert ctl.state()["mic"]["revive"]["state"] == "idle"  # resolved by itself: the failure is forgotten
+
+
+def test_revive_progress_is_visible_while_it_runs(rig: Rig) -> None:
+    gate = threading.Event()
+    ctl = AudioController(
+        config.load_settings(),
+        clock=rig.clock,
+        stall_probe=Probe(HEALTHY),
+        verify=Verify([False]),
+        sleep=lambda s: gate.wait(5),
+    )
+    ctl._probe()
+    ctl.act("audio.revive", {"force": True})
+    assert ctl.state()["mic"]["revive"]["state"] == "reviving"
+    assert "Suspending" in ctl.state()["mic"]["revive"]["message"]
+    with pytest.raises(ActionError) as busy:
+        ctl.act("audio.revive", {"force": True})
+    assert busy.value.status == 409
+    gate.set()
+    assert wait_revive(ctl)["state"] == "ok"
+
+
+def test_revive_needs_a_microphone_and_pactl(rig: Rig) -> None:
+    ctl, _ = watcher(rig, Probe(HEALTHY))
+    rig.have.discard("pactl")
+    with pytest.raises(ActionError, match="pactl"):
+        ctl.act("audio.revive", {"force": True})
+    rig.have.add("pactl")
+    rig.pactl_out = "[]"
+    ctl._probe()
+    with pytest.raises(ActionError, match="No microphone"):
+        ctl.act("audio.revive", {"force": True})
+
+
+def test_the_real_controller_has_no_demo_stall(rig: Rig) -> None:
+    ctl, _ = watcher(rig, Probe(HEALTHY))
+    with pytest.raises(ActionError) as err:
+        ctl.act("audio.demo_stall", {"on": True})
+    assert err.value.status == 400
+
+
+def test_the_watchdog_pauses_while_a_revive_runs(rig: Rig) -> None:
+    gate = threading.Event()
+    probe = Probe(STALLED)
+    ctl = AudioController(
+        config.load_settings(), clock=rig.clock, stall_probe=probe, verify=Verify([False]), sleep=lambda s: gate.wait(5)
+    )
+    ctl._probe()
+    ctl.act("audio.revive", {})
+    calls = probe.calls
+    tick(rig, ctl, 12)
+    assert probe.calls == calls  # a half-resumed node is not judged
+    gate.set()
+    wait_revive(ctl)
+
+
+# ---------------------------------------------------------------------------
+# Mic watchdog: the demo twin
+# ---------------------------------------------------------------------------
+
+
+def test_demo_stall_is_triggerable_and_revives_after_1_5_seconds() -> None:
+    clock = Clock()
+    toasts: list[tuple[str, str]] = []
+    demo = DemoAudio(lambda level, text: toasts.append((level, text)), clock=clock)
+    assert demo.state()["mic"]["stalled"] is False
+    assert demo.health_checks()[0]["state"] == "ok"
+
+    demo.act("audio.demo_stall", {"on": True})
+    mic = demo.state()["mic"]
+    assert mic["stalled"] is True and mic["stalled_since"]
+    assert mic["revive"] == {"state": "idle", "message": None}
+    assert [t[0] for t in toasts] == ["warn"]
+    assert demo.meters()["mic"]["peak_db"] == -90.0 and demo.meters()["voice"]["peak_db"] == -90.0
+    assert demo.health_checks()[0]["state"] == "fail"
+    demo.act("audio.demo_stall", {"on": True})  # already stalled: no second toast
+    assert len(toasts) == 1
+
+    demo.act("audio.revive", {})
+    assert demo.state()["mic"]["revive"]["state"] == "reviving"
+    with pytest.raises(ActionError) as busy:
+        demo.act("audio.revive", {})
+    assert busy.value.status == 409
+    clock.advance(0.5)
+    assert "Waiting" in demo.state()["mic"]["revive"]["message"]
+    assert demo.state()["mic"]["stalled"] is True
+    clock.advance(1.1)
+    mic = demo.state()["mic"]
+    assert mic["stalled"] is False and mic["revive"]["state"] == "ok"
+    assert toasts[-1][0] == "ok"
+    assert demo.health_checks()[0]["state"] == "ok"
+    clock.advance(audio.REVIVE_SHOW_S + 1)
+    assert demo.state()["mic"]["revive"] == {"state": "idle", "message": None}
+
+
+def test_demo_stall_off_returns_to_healthy_and_validates() -> None:
+    demo = DemoAudio()
+    demo.act("audio.demo_stall", {"on": True})
+    demo.act("audio.demo_stall", {"on": False})
+    assert demo.state()["mic"]["stalled"] is False and demo.state()["mic"]["stalled_since"] is None
+    with pytest.raises(ActionError) as err:
+        demo.act("audio.demo_stall", {"on": "yes"})
+    assert err.value.status == 400
+
+
+def test_demo_revive_refuses_a_healthy_microphone_like_the_real_one() -> None:
+    demo = DemoAudio(clock=Clock())
+    with pytest.raises(ActionError) as err:
+        demo.act("audio.revive", {})
+    assert err.value.status == 409

@@ -10,3 +10,4 @@ htmlcov/
 .ruff_cache/
 .venv/
 venv/
+e2e-artifacts/

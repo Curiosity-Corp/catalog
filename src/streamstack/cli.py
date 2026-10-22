@@ -12,7 +12,9 @@ user and never needs root.
     streamstack cameras         every live camera and every mode it offers
     streamstack preview [cam]   watch a camera feed (canon, camlink, program, /dev/videoN)
     streamstack mic-check [s]   record a few seconds and play them back
+    streamstack mic-revive      bring back a stalled microphone (suspend/resume, then a card profile cycle)
     streamstack voice [preset]  list or load a voice preset (bass, treble, pitch)
+    streamstack console         the visual control surface: faders, meters, scenes, live picture
     streamstack canon-bridge    run the Canon live view -> loopback camera bridge
     streamstack setup           seed this user's OBS profile and voice presets
     streamstack call-settings   the Teams and Zoom settings that match this rig
@@ -31,7 +33,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from streamstack import __version__, config, system
+from streamstack import __version__, config, micwatch, system
 from streamstack.config import camera_external, load_settings
 from streamstack.system import (
     CAMLINK_LINK,
@@ -84,34 +86,52 @@ def auto_running() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
-    cfg = load_settings()
-    failures = 0
+def check(group: str, cid: str, state: str, title: str, detail: str = "", hint: str = "") -> dict[str, str]:
+    return {"id": cid, "group": group, "state": state, "title": title, "detail": detail, "hint": hint}
+
+
+def run_checks(cfg: dict[str, str] | None = None, *, stall_probe: bool = True) -> list[dict[str, str]]:
+    """Every doctor check as structured data: id, group (video|audio|apps), state (ok|warn|fail), title, detail, hint.
+
+    `streamstack doctor` prints these and the Console shows them as cards. `stall_probe` adds the microphone
+    stall check, which samples the microphone's ALSA PCM for about 5 s; the Console turns it off because its audio
+    controller watches the microphone continuously.
+    """
+    cfg = cfg or load_settings()
+    checks: list[dict[str, str]] = []
     camera = cfg["STREAMSTACK_CAMERA_DEVICE"]
     program = cfg["STREAMSTACK_PROGRAM_DEVICE"]
 
-    print("Video")
-    for device, label, role in (
-        (camera, cfg["STREAMSTACK_CAMERA_LABEL"], "camera bridge"),
-        (program, cfg["STREAMSTACK_PROGRAM_LABEL"], "OBS virtual camera"),
+    for device, label, role, cid in (
+        (camera, cfg["STREAMSTACK_CAMERA_LABEL"], "camera bridge", "camera-node"),
+        (program, cfg["STREAMSTACK_PROGRAM_LABEL"], "OBS virtual camera", "program-node"),
     ):
         name = video_name(device)
         if not name:
-            report(
-                FAIL,
-                f"{device} ({role}) is missing",
-                "load v4l2loopback with the StreamStack nodes (see the README), or reboot after installing",
+            checks.append(
+                check(
+                    "video",
+                    cid,
+                    "fail",
+                    f"{device} ({role}) is missing",
+                    hint="load v4l2loopback with the StreamStack nodes (see the README), or reboot after installing",
+                )
             )
-            failures += 1
             continue
         if name != label:
-            report(
-                WARN,
-                f"{device} is named {name!r}, expected {label!r}",
-                "another v4l2loopback configuration is loaded; see Troubleshooting in the README",
+            checks.append(
+                check(
+                    "video",
+                    f"{cid}-name",
+                    "warn",
+                    f"{device} is named {name!r}, expected {label!r}",
+                    hint="another v4l2loopback configuration is loaded; see Troubleshooting in the README",
+                )
             )
         if loopback_has_producer(device):
-            report(OK, f"{label} ({device}) is live: {current_format(device) or 'format unknown'}")
+            checks.append(
+                check("video", cid, "ok", f"{label} ({device}) is live", current_format(device) or "format unknown")
+            )
         else:
             if role == "OBS virtual camera":
                 hint = "start it: streamstack studio (OBS Start Virtual Camera)"
@@ -119,20 +139,40 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 hint = "this camera is fed by another tool on this host; start its service"
             else:
                 hint = f"start it: systemctl --user start {CANON_UNIT}"
-            report(WARN, f"{label} ({device}) has no picture yet; browsers will not list it", hint)
+            checks.append(
+                check(
+                    "video", cid, "warn", f"{label} ({device}) has no picture yet; browsers will not list it", hint=hint
+                )
+            )
 
     canon = usb_products(CANON_USB_VENDOR)
     if canon:
-        report(OK, f"Canon on USB: {', '.join(canon)}")
+        checks.append(check("video", "canon-usb", "ok", "Canon on USB", ", ".join(canon)))
         if (
             cfg["STREAMSTACK_CANON_BRIDGE"] != "none"
             and not camera_external(cfg)
             and not user_unit_active(CANON_UNIT)
             and not loopback_has_producer(camera)
         ):
-            report(WARN, "the Canon bridge is not running", f"systemctl --user start {CANON_UNIT}")
+            checks.append(
+                check(
+                    "video",
+                    "canon-bridge",
+                    "warn",
+                    "the Canon bridge is not running",
+                    hint=f"systemctl --user start {CANON_UNIT}",
+                )
+            )
     elif not camera_external(cfg) and cfg["STREAMSTACK_CANON_BRIDGE"] != "none":
-        report(WARN, "no Canon camera on USB", "check the cable, power, and that the dial is not on a movie-only mode")
+        checks.append(
+            check(
+                "video",
+                "canon-usb",
+                "warn",
+                "no Canon camera on USB",
+                hint="check the cable, power, and that the dial is not on a movie-only mode",
+            )
+        )
 
     # OBS's virtual camera takes whichever loopback node is free first, which
     # can be the camera node when its bridge is not running yet.
@@ -142,55 +182,105 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         if d not in {str(Path(camera).resolve()), str(Path(program).resolve())}
     ]
     if strays:
-        report(
-            WARN,
-            f"OBS holds loopback camera {', '.join(strays)}, not {program}",
-            "stop the virtual camera, close other camera tools, then streamstack studio",
+        checks.append(
+            check(
+                "video",
+                "obs-loopback",
+                "warn",
+                f"OBS holds loopback camera {', '.join(strays)}, not {program}",
+                hint="stop the virtual camera, close other camera tools, then streamstack studio",
+            )
         )
     elif not opened_by("obs", [program]) and opened_by("obs", [camera]) and not loopback_has_producer(program):
-        report(
-            WARN,
-            f"OBS may be feeding {camera} instead of {program}",
-            "stop the virtual camera, start the camera bridge first, then Start Virtual Camera",
+        checks.append(
+            check(
+                "video",
+                "obs-loopback",
+                "warn",
+                f"OBS may be feeding {camera} instead of {program}",
+                hint="stop the virtual camera, start the camera bridge first, then Start Virtual Camera",
+            )
         )
 
     camlink = find_camlink()
     if camlink:
         fmt = current_format(camlink)
-        report(
-            OK,
-            f"Elgato Cam Link on {camlink}: {fmt or 'no HDMI signal format reported'}",
-            "" if fmt else "turn on the HDMI camera and disable its on-screen display",
+        checks.append(
+            check(
+                "video",
+                "camlink",
+                "ok",
+                f"Elgato Cam Link on {camlink}",
+                fmt or "no HDMI signal format reported",
+                "" if fmt else "turn on the HDMI camera and disable its on-screen display",
+            )
         )
     else:
-        report(
-            WARN, "no Elgato Cam Link 4K found", "plug it into a USB 3 port (blue) directly, not through a USB 2 hub"
+        checks.append(
+            check(
+                "video",
+                "camlink",
+                "warn",
+                "no Elgato Cam Link 4K found",
+                hint="plug it into a USB 3 port (blue) directly, not through a USB 2 hub",
+            )
         )
 
-    print("\nAudio")
     sources = audio_sources()
     mic = system.pick_microphone(sources, cfg["STREAMSTACK_MICROPHONE"], system.default_device("source"))
     if mic:
-        report(OK, f"call microphone: {sources.get(mic) or mic}")
+        checks.append(check("audio", "microphone", "ok", "call microphone", sources.get(mic) or mic))
     elif cfg["STREAMSTACK_MICROPHONE"]:
-        report(WARN, f"microphone {cfg['STREAMSTACK_MICROPHONE']!r} is not connected", "check USB and power")
-    else:
-        report(WARN, "no microphone found", "plug in a USB microphone; the Wave XLR also needs +48V for condenser mics")
-    if EE_SOURCE in sources:
-        report(OK, "Easy Effects Source (processed voice) is available")
-    elif easyeffects_running():
-        report(
-            WARN,
-            "Easy Effects is running but its virtual source is missing",
-            "restart it: easyeffects -q; streamstack studio",
+        checks.append(
+            check(
+                "audio",
+                "microphone",
+                "warn",
+                f"microphone {cfg['STREAMSTACK_MICROPHONE']!r} is not connected",
+                hint="check USB and power",
+            )
         )
     else:
-        report(FAIL, "Easy Effects is not running, so there is no processed voice", "streamstack studio")
-        failures += 1
+        checks.append(
+            check(
+                "audio",
+                "microphone",
+                "warn",
+                "no microphone found",
+                hint="plug in a USB microphone; the Wave XLR also needs +48V for condenser mics",
+            )
+        )
+    if mic and stall_probe:
+        probe = _watch_microphone(mic)
+        if stall_item := micwatch.check_item(probe.stalled, probe.detail):
+            checks.append(stall_item)
+    if EE_SOURCE in sources:
+        checks.append(check("audio", "voice-chain", "ok", "Easy Effects Source (processed voice) is available"))
+    elif easyeffects_running():
+        checks.append(
+            check(
+                "audio",
+                "voice-chain",
+                "warn",
+                "Easy Effects is running but its virtual source is missing",
+                hint="restart it: easyeffects -q; streamstack studio",
+            )
+        )
+    else:
+        checks.append(
+            check(
+                "audio",
+                "voice-chain",
+                "fail",
+                "Easy Effects is not running, so there is no processed voice",
+                hint="streamstack studio",
+            )
+        )
     if any("cam_link" in name.lower() for name in sources):
-        report(OK, "Cam Link HDMI audio exists; never pick it as a call microphone")
+        checks.append(
+            check("audio", "camlink-audio", "ok", "Cam Link HDMI audio exists; never pick it as a call microphone")
+        )
 
-    print("\nApps")
     for tool, why in (
         ("obs", "OBS Studio"),
         ("easyeffects", "Easy Effects"),
@@ -199,18 +289,53 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ("gphoto2", "Canon tether"),
         ("ffplay", "previews"),
     ):
-        report(OK if have(tool) else FAIL, f"{why}: {'installed' if have(tool) else 'missing'}")
-        failures += 0 if have(tool) else 1
+        checks.append(
+            check("apps", f"app-{tool}", "ok" if have(tool) else "fail", why, "installed" if have(tool) else "missing")
+        )
     browsers = [
         b for b in ("microsoft-edge", "microsoft-edge-stable", "google-chrome", "chromium", "firefox") if have(b)
     ]
-    report(OK if browsers else WARN, f"browser for Teams web: {', '.join(browsers) or 'none found'}")
-    report(
-        OK if have("zoom") else WARN,
-        f"Zoom desktop client: {'installed' if have('zoom') else 'not installed (zoom.us web client works too)'}",
+    checks.append(
+        check(
+            "apps",
+            "browser",
+            "ok" if browsers else "warn",
+            "browser for Teams web",
+            ", ".join(browsers) or "none found",
+        )
     )
-    report(OK, f"auto mode: {'on' if auto_running() else 'off'} (streamstack auto on|off)")
+    checks.append(
+        check(
+            "apps",
+            "zoom",
+            "ok" if have("zoom") else "warn",
+            "Zoom desktop client",
+            "installed" if have("zoom") else "not installed (zoom.us web client works too)",
+        )
+    )
+    checks.append(
+        check("apps", "auto-mode", "ok", "auto mode", f"{'on' if auto_running() else 'off'} (streamstack auto on|off)")
+    )
+    return checks
 
+
+def summarize(checks: list[dict[str, str]]) -> str:
+    """ok, warn or fail: the worst state among the checks."""
+    states = {c["state"] for c in checks}
+    return "fail" if "fail" in states else "warn" if "warn" in states else "ok"
+
+
+GROUP_TITLES = {"video": "Video", "audio": "Audio", "apps": "Apps"}
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    cfg = load_settings()
+    checks = run_checks(cfg)
+    for number, (group, title) in enumerate(GROUP_TITLES.items()):
+        print(("\n" if number else "") + title)
+        for item in (c for c in checks if c["group"] == group):
+            message = f"{item['title']}: {item['detail']}" if item["detail"] else item["title"]
+            report("FAIL" if item["state"] == "fail" else item["state"], message, item["hint"])
     print("\nPick these in Teams / Zoom")
     print(
         f"  Camera:     {cfg['STREAMSTACK_PROGRAM_LABEL']}   "
@@ -219,7 +344,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("  Microphone: Easy Effects Source")
     print("  Speaker:    headphones - not the laptop speakers")
     print("  Run `streamstack call-settings` for the in-app toggles to turn off.")
-    return 1 if failures else 0
+    return 1 if any(c["state"] == "fail" for c in checks) else 0
 
 
 def cmd_auto(args: argparse.Namespace) -> int:
@@ -273,18 +398,20 @@ def describe(entry: dict) -> str:
     return str(entry.get("error") or entry.get("reason") or "")
 
 
+def call_camera(cfg: dict[str, str], studio: bool) -> str:
+    """What calls get for a camera: graded (OBS virtual camera), obs-idle, raw or off."""
+    if studio and loopback_has_producer(cfg["STREAMSTACK_PROGRAM_DEVICE"]):
+        return "graded"
+    if studio:
+        return "obs-idle"
+    camera = cfg["STREAMSTACK_CAMERA_DEVICE"]
+    return "raw" if Path(camera).exists() and loopback_has_producer(camera) else "off"
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """One line for a panel button: what calls get for camera and microphone."""
     cfg = load_settings()
-    studio = system.running("obs")
-    if studio and loopback_has_producer(cfg["STREAMSTACK_PROGRAM_DEVICE"]):
-        camera = "graded"
-    elif studio:
-        camera = "OBS idle"
-    elif Path(cfg["STREAMSTACK_CAMERA_DEVICE"]).exists() and loopback_has_producer(cfg["STREAMSTACK_CAMERA_DEVICE"]):
-        camera = "raw"
-    else:
-        camera = "off"
+    camera = call_camera(cfg, system.running("obs")).replace("obs-idle", "OBS idle")
     mic = "fx" if EE_SOURCE in audio_sources() else "raw"
     detail = f"camera for calls: {camera}; microphone: {'Easy Effects Source' if mic == 'fx' else 'raw mic'}"
     if auto_running():
@@ -441,8 +568,49 @@ def cmd_mic_check(args: argparse.Namespace) -> int:
                 print(f"  nothing captured from {source}")
         for label, path in recordings:
             print(f"Playing back: {label}")
-            subprocess.run(["paplay", path], check=False)
+            system.run(["paplay", path], timeout=args.seconds + 20)  # a wedged server must not hold the terminal
     return 0 if takes else 1
+
+
+def _watch_microphone(mic: str) -> micwatch.StallProbe:
+    """Sample the microphone's ALSA PCM once a second for a full window and judge it (blocks ~5 s)."""
+    monitor = micwatch.StallMonitor()
+    deadline = time.monotonic() + micwatch.WINDOW_S + 1.5
+    while True:
+        listing = system.run(["pactl", "-f", "json", "list", "sources"], timeout=micwatch.PACTL_TIMEOUT)
+        probe = monitor.probe(mic, listing.stdout if listing and listing.returncode == 0 else "")
+        if probe.state != "watching" or time.monotonic() >= deadline:
+            return probe
+        time.sleep(micwatch.SAMPLE_S)
+
+
+def cmd_mic_revive(args: argparse.Namespace) -> int:
+    """Revive a stalled microphone: suspend/resume the source, then cycle its card profile if that was not enough."""
+    if not have("pactl"):
+        print("streamstack: pactl is missing (install pulseaudio-utils)", file=sys.stderr)
+        return 1
+    cfg = load_settings()
+    sources = audio_sources()
+    mic = system.pick_microphone(sources, cfg["STREAMSTACK_MICROPHONE"], system.default_device("source"))
+    if not mic:
+        print("streamstack: no microphone found (plug it in, or set STREAMSTACK_MICROPHONE)", file=sys.stderr)
+        return 1
+    print(f"Microphone: {sources.get(mic) or mic}")
+    print(f"Watching the microphone for {micwatch.WINDOW_S:g} seconds...", flush=True)
+    probe = _watch_microphone(mic)
+    print(f"  now: {probe.detail or 'could not tell whether it is stalled'}")
+    if probe.stalled is False and not args.force:
+        print("The microphone is delivering audio, nothing to revive (--force cycles it anyway).")
+        return 0
+    if probe.stalled is None and not args.force:
+        print("Cannot tell whether the microphone is stalled, so it is left alone (--force cycles it anyway).")
+        return 0
+
+    monitor = micwatch.StallMonitor()
+    result = micwatch.revive_mic(mic, say=lambda text: print(text, flush=True), stalled=lambda: monitor.verify(mic))
+    print(f"Did: {', '.join(result.steps)}")
+    print(result.message, file=sys.stdout if result.ok else sys.stderr)
+    return 0 if result.ok else 1
 
 
 def cmd_voice(args: argparse.Namespace) -> int:
@@ -541,6 +709,14 @@ def cmd_stop(args: argparse.Namespace) -> int:
         run(["easyeffects", "-q"], timeout=15)
     print(f"In Teams/Zoom pick camera '{cfg['STREAMSTACK_CAMERA_LABEL']}' (raw) until the studio runs again.")
     return 0
+
+
+def cmd_console(args: argparse.Namespace) -> int:
+    from streamstack.console.launcher import run_console
+
+    return run_console(
+        demo=args.demo, port=args.port, window=not args.no_window, mini=args.mini, idle_exit=args.idle_exit
+    )
 
 
 def _canon_release_gvfs() -> None:
@@ -688,11 +864,26 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument("--grid", action="store_true", help="overlay a rule-of-thirds grid for framing")
     preview.add_argument("--mode", help="capture mode from `streamstack cameras`, e.g. '1920x1080@30 MJPG'")
     preview.set_defaults(func=cmd_preview)
+    console = sub.add_parser("console", help="open the Console: faders, meters, scenes and the live picture")
+    console.add_argument("--demo", action="store_true", help="a simulated rig; nothing is touched")
+    console.add_argument("--no-window", action="store_true", help="only serve; print the address")
+    console.add_argument("--mini", action="store_true", help="the compact window to keep beside a call")
+    console.add_argument("--port", type=int, default=0, help="listen port (default: any free port)")
+    console.add_argument(
+        "--idle-exit",
+        type=float,
+        metavar="SECONDS",
+        help="quit after this long with no window (default: 600 with a window, never without)",
+    )
+    console.set_defaults(func=cmd_console)
     sub.add_parser("cameras", help="every live video device and each mode it offers").set_defaults(func=cmd_cameras)
     mic = sub.add_parser("mic-check", help="record and play back your voice")
     mic.add_argument("seconds", nargs="?", type=float, default=6.0)
     mic.add_argument("--raw", action="store_true", help="also record the unprocessed mic for an A/B comparison")
     mic.set_defaults(func=cmd_mic_check)
+    revive = sub.add_parser("mic-revive", help="bring back a stalled microphone")
+    revive.add_argument("--force", action="store_true", help="cycle the microphone even when it looks healthy")
+    revive.set_defaults(func=cmd_mic_revive)
     voice = sub.add_parser("voice", help="list or load a voice preset")
     voice.add_argument("preset", nargs="?")
     voice.set_defaults(func=cmd_voice)
