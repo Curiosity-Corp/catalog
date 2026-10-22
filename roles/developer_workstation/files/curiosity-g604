@@ -60,7 +60,7 @@ if [ "${XDG_SESSION_TYPE:-}" = wayland ] || [ -z "${DISPLAY:-}" ]; then
     exit 0
 fi
 
-for tool in xinput xbindkeys flock; do
+for tool in xinput xbindkeys flock pkill; do
     command -v "$tool" >/dev/null 2>&1 || { echo "curiosity-g604: $tool is not installed" >&2; exit 1; }
 done
 [ -r "$conf" ] || { echo "curiosity-g604: cannot read $conf" >&2; exit 1; }
@@ -104,8 +104,13 @@ watch_thumb_buttons() {
     done
 }
 
+# The thumb-button watcher is a subshell running an `xinput test | while read`
+# pipeline; killing only the subshell orphaned that pipeline, which kept
+# running the button commands, so every press fired once per stale watcher
+# (back jumped several pages, toggles cancelled out). Stop the children first.
 stop_bindings() {
     for pid in $bindings_pid $keys_pid; do
+        pkill -TERM -P "$pid" 2>/dev/null
         kill "$pid" 2>/dev/null
         wait "$pid" 2>/dev/null
     done

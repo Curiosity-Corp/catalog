@@ -203,6 +203,8 @@ exit 1
             "pasystray",
             "blueman-applet",
             "flameshot",
+            # never start the real G604 launcher from a test (Curiosity-Corp/catalog#99)
+            "curiosity-g604",
         ):
             scripts[name] = "#!/bin/sh\nexit 0\n"
         for name, content in scripts.items():
