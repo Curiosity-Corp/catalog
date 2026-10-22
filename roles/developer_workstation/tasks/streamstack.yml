@@ -13,7 +13,7 @@
 # Both loopback nodes use exclusive_caps=1, which Chromium-based browsers
 # (Teams web) require before they list a virtual camera.
 #
-# The application (CLI, panel menu, auto mode, presets) is the StreamStack
+# The application (CLI, Console, panel menu, auto mode, presets) is the StreamStack
 # project, vendored at files/streamstack as a squashed git subtree of a release
 # tag; this file wires it into the host: packages, the loopback cameras, udev,
 # the settings file, and the install under /usr/local.
@@ -292,7 +292,7 @@
     owner: root
     group: root
     mode: "0755"
-  loop: [streamstack, streamstack-auto, streamstack-tray]
+  loop: [streamstack, streamstack-auto, streamstack-console, streamstack-tray]
 
 - name: Create the local hicolor icon directories
   ansible.builtin.file:
