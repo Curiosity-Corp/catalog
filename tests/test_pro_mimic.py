@@ -50,7 +50,7 @@ def test_pro_mimic_safe_defaults() -> None:
 
 def test_pro_mimic_files_are_included_with_tags() -> None:
     main = (TASKS / "main.yml").read_text()
-    assert "ansible.builtin.include_tasks: pro-mimic.yml" in main
+    assert "file: pro-mimic.yml" in main
     assert "tags: [pro-mimic, security]" in main
     # Machine-level plane only: the container-safe workspace profile has no
     # systemd, MOTD, or default target to converge.
@@ -59,11 +59,11 @@ def test_pro_mimic_files_are_included_with_tags() -> None:
     parent = (TASKS / "pro-mimic.yml").read_text()
     for name in PRO_MIMIC_CHILDREN:
         stem = name.removesuffix(".yml")
-        assert f"include_tasks: {name}" in parent, f"{name} is not included"
+        assert f"file: {name}" in parent, f"{name} is not included"
         assert (TASKS / name).is_file()
     # Every child include in the parent carries tags so focused
     # `--tags pro-mimic` runs stay selectable per area.
-    assert parent.count("tags: [pro-mimic") == len(PRO_MIMIC_CHILDREN)
+    assert parent.count("\n  tags: [pro-mimic") == len(PRO_MIMIC_CHILDREN)
 
 
 def _code_lines(text: str) -> list:
