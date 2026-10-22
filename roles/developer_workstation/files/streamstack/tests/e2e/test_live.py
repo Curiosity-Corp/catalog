@@ -276,3 +276,34 @@ def test_meter_goes_silent_when_muted(live: App, page: Page) -> None:
     live.press("m")
     meter = page.locator("ss-meter[source='mic']").first
     expect(meter).to_have_attribute("aria-valuetext", "silent", timeout=LOADED)
+
+
+# ---------------------------------------------------------------------------
+# Background blur pad
+# ---------------------------------------------------------------------------
+
+
+def test_blur_pad_switches_the_blur_on_every_camera_and_shows_its_strength(live: App, rig: Rig) -> None:
+    pad = live.page.get_by_role("button", name=re.compile(r"^Blur\b"))
+    expect(pad).to_be_visible()
+    expect(live.slider("Blur strength")).to_be_hidden()
+    pad.click()
+    expect(pad).to_have_attribute("aria-pressed", "true")
+    state = poll(rig, lambda s: s["video"]["blur"]["on"] and s["video"]["blur"])
+    assert all(e["enabled"] for e in state["sources"].values())
+    fader = live.slider("Blur strength")
+    expect(fader).to_be_visible()
+    fader.focus()
+    fader.press("ArrowDown")
+    assert poll(rig, lambda s: s["video"]["blur"]["strength"] == 7 or None)
+    pad.click()
+    assert poll(rig, lambda s: not s["video"]["blur"]["on"])
+
+
+def test_blur_pad_is_hidden_while_the_plugin_is_missing(live: App, rig: Rig) -> None:
+    pad = live.page.get_by_role("button", name=re.compile(r"^Blur\b"))
+    expect(pad).to_be_visible()
+    rig.act("video.blur.plugin", installed=False)
+    expect(pad).to_be_hidden(timeout=LOADED)
+    rig.act("video.blur.plugin", installed=True)
+    expect(pad).to_be_visible(timeout=LOADED)

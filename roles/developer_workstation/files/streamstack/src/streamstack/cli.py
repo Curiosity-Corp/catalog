@@ -17,8 +17,10 @@ user and never needs root.
     streamstack voice [preset]  list or load a voice preset (bass, treble, pitch)
     streamstack console         the visual control surface: faders, meters, scenes, live picture
     streamstack canon-bridge    run the Canon live view -> loopback camera bridge
+    streamstack canon status    the bridge's GPU path, rates and the camera's settings (also: get, set, af, focus)
     streamstack setup           seed this user's OBS profile and voice presets
     streamstack encoder         which video encoder OBS can use here (--apply sets it in the profile)
+    streamstack framing         auto-framing: backends, face model (--fetch downloads and verifies it)
     streamstack call-settings   the Teams and Zoom settings that match this rig
 """
 
@@ -28,16 +30,17 @@ import argparse
 import json
 import os
 import re
-import signal
-import subprocess
 import sys
 import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-from streamstack import __version__, camlink, config, encoder, micwatch, system
+from streamstack import __version__, blur, camlink, config, encoder, micwatch, system
+from streamstack.canon import run as canon_run
 from streamstack.config import camera_external, load_settings
+from streamstack.framing import cli as framing_cli
+from streamstack.framing import health as framing_health
 from streamstack.system import (
     CAMLINK_LINK,
     CANON_USB_VENDOR,
@@ -318,7 +321,19 @@ def run_checks(cfg: dict[str, str] | None = None, *, stall_probe: bool = True) -
         )
 
     checks.append(encoder.health_check(cfg))
+    checks.append(framing_health.health_check(cfg))
+    checks.append(blur.health_check(cfg))
 
+    checks.extend(app_checks())
+    checks.append(
+        check("apps", "auto-mode", "ok", "auto mode", f"{'on' if auto_running() else 'off'} (streamstack auto on|off)")
+    )
+    return checks
+
+
+def app_checks() -> list[dict[str, str]]:
+    """The apps the rig and the calls need. Optional extras never warn."""
+    checks: list[dict[str, str]] = []
     for tool, why in (
         ("obs", "OBS Studio"),
         ("easyeffects", "Easy Effects"),
@@ -346,13 +361,11 @@ def run_checks(cfg: dict[str, str] | None = None, *, stall_probe: bool = True) -
         check(
             "apps",
             "zoom",
-            "ok" if have("zoom") else "warn",
+            # the zoom.us web client is a full replacement, so a missing desktop client is not a problem
+            "ok",
             "Zoom desktop client",
-            "installed" if have("zoom") else "not installed (zoom.us web client works too)",
+            "installed" if have("zoom") else "not installed, calls use the zoom.us web client",
         )
-    )
-    checks.append(
-        check("apps", "auto-mode", "ok", "auto mode", f"{'on' if auto_running() else 'off'} (streamstack auto on|off)")
     )
     return checks
 
@@ -407,6 +420,10 @@ def cmd_auto(args: argparse.Namespace) -> int:
         return auto.cmd_check(args)
     if args.action == "reset":
         return auto.cmd_reset(args)
+    if args.action in ("persona", "property"):
+        from streamstack.director import commands
+
+        return commands.persona(args.values) if args.action == "persona" else commands.prop(args.values)
     print(f"Auto mode: {'on' if auto_running() else 'off'}")
     if auto.load_baseline():
         print("  changes since the last reset can be undone: streamstack auto reset")
@@ -433,6 +450,10 @@ def describe(entry: dict) -> str:
         return f"{entry['source']}: {entry.get('metering', 'frame')} luma {entry['stats'].get('YAVG', 0):.0f}"
     if event == "ai":
         return f"({entry.get('confidence', 0):.1f}) {entry.get('proposal', {}).get('notes', '')}"
+    if event == "change":
+        return f"{entry.get('key')}: {entry.get('before')} -> {entry.get('after')} ({entry.get('reason', '')})"
+    if event == "override":
+        return f"you changed {', '.join(entry.get('keys', []))}; left alone for {entry.get('hold_minutes', 30)} min"
     return str(entry.get("error") or entry.get("reason") or "")
 
 
@@ -788,12 +809,6 @@ def cmd_console(args: argparse.Namespace) -> int:
     )
 
 
-def _canon_release_gvfs() -> None:
-    # GVFS mounts PTP cameras on plug-in and then holds the USB interface.
-    run(["gio", "mount", "-s", "gphoto2"], timeout=10)
-    run(["pkill", "-u", str(os.getuid()), "-f", "gvfsd-gphoto2"], timeout=5)
-
-
 def bridge_filter(width: str, height: str, fps: str) -> str:
     # Live view is 3:2 MJPEG; fill the 16:9 frame (crop, never letterbox) at a
     # constant rate so Teams/Zoom see a steady camera.
@@ -822,42 +837,7 @@ def cmd_canon_bridge(args: argparse.Namespace) -> int:
     if mode != "gphoto2":
         print(f"streamstack: canon bridge mode {mode!r} is disabled", file=sys.stderr)
         return 1
-    _canon_release_gvfs()
-    vf = bridge_filter(cfg["STREAMSTACK_WIDTH"], cfg["STREAMSTACK_HEIGHT"], cfg["STREAMSTACK_FPS"])
-    camera = subprocess.Popen(["gphoto2", "--stdout", "--capture-movie"], stdout=subprocess.PIPE)
-    encoder = subprocess.Popen(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "mjpeg",
-            "-i",
-            "pipe:0",
-            "-vf",
-            vf,
-            "-f",
-            "v4l2",
-            device,
-        ],
-        stdin=camera.stdout,
-        env=env,
-    )
-    if camera.stdout:
-        camera.stdout.close()
-
-    def stop(signum: int, frame: object) -> None:
-        for proc in (camera, encoder):
-            if proc.poll() is None:
-                proc.terminate()
-
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-    code = encoder.wait()
-    stop(0, None)
-    camera.wait(timeout=10)
-    return code or camera.returncode or 0
+    return canon_run.run_bridge(cfg)
 
 
 def _seed(
@@ -958,8 +938,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"streamstack {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="check cameras, microphone and apps").set_defaults(func=cmd_doctor)
-    auto = sub.add_parser("auto", help="auto-cinematographer and auto-audio: on, off, status, once, reset, check")
-    auto.add_argument("action", nargs="?", default="status", choices=["on", "off", "status", "once", "reset", "check"])
+    auto = sub.add_parser(
+        "auto", help="auto-cinematographer and auto-audio: on, off, status, once, reset, check, persona, property"
+    )
+    auto.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["on", "off", "status", "once", "reset", "check", "persona", "property"],
+    )
+    auto.add_argument("values", nargs="*", help="persona: an id; property: NAME LATITUDE LONGITUDE, or clear")
     auto.add_argument("--dry-run", action="store_true", help="with once: show Claude's proposal, change nothing")
     auto.add_argument("--lines", type=int, default=8, help="with status: how many recent actions to show")
     auto.set_defaults(func=cmd_auto)
@@ -1005,6 +993,7 @@ def build_parser() -> argparse.ArgumentParser:
     voice = sub.add_parser("voice", help="list or load a voice preset")
     voice.add_argument("preset", nargs="?")
     voice.set_defaults(func=cmd_voice)
+    canon_run.add_parser(sub)
     sub.add_parser("canon-bridge", help="feed Canon live view into the loopback camera").set_defaults(
         func=cmd_canon_bridge
     )
@@ -1013,6 +1002,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply", action="store_true", help="set the best one in the StreamStack OBS profile (OBS closed)"
     )
     enc.set_defaults(func=cmd_encoder)
+    framing_cli.add_parser(sub)
     setup = sub.add_parser("setup", help="seed OBS and Easy Effects defaults for this user")
     setup.add_argument("--force", action="store_true", help="overwrite with the StreamStack defaults")
     setup.add_argument("--quiet", action="store_true")

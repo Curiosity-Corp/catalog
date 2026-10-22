@@ -14,11 +14,13 @@ runs two loops on the graded studio camera:
            room noise never raises the gain.
 
   every STREAMSTACK_AUTO_AI_INTERVAL seconds (Claude)
-    send one still of the camera, the measured picture and voice statistics
-    and the current settings, and apply the bounded changes Claude proposes:
+    send a contact sheet of a burst of stills (the stills go to Claude), the
+    measured picture and voice numbers, the chosen persona, the time of day
+    and the current settings (see streamstack.director), and apply the
+    bounded changes Claude proposes:
     contrast, saturation, warmth (white balance), the cinematic LUT,
-    sharpening and the voice preset. Audio never leaves the host, only its
-    statistics. When Claude changes nothing and the picture holds still, the
+    sharpening and the voice preset. Audio never leaves the host, only the
+    numbers measured from it. When Claude changes nothing and the picture holds still, the
     pass backs off to 2x and then 4x the interval; a changed picture (lights,
     camera, person) brings it back early.
 
@@ -56,31 +58,32 @@ import urllib.request
 from pathlib import Path
 
 from streamstack import config, system
+from streamstack.director import (
+    actuators,
+    adapters,
+    audiofeatures,
+    devices,
+    faces,
+    judge,
+    limits,
+    observe,
+    pilot,
+    prompt,
+    status,
+)
 from streamstack.obs import COLOR_FILTER, LUT_FILTER, OBS, SHARPEN_FILTER, ensure_websocket
 
 API_MODEL = "claude-sonnet-5-5"
 LOG_MAX_BYTES = 2_000_000
 
-# Hard limits for every setting auto mode may touch, whoever proposes it.
-LIMITS = {
-    "brightness": (-0.15, 0.2),
-    "contrast": (-0.3, 0.4),
-    "gamma": (-0.5, 0.6),
-    "saturation": (-0.3, 0.35),
-    "warmth": (-0.5, 0.5),
-    "lut_amount": (0.0, 0.6),
-}
-# Largest change one Claude pass may make.
-AI_STEP = {"brightness": 0.08, "contrast": 0.15, "gamma": 0.2, "saturation": 0.15, "warmth": 0.25, "lut_amount": 0.2}
-COLOR_KEYS = ("brightness", "contrast", "gamma", "saturation", "warmth")
-# Relative to the gain auto mode found at start; boosting a quiet mic in
-# software also raises its noise, so the hardware gain knob comes first.
-MIC_GAIN_DB = (-12.0, 6.0)
-# Whole-frame exposure band (8-bit luma average) when no face is known.
-FRAME_BAND = (100.0, 140.0)
-# Face luma targets Claude may choose, and the band kept around them.
-FACE_TARGET = (70.0, 180.0)
-FACE_BAND = 15.0
+# Hard limits for every setting auto mode may touch live in director.limits (shared with the actuators).
+LIMITS = limits.LIMITS
+AI_STEP = limits.AI_STEP
+COLOR_KEYS = limits.COLOR_KEYS
+MIC_GAIN_DB = limits.MIC_GAIN_DB
+FRAME_BAND = limits.FRAME_BAND
+FACE_TARGET = limits.FACE_TARGET
+FACE_BAND = limits.FACE_BAND
 SUBJECT_MAX_AGE = 1200.0
 AI_MIN_GAP = 60.0
 AI_MAX_BACKOFF = 4
@@ -458,6 +461,12 @@ def load_baseline() -> dict:
         return {}
 
 
+def baseline_gain(target: str) -> float | None:
+    """The preamp gain an interface control had before auto mode first moved it, when recorded."""
+    value = (load_baseline().get("gain") or {}).get(target)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 def remember(kind: str, key: str, value) -> None:
     """Record the value from before auto mode's first change (never overwritten)."""
     baseline = load_baseline()
@@ -505,12 +514,14 @@ fix by hand (light, framing, background)."""
 
 
 def ask_claude(cfg: dict, image: Path, context: dict) -> dict:
+    """One Claude pass about `image`. `context["prompt"]` and `context["schema"]` replace the built-in ones."""
     backend = cfg["STREAMSTACK_AUTO_BACKEND"]
-    prompt = PROMPT.format(image=image, **context)
+    text = context["prompt"] if "prompt" in context else PROMPT.format(image=image, **context)
+    schema = context.get("schema", PROPOSAL_SCHEMA)
     if backend == "api":
-        return _ask_api(cfg, image, prompt)
+        return _ask_api(cfg, image, text, schema)
     if backend == "claude-cli":
-        return _ask_cli(cfg, image, prompt)
+        return _ask_cli(cfg, image, text, schema)
     raise RuntimeError(f"backend {backend!r} does not call Claude")
 
 
@@ -535,7 +546,7 @@ def json_from(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def cli_argv(claude: str, image: Path, prompt: str, model: str = "") -> list[str]:
+def cli_argv(claude: str, image: Path, prompt: str, model: str = "", schema: dict | None = None) -> list[str]:
     # --restricted drops every tool that runs code and confines Read to the
     # working directory, which holds only this still; --tools leaves Read
     # alone. No MCP servers, no saved session, schema-checked output.
@@ -546,7 +557,7 @@ def cli_argv(claude: str, image: Path, prompt: str, model: str = "") -> list[str
         "--output-format",
         "json",
         "--json-schema",
-        json.dumps(PROPOSAL_SCHEMA),
+        json.dumps(schema or PROPOSAL_SCHEMA),
         "--tools",
         "Read",
         "--restricted",
@@ -558,11 +569,13 @@ def cli_argv(claude: str, image: Path, prompt: str, model: str = "") -> list[str
     return argv
 
 
-def _ask_cli(cfg: dict, image: Path, prompt: str) -> dict:
+def _ask_cli(cfg: dict, image: Path, prompt: str, schema: dict | None = None) -> dict:
     claude = claude_cli()
     if not claude:
         raise RuntimeError("the claude CLI is not installed; install Claude Code and sign in, or use the api backend")
-    argv = cli_argv(claude, image, f"Read the image {image}, then answer.\n\n{prompt}", cfg["STREAMSTACK_AUTO_MODEL"])
+    argv = cli_argv(
+        claude, image, f"Read the image {image}, then answer.\n\n{prompt}", cfg["STREAMSTACK_AUTO_MODEL"], schema
+    )
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     try:
         result = subprocess.run(
@@ -614,15 +627,15 @@ def api_key() -> str:
     return key
 
 
-def api_request(cfg: dict, image: Path, prompt: str) -> dict:
+def api_request(cfg: dict, image: Path, prompt: str, schema: dict | None = None) -> dict:
     return {
         "model": cfg["STREAMSTACK_AUTO_MODEL"] or API_MODEL,
-        "max_tokens": 1024,
+        "max_tokens": 1800,
         "tools": [
             {
                 "name": "propose_adjustments",
                 "description": "Propose bounded picture and voice adjustments for the live call.",
-                "input_schema": PROPOSAL_SCHEMA,
+                "input_schema": schema or PROPOSAL_SCHEMA,
             }
         ],
         "tool_choice": {"type": "tool", "name": "propose_adjustments"},
@@ -645,10 +658,10 @@ def api_request(cfg: dict, image: Path, prompt: str) -> dict:
     }
 
 
-def _ask_api(cfg: dict, image: Path, prompt: str) -> dict:
+def _ask_api(cfg: dict, image: Path, prompt: str, schema: dict | None = None) -> dict:
     request = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
-        data=json.dumps(api_request(cfg, image, prompt)).encode(),
+        data=json.dumps(api_request(cfg, image, prompt, schema)).encode(),
         method="POST",
         headers={"x-api-key": api_key(), "anthropic-version": "2023-06-01", "content-type": "application/json"},
     )
@@ -673,7 +686,6 @@ class Auto:
         self.mic = system.microphone(cfg) if config.truthy(cfg["STREAMSTACK_AUTO_AUDIO"]) else ""
         self.mic_start_db = source_gain_db(self.mic) if self.mic else None
         self.last_ai = 0.0
-        self.last_preset_change = 0.0
         self.last_voice: dict = {}
         self.frame_stats: dict = {}
         self.ai_reference: dict = {}
@@ -683,6 +695,46 @@ class Auto:
         self.cache = config.cache_dir() / "auto"
         self.cache.mkdir(parents=True, exist_ok=True)
         self.cache.chmod(0o700)
+        self.pilot = pilot.Pilot(cfg)
+        self.governor = actuators.Governor()
+        self.registry = self._registry()
+        self.faces, self.faces_row = faces.install(cfg)
+        self.last_error = ""
+        self.report: dict = {}
+
+    def _registry(self) -> actuators.Registry:
+        """Everything auto mode can drive, behind one interface (see director.actuators)."""
+        registry = actuators.Registry()
+        registry.register(
+            actuators.ObsLookActuator(
+                connect=self.connect,
+                read_look=lambda obs, source: current_look(obs, source),
+                apply_look=lambda obs, source, look, target, seconds: apply_look(obs, source, look, target, seconds),
+                remember=lambda kind, key, value: remember(kind, key, value),
+                sources=lambda obs: obs.camera_sources(),
+            )
+        )
+        registry.register(
+            actuators.MicGainActuator(
+                source=lambda: self.mic,
+                read_gain=lambda source: source_gain_db(source),
+                write_gain=lambda source, db: set_source_gain_db(source, db),
+                remember=lambda kind, key, value: remember(kind, key, value),
+                start_gain=lambda: self.mic_start_db,
+            )
+        )
+        registry.register(
+            actuators.VoicePresetActuator(
+                presets=lambda: system.ee_presets(),
+                current=lambda: system.easyeffects_preset() or None,
+                load=lambda name: system.run(["easyeffects", "-l", name], timeout=15),
+                remember=lambda kind, key, value: remember(kind, key, value),
+            )
+        )
+        # Hardware: each is registered per its setting and says "unavailable, because ..." until its device shows.
+        for actuator in adapters.hardware_actuators(self.cfg, remember, baseline_gain):
+            registry.register(actuator)
+        return registry
 
     def connect(self) -> OBS | None:
         if self.obs:
@@ -706,11 +758,59 @@ class Auto:
             log("video-paused", reason=reason)
         self.skipping = reason
 
+    # -- one change, whoever asked for it ----------------------------------------------
+
+    def watch(self, actuator_id: str, target: str, current: dict) -> list[str]:
+        """Note values the person moved by hand since the director last set them; those are left alone."""
+        actuator = self.registry.get(actuator_id)
+        eps = actuator.override_eps()
+        self.governor.remember_state(actuator_id, target, current)
+        moved = self.governor.sync(actuator_id, target, current, eps)
+        if moved:
+            log("override", actuator=actuator_id, target=target, keys=moved, hold_minutes=int(self.governor.hold // 60))
+        return [f"{actuator.label}: {key}" for key in moved]
+
+    def held(self, actuator_id: str, target: str, current: dict) -> list[str]:
+        return [key for key in current if self.governor.is_held(actuator_id, target, key)]
+
+    def drive(
+        self,
+        actuator_id: str,
+        target: str,
+        current: dict,
+        wanted: dict,
+        reasons: dict[str, str],
+        source: str,
+        default_reason: str = "",
+        seconds: float = 4.0,
+    ) -> list[actuators.Change]:
+        """Apply `wanted` to one actuator through the governor: bounded, rate-limited, explained and journalled."""
+        actuator = self.registry.get(actuator_id)
+        values, changes = self.governor.plan(actuator, target, current, wanted, reasons, source, default_reason)
+        if not changes:
+            return []
+        for change in changes:
+            log("change", dry_run=self.dry_run, **change.public())
+        if self.dry_run:
+            return changes
+        try:
+            actuator.remember(target, current)
+            actuator.apply(target, current, values, seconds)
+        except actuators.ActuatorError as exc:
+            self.last_error = str(exc)
+            log("change-failed", actuator=actuator_id, target=target, error=str(exc), keys=[c.key for c in changes])
+            return []
+        self.governor.committed(actuator_id, target, values, [c.key for c in changes])
+        return changes
+
+    # -- the local loops -----------------------------------------------------------------
+
     def video_tick(self) -> None:
         obs = self.connect()
         if not obs:
             return
         try:
+            self.pilot.refresh()
             sources = obs.camera_sources()
             for index, source in enumerate(sources):
                 frame = obs.screenshot(source, self.cache / "local.jpg", width=320)
@@ -722,7 +822,7 @@ class Auto:
                 self.skipping = ""
                 if index == 0:
                     self.frame_stats = whole
-                stats, band, metering = whole, FRAME_BAND, "frame"
+                stats, band, metering = whole, self.pilot.frame_band(), "frame"
                 subject = self.subject if index == 0 else None
                 if subject and time.monotonic() - subject["time"] < SUBJECT_MAX_AGE:
                     face = picture_stats(frame, subject["box"])
@@ -730,33 +830,164 @@ class Auto:
                         stats, metering = face, "face"
                         if subject["target"] is not None:
                             band = (subject["target"] - FACE_BAND, subject["target"] + FACE_BAND)
+                        else:
+                            band = self.pilot.face_band()
                 look = current_look(obs, source)
+                self.watch("obs-look", source, look)
                 target = exposure_target(stats, look, band)
+                if target and index == 0 and self.canon_exposure(look, target, stats, band, metering):
+                    continue
                 if target:
-                    log(
-                        "exposure",
-                        source=source,
-                        metering=metering,
-                        stats=stats,
-                        band=band,
-                        before=look,
-                        after=target,
-                        dry_run=self.dry_run,
-                    )
-                    if not self.dry_run:
-                        remember("look", source, look)
-                        ramp(obs, source, look, target, seconds=1.5, steps=6)
+                    self._expose(obs, source, look, target, stats, band, metering)
+                elif index == 0 and config.truthy(self.cfg["STREAMSTACK_AUTO_PERSONA_LOOK"]):
+                    self._ease(source, look)
         except Exception as exc:
             log("video-error", error=str(exc))
             self.drop()
+
+    def _expose(self, obs: OBS, source: str, look: dict, target: dict, stats: dict, band: tuple, metering: str) -> None:
+        keys = [k for k in ("brightness", "gamma") if target.get(k) != look.get(k)]
+        if all(self.governor.is_held("obs-look", source, k) for k in keys):
+            return
+        average = stats.get("YAVG", 0.0)
+        side = "above" if average > band[1] else "below"
+        reason = (
+            f"The {metering} was {average:.0f} luma, {side} the {band[0]:.0f}-{band[1]:.0f} band for "
+            f"{self.pilot.persona['name']}"
+        )
+        log(
+            "exposure",
+            source=source,
+            metering=metering,
+            stats=stats,
+            band=band,
+            before=look,
+            after=target,
+            reason=reason,
+            dry_run=self.dry_run,
+        )
+        if self.dry_run:
+            return
+        wanted = {k: target[k] for k in keys}
+        values, changes = self.governor.plan(self.registry.get("obs-look"), source, look, wanted, {}, "local", reason)
+        if not changes:
+            return
+        remember("look", source, look)
+        ramp(obs, source, look, values, seconds=1.5, steps=6)
+        self.governor.committed("obs-look", source, values, [c.key for c in changes])
+
+    def canon(self) -> tuple[devices.CanonActuator, str, dict] | None:
+        """(the Canon actuator, its target, the controls the director may change now), or None without a usable one."""
+        actuator = self.registry.find("canon-exposure")
+        if not isinstance(actuator, devices.CanonActuator) or not actuator.availability().ok:
+            return None
+        targets = actuator.targets()
+        current = actuator.read(targets[0]) if targets else {}
+        return (actuator, targets[0], current) if targets and current else None
+
+    def canon_exposure(self, look: dict, target: dict, stats: dict, band: tuple, metering: str) -> bool:
+        """Let the camera's own exposure compensation do the exposing; True when it took this pass.
+
+        The Canon is the first choice because it works on the sensor, before the picture is compressed: raising the
+        exposure in OBS afterwards lifts noise too. OBS finishes the job when the camera is at its limit, locked, or
+        the person set it by hand (see the governor's hold), and always when there is no Canon.
+        """
+        found = self.canon()
+        if found is None or "exposure_comp" not in found[2]:
+            return False
+        actuator, name, current = found
+        self.watch("canon-exposure", name, current)
+        direction = 1 if (target["gamma"] - look["gamma"]) + (target["brightness"] - look["brightness"]) > 0 else -1
+        if self.governor.is_held("canon-exposure", name, "exposure_comp") or not actuator.headroom(current, direction):
+            return False
+        average = stats.get("YAVG", 0.0)
+        side = "above" if average > band[1] else "below"
+        reason = (
+            f"The {metering} was {average:.0f} luma, {side} the {band[0]:.0f}-{band[1]:.0f} band for "
+            f"{self.pilot.persona['name']}; the camera's own exposure compensation moves first"
+        )
+        step = actuator.param("exposure_comp").step or 0.34
+        self.last_error = ""
+        self.drive(
+            "canon-exposure",
+            name,
+            current,
+            {"exposure_comp": current["exposure_comp"] + direction * step},
+            {},
+            "local",
+            reason,
+        )
+        return not self.last_error
+
+    def canon_white_balance(self, picture: dict) -> None:
+        """One step of the camera's Kelvin towards the persona's colour temperature, judged on the measured picture."""
+        found = self.canon()
+        warm = picture.get("warm_index")
+        if found is None or "kelvin" not in found[2] or not isinstance(warm, (int, float)):
+            return
+        actuator, name, current = found
+        self.watch("canon-exposure", name, current)
+        wanted_k = float(self.pilot.persona["picture"]["warmth_k"])
+        gap = warm - judge.expected_warm_index(wanted_k)
+        if abs(gap) <= judge.WARM_TOLERANCE:
+            return
+        step = actuator.param("kelvin").step or 400.0
+        # A warmer picture than wanted: tell the camera the light is cooler (a lower Kelvin), and the other way round.
+        direction = -1 if gap > 0 else 1
+        side = "warmer" if gap > 0 else "cooler"
+        reason = (
+            f"The picture read {side} than {self.pilot.persona['name']}'s {wanted_k:.0f} K "
+            f"(warm index {warm:+.2f}, wanted about {judge.expected_warm_index(wanted_k):+.2f})"
+        )
+        self.drive(
+            "canon-exposure", name, current, {"kelvin": current["kelvin"] + direction * step}, {}, "local", reason
+        )
+
+    def light_tick(self) -> None:
+        """Ease the Litra lights towards the persona's light for this hour (brightness and colour temperature)."""
+        actuator = self.registry.find("litra")
+        if not isinstance(actuator, devices.LitraActuator) or not actuator.availability().ok:
+            return
+        self.pilot.refresh()
+        goal = self.pilot.light_goal()
+        if goal is None:
+            return
+        fraction, kelvin, origin, why = goal
+        readings = {t: r for t in actuator.targets() if (r := actuator.read(t))}
+        for light, current in readings.items():
+            self.watch("litra", light, current)
+        for light, wanted in actuator.plan_group(fraction, kelvin, readings).items():
+            current = readings[light]
+            wanted = {
+                k: v
+                for k, v in wanted.items()
+                if abs(v - current[k]) >= (devices.LIGHT_EPS_LUMEN if k == "lumen" else devices.LIGHT_EPS_KELVIN)
+            }
+            if wanted:
+                self.drive("litra", light, current, wanted, {}, origin, f"Easing towards {why}")
+
+    def _ease(self, source: str, look: dict) -> None:
+        """A small step towards the persona's look for this hour, when nothing needs exposing."""
+        wanted, origin, reason = self.pilot.ease(look)
+        if "warmth" in wanted:
+            found = self.canon()
+            if found is not None and "kelvin" in found[2]:
+                del wanted["warmth"]  # the camera's own Kelvin is doing the white balance
+        if wanted:
+            self.drive("obs-look", source, look, wanted, {}, origin, reason, seconds=2.0)
 
     def audio_tick(self) -> None:
         if not self.mic:
             return
         stats = voice_stats(self.mic)
         self.last_voice = stats
+        if stats and self.hardware_gain(stats):
+            return
         gain = source_gain_db(self.mic)
         if not stats or gain is None:
+            return
+        self.watch("mic-gain", self.mic, {"gain_db": gain})
+        if self.governor.is_held("mic-gain", self.mic, "gain_db"):
             return
         change = gain_change(stats)
         if not change:
@@ -765,10 +996,61 @@ class Auto:
         new = max(base + MIC_GAIN_DB[0], min(base + MIC_GAIN_DB[1], gain + change))
         if abs(new - gain) < 0.25:
             return
-        log("mic-gain", source=self.mic, stats=stats, before_db=gain, after_db=new, dry_run=self.dry_run)
-        if not self.dry_run:
-            remember("mic", self.mic, gain if self.mic_start_db is None else self.mic_start_db)
-            set_source_gain_db(self.mic, new)
+        reason = (
+            "The microphone was clipping."
+            if stats.get("peak_db", -90) > -1.0
+            else "Speech was too loud."
+            if change < 0
+            else "Speech was quiet against the room."
+        )
+        self.drive("mic-gain", self.mic, {"gain_db": gain}, {"gain_db": new}, {}, "local", reason)
+
+    def hardware_gain(self, stats: dict) -> bool:
+        """Level the voice with the interface's own preamp gain; False when there is none (use the software gain)."""
+        actuator = self.registry.find("interface-gain")
+        if not isinstance(actuator, devices.InterfaceGainActuator) or not actuator.availability().ok:
+            return False
+        targets = actuator.targets()
+        current = actuator.read(targets[0]) if targets else {}
+        if not current:
+            return False
+        name, gain = targets[0], current["gain_db"]
+        self.watch("interface-gain", name, current)
+        if self.governor.is_held("interface-gain", name, "gain_db"):
+            return True  # the person has a hand on the preamp; the software gain stays out of it too
+        change = gain_change(stats)
+        window = actuator.window(name)
+        if not change or window is None:
+            return True
+        new = max(window[0], min(window[1], gain + change))
+        if abs(new - gain) < 0.25:
+            return True
+        reason = (
+            "The microphone was clipping."
+            if stats.get("peak_db", -90) > -1.0
+            else "Speech was too loud."
+            if change < 0
+            else "Speech was quiet against the room."
+        )
+        self.last_error = ""
+        self.drive("interface-gain", name, current, {"gain_db": new}, {}, "local", reason)
+        return not self.last_error
+
+    # -- looking and listening for a Claude pass ----------------------------------------------
+
+    def listen(self) -> tuple[dict | None, str]:
+        """Record a short clip, reduce it to features on this machine and delete it. (features, why-not)."""
+        if not self.mic:
+            return None, "no microphone is being watched"
+        seconds = max(3.0, min(15.0, float(self.cfg["STREAMSTACK_AUTO_CLIP_SECONDS"] or 6)))
+        with tempfile.TemporaryDirectory(prefix="clip-", dir=self.cache) as tmp:
+            clip = Path(tmp) / "clip.wav"
+            if not system.record(self.mic, seconds, str(clip)):
+                return None, "the microphone gave no audio"
+            try:
+                return audiofeatures.analyze_wav(clip), ""
+            except audiofeatures.AudioAnalysisError as exc:
+                return None, f"the clip could not be analysed ({exc})"
 
     def ai_due(self, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
@@ -780,8 +1062,7 @@ class Auto:
         return elapsed >= AI_MIN_GAP and picture_changed(self.ai_reference, self.frame_stats)
 
     def ai_tick(self, force: bool = False) -> dict | None:
-        if self.cfg["STREAMSTACK_AUTO_BACKEND"] == "local":
-            return None
+        asks_claude = self.cfg["STREAMSTACK_AUTO_BACKEND"] != "local"
         if not force and not self.ai_due():
             return None
         self.last_ai = time.monotonic()
@@ -795,76 +1076,273 @@ class Auto:
                 log("ai-skipped", reason="no camera with the StreamStack filters in the program scene")
                 return None
             source = sources[0]
+            self.pilot.refresh()
             with tempfile.TemporaryDirectory(prefix="ai-", dir=self.cache) as tmp:
-                frame = obs.screenshot(source, Path(tmp) / "frame.jpg")
+                seen = observe.observe(
+                    source,
+                    lambda path: obs.screenshot(source, path),
+                    Path(tmp),
+                    observe.burst_size(self.cfg),
+                    observe.burst_spacing(self.cfg),
+                    sleep=lambda seconds: time.sleep(seconds),
+                )
+                frame = seen.middle
                 stats = picture_stats(frame)
                 reason = no_picture(stats)
                 if reason:
                     log("ai-skipped", reason=f"{source}: {reason}")
                     return None
                 look = current_look(obs, source)
+                self.watch("obs-look", source, look)
+                held = self.held("obs-look", source, look)
+                audio, audio_reason = self.listen()
+                findings = self.assess(seen, audio, audio_reason)
+                self.canon_white_balance(judge.aggregate_frames((seen.analysis or {}).get("frames", [])))
+                self.keep(source, look, held)
                 presets = system.ee_presets()
                 preset = system.easyeffects_preset()
-                context = {
-                    "source": source,
-                    "picture": json.dumps(stats),
-                    "look": json.dumps(look),
-                    "limits": json.dumps(LIMITS),
-                    "steps": json.dumps(AI_STEP),
-                    "voice": json.dumps(self.last_voice or "not measured"),
-                    "preset": preset or "unknown",
-                    "presets": json.dumps(presets),
-                }
+                context = self.context(seen, source, stats, look, held, findings, audio, audio_reason, presets, preset)
+                status.publish_sheet(seen.sheet)
+                self.report = self.snapshot(seen, findings, audio, audio_reason, held)
+                if not asks_claude:
+                    self.subject = self.local_subject(seen, source, None)
+                    self.finish_report(None, [])
+                    return None
                 started = time.monotonic()
-                proposal = ask_claude(self.cfg, frame, context)
-                shutil.copy2(frame, self.cache / "last-ai.jpg")
-            target = bounded(proposal, look)
-            confidence = float(proposal.get("confidence", 0) or 0)
-            notes = str(proposal.get("notes", ""))[:300]
-            subject = subject_from(proposal)
-            self.subject = dict(subject, time=time.monotonic(), source=source) if subject else None
-            self.ai_reference = stats
-            log(
-                "ai",
-                source=source,
-                stats=stats,
-                before=look,
-                after=target,
-                proposal=proposal,
-                confidence=confidence,
-                seconds=round(time.monotonic() - started, 1),
-                dry_run=self.dry_run,
-            )
-            if self.dry_run or confidence < 0.5:
-                self.ai_backoff = min(AI_MAX_BACKOFF, self.ai_backoff * 2)
-                return proposal
-            if any(target.get(k) != look.get(k) for k in target):
-                remember("look", source, look)
-            changed = apply_look(obs, source, look, target)
-            wanted = (proposal.get("audio") or {}).get("voice_preset")
-            if (
-                wanted
-                and wanted in presets
-                and wanted != preset
-                and confidence >= 0.7
-                and time.monotonic() - self.last_preset_change > 600
-            ):
-                if preset:
-                    remember("preset", "input", preset)
-                system.run(["easyeffects", "-l", wanted], timeout=15)
-                self.last_preset_change = time.monotonic()
-                notes += f" (voice: {wanted})"
-                changed = True
-            # Nothing to change in a still picture: look less often.
-            self.ai_backoff = 1 if changed else min(AI_MAX_BACKOFF, self.ai_backoff * 2)
-            if notes:
-                notify(self.cfg, "Auto-cinematographer", notes)
-            return proposal
+                proposal = ask_claude(self.cfg, seen.sheet, context)
+                shutil.copy2(seen.sheet, self.cache / "last-ai.jpg")
+            return self.apply_proposal(proposal, obs, source, look, stats, presets, preset, started, seen)
         except Exception as exc:
             log("ai-error", error=str(exc))
             notify(self.cfg, "Auto-cinematographer paused a pass", str(exc)[:200])
             self.drop()
             return None
+
+    def local_subject(self, seen: observe.Observation, source: str, claude: dict | None) -> dict | None:
+        """The face to meter: the face detector's box when it found one, else Claude's; Claude keeps the luma target."""
+        found = judge.aggregate_frames((seen.analysis or {}).get("frames", [])).get("subject")
+        box = found["box"] if isinstance(found, dict) and found.get("source") == "yunet" else None
+        if box is None and claude is None:
+            return None
+        chosen = {"box": box or claude["box"], "target": claude["target"] if claude else None}
+        return dict(chosen, time=time.monotonic(), source=source)
+
+    def assess(self, seen: observe.Observation, audio: dict | None, audio_reason: str) -> list[dict]:
+        """Local findings (picture and voice) against the persona and the hour."""
+        persona = self.pilot.persona
+        frames = (seen.analysis or {}).get("frames", [])
+        picture = judge.aggregate_frames(frames)
+        burst = (seen.analysis or {}).get("burst", {})
+        sun = self.pilot.sun_public()
+        return judge.picture_findings(picture, burst, persona, sun) + judge.voice_findings(audio, persona, audio_reason)
+
+    def keep(self, source: str, look: dict, held: list[str]) -> None:
+        """What is in place at the start of a pass is what the person kept since the last one; learn it."""
+        if self.dry_run:
+            return
+        gain = source_gain_db(self.mic) if self.mic else None
+        try:
+            self.pilot.remember_kept(
+                look,
+                bool(held),
+                (self.mic, gain) if self.mic and gain is not None else None,
+                self.kept_light(),
+            )
+        except OSError as exc:
+            log("learn-error", error=str(exc))
+
+    def kept_light(self) -> tuple[float, float] | None:
+        """The (brightness fraction, kelvin) the person left the lights at, only when they moved them by hand.
+
+        What the director set itself is not "kept": learning it would make the first night pass settle on whatever
+        the lights were at and never raise them for the dark hours.
+        """
+        actuator = self.registry.find("litra")
+        if not isinstance(actuator, devices.LitraActuator) or not actuator.availability().ok:
+            return None
+        fractions: list[float] = []
+        kelvins: list[float] = []
+        for light in actuator.targets():
+            current = actuator.read(light)
+            if not current or not self.held("litra", light, current):
+                continue
+            fraction = actuator.fraction(light, current["lumen"])
+            if fraction is not None:
+                fractions.append(fraction)
+                kelvins.append(current["kelvin"])
+        return (sum(fractions) / len(fractions), sum(kelvins) / len(kelvins)) if fractions else None
+
+    def context(
+        self,
+        seen: observe.Observation,
+        source: str,
+        stats: dict,
+        look: dict,
+        held: list[str],
+        findings: list[dict],
+        audio: dict | None,
+        audio_reason: str,
+        presets: list[str],
+        preset: str,
+    ) -> dict:
+        analysis = seen.analysis or {}
+        text = prompt.build(
+            image=seen.sheet,
+            source=source,
+            frames=len(seen.stills),
+            spacing=seen.spacing,
+            persona=self.pilot.persona,
+            sun=self.pilot.sun_public(),
+            picture={k: v for k, v in judge.aggregate_frames(analysis.get("frames", [])).items() if k != "histogram"}
+            or stats,
+            burst=analysis.get("burst", {}),
+            findings=findings,
+            audio=audio,
+            audio_reason=audio_reason,
+            look=look,
+            presets=presets,
+            preset=preset or None,
+            learned=self.pilot.learned(),
+            held=held,
+        )
+        return {
+            "prompt": text,
+            "schema": prompt.schema(PROPOSAL_SCHEMA),
+            "source": source,
+            "picture": json.dumps(stats),
+            "look": json.dumps(look),
+            "limits": json.dumps(LIMITS),
+            "steps": json.dumps(AI_STEP),
+            "voice": json.dumps(audio or self.last_voice or "not measured"),
+            "preset": preset or "unknown",
+            "presets": json.dumps(presets),
+        }
+
+    def apply_proposal(
+        self,
+        proposal: dict,
+        obs: OBS,
+        source: str,
+        look: dict,
+        stats: dict,
+        presets: list[str],
+        preset: str,
+        started: float,
+        seen: observe.Observation,
+    ) -> dict:
+        target = bounded(proposal, look)
+        confidence = float(proposal.get("confidence", 0) or 0)
+        notes = str(proposal.get("notes", ""))[:300]
+        reasons = prompt.reasons_from(proposal)
+        assessment = prompt.assessment_from(proposal)
+        subject = subject_from(proposal)
+        self.subject = self.local_subject(seen, source, subject)
+        self.ai_reference = stats
+        log(
+            "ai",
+            source=source,
+            stats=stats,
+            before=look,
+            after=target,
+            proposal=proposal,
+            confidence=confidence,
+            seconds=round(time.monotonic() - started, 1),
+            persona=self.pilot.persona["id"],
+            slot=self.pilot.slot,
+            frames=len(seen.stills),
+            assessment=assessment,
+            reasons=reasons,
+            dry_run=self.dry_run,
+        )
+        changes: list[actuators.Change] = []
+        if self.dry_run or confidence < 0.5:
+            self.ai_backoff = min(AI_MAX_BACKOFF, self.ai_backoff * 2)
+        else:
+            wanted = {k: v for k, v in target.items() if v != look.get(k)}
+            changes += self.drive("obs-look", source, look, wanted, reasons, "claude", "Claude adjusted the look")
+            self.pilot.claude_set.update(c.key for c in changes)
+            name = (proposal.get("audio") or {}).get("voice_preset")
+            if name and name in presets and name != preset and confidence >= 0.7:
+                voice = self.drive(
+                    "voice-preset",
+                    "input",
+                    {"voice_preset": preset or None},
+                    {"voice_preset": name},
+                    {"voice_preset": reasons.get("voice_preset", reasons.get("audio", ""))},
+                    "claude",
+                    "Claude chose another voice preset",
+                )
+                if voice:
+                    notes += f" (voice: {name})"
+                changes += voice
+            # Nothing to change in a still picture: look less often.
+            self.ai_backoff = 1 if changes else min(AI_MAX_BACKOFF, self.ai_backoff * 2)
+            if notes:
+                notify(self.cfg, "Auto-cinematographer", notes)
+        self.finish_report(
+            {"confidence": confidence, "notes": notes, "assessment": assessment, "reasons": reasons}, changes
+        )
+        return proposal
+
+    # -- the status the Console reads -----------------------------------------------------------
+
+    def snapshot(
+        self, seen: observe.Observation, findings: list[dict], audio: dict | None, audio_reason: str, held: list[str]
+    ) -> dict:
+        analysis = seen.analysis or {}
+        now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        keep = (
+            "seconds",
+            "enough_speech",
+            "speech_ratio",
+            "peak_db",
+            "speech_db",
+            "noise_floor_db",
+            "snr_db",
+            "lufs",
+            "f0_hz",
+            "f0_low_hz",
+            "f0_high_hz",
+            "f0_range_st",
+            "pitch_band",
+            "centroid_hz",
+            "tilt_db_oct",
+            "clarity_db",
+            "sibilance_db",
+            "rt60_s",
+            "room",
+            "scores",
+        )
+        return {
+            "time": now,
+            "persona": self.pilot.persona["id"],
+            "slot": self.pilot.slot,
+            "observation": {
+                "source": seen.source,
+                "frames": len(seen.stills),
+                "spacing": seen.spacing,
+                "picture": judge.aggregate_frames(analysis.get("frames", [])),
+                "burst": analysis.get("burst", {}),
+                "problems": seen.problems,
+            },
+            "audio": {"features": {k: audio[k] for k in keep if k in audio} if audio else None, "reason": audio_reason},
+            "findings": findings,
+            "held": held,
+            "learned": self.pilot.learned(),
+        }
+
+    def finish_report(self, answer: dict | None, changes: list[actuators.Change]) -> None:
+        """Write what this pass saw, said and changed to director-status.json for the Console."""
+        if not self.report:
+            return
+        report = dict(self.report)
+        report["claude"] = answer
+        report["changes"] = [c.public() for c in changes]
+        report["actuators"] = [*self.registry.describe(), self.faces.describe() if self.faces else self.faces_row]
+        try:
+            status.write(report)
+        except OSError as exc:
+            log("status-error", error=str(exc))
 
 
 def gain_change(stats: dict[str, float]) -> float:
@@ -905,6 +1383,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             auto.video_tick()
         if config.truthy(cfg["STREAMSTACK_AUTO_AUDIO"]):
             auto.audio_tick()
+        auto.light_tick()
         auto.ai_tick()
         while not stop["now"] and time.monotonic() - started < interval:
             time.sleep(0.5)
@@ -937,6 +1416,22 @@ def cmd_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def restore_hardware(baseline: dict, cfg: dict) -> int:
+    """Put the camera, lights and preamp gain back to what they were before auto mode (problems found)."""
+    problems = 0
+    for actuator in adapters.hardware_actuators(cfg, remember, baseline_gain):
+        saved = baseline.get(actuator.baseline_kind) or {}
+        for target, value in saved.items():
+            try:
+                actuator.restore(target, value)
+            except actuators.ActuatorError as exc:
+                print(f"{actuator.label} ({target}): not restored: {exc}")
+                problems += 1
+            else:
+                print(f"{actuator.label} ({target}): restored")
+    return problems
+
+
 def cmd_reset(args: argparse.Namespace) -> int:
     """Ramp back to the look, mic gain and voice preset from before auto mode changed them."""
     baseline = load_baseline()
@@ -964,6 +1459,7 @@ def cmd_reset(args: argparse.Namespace) -> int:
     for source, gain in baseline.get("mic", {}).items():
         set_source_gain_db(source, float(gain))
         print(f"{source}: input gain back to {float(gain):+.1f} dB")
+    problems += restore_hardware(baseline, config.load_settings())
     preset = baseline.get("preset", {}).get("input")
     if preset and system.easyeffects_running():
         system.run(["easyeffects", "-l", preset], timeout=15)
@@ -1017,6 +1513,11 @@ def cmd_check(args: argparse.Namespace) -> int:
             problems += 1
     else:
         print("Claude: off (local loops only)")
+    for actuator in adapters.hardware_actuators(cfg, remember, baseline_gain):
+        state = actuator.availability()
+        print(f"{actuator.label}: {'ready' if state.ok else 'not available - ' + state.reason}")
+    _, face_row = faces.install(cfg)
+    print(f"Face finder: {'YuNet' if face_row['available'] else face_row['reason']}")
     mic = system.microphone(cfg)
     print(f"Microphone: {mic or 'none found'}")
     problems += config.truthy(cfg["STREAMSTACK_AUTO_AUDIO"]) and not mic

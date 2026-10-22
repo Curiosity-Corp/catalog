@@ -121,6 +121,18 @@ def healthy_rig(monkeypatch: pytest.MonkeyPatch) -> None:
         "health_check",
         lambda cfg: cli.check("video", "encoder", "ok", "OBS encodes with AV1 on the GPU (VA-API)"),
     )
+    monkeypatch.setattr(
+        cli.framing_health,
+        "health_check",
+        lambda cfg: cli.check("video", "framing", "ok", "Auto-framing is not installed (optional)"),
+    )
+    monkeypatch.setattr(
+        cli.blur,
+        "health_check",
+        lambda cfg: cli.check(
+            "video", "background-blur", "ok", "Background blur is available: obs-backgroundremoval 1.4.1"
+        ),
+    )
     monkeypatch.setattr(cli, "_watch_microphone", lambda mic: micwatch.StallProbe(False, "healthy", "scheduled"))
 
 
@@ -400,7 +412,7 @@ def test_demo_studio_stop_and_start_flip_state() -> None:
 
 
 def test_demo_busy_while_a_slow_action_runs() -> None:
-    demo = DemoStudio(delay=0.2)
+    demo = DemoStudio(delay=1.5)  # long enough that a loaded CI runner cannot finish it between two calls
     demo.act("studio.stop", {})
     assert demo.state()["studio"]["busy"] is True and demo.state()["studio"]["running"] is True
     with pytest.raises(ActionError) as busy:

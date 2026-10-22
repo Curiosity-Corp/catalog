@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "id": "daylight-natural",
+  "name": "Daylight natural",
+  "tagline": "Honest colour, nothing added",
+  "description": "True-to-life colour and a clean, unprocessed voice. The default: it corrects problems and adds no style.",
+  "mood": [
+    "natural",
+    "honest",
+    "neutral",
+    "approachable"
+  ],
+  "avoid": [
+    "colour cast",
+    "clipped highlights",
+    "crushed shadows",
+    "over-processed look",
+    "boxy or harsh voice"
+  ],
+  "swatch": [
+    "#3d5a73",
+    "#cfe3f1"
+  ],
+  "picture": {
+    "look": {
+      "brightness": 0.0,
+      "contrast": 0.04,
+      "gamma": 0.0,
+      "saturation": 0.0,
+      "warmth": 0.0
+    },
+    "face_luma": [
+      110,
+      150
+    ],
+    "frame_luma": [
+      100,
+      140
+    ],
+    "warmth_k": 5600,
+    "saturation": [
+      0.14,
+      0.32
+    ],
+    "contrast_spread": [
+      110,
+      205
+    ],
+    "max_clipped": 0.02
+  },
+  "voice": {
+    "preset": "StreamStack Voice",
+    "speech_peak_db": [
+      -24,
+      -12
+    ],
+    "lufs": [
+      -30,
+      -16
+    ],
+    "targets": {
+      "depth": [
+        0.35,
+        0.8
+      ],
+      "clarity": [
+        0.3,
+        0.75
+      ],
+      "sibilance": [
+        0.0,
+        0.55
+      ]
+    },
+    "min_snr_db": 30,
+    "max_rt60_s": 0.6
+  },
+  "light": {
+    "brightness": 0.6,
+    "kelvin": 5600
+  }
+}

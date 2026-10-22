@@ -113,28 +113,34 @@ Component: new `streamstack/framing.py`, a thread owned by the console's
 
 ## Design 2: background blur (issues #24, #26)
 
-Component: obs-backgroundremoval built as a .deb in CI against OBS 32.1.0 and
-installed by the workstation role (StreamStack itself never installs it).
+Component: obs-backgroundremoval 1.4.1 (upstream release `.forky_amd64.deb`, installs to
+`/usr/local`) installed by the workstation role (Curiosity-Corp/catalog#100; StreamStack itself never
+installs it). Implemented in #24, with the keys below read from the plugin source at tag 1.4.1.
 
 Filter in `scenes.json`, on the camera source, after the existing Lighting &
 Color filter and disabled by default:
 
 | Setting | Value |
 | --- | --- |
-| Filter name | `Background Blur` (StreamStack's handle) |
-| Model | MediaPipe Meet or PP-HumanSeg, 256-class input |
-| Inference device | CPU, 2 threads (README guidance) |
-| Max FPS | 15 (mask reused between inferences) |
-| Blur strength | 6 to 10 percent, exposed as the Console control |
-| Edge smoothing | on, feather 1 to 2 px |
+| Filter name | `Background Blur` (StreamStack's handle), kind `background_removal` |
+| `model_select` | `models/mediapipe.with_runtime_opt.ort` (MediaPipe Meet; the input size is fixed by the model, there is no resolution key) |
+| `useGPU` / `numThreads` | `cpu` / `2` (README: two threads work best) |
+| `mask_every_x_frames` | `2` (Balanced); the plugin has no fps key, so 30 fps camera gives a 15 Hz mask, with the mask reused in between |
+| `enable_image_similarity` / `image_similarity_threshold` | on / 35 dB PSNR: skip inference when the picture is nearly unchanged |
+| `temporal_smooth_factor` | `0.85` |
+| `blur_background` | `8`, an integer Kawase pass count 1 to 20 (not a percentage); 0 means "remove the background" and is never written |
+| Edge | `enable_threshold` on at `0.5`, `contour_filter` `0.05`, `smooth_contour` `0.3`, `feather` `0.05` (kernel int(40 x feather) = 2 px) |
+| Other | `enable_focal_blur` off, `stop_when_source_is_inactive` on |
 
-Exact setting keys come from `GetSourceFilterDefaultSettings` against the
-installed plugin in #24, not from this document.
+The Console control is a toggle, a strength fader (`blur_background`) and a Light / Balanced / Smooth switch
+(`mask_every_x_frames` 3 / 2 / 1). A per-frame cost guard reads OBS's `GetStats` and flags the blur when it
+adds 8 ms or more of frame time, 1 percent or more CPU, or any dropped frame (docs/console.md, "Background blur
+notes"). Upstream has no OpenVINO device value, so the Arc path below is a carried build, not a setting.
 
-Console: Camera page toggle "Blur background" plus a strength fader, via
-`SetSourceFilterEnabled` and `SetSourceFilterSettings`. Presence is detected
-from `GetSourceFilterKindList`; if the plugin kind is absent the control is
-hidden with an install hint.
+Console: Camera page toggle "Blur background" plus a strength fader and a smoothness switch, and a compact
+"Blur" pad on Live, via `CreateSourceFilter`, `SetSourceFilterEnabled` and `SetSourceFilterSettings`. Presence is
+detected from the plugin files and `GetSourceFilterKindList`; if the plugin is absent the Camera card shows an
+install hint, the Live pad is hidden and the health check warns.
 
 Fallback with no Arc GPU: this is the default path, CPU only. If the benchmark
 (#22) shows the CPU misses the gate, #26 carries an ORT OpenVINO build with

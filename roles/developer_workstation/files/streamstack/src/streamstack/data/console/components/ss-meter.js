@@ -13,18 +13,24 @@
 //   mode          led (segments, default) | smooth
 //   label         text under/over the meter (also its accessible name)
 //   thickness     bar thickness in rem (default 0.9)
-// Properties: push(frame)  frame = {peak_db, rms_db, clip}; null/undefined = silence
+// Properties: push(frame)  frame = {peak_db, rms_db, clip, latched?}; null/undefined = silence
+//   peak_db is the 4x-oversampled true peak (dBTP). `clip` = this frame reached -1 dBTP or the rail.
 // Methods:  resetClip()
+// Clip lamp: with a `source` it shows the server's latch (`latched`), which stays on until cleared; a click sends
+//   audio.clip_clear, so every page and window drops it together. A manual meter has no server: its lamp holds 3 s.
 // Ballistics: peak = instant attack, 20 dB/s release; level (RMS) = 50 ms attack, 350 ms release;
-//   peak-hold tick holds 1.6 s then falls 14 dB/s; the clip lamp latches for 3 s (click it to clear).
+//   peak-hold tick holds 1.6 s then falls 14 dB/s; a latched clip lamp stays lit until it is clicked.
 // Rendering never touches the page: one shared requestAnimationFrame loop, only while a meter is moving.
 // The element has role="meter"; aria-valuenow is refreshed ~4×/s (not per frame).
 
 import { css, define, SSElement } from './base.js';
 import { store } from '../core/store.js';
 import { clamp } from '../core/util.js';
+import { act } from '../core/actions.js';
 
 const FLOOR = -90;
+const CLIP_TP = -1;          // dBTP: EBU R128 true-peak ceiling
+const LATCH_SETTLE_MS = 500;  // frames already in flight when the latch is cleared still say latched
 const styles = css`
   :host { display: inline-flex; flex-direction: column; align-items: center; gap: var(--s-2); min-width: 0; min-height: 0; --bar: 0.9rem; }
   :host([orientation="horizontal"]) { flex-direction: row-reverse; align-items: center; width: 100%; }
@@ -65,13 +71,15 @@ export class SSMeter extends SSElement {
     this.peak = FLOOR; this.rms = FLOOR; this.hold = FLOOR; this.holdAt = 0;
     this.inPeak = FLOOR; this.inRms = FLOOR;
     this.clipUntil = 0;
+    this.latched = false;
+    this.latchIgnoreUntil = 0;
     this.size = { w: 0, h: 0, dpr: 1 };
     this._ariaAt = 0;
     this.rootPx = 14;
   }
 
   build(root) {
-    root.innerHTML = `<div class="stage"><button class="clip" type="button" aria-label="Clip indicator, press to clear" title="Clip — click to clear"></button><div class="cv"><canvas></canvas></div></div><span class="label"></span>`;
+    root.innerHTML = `<div class="stage"><button class="clip" type="button" aria-label="Clip indicator" title="Clip lamp: lights at -1 dBTP or full scale and stays lit — click to clear"></button><div class="cv"><canvas></canvas></div></div><span class="label"></span>`;
     this.$ = { canvas: root.querySelector('canvas'), cv: root.querySelector('.cv'), clip: root.querySelector('.clip'), label: root.querySelector('.label') };
     this.ctx = this.$.canvas.getContext('2d');
     this.$.clip.addEventListener('click', () => this.resetClip());
@@ -132,12 +140,22 @@ export class SSMeter extends SSElement {
     else {
       this.inPeak = Number.isFinite(frame.peak_db) ? frame.peak_db : FLOOR;
       this.inRms = Number.isFinite(frame.rms_db) ? frame.rms_db : FLOOR;
-      if (frame.clip || this.inPeak >= -0.5) this.clipUntil = performance.now() + 3000;
+      const now = performance.now();
+      if ('latched' in frame) this.latched = !!frame.latched && now >= this.latchIgnoreUntil;
+      else if (frame.clip || this.inPeak >= CLIP_TP) this.clipUntil = now + 3000;
     }
     wake(this);
   }
 
-  resetClip() { this.clipUntil = 0; this.dirty = true; wake(this); }
+  /** Clear the lamp. With a source the latch lives on the server (shared by every window); tell it. */
+  resetClip() {
+    this.clipUntil = 0;
+    this.latched = false;
+    this.latchIgnoreUntil = performance.now() + LATCH_SETTLE_MS;
+    this.dirty = true;
+    wake(this);
+    if (this.getAttribute('source')) act('audio.clip_clear', {}, { quiet: true });
+  }
 
   resize() {
     if (!this.$) return;
@@ -176,11 +194,13 @@ export class SSMeter extends SSElement {
     this.rms += (this.inRms - this.rms) * (1 - Math.exp(-dt / tau));
     if (this.peak >= this.hold) { this.hold = this.peak; this.holdAt = now; }
     else if (now - this.holdAt > 1600) this.hold = Math.max(this.peak, this.hold - 14 * dt);
-    const clipOn = now < this.clipUntil;
+    const timed = now < this.clipUntil;
+    const clipOn = timed || this.latched;
     const moved = Math.abs(this.peak - prevPeak) > 0.05 || Math.abs(this.rms - prevRms) > 0.05 || Math.abs(this.hold - prevHold) > 0.05;
     if (moved || this.dirty || clipOn !== this._clipOn) {
       this._clipOn = clipOn;
       this.$.clip.toggleAttribute('data-on', clipOn);
+      this.$.clip.setAttribute('aria-label', clipOn ? 'Clipped, press to clear' : 'Clip indicator');
       this.draw();
       this.dirty = false;
     }
@@ -191,7 +211,7 @@ export class SSMeter extends SSElement {
       this.setAttribute('aria-valuetext', this.rms <= this.min ? 'silent' : `${v.toFixed(0)} dB${clipOn ? ', clipping' : ''}`);
     }
     // sleep when settled at the floor with nothing coming in
-    const resting = this.peak <= floor && this.rms <= floor && this.hold <= floor && this.inPeak <= floor && !clipOn && !this.dirty;
+    const resting = this.peak <= floor && this.rms <= floor && this.hold <= floor && this.inPeak <= floor && !timed && !this.dirty;  // a latched lamp needs no animation: only a frame or a click changes it
     if (resting) live.delete(this);
   }
 

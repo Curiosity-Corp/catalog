@@ -19,6 +19,9 @@
   .m-level ss-fader { --fader-w: 1.9rem; --fader-cap-len: 1.5rem; }
   .m-scenes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); }
   .m-block { display: grid; gap: var(--s-2); }
+  .m-lights { display: flex; align-items: center; gap: var(--s-3); }
+  .m-lights[hidden] { display: none; }
+  .m-lights ss-fader { flex: 1; --fader-w: 1.6rem; --fader-cap-len: 1.3rem; --fader-groove-h: 0.4rem; }
   .m-presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-1); }
   .m-presets ss-pad { --pad-min: 2.6rem; }
   .m-status { display: flex; flex-wrap: wrap; gap: var(--s-1); }

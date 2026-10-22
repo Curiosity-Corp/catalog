@@ -28,6 +28,8 @@ ARTIFACTS = Path(os.environ.get("E2E_ARTIFACTS", REPO / "e2e-artifacts"))
 URL_LINE = re.compile(r"StreamStack Console: (http://127\.0\.0\.1:\d+/)\?token=(\S+?)(?:#\S*)?\s*$")
 STARTUP_SECONDS = 30
 ALL_BROWSERS = ("chromium", "firefox")
+# The two simulated Litra Beams of the demo rig: light id -> (on, brightness %, kelvin).
+LIGHT_BASELINE = {"c901-usb-demo-1": (True, 70, 5000), "c901-usb-demo-2": (True, 55, 4200)}
 DESKTOP = {"width": 1280, "height": 720}
 
 # Page JS: collect CSP violations before any page script runs.
@@ -157,6 +159,7 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             rig.act("video.privacy", on=False)
         if s["audio"]["mic"].get("stalled"):
             rig.act("audio.demo_stall", on=False)
+        rig.act("audio.clip_clear")
         rig.act("audio.mute", on=False)
         rig.act("audio.bypass", on=False)
         rig.act("audio.gain", db=0)
@@ -168,15 +171,33 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             rig.act("audio.preset", name=base["preset"])
         for source in s["video"]["sources"]:
             rig.act("video.look.reset", source=source)
+        blur = s["video"]["blur"]
+        if not blur["plugin"]["installed"]:
+            rig.act("video.blur.plugin", installed=True)
+        if blur["on"] or any(e["enabled"] or e["strength"] != 8 or e["rate"] != 2 for e in blur["sources"].values()):
+            rig.act("video.blur", on=False, strength=8, rate=2)
         for look in s["video"]["looks"]:
             if not look["builtin"]:
                 rig.act("video.looks.delete", name=look["name"])
+        if s["framing"]["mode"] != "off":
+            rig.act("framing.mode", mode="off")
         if s["video"]["recording"]["active"]:
             rig.act("video.record", on=False)
         if s["video"]["streaming"]["active"]:
             rig.act("video.stream", on=False)
         if s["video"]["virtualcam"] != base["virtualcam"]:
             rig.act("video.virtualcam", on=base["virtualcam"])
+        for light in s["lighting"]["lights"]:
+            start = LIGHT_BASELINE.get(light["id"])
+            if start is None:
+                continue
+            on, percent, kelvin = start
+            rig.act("lighting.brightness", id=light["id"], percent=percent)
+            rig.act("lighting.temperature", id=light["id"], kelvin=kelvin)
+            rig.act("lighting.power", id=light["id"], on=on)
+        for preset in s["lighting"]["presets"]:
+            if not preset["builtin"]:
+                rig.act("lighting.presets.delete", name=preset["name"])
         if s["auto"]["running"] != base["auto"]:
             rig.act("auto.on" if base["auto"] else "auto.off")
             poll(rig, lambda st: not st["auto"]["busy"] and st["auto"]["running"] == base["auto"])

@@ -4,7 +4,7 @@
 import { h, renderList } from '../core/util.js';
 import { iconHTML } from '../components/icons.js';
 import { mountReviveBanner } from '../core/revive.js';
-import { toggleMute, togglePrivacy, selectScene, selectPreset } from '../core/ops.js';
+import { toggleLights, toggleMute, togglePrivacy, selectScene, selectPreset } from '../core/ops.js';
 
 const TEMPLATE = `
 <div class="mini">
@@ -24,7 +24,11 @@ const TEMPLATE = `
   </div>
   <ss-pad big row solid tone="amber" icon="eye-off" label="Privacy" sub="Cut camera to Be Right Back" hotkey="P" data-ref="privacy"></ss-pad>
   <ss-card bare inline-reason data-ref="scenesCard"><div class="m-scenes" data-ref="scenes" role="group" aria-label="Scenes"></div></ss-card>
-  <div class="m-block"><span class="eyebrow">Voice</span><div class="m-presets" data-ref="presets" role="group" aria-label="Voice presets"></div></div>
+  <div class="m-block"><span class="eyebrow">Voice</span><div class="m-presets" data-ref="presets" role="group" aria-label="Voice presets"></div>
+    <div class="m-lights" data-ref="lights" role="group" aria-label="Lights" hidden>
+      <ss-button size="sm" icon="lights" data-ref="lightsToggle" title="Every light on / off (L)">Lights</ss-button>
+      <ss-fader data-ref="lightsFader" orientation="horizontal" label="Light level" unit="%" min="1" max="100" step="1" default="70" ticks="none" readout="none" accent="amber"></ss-fader>
+    </div></div>
   <nav class="m-status" data-ref="status" aria-label="Status"></nav>
 </div>`;
 
@@ -53,6 +57,15 @@ export async function mount(host, ctx) {
   sub((s) => s.audio.mic.gain_db, (v) => { R.gain.value = v; });
   R.gain.addEventListener('input', (e) => actStream('audio.gain', { db: e.detail.value }));
   R.gain.addEventListener('change', () => flushStream('audio.gain'));
+
+  sub((s) => [s.lighting.master, s.lighting.lights], ([m, lights]) => {
+    R.lights.hidden = !lights.some((l) => l.connected);
+    R.lightsToggle.setAttribute('pressed', String(m.on));
+    R.lightsFader.value = m.brightness;
+  });
+  R.lightsToggle.addEventListener('click', () => toggleLights());
+  R.lightsFader.addEventListener('input', (e) => actStream('lighting.brightness', { id: 'all', percent: e.detail.value }));
+  R.lightsFader.addEventListener('change', () => flushStream('lighting.brightness'));
 
   sub((s) => [s.video.privacy, s.video.privacy_scene, s.video.obs], ([on, scene, obs]) => {
     R.privacy.toggleAttribute('active', on);

@@ -1,0 +1,55 @@
+/* interface.css — the audio interface page: one card per group, one row per control. Natural height; the page scrolls. */
+/* Scoped to this page: page stylesheets stay loaded after navigation, so unscoped class names would leak into other pages. */
+@scope ([data-page="interface"]) {
+  .ifc { padding: var(--s-4); display: grid; gap: var(--s-4); max-width: 96rem; margin: 0 auto; }
+
+  .ifc-head { --c: var(--text-3); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-3) var(--s-5); padding: var(--s-4) var(--s-5); border-radius: var(--r-4); background: var(--surface-1); border: 1px solid color-mix(in srgb, var(--c) 45%, var(--line)); }
+  .ifc-head[data-state="ok"] { --c: var(--green); }
+  .ifc-head[data-state="warn"] { --c: var(--amber); }
+  .ifc-id { min-width: 0; }
+  .ifc-head h1 { margin: 0; font-size: var(--fs-xl); line-height: 1.2; }
+  .ifc-sub { margin: var(--s-1) 0 0; color: var(--text-2); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+
+  .ifc-banner { margin: 0; padding: var(--s-3) var(--s-4); border-radius: var(--r-3); font-size: var(--fs-sm); line-height: 1.45; color: var(--amber); background: var(--amber-soft); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); }
+  .ifc-banner[data-state="error"] { color: var(--red); background: var(--red-soft); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+
+  .ifc-demo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+  .ifc-demo-label { font-size: var(--fs-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-3); }
+
+  .ifc-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: var(--s-4); align-items: start; }
+  .ifc-rows { display: grid; gap: var(--s-1); padding: var(--s-2) var(--s-4) var(--s-4); }
+
+  .ifc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--s-2) var(--s-4); padding: var(--s-3) 0; border-top: 1px solid var(--line); }
+  .ifc-row:first-child { border-top: 0; }
+  .ifc-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+  .ifc-label { font-weight: 650; font-size: var(--fs-sm); color: var(--text); }
+  .ifc-hint { font-size: var(--fs-xs); color: var(--text-3); line-height: 1.4; }
+  .ifc-hint:empty { display: none; }
+  .ifc-hint[data-locked="true"] { color: var(--amber); }
+  .ifc-ctl { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-3); min-width: 0; }
+
+  /* switches and sliders carry their own label: the row label would say it twice */
+  .ifc-row[data-kind="switch"] .ifc-label,
+  .ifc-row[data-kind="slider"] .ifc-label { display: none; }
+  .ifc-row[data-kind="slider"] { grid-template-columns: 1fr; }
+  .ifc-row[data-kind="slider"] .ifc-ctl { justify-content: stretch; }
+  .ifc-row[data-kind="slider"] ss-fader { flex: 1; min-width: min(100%, 16rem); }
+  .ifc-row[data-kind="switch"] .ifc-hint { order: 2; grid-column: 1 / -1; }
+  .ifc-row[data-kind="switch"] { grid-template-columns: auto minmax(0, 1fr); }
+  .ifc-row[data-kind="switch"] .ifc-text { order: 2; }
+  .ifc-row[data-kind="switch"] .ifc-ctl { order: 1; justify-content: flex-start; }
+
+  .ifc-value { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text); text-align: right; overflow-wrap: anywhere; }
+  .ifc-text-status { font-size: var(--fs-xs); color: var(--text-2); max-width: 22rem; }
+  .ifc-text-status[data-state="ok"] { color: var(--green); }
+  .ifc-text-status[data-state="warn"] { color: var(--amber); }
+
+  .ifc-list { margin: 0; padding: var(--s-2) var(--s-4) var(--s-4) var(--s-6); display: grid; gap: var(--s-2); font-size: var(--fs-sm); color: var(--text-2); }
+  .ifc-foot { max-width: 60rem; }
+
+  @media (max-width: 40rem) {
+    .ifc { padding: var(--s-3); }
+    .ifc-row { grid-template-columns: 1fr; }
+    .ifc-ctl { justify-content: flex-start; }
+  }
+}

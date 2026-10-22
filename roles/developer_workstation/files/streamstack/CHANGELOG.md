@@ -5,6 +5,98 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-22
+
+### Added
+
+- Canon bridge on the GPU (#14): live-view JPEGs are decoded and scaled on Intel Quick Sync, then VA-API, with the CPU and the old command line as fallbacks; each path is probed on a real frame first and a path that crashes or stalls is dropped. Frames reach ffmpeg length-framed so there is no one-frame demux delay, with low-delay input flags and frame passthrough. Output keeps the camera's aspect and is never enlarged (`STREAMSTACK_CANON_OUTPUT=fill` restores the 0.2 crop). A stalled camera (4 s) or ffmpeg (3 s) is restarted with backoff and a hung camera library ends the process for systemd. The System page shows decode path, fps in/out, grab and hand-off time, CPU of bridge and ffmpeg, and restarts; so does `streamstack canon status`.
+- Canon camera settings (#15): ISO, shutter, aperture, exposure compensation, white balance and Kelvin, Picture Style, focus mode, live-view size, live-view autofocus and focus nudges on the Camera page (Canon body tab) and `streamstack canon get|set|af|focus`, using libgphoto2's configuration names, with choices and read-only state taken from the camera and every change read back. One shared libgphoto2 session (python `gphoto2`, extra `canon`) changes settings without interrupting the picture; without it the gphoto2 command pauses live view for about a second per change.
+- New settings `STREAMSTACK_CANON_OUTPUT`, `_DECODE`, `_BACKEND`, `_RENDER_NODE`.
+- Auto-framing (issue #23): a face detector (YuNet, MIT, fetched and checksum-verified by
+  `streamstack framing --fetch`) runs beside OBS on a low-rate screenshot of the camera, on the Intel GPU through
+  OpenVINO when there is one, else on the CPU, and moves a smooth crop and zoom over obs-websocket, so there is no
+  added video latency. Modes Off, Gentle, Tight and Follow; a dead zone, critically damped smoothing, headroom and
+  a zoom limit set by the camera's resolution. The Camera page has an Auto-framing panel (mode, Hold, Recentre,
+  device and time per detection) and the Live page a compact control. The original crops are restored when framing
+  is off, on exit and after a crash. Install with `pip install 'streamstack[framing]'`; without it nothing changes.
+  `framing.*` actions give the AI director a clean actuator. See docs/auto-framing.md.
+- AI Director 2.0 (issue #27). Auto mode reviews a burst of stills joined into one contact sheet (the stills go to Claude; the Auto page says so) with local per-frame measurements (histogram, clipping, white balance, skin tone, sharpness, noise, face position), and analyses a short voice clip locally into features only (f0, depth, clarity, sibilance, SNR, LUFS, room); raw audio never leaves the computer. Personas (Executive, Bright podcast, Late-night calm, Daylight natural, Crisp newsroom) are data files, selectable and editable on the Auto page and with `streamstack auto persona`; Claude judges mood against them. Time of day from the local clock and offline sunrise/sunset for a configured property (`streamstack auto property`), with per-slot learned baselines. One actuator registry (OBS look, mic gain, voice preset) with rate-limited steps, override hold, reasons in the log and undo. The Auto page is redesigned around the contact sheet, voice bars, persona cards, a time-of-day strip and a change log with reasons.
+- Auto mode drives hardware when it is present (each is simply listed as
+  unavailable, with the reason, when it is not): the Canon's exposure
+  compensation and white balance Kelvin through the Canon bridge (never focus),
+  Litra brightness and colour temperature per light within the model's range
+  (never power), and the audio interface's preamp gain for the Scarlett 2i2
+  Gen 4 and, when enabled, the Wave XLR (never 48V or Autogain), with the
+  PipeWire software gain as the fallback. Lights follow the hour: the dark
+  slots raise and warm the persona's light, and what you set by hand in a slot
+  is learned. The director meters the face with the YuNet detector when the
+  framing extra is installed and keeps the skin-colour heuristic otherwise.
+  Settings `STREAMSTACK_AUTO_CANON`, `STREAMSTACK_AUTO_LIGHTS`,
+  `STREAMSTACK_AUTO_HARDWARE_GAIN`, `STREAMSTACK_AUTO_FACES` and
+  `STREAMSTACK_AUTO_INTERFACE_INPUT`; `streamstack auto reset` restores them.
+  The demo rig shows all of them on the Auto page. Unverified on real
+  hardware: see `docs/auto-mode.md`.
+- Lighting page for Logitech Litra Glow, Beam and Beam LX lights (USB HID over
+  `/dev/hidraw`, pure Python): power, brightness and colour temperature per
+  light, an All lights master, presets (Key light, Soft, Warm evening,
+  Daylight, Off) and saved presets, Identify, hotplug and read-back of the real
+  state. Alt+6 opens it, `L` turns every light on or off, and a small lights
+  control sits in the Live status rail and the Mini window. The System page
+  reports lights found and whether this user may open them. Needs the udev rule
+  in `packaging/udev/` (see `docs/lighting.md`). Demo mode has two simulated
+  Beams.
+- Hardware-agnostic audio interface layer (`streamstack.hardware`): the
+  interface is found by USB id, a profile selects its driver, and the Console
+  renders whatever controls the driver reports. Profiles: Focusrite Scarlett
+  2i2 Gen 3 and Gen 4 (through the kernel's `scarlett2` ALSA controls, read and
+  set with `amixer`) and Elgato Wave XLR. Settings `STREAMSTACK_INTERFACE`
+  (`auto`, `off`, a profile or a USB id) and `STREAMSTACK_WAVE_XLR_USB`.
+- Console Interface page (Alt 7): Scarlett gain, Autogain, Air (switch on
+  Gen 3, Off/Presence/Presence + Drive on Gen 4), Line/Inst, Safe, link, input
+  select, direct monitor and Autogain targets; 48V needs a press-and-hold and a
+  server-side confirm. The Audio page's software gain remains the fallback. The
+  demo rig simulates a Gen 4, a Gen 3, a Wave XLR or nothing connected.
+- Wave XLR hardware gain, mute, 48V, headphone volume and low-impedance mode
+  over its vendor USB control interface, read-modify-write with read-back.
+- Clip latch on the Live, Audio and Mini mic meters and the Audio voice meter: lights at -1 dBTP or digital full
+  scale and stays lit until clicked. The latch lives on the server, so every window and page agrees; `audio.clip_clear`
+  clears it.
+- Momentary (400 ms) and short-term (3 s) loudness in LUFS (K-weighted, BS.1770-4) for the mic and the voice, shown on
+  the Audio page loudness card. The `meters` event carries `sample_db`, `latched`, `lufs_m` and `lufs_s`.
+- Tests of the true-peak, K-weighting and loudness maths against BS.1770 and EBU Tech 3341 signals
+  (`tests/test_loudness.py`), a CPU bound for the analyser, and browser tests of the lamp and readout
+  (`tests/e2e/test_meters.py`).
+- Background blur (issue #24): the obs-backgroundremoval plugin as a `Background Blur` filter on both camera
+  sources, disabled by default and shipped with low-latency CPU settings (2 threads, mask every second frame,
+  MediaPipe model). The Camera page has a "Blur background" card (toggle, strength 1 to 20, Light / Balanced /
+  Smooth) and the Live look card a compact "Blur" pad; both create the filter on older OBS profiles on first use.
+  Detection finds the plugin, its version and inference device at runtime, a Video health check says how to
+  install it when it is missing, and a cost guard reads OBS's stats and warns when the blur adds 8 ms or more
+  per frame, 1 percent or more CPU or any dropped frame. The demo rig simulates all of it
+  (`video.blur`, `video.blur.plugin`); the plugin itself is installed by Curiosity-Corp/catalog#100.
+
+### Notes
+
+- The Wave XLR has no HID interface (no `/dev/hidraw`); the issue's HID premise
+  was wrong. Its controls are vendor USB control transfers on interface 3,
+  taken from open-source prior art (OpenWave and others) and **not verified on
+  hardware**. They are off by default: `STREAMSTACK_WAVE_XLR_USB=off` never
+  opens the device. Clipguard and low cut have no documented register and are
+  reported as unavailable. See docs/interfaces.md.
+- The Scarlett amixer fixtures in the tests are synthesized from the kernel
+  source, not captured from a device.
+
+### Changed
+
+- Console meters tap the microphone and the voice chain at the source's own 48 kHz, 32 bit float, in 20 ms frames
+  (was 16 kHz, 16 bit, 50 ms) and push at 30 Hz (was 20 Hz). The bar shows the true peak (dBTP, 4x oversampled per
+  ITU-R BS.1770-4), so inter-sample peaks that a sample meter misses now show.
+  Pure Python (numpy is not a dependency): about 1-3 % of one core per source.
+
+### Fixed
+
+- A missing Zoom desktop client no longer turns the Health badge amber; calls use the zoom.us web client.
+
 ## [0.2.1] - 2026-10-22
 
 ### Added

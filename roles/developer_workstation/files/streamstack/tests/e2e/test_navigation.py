@@ -7,7 +7,16 @@ from playwright.sync_api import Page, expect
 
 from support import ROUTES, App
 
-RAIL = {"live": "Live", "camera": "Camera", "audio": "Audio", "auto": "Auto", "system": "System", "mini": "Mini"}
+RAIL = {
+    "live": "Live",
+    "camera": "Camera",
+    "audio": "Audio",
+    "auto": "Auto",
+    "system": "System",
+    "lighting": "Lighting",
+    "interface": "Interface",
+    "mini": "Mini",
+}
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -27,12 +36,12 @@ def test_unknown_route_falls_back_to_live(app: App, page: Page) -> None:
 def test_rail_lists_the_pages_and_marks_the_current_one(app: App, page: Page) -> None:
     app.goto("live")
     rail = page.get_by_role("navigation", name="Pages")
-    for title in ("Live", "Camera", "Audio", "Auto", "System", "Mini"):
+    for title in ("Live", "Camera", "Audio", "Auto", "System", "Lighting", "Interface", "Mini"):
         expect(rail.get_by_role("link", name=title)).to_be_visible()
     expect(rail.get_by_role("link", name="Live")).to_have_attribute("aria-current", "page")
 
 
-@pytest.mark.parametrize("route", ["camera", "audio", "auto", "system"])
+@pytest.mark.parametrize("route", ["camera", "audio", "auto", "system", "lighting", "interface"])
 def test_rail_click_navigates(app: App, page: Page, route: str) -> None:
     app.goto("live")
     rail = page.get_by_role("navigation", name="Pages")
@@ -43,7 +52,16 @@ def test_rail_click_navigates(app: App, page: Page, route: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("digit", "route"), [("1", "live"), ("2", "camera"), ("3", "audio"), ("4", "auto"), ("5", "system")]
+    ("digit", "route"),
+    [
+        ("1", "live"),
+        ("2", "camera"),
+        ("3", "audio"),
+        ("4", "auto"),
+        ("5", "system"),
+        ("6", "lighting"),
+        ("7", "interface"),
+    ],
 )
 def test_alt_digit_goes_to_page(app: App, page: Page, digit: str, route: str) -> None:
     app.goto("system" if route == "live" else "live")
@@ -78,7 +96,7 @@ def test_live_layout_survives_a_tour_of_every_page(app: App, page: Page) -> None
 
     before = geometry()
     assert before[0] == 1, "voice presets should sit in one row"
-    for route in ("camera", "audio", "auto", "system", "live"):
+    for route in ("camera", "audio", "auto", "system", "lighting", "live"):
         app.hash_to(route)
     after = geometry()
     assert after[0] == 1, "voice presets wrapped after visiting the other pages"

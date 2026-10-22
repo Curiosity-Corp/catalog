@@ -9,9 +9,11 @@
 
 import { h, renderList, signed, clockTime } from '../core/util.js';
 import { iconHTML } from '../components/icons.js';
-import { toggleMute, togglePrivacy, toggleBypass, toggleVirtualcam, selectScene, selectPreset, toggleAuto, setRecord, startStudio } from '../core/ops.js';
+import { toggleLights, toggleMute, togglePrivacy, toggleBypass, toggleVirtualcam, selectScene, selectPreset, toggleAuto, setRecord, startStudio } from '../core/ops.js';
 import { setUi, onUi, ui } from '../core/ui.js';
 import { mountReviveBanner, reviveView } from '../core/revive.js';
+import { mountFraming } from './framing.js';
+import { mountBlur, blurCommands } from './blur.js';
 
 const LOOKS = [
   { key: 'brightness', label: 'Brightness', icon: 'sun' },
@@ -53,10 +55,12 @@ const TEMPLATE = `
     </ss-card>
     <ss-card bare inline-reason class="area-scenes" data-ref="scenesCard">
       <div class="scene-row"><span class="eyebrow">Scenes</span><div class="scene-pads" data-ref="scenes" role="group" aria-label="Scenes"></div></div>
+      <div class="framing-row" data-ref="framingHost"></div>
     </ss-card>
     <ss-card inline-reason class="area-look" heading="Look" icon="sliders" data-ref="lookCard">
       <ss-button slot="actions" size="sm" variant="ghost" icon="refresh" data-ref="lookReset">Reset look</ss-button>
       <div class="looks" data-ref="looks"></div>
+      <div class="bl-row" data-ref="blurRow" role="group" aria-label="Background blur" hidden></div>
     </ss-card>
   </div>
 
@@ -98,8 +102,10 @@ const TEMPLATE = `
 </div>`;
 
 export async function mount(host, ctx) {
-  const { store, act, actStream, flushStream, registerKeys } = ctx;
+  const { store, act, actStream, flushStream, registerKeys, registerCommands } = ctx;
   await ctx.ensureCss(new URL('./live.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./framing.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./blur.css', import.meta.url).href);
   await ctx.ensureCss(new URL('../core/revive.css', import.meta.url).href);
   document.title = 'Live · StreamStack';
   host.innerHTML = TEMPLATE;
@@ -107,6 +113,7 @@ export async function mount(host, ctx) {
   host.querySelectorAll('[data-ref]').forEach((el) => { R[el.dataset.ref] = el; });
   const off = [];
   const sub = (selector, cb) => off.push(store.subscribe(selector, cb));
+  off.push(mountFraming(R.framingHost, ctx, { compact: true }));
 
   // ---------- availability of everything that needs OBS ----------
   sub((s) => [s.video.obs, s.video.obs_error, s.studio.busy, s.studio.running], ([obs, err, busy]) => {
@@ -267,18 +274,43 @@ export async function mount(host, ctx) {
   sub((s) => s.video.look, (look) => { for (const l of LOOKS) lookFader(l.key).value = look[l.key] ?? 0; });
   R.lookReset.addEventListener('click', () => act('video.look.reset'));
 
+  // ---------- background blur (pages/blur.js; the row stays hidden while the plugin is missing) ----------
+  off.push(mountBlur(R.blurRow, ctx, { variant: 'compact' }));
+  off.push(registerCommands(() => blurCommands(ctx)));
+
   // ---------- auto director ----------
   sub((s) => s.auto, (auto) => {
     R.autoToggle.toggleAttribute('checked', auto.running);
     R.autoNote.textContent = auto.busy ? 'Claude is looking at the picture…' : (auto.last_note || 'No changes yet. The director watches picture and voice and adjusts gently.');
     R.autoNote.toggleAttribute('data-dim', !auto.running && !auto.busy);
-    R.autoTime.textContent = auto.last_time && !auto.busy ? `Last note ${clockTime(auto.last_time)}` : (auto.running ? 'Director on' : 'Director off');
+    const dir = auto.director || {};
+    const persona = (dir.personas || []).find((p) => p.id === dir.persona);
+    const where = persona && dir.time ? ` · ${persona.name}, ${dir.time.sun.slot_label}` : '';
+    R.autoTime.textContent = (auto.last_time && !auto.busy ? `Last note ${clockTime(auto.last_time)}` : (auto.running ? 'Director on' : 'Director off')) + where;
     R.autoUndo.toggleAttribute('disabled', !auto.can_undo);
     R.autoNow.toggleAttribute('busy', auto.busy);
   });
   R.autoToggle.addEventListener('change', () => toggleAuto());
   R.autoNow.addEventListener('click', () => act('auto.once'));
   R.autoUndo.addEventListener('click', () => act('auto.reset'));
+
+  // ---------- lights quick control (in the status rail; hidden when no Litra is connected) ----------
+  const lq = h('div', { class: 'lq', role: 'group', 'aria-label': 'Lights', hidden: true });
+  const lqToggle = h('ss-button', { size: 'sm', icon: 'lights', title: 'Every light on / off (L)' }, 'Lights');
+  const lqFader = h('ss-fader', { orientation: 'horizontal', label: 'Light level', unit: '%', min: 1, max: 100, step: 1, default: 70, ticks: 'none', readout: 'none', accent: 'amber' });
+  lq.append(lqToggle, lqFader);
+  R.status.append(lq);
+  lqToggle.addEventListener('click', () => toggleLights());
+  lqFader.addEventListener('input', (e) => actStream('lighting.brightness', { id: 'all', percent: e.detail.value }));
+  lqFader.addEventListener('change', () => {
+    flushStream('lighting.brightness');
+    if (!store.state.lighting.master.on) act('lighting.power', { id: 'all', on: true });
+  });
+  sub((s) => [s.lighting.master, s.lighting.lights], ([m, lights]) => {
+    lq.hidden = !lights.some((l) => l.connected);
+    lqToggle.setAttribute('pressed', String(m.on));
+    lqFader.value = m.brightness;
+  });
 
   // ---------- status rail ----------
   sub((s) => [s.studio.camera_for_calls, s.studio.voice_chain, s.audio.chain.bypass, s.video.obs, s.system.cpu_percent, s.health.summary, s.health.checks, s.version, s.studio.camera_label], ([cam, voice, bypass, obs, cpu, health, checks, version, camLabel]) => {

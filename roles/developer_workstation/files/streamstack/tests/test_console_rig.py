@@ -10,7 +10,9 @@ import pytest
 from streamstack.console.errors import ActionError
 from streamstack.console.rig import Rig
 
-TOP_LEVEL = {"version", "demo", "studio", "video", "audio", "auto", "health", "system"}
+TOP_LEVEL = {
+    "version", "demo", "studio", "video", "audio", "auto", "health", "system", "lighting", "interface", "framing",
+}  # fmt: skip
 
 
 @pytest.fixture
@@ -34,6 +36,8 @@ def test_meters_frame_shape(rig: Rig) -> None:
     frame = rig.meters()
     assert {"t", "mic", "voice"} <= set(frame)
     assert -90.0 <= frame["mic"]["peak_db"] <= 0.0
+    for source in ("mic", "voice"):
+        assert {"peak_db", "sample_db", "rms_db", "clip", "latched", "lufs_m", "lufs_s"} == set(frame[source])
 
 
 @pytest.mark.parametrize(
@@ -110,5 +114,37 @@ def test_health_is_untouched_when_the_audio_controller_has_no_checks(rig: Rig) -
         notify = None
 
     rig.audio = Plain()
+    rig.lighting = None
+    rig.video = Plain()
     health = {"updated": None, "summary": "ok", "checks": [{"id": "x", "state": "ok"}]}
     assert rig._health(health) is health
+
+
+def test_snapshot_carries_the_blur_state_and_the_action_reaches_the_demo_controller(rig: Rig) -> None:
+    blur_state = rig.snapshot()["video"]["blur"]
+    assert blur_state["available"] is True and blur_state["on"] is False
+    assert set(blur_state["limits"]) == {"strength", "rate"}
+    rig.act("video.blur", {"on": True, "strength": 12})
+    after = rig.snapshot()["video"]["blur"]
+    assert after["on"] is True and after["strength"] == 12
+    assert after["cost"]["state"] == "ok"
+
+
+def test_blur_cost_over_budget_reaches_the_health_list(rig: Rig) -> None:
+    rig.act("video.blur", {"on": True, "rate": 1})
+    health = rig.snapshot()["health"]
+    check = next(c for c in health["checks"] if c["id"] == "background-blur")
+    assert check["state"] == "warn" and health["summary"] != "ok"
+    assert [c["id"] for c in health["checks"]].count("background-blur") == 1
+
+
+def test_demo_plugin_removal_hides_nothing_and_explains_the_install(rig: Rig) -> None:
+    rig.act("video.blur.plugin", {"installed": False})
+    snapshot = rig.snapshot()
+    assert snapshot["video"]["blur"]["plugin"]["installed"] is False
+    assert snapshot["video"]["blur"]["plugin"]["hint"]
+    with pytest.raises(ActionError) as caught:
+        rig.act("video.blur", {"on": True})
+    assert caught.value.status == 409
+    rig.act("video.blur.plugin", {"installed": True})
+    assert rig.snapshot()["video"]["blur"]["plugin"]["installed"] is True

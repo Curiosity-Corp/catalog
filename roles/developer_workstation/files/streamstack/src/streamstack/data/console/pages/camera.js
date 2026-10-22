@@ -16,6 +16,9 @@ import { toggleVirtualcam, selectScene, setRecord, startStudio } from '../core/o
 import { setUi, onUi, ui } from '../core/ui.js';
 import { Scopes } from './camera-scopes.js';
 import { drawSwatch, sameLook } from './look-swatch.js';
+import { mountBody } from './camera-body.js';
+import { mountFraming } from './framing.js';
+import { mountBlur, blurCommands } from './blur.js';
 
 const STORE_KEY = 'streamstack.console.camera';
 const MAX_NAME = 40;
@@ -61,9 +64,14 @@ const TEMPLATE = `
             <ss-button size="sm" icon="safe" data-ref="tSafe" title="Title and action safe areas (S)"><span class="lbl">Safe</span></ss-button>
             <ss-button size="sm" icon="cross" data-ref="tCross" title="Centre cross (C)"><span class="lbl">Centre</span></ss-button>
             <ss-button size="sm" icon="zebra" data-ref="tZebra" title="Zebra: stripes where highlights clip (Z)"><span class="lbl">Zebra</span></ss-button>
+            <ss-button size="sm" icon="eye" data-ref="tFraming" title="Auto-framing: keep you in the picture" aria-haspopup="dialog" aria-expanded="false"><span class="lbl">Framing</span></ss-button>
             <ss-button size="sm" icon="scope" data-ref="tScopes" title="Scopes: histogram and parade (H)"><span class="lbl">Scopes</span></ss-button>
           </div>
         </ss-preview>
+        <div class="fr-pop" role="dialog" aria-label="Auto-framing" data-ref="framingPop" hidden>
+          <div class="fr-pop-head"><span class="eyebrow">Auto-framing</span></div>
+          <div data-ref="framingHost"></div>
+        </div>
       </div>
     </ss-card>
 
@@ -108,6 +116,7 @@ const TEMPLATE = `
       <div class="fx">
         <div class="fx-block"><ss-toggle label="Sharpen" data-ref="sharpOn"></ss-toggle><ss-fader class="fx-fader" orientation="horizontal" label="Amount" min="0" max="1" step="0.01" default="0.08" ticks="none" data-ref="sharpAmt"></ss-fader></div>
         <div class="fx-block"><ss-toggle label="LUT" data-ref="lutOn"></ss-toggle><ss-fader class="fx-fader" orientation="horizontal" label="Amount" min="0" max="1" step="0.01" default="0.35" ticks="none" data-ref="lutAmt"></ss-fader></div>
+        <div class="fx-block fx-blur bl" role="group" aria-label="Background blur" data-ref="blurBody"></div>
       </div>
       <p class="hint grade-hint">Double-click a control to reset it. Hold Shift while dragging for fine control.</p>
     </ss-card>
@@ -162,6 +171,8 @@ export async function mount(host, ctx) {
   const { store, act, actStream, flushStream, registerKeys, registerCommands } = ctx;
   await ctx.ensureCss(new URL('./common.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./camera.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./framing.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./blur.css', import.meta.url).href);
   document.title = 'Camera · StreamStack';
   host.innerHTML = TEMPLATE;
   const R = {};
@@ -169,6 +180,21 @@ export async function mount(host, ctx) {
   const off = [];
   const sub = (selector, cb) => off.push(store.subscribe(selector, cb));
   const prefs = readPrefs();
+  off.push(mountFraming(R.framingHost, ctx));
+  // The framing panel is a popover over the picture: the right column has no room for another card.
+  const setFramingOpen = (open) => {
+    R.framingPop.hidden = !open;
+    R.tFraming.setAttribute('aria-expanded', String(open));
+  };
+  R.tFraming.addEventListener('click', () => setFramingOpen(R.framingPop.hidden));
+  const closeFraming = (e) => {
+    if (R.framingPop.hidden) return;
+    if (e.type === 'keydown' ? e.key === 'Escape' : !e.target.closest?.('.fr-pop, [data-ref="tFraming"]')) setFramingOpen(false);
+  };
+  document.addEventListener('keydown', closeFraming);
+  document.addEventListener('pointerdown', closeFraming);
+  off.push(() => { document.removeEventListener('keydown', closeFraming); document.removeEventListener('pointerdown', closeFraming); });
+  off.push(store.subscribe((st) => st.framing.mode, (mode) => R.tFraming.toggleAttribute('pressed', mode !== 'off')));
   const save = () => writePrefs(prefs);
 
   // ---------- overlays + scopes ----------
@@ -366,6 +392,9 @@ export async function mount(host, ctx) {
   }
   R.reset.addEventListener('click', () => act('video.look.reset'));
 
+  // ---------- background blur (pages/blur.js) ----------
+  off.push(mountBlur(R.blurBody, ctx, { variant: 'full', source: () => store.state.video.selected_source || undefined }));
+
   // ---------- looks library ----------
   const busyLooks = new Set();
   const renderLooks = () => {
@@ -492,8 +521,15 @@ export async function mount(host, ctx) {
     { id: 'cam:cross', group: 'Camera', title: prefs.cross ? 'Hide centre cross' : 'Show centre cross', icon: 'cross', hint: 'C', keywords: 'center centre cross overlay', run: () => toggle('cross') },
     { id: 'cam:scopes', group: 'Camera', title: prefs.scopes ? 'Hide scopes' : 'Show scopes', icon: 'scope', hint: 'H', keywords: 'scopes histogram parade waveform', run: () => toggle('scopes') },
     { id: 'cam:mode', group: 'Camera', title: prefs.mode === 'parade' ? 'Scope: waveform' : 'Scope: RGB parade', icon: 'scope', hint: 'V', keywords: 'parade waveform scope', run: () => setMode(prefs.mode === 'parade' ? 'waveform' : 'parade') },
+    ...blurCommands(ctx, () => store.state.video.selected_source || undefined),
     { id: 'cam:save', group: 'Camera', title: 'Save current look…', icon: 'save', keywords: 'save look preset grade', run: openSave },
   ]));
 
-  return () => off.forEach((fn) => fn());
+  // The Canon body tab mounts last and in the background, so it can never delay the page's own keys and controls.
+  let gone = false;
+  mountBody(host.querySelector('.cam-side'), ctx).then(
+    (unmount) => { if (gone) unmount(); else off.push(unmount); },
+    (err) => { console.error('Canon body tab failed to mount', err); },
+  );
+  return () => { gone = true; off.forEach((fn) => fn()); };
 }

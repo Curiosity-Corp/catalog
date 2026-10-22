@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from streamstack import cli, system
+from streamstack.director import adapters, faces
 
 
 @pytest.fixture(autouse=True)
@@ -16,6 +17,7 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(home))
     for name, sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_STATE_HOME", ".local/state"), ("XDG_CACHE_HOME", ".cache")):
         monkeypatch.setenv(name, str(home / sub))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local/share"))
     monkeypatch.setenv("STREAMSTACK_ENV_FILE", str(tmp_path / "absent.env"))
     monkeypatch.setenv("NO_COLOR", "1")
     for name in ("STREAMSTACK_SHARE", "STREAMSTACK_AUTO_VERBOSE", "STREAMSTACK_AUTO_CLAUDE", "ANTHROPIC_API_KEY"):
@@ -24,6 +26,16 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(system, "find_camlink", lambda: "")
     monkeypatch.setattr(cli, "find_camlink", lambda: "")
     return home
+
+
+@pytest.fixture(autouse=True)
+def no_real_hardware(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auto mode must not probe (let alone drive) the camera, lights or interface of the machine running the tests.
+
+    Tests that want hardware actuators register fakes themselves; the adapters' own tests build them directly.
+    """
+    monkeypatch.setattr(adapters, "hardware_actuators", lambda cfg, remember, start_gain: [])
+    monkeypatch.setattr(faces, "install", lambda cfg, finders=None: (None, faces.heuristic_row("disabled in tests")))
 
 
 def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:

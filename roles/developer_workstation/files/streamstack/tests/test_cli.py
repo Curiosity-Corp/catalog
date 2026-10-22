@@ -292,3 +292,21 @@ def test_mic_check_playback_has_a_deadline(monkeypatch: pytest.MonkeyPatch, tmp_
     assert cli.main(["mic-check", "3"]) == 0
     (paplay,) = [call for call in played if call[0][0] == "paplay"]
     assert paplay[1] == 3 + 20  # the recording length plus a fixed allowance
+
+
+# -- doctor -----------------------------------------------------------------------
+
+
+def test_app_checks_never_warn_about_a_missing_zoom_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "have", lambda tool: tool != "zoom")
+    checks = {c["id"]: c for c in cli.app_checks()}
+    assert checks["zoom"]["state"] == "ok"
+    assert "web client" in checks["zoom"]["detail"]
+    assert cli.summarize(list(checks.values())) == "ok"
+
+
+def test_app_checks_fail_when_a_required_app_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "have", lambda tool: tool != "obs")
+    checks = {c["id"]: c for c in cli.app_checks()}
+    assert checks["app-obs"]["state"] == "fail"
+    assert cli.summarize(list(checks.values())) == "fail"

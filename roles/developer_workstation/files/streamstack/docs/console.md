@@ -83,7 +83,7 @@ page URL as `?token=…`; `app.js` keeps it in memory.
 | GET | `/` | `index.html` |
 | GET | `/static/<path>` | files under `data/console/` |
 | GET | `/api/state` | the full state snapshot (below) |
-| GET | `/api/events` | Server-Sent Events: `state` (full snapshot, on every change, at most 4/s), `meters` (~20/s), `toast` (`{level, text}`), and a `: ping` comment every 15 s |
+| GET | `/api/events` | Server-Sent Events: `state` (full snapshot, on every change, at most 4/s), `meters` (~30/s), `toast` (`{level, text}`), and a `: ping` comment every 15 s |
 | POST | `/api/action` | `{"action": "<name>", ...params}` → `{"ok": true, "message"?: str}` or HTTP 400/409/500 `{"ok": false, "error": str}` |
 | GET | `/api/preview.mjpg?source=program\|<obs source>\|camera&fps=1..15&width=160..1280` | `multipart/x-mixed-replace` JPEG stream |
 | GET | `/api/preview.jpg?source=…&width=…` | one JPEG (look thumbnails) |
@@ -123,9 +123,41 @@ values in OBS's own units.
     "limits": {"brightness": [-0.5, 0.5], "contrast": [-1, 1], "gamma": [-1, 1],
                "saturation": [-1, 1], "warmth": [-1, 1], "sharpen_amount": [0, 1], "lut_amount": [0, 1]},
     "looks": [{"name": "Natural", "builtin": true, "values": {…look…}}],
+    "blur": {                         // background blur (obs-backgroundremoval), see "Background blur notes"
+      "available": true,              // the filter kind is registered in the running OBS; null while OBS is down
+      "plugin": {"installed": true, "version": "1.4.1", "models_ok": true, "loaded": true,
+                 "devices": ["cpu"], "device_labels": ["CPU"], "device": "cpu", "hint": ""},
+      "sources": {"Canon EOS 50D": {"present": true, "enabled": false, "strength": 8, "rate": 2}},
+      "on": false, "strength": 8, "rate": 2,                 // on = any camera has it enabled
+      "limits": {"strength": [1, 20], "rate": [1, 6]},
+      "presets": {"light": 3, "balanced": 2, "smooth": 1},   // smoothness name -> rate
+      "cost": {"state": "off|measuring|ok|over", "detail": "+1.9 ms per frame, +0.4% CPU, 0 dropped",
+               "reasons": [], "limits": {"p95_ms": 8, "cpu_percent": 1}}
+    },
     "virtualcam": true,
     "recording": {"active": false, "paused": false, "timecode": null},
-    "streaming": {"active": false, "timecode": null}
+    "streaming": {"active": false, "timecode": null},
+    "canon": {                       // the Canon bridge and body; every key is always present
+      "available": true,             // the bridge answered; false = not running (state says why)
+      "state": "running",            // disabled | offline | starting | running | paused | stalled | stopped
+      "message": null,
+      "session": "shared",           // shared (python-gphoto2, instant) | pause (gphoto2 command, ~1 s freeze per change)
+      "usb": ["04a9:3215 Canon EOS 50D"],
+      "decode": {"path": "qsv", "label": "GPU (Intel Quick Sync)",   // qsv | vaapi | cpu | legacy
+                 "tried": [{"name": "qsv", "ok": true, "reason": null}],
+                 "render_node": "/dev/dri/renderD128", "ffmpeg": "8.0"},
+      "input": {"width": 1056, "height": 704, "subsampling": "4:2:0"},
+      "output": {"width": 1056, "height": 704, "mode": "native"},
+      "fps_in": 29.9, "fps_out": 29.9, "grab_ms": 31.0, "pipe_ms": 0.4,
+      "cpu": {"bridge": 6.1, "ffmpeg": 3.2, "gphoto2": null, "total": 9.3},   // percent of one core
+      "frames": 1234, "restarts": {"source": 0, "encoder": 0}, "stalls": 0, "last_error": null, "uptime_s": 41,
+      "controls": {                  // only what this body exposes; choices, read-only and range come from the camera
+        "iso": {"id": "iso", "key": "iso", "label": "ISO", "group": "exposure", "value": "400",
+                "choices": ["100", "200", "400"], "range": null, "readonly": false, "reason": null, "hint": null}
+        // ids: iso shutter aperture exposure_comp whitebalance kelvin picturestyle focusmode liveviewsize
+        //      and, information only: model lens battery mode
+      }
+    }
   },
   "audio": {
     "mic": {"name": "alsa_input.usb-Elgato…", "description": "Wave:3", "present": true,
@@ -149,13 +181,55 @@ values in OBS's own units.
     "last_note": "Face slightly under-exposed; lifted gamma.", "last_time": "2026-10-22T14:03:11",
     "journal": [{"time": "…", "event": "ai", "text": "…", "kind": "video|audio|ai|error"}]  // newest first, ≤ 30
   },
+  "framing": {                         // auto-framing, docs/auto-framing.md
+    "mode": "off",                     // off | gentle | tight | follow
+    "state": "off",                    // off | starting | tracking | held | no-face | unavailable
+    "held": false, "available": true,  // available false: the extra or the model is missing
+    "unavailable_hint": null, "reason": null,   // why, and the fix; reason is set when state is unavailable
+    "backend": null, "device": null,   // "openvino", "Intel Arc A380 (GPU)"
+    "detect_ms": null, "detect_p95_ms": null, "fps": null, "model": "YuNet 2023mar",
+    "zoom": 1.0, "window": null,       // {"cx", "cy", "zoom"} in frame units while on
+    "sources": [{"name": "Canon EOS 50D", "on_air": true, "state": "tracking", "zoom": 1.2, "cx": 0.5, "cy": 0.46, "max_zoom": 1.3}],
+    "skipped": [],                     // scene items that cannot be zoomed, with the reason
+    "modes": [{"name": "gentle", "label": "Gentle", "blurb": "…"}]
+  },
   "health": {
     "updated": "2026-10-22T14:03:00",
     "summary": "ok",                  // ok | warn | fail
     "checks": [{"id": "camera-node", "group": "video|audio|apps", "state": "ok|warn|fail",
                 "title": "Canon EOS 50D is live", "detail": "1920x1080 YUYV @ 30 fps", "hint": ""}]
   },
-  "system": {"cpu_percent": 23.0, "load": [0.8, 0.7, 0.6], "cores": 8}
+  "system": {"cpu_percent": 23.0, "load": [0.8, 0.7, 0.6], "cores": 8},
+  "lighting": {
+    "scanned": true,                  // false until the first USB scan finished
+    "lights": [{"id": "c901-<uniq>", "name": "Litra Beam 1", "model": "Litra Beam", "pid": 51457,
+                "connected": true, "error": "", "error_kind": "",   // error_kind: permission | gone | io
+                "power": true, "brightness": 70, "lumen": 284, "lumen_range": [30, 400],
+                "kelvin": 5000, "identifying": false}],
+    "master": {"on": true, "all_on": true, "brightness": 63, "kelvin": 4600},
+    "presets": [{"name": "Warm evening", "builtin": true, "on": true, "brightness": 35, "kelvin": 2700, "blurb": "…"}],
+    "preset": "Warm evening",         // the preset the lights currently match, or null
+    "problem": null,                  // {"kind": "scan|permission|io", "message": "…"} when the bus cannot be used
+    "kelvin_range": [2700, 6500], "kelvin_step": 100
+  },
+  "interface": {                     // the audio interface on the desk; see docs/interfaces.md
+    "present": true, "checked": true, "setting": "auto",
+    "profile": "scarlett-2i2-gen4",  // scarlett-2i2-gen4 | scarlett-2i2-gen3 | wave-xlr | null
+    "label": "Focusrite Scarlett 2i2 (4th Gen)", "usb": "1235:8219", "card": 1,
+    "mode": null,                    // Wave XLR only: off | read | write
+    "notice": null, "error": null,   // a sentence to show, never a stack trace
+    "controls": [{"id": "gain.1", "kind": "slider", "label": "Preamp gain", "group": "Input 1", "hint": "",
+                  "readonly": "",    // a reason when the control is locked right now
+                  "danger": false,   // true: switching it on needs a hold and confirm (48V)
+                  "value": 38.0, "min": 0, "max": 70, "step": 1, "unit": "dB"}],
+                                     // kind: switch | choice (value = option index) | slider | action | readout
+    "info": [{"id": "rate", "kind": "readout", "label": "Capture", "group": "Device", "value": "48 kHz, …"}],
+    "capabilities": {"input_gain": true, "autogain": true, "air": true, "phantom": true, "clipguard": false},
+    "unsupported": [{"label": "Clipguard", "reason": "…"}],
+    "devices": [{"usb": "1235:8219", "name": "Scarlett 2i2 4th Gen", "profile": "scarlett-2i2-gen4"}],
+    "software_gain": true,           // the Audio page's PipeWire gain is always the fallback
+    "demo_profiles": []              // demo only: [{"id", "label"}] the page offers to simulate
+  }
 }
 ```
 
@@ -163,11 +237,20 @@ values in OBS's own units.
 
 ```jsonc
 {"t": 1729605791.12,
- "mic":   {"peak_db": -18.2, "rms_db": -27.5, "clip": false},   // the raw microphone
- "voice": {"peak_db": -14.0, "rms_db": -22.1, "clip": false}}   // Easy Effects Source; null when absent
+ "mic":   {"peak_db": -18.2, "sample_db": -18.9, "rms_db": -27.5, "clip": false, "latched": false,
+           "lufs_m": -26.1, "lufs_s": -27.0},                       // the raw microphone
+ "voice": {"peak_db": -14.0, "sample_db": -14.3, "rms_db": -22.1, "clip": false, "latched": false,
+           "lufs_m": -22.4, "lufs_s": -23.0}}                       // Easy Effects Source; null when absent
 ```
 
-Silence is `-90.0`. `clip` is true when a sample reached −0.5 dBFS in the frame.
+The tap is the source's own 48 kHz, 32 bit float, in 20 ms frames (`console/loudness.py`, pure Python, about 1-3 % of
+one core per source). `peak_db` is the true peak in dBTP (ITU-R BS.1770-4: 4x oversampled) and the loudest of
+the frames since the previous event, so no peak is missed between events; `sample_db` is the sample peak in dBFS;
+`lufs_m` and `lufs_s` are momentary (400 ms) and short-term (3 s) K-weighted loudness. A mono tap is measured
+as one channel: the same signal from two speakers reads 3 LU louder. Silence is `-90.0`. `clip` is true when a frame
+since the previous event reached -1 dBTP or digital full scale; `latched` stays true from then until
+`audio.clip_clear` (the lamp on every mic meter), whatever happens to the signal afterwards. A frame is about 260 bytes,
+so the stream costs about 8 kB/s.
 
 ## Actions
 
@@ -189,9 +272,14 @@ take seconds (studio start, mic check, auto once) return at once with
 | `video.looks.apply` | `name`, `source?` | ramp to a saved look over 1.5 s |
 | `video.looks.save` | `name` | save the current look (`~/.config/streamstack/looks.json`) |
 | `video.looks.delete` | `name` | delete a saved (non-builtin) look |
+| `video.blur` | `on?`, `strength?` (1–20), `rate?` (1–6), `source?` (omitted: every camera) | background blur: creates the `Background Blur` filter on the camera if it is missing, then sets its enabled flag and settings; 409 when the plugin is missing or not loaded (turning it off always works) |
+| `video.blur.plugin` | `installed: bool` | demo only: pretend the plugin is (not) installed, to see the install hint |
 | `video.virtualcam` | `on` | start/stop the OBS virtual camera |
 | `video.record` | `on` | start/stop recording |
 | `video.stream` | `on` | start/stop streaming |
+| `video.canon_set` | `id`, `value` | set a Canon setting (`iso`, `shutter`, `aperture`, `exposure_comp`, `whitebalance`, `kelvin`, `picturestyle`, `focusmode`, `liveviewsize`); 409 with the camera's own reason when it refuses (for example the mode dial). The answer message says when the camera kept a different value |
+| `video.canon_action` | `name`: `autofocus` \| `af_cancel` \| `focus` (`step` -3..-1 nearer, 1..3 farther) | live-view autofocus and focus nudges |
+| `video.canon_refresh` | | re-read every Canon setting from the body |
 | `audio.gain` | `db` | microphone input gain, clamped to `gain_range` |
 | `audio.mute` | `on` | mute/unmute the microphone (the raw source, so every app is muted) |
 | `audio.preset` | `name` | load a voice preset |
@@ -199,10 +287,29 @@ take seconds (studio start, mic check, auto once) return at once with
 | `audio.tone` | any of `bass_db`, `presence_db`, `treble_db`, `pitch_semitones` | voice tone, live |
 | `audio.revive` | | restart a stalled microphone: suspend/resume the source, then cycle the card profile; 409 while one is running |
 | `audio.demo_stall` | `on` | demo only: put the demo microphone into (or out of) the stalled state |
+| `audio.clip_clear` | | clear the clip latch (every window shows it cleared) |
+| `audio.demo_clip` | | demo only: trip the clip latch |
 | `audio.mic_check` | `seconds?` (2–15, default 6) | record raw then processed; clips appear in state |
+| `interface.set` | `id`, `value`, `confirm?: bool` | change one control of the detected interface (`id` and `value` as the widget reports them: bool for a switch or Autogain, option index for a choice, number for a slider). Switching 48V on needs `confirm: true`, else 400 |
+| `interface.rescan` | | look for the interface again now |
+| `interface.demo_profile` | `profile`: `scarlett-2i2-gen4` \| `scarlett-2i2-gen3` \| `wave-xlr` \| `none` | demo only: simulate another interface |
 | `auto.on` / `auto.off` | | auto mode service |
 | `auto.once` | | one Claude pass now |
 | `auto.reset` | | undo every auto change |
+| `lighting.power` | `id` (a light id or `all`), `on` | turn one light, or every connected light, on or off |
+| `lighting.brightness` | `id`, `percent` (1-100) | brightness, as a percentage of that model's lumen range |
+| `lighting.temperature` | `id`, `kelvin` (2700-6500) | colour temperature, rounded to 100 K |
+| `lighting.preset` | `name` | apply a built-in or saved lighting preset to every connected light |
+| `lighting.presets.save` / `lighting.presets.delete` | `name` | save the current lights as a preset (`~/.config/streamstack/lighting.json`) / delete a saved one |
+| `lighting.identify` | `id` | pulse one light three times, then restore it |
+| `lighting.rescan` | | look for lights now |
+| `framing.mode` | `mode`: `off` \| `gentle` \| `tight` \| `follow` | auto-framing mode; 409 when the extra or model is missing |
+| `framing.hold` | `on` | freeze or release the crop; 409 while off |
+| `framing.reset` | | recentre: forget the crop and find the face again; 409 while off |
+| `auto.persona` | `id` | choose the director's persona |
+| `auto.persona_save` | `persona` | save an edited or new persona (the full document, validated) |
+| `auto.persona_reset` | `id` | drop your edits of a shipped persona, or delete a custom one |
+| `auto.location` | `name`, `latitude`, `longitude` or `clear` | the property location for sunrise and sunset |
 | `health.refresh` | | re-run the checks now |
 | `open.app` | `name`: `obs` \| `easyeffects` \| `qpwgraph` \| `pavucontrol` \| `qv4l2` | open the full tool |
 
@@ -225,8 +332,14 @@ class AudioController:          # console/audio.py  (+ DemoAudio)
 
 class VideoController:          # console/video.py  (+ DemoVideo)
     def state(self) -> dict: ...                 # the "video" object
-    def act(self, action: str, params: dict) -> str | None: ...   # "video.*"
+    def act(self, action: str, params: dict) -> str | None: ...   # "video.*" (video.canon_* go to console/canon.py)
     def frame(self, source: str, width: int) -> bytes | None: ... # one JPEG for previews
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+
+class InterfaceController:      # console/interface.py (+ DemoInterface)
+    def state(self) -> dict: ...                 # the "interface" object (cached; polled in a thread)
+    def act(self, action: str, params: dict) -> str | None: ...   # "interface.*"
     def start(self) -> None: ...
     def stop(self) -> None: ...
 
@@ -237,10 +350,21 @@ class StudioController:         # console/studio.py (+ DemoStudio)
     def stop(self) -> None: ...
 ```
 
-`console/rig.py` composes the three (`Rig.live(cfg)` / `Rig.demo()`), routes
+class LightingController:       # console/lighting.py (+ DemoLighting, two simulated Litra Beams)
+    def state(self) -> dict: ...                 # the "lighting" object
+    def act(self, action: str, params: dict) -> str | None: ...   # "lighting.*"
+    def health_checks(self) -> list[dict]: ...   # one System-page check: lights found, permission ok
+    def start(self) -> None: ...                 # scan thread (hotplug) and read-back thread
+    def stop(self) -> None: ...
+```
+
+The USB protocol itself lives in `streamstack/lighting.py` (see
+[lighting.md](lighting.md)).
+
+`console/rig.py` composes the controllers (`Rig.live(cfg)` / `Rig.demo()`), routes
 actions by prefix and assembles the snapshot. `console/hub.py` polls
 `Rig.snapshot()` (every 1 s, and right after each action), pushes `state`
-only when it changed, and pushes `meters` at 20 Hz to every SSE client.
+only when it changed, and pushes `meters` at 30 Hz to every SSE client.
 Controllers cache slow probes (v4l2-ctl, pactl, OBS) in their own threads so
 `state()` and `meters()` return in well under 10 ms.
 
@@ -270,6 +394,30 @@ Controllers cache slow probes (v4l2-ctl, pactl, OBS) in their own threads so
   (LUT on), Punchy, Soft Skin. User looks live in
   `~/.config/streamstack/looks.json`.
 
+### Background blur notes
+
+- Plugin: [obs-backgroundremoval](https://github.com/royshil/obs-backgroundremoval) 1.4.1. Detection
+  (`streamstack.blur.detect`) reads files only: `obs-backgroundremoval.so` in OBS's plugin folders (including
+  `/usr/local/lib/obs-plugins`), the models next to it, the version from dpkg (or the OBS log), and the
+  inference providers the binary imports. It is CPU only: upstream has no OpenVINO value for `useGPU`, so an
+  Arc GPU path is a carried build (issue #26) and shows up as an extra device once it exists.
+- The filter is `Background Blur` (kind `background_removal`), disabled in `scenes.json` on both cameras after
+  the colour chain. Existing OBS profiles that predate it get it created on the first enable, with the same
+  low-latency settings (`streamstack.blur.LOW_LATENCY`). Strength is the plugin's `blur_background` (Kawase
+  blur passes, 1–20; 0 would remove the background, so it is never written); smoothness is
+  `mask_every_x_frames` (Light 3, Balanced 2, Smooth 1). The plugin has no resolution or fps key: the network
+  input size is fixed by the model file and the effective mask rate is the camera fps divided by
+  `mask_every_x_frames`.
+- obs-websocket requests: `GetSourceFilterKindList`, `GetSourceFilter`, `CreateSourceFilter`,
+  `SetSourceFilterSettings` (overlay), `SetSourceFilterEnabled`, `GetStats`.
+- Cost guard: while the blur is on, once a second `GetStats` gives OBS's mean frame render time and CPU use.
+  Against the numbers from just before it was switched on, the verdict is `over` when the added p95 frame time is
+  8 ms or more, the added CPU is 1 percentage point or more, or any frame was skipped since. OBS reports a
+  smoothed mean, not a per-frame distribution, so the p95 here is over one-second readings; the benchmark
+  (issue #22) measures the real distribution. `over` raises one toast and a `background-blur` health warning.
+- Health: the static `background-blur` check (doctor and System page) warns with an install hint when the plugin
+  or its models are missing; the live check replaces it when OBS is connected.
+
 ## Frontend
 
 `data/console/` holds `index.html`, `app.js` (state store, SSE, router,
@@ -290,6 +438,9 @@ and `pages/*.js`. Hash routing: `#/live` (default), `#/camera`, `#/audio`,
   fader, mute, tone knobs (bass, presence, treble, pitch), preset pads with
   their character, bypass A/B, in-app mic check with playback, and a 60 s
   loudness history.
+- **Lighting**: Litra lights as big power pads and brightness / warm-to-cool
+  temperature faders, an All lights master, preset pads and saved presets. A
+  small lights control also sits in the Live status rail and the Mini window.
 - **Auto**: the AI director: on/off, ask now, undo, Claude's notes and a
   timeline of every change.
 - **System**: health checks as cards, the services, the full tools, and the
