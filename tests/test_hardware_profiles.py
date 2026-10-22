@@ -110,6 +110,27 @@ def test_deskmeet_b760_udev_rules_cover_the_desk_peripherals() -> None:
     assert not any("video4linux" in c for c in rules.values())
 
 
+def test_litra_udev_rule_covers_every_litra_and_nothing_else_from_logitech() -> None:
+    rules = {r["name"]: r["content"] for r in _profiles()["deskmeet-b760"]["udev_rules"]}
+    active = [
+        line.strip() for line in rules["60-logitech-litra"].splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    litra_ids = {"c900", "c901", "b901", "c903"}  # Glow, Beam, Beam, Beam LX (litra-rs)
+    for subsystem, attr in (("usb", "ATTR"), ("hidraw", "ATTRS")):
+        found = set()
+        for line in active:
+            if line.startswith(f'SUBSYSTEM=="{subsystem}"'):
+                assert f'{attr}{{idVendor}}=="046d"' in line
+                (product,) = re.findall(rf'{attr}{{idProduct}}=="([0-9a-f]{{4}})"', line)
+                for fragment in ('TAG+="uaccess"', 'GROUP="plugdev"', 'MODE="0660"'):
+                    assert fragment in line
+                found.add(product)
+        assert found == litra_ids, subsystem
+    assert len(active) == 2 * len(litra_ids), "every rule names one exact product id"
+    assert "c539" not in "".join(active), "the Lightspeed receiver stays untouched"
+
+
 def test_deskmeet_b760_hands_the_loopback_cameras_to_streamstack() -> None:
     profile = _profiles()["deskmeet-b760"]
     assert profile["streamstack"] is True

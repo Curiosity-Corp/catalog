@@ -1,0 +1,263 @@
+---
+# =============================================================================
+# StreamStack low-latency tuning and current media drivers
+# =============================================================================
+# Included from main.yml for StreamStack hosts (streamstack_enabled) while
+# streamstack_low_latency is true. Everything is detected or matched by
+# hardware id, so a host without a given device (a Scarlett 2i2 instead of the
+# Wave XLR, no Intel GPU) gets only the rules that apply to it, and a missing
+# device is never an error. Nothing here restarts PipeWire, reloads a module or
+# reboots: the audio settings take effect when PipeWire/WirePlumber next start
+# (log out and in, or `systemctl --user restart pipewire wireplumber
+# pipewire-pulse` between calls). See docs/streamstack.md, "Low latency".
+# =============================================================================
+
+- name: Validate the StreamStack low-latency settings
+  ansible.builtin.assert:
+    that:
+      - streamstack_audio_rate | int in [44100, 48000, 96000]
+      - streamstack_audio_min_quantum | int >= 32
+      - streamstack_audio_min_quantum | int <= streamstack_audio_quantum | int
+      - streamstack_audio_quantum | int <= streamstack_audio_max_quantum | int
+      - streamstack_audio_max_quantum | int <= 8192
+      - streamstack_audio_period_size | int >= 32
+      - streamstack_audio_headroom | int >= 0
+      - streamstack_realtime_rtprio | int >= 1
+      - streamstack_realtime_rtprio | int <= 99
+      - streamstack_realtime_group is match('^[a-z_][a-z0-9_-]*$')
+      - streamstack_usb_no_autosuspend_ids | select('match', '^[0-9a-f]{4}:([0-9a-f]{4}|[*])$') | list | length == streamstack_usb_no_autosuspend_ids | length
+      - streamstack_media_package_state in ['latest', 'present']
+      - streamstack_kernel_args | select('match', '^[A-Za-z0-9_.=,:@/-]+$') | list | length == streamstack_kernel_args | length
+    fail_msg: >-
+      Invalid StreamStack low-latency setting: quantums must satisfy
+      32 <= min <= default <= max <= 8192, USB ids are lowercase
+      vendor:product (product may be *), kernel arguments are single
+      shell-safe words.
+
+# --- PipeWire / WirePlumber -------------------------------------------------
+
+- name: Ensure the PipeWire and WirePlumber drop-in directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/pipewire/pipewire.conf.d
+    - /etc/pipewire/pipewire-pulse.conf.d
+    - /etc/wireplumber/wireplumber.conf.d
+
+- name: Set the PipeWire graph clock for low latency
+  ansible.builtin.copy:
+    dest: /etc/pipewire/pipewire.conf.d/50-curiosity-streamstack-low-latency.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack-low-latency task group).
+      # Overridable per host with streamstack_audio_* or a later-sorting drop-in.
+      context.properties = {
+          default.clock.rate          = {{ streamstack_audio_rate | int }}
+          default.clock.allowed-rates = [ {{ streamstack_audio_rate | int }} ]
+          default.clock.quantum       = {{ streamstack_audio_quantum | int }}
+          default.clock.min-quantum   = {{ streamstack_audio_min_quantum | int }}
+          default.clock.max-quantum   = {{ streamstack_audio_max_quantum | int }}
+      }
+
+- name: Match the PulseAudio clients (browsers, Teams, Zoom) to the graph clock
+  ansible.builtin.copy:
+    dest: /etc/pipewire/pipewire-pulse.conf.d/50-curiosity-streamstack-low-latency.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack-low-latency task group).
+      pulse.properties = {
+          pulse.min.req     = {{ streamstack_audio_min_quantum | int }}/{{ streamstack_audio_rate | int }}
+          pulse.default.req = {{ streamstack_audio_quantum | int }}/{{ streamstack_audio_rate | int }}
+          pulse.min.quantum = {{ streamstack_audio_min_quantum | int }}/{{ streamstack_audio_rate | int }}
+      }
+
+- name: Pin the audio interface ALSA period and keep it awake
+  ansible.builtin.copy:
+    dest: /etc/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-alsa.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack-low-latency task group).
+      # Matches by node name, so it is inert on a host without these interfaces.
+      monitor.alsa.rules = [
+      {% for pattern in streamstack_audio_node_patterns %}
+        {
+          matches = [
+            { node.name = "~{{ pattern | replace('\\', '\\\\') }}" }
+          ]
+          actions = {
+            update-props = {
+              session.suspend-timeout-seconds = 0
+              node.pause-on-idle = false
+              api.alsa.period-size = {{ streamstack_audio_period_size | int }}
+              api.alsa.headroom = {{ streamstack_audio_headroom | int }}
+            }
+          }
+        }
+      {% endfor %}
+      ]
+
+# --- Realtime scheduling ----------------------------------------------------
+
+- name: Install rtkit (PipeWire's realtime fallback)
+  ansible.builtin.apt:
+    name: rtkit
+    state: present
+
+- name: Grant the audio group realtime priority and locked memory
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/95-curiosity-streamstack-realtime.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack-low-latency task group).
+      @{{ streamstack_realtime_group }}   -   rtprio    {{ streamstack_realtime_rtprio | int }}
+      @{{ streamstack_realtime_group }}   -   memlock   unlimited
+      @{{ streamstack_realtime_group }}   -   nice      -19
+
+# `user: groups=... append=true` creates a user that does not exist, so only
+# accounts that are already on the host are touched.
+- name: Look up the managed users
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ item.name }}"
+    fail_key: false
+  loop: "{{ dev_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _streamstack_rt_users
+
+- name: Put the managed users in the realtime group
+  ansible.builtin.user:
+    name: "{{ item.item.name }}"
+    groups: "{{ streamstack_realtime_group }}"
+    append: true
+  loop: "{{ _streamstack_rt_users.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.ansible_facts.getent_passwd[item.item.name] | default(none) is not none
+
+# --- USB: no autosuspend for the studio devices -----------------------------
+
+- name: Keep the StreamStack USB devices awake
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/60-curiosity-streamstack-usb-power.rules
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack-low-latency task group).
+      # Audio interfaces and capture devices must never autosuspend: the wake-up
+      # is an audible dropout or a frozen picture.
+      {% for usb_id in streamstack_usb_no_autosuspend_ids %}
+      ACTION=="add|bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="{{ usb_id.split(':')[0] }}"{% if usb_id.split(':')[1] != '*' %}, ATTR{idProduct}=="{{ usb_id.split(':')[1] }}"{% endif %}, TEST=="power/control", ATTR{power/control}="on"
+      {% endfor %}
+  register: _streamstack_usb_power
+
+- name: Reload udev rules for the StreamStack USB power policy  # noqa: no-handler
+  ansible.builtin.command: udevadm control --reload
+  when: _streamstack_usb_power is changed
+  changed_when: true
+
+# Applies the policy to devices that are plugged in now without replaying
+# udev events (no rebind, no re-enumeration): only power/control is written.
+- name: Disable autosuspend on the StreamStack USB devices that are present
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      for dev in /sys/bus/usb/devices/*; do
+        [ -r "$dev/idVendor" ] && [ -w "$dev/power/control" ] || continue
+        vendor="$(cat "$dev/idVendor")"
+        product="$(cat "$dev/idProduct")"
+        for want in {{ streamstack_usb_no_autosuspend_ids | map('quote') | join(' ') }}; do
+          [ "${want%%:*}" = "$vendor" ] || continue
+          [ "${want##*:}" = '*' ] || [ "${want##*:}" = "$product" ] || continue
+          if [ "$(cat "$dev/power/control")" != on ]; then
+            echo on > "$dev/power/control"
+            echo "changed $vendor:$product"
+          fi
+          break
+        done
+      done
+    executable: /bin/bash
+  register: _streamstack_usb_live
+  changed_when: "'changed ' in _streamstack_usb_live.stdout"
+
+# --- Intel Arc / iGPU media stack ------------------------------------------
+
+- name: Detect an Intel GPU
+  ansible.builtin.shell:
+    cmd: grep -qx 0x8086 /sys/class/drm/card*/device/vendor
+    executable: /bin/bash
+  register: _streamstack_intel_gpu
+  changed_when: false
+  failed_when: false
+
+- name: Install the current Intel media stack
+  ansible.builtin.apt:
+    name: >-
+      {{ streamstack_intel_media_packages
+         + (['intel-media-va-driver-non-free'] if streamstack_intel_media_non_free | bool else ['intel-media-va-driver']) }}
+    state: "{{ streamstack_media_package_state }}"
+  when: _streamstack_intel_gpu.rc == 0
+
+# --- Optional kernel arguments (opt-in; reversible by emptying the list) -----
+
+- name: Check for the GRUB defaults file
+  ansible.builtin.stat:
+    path: /etc/default/grub
+  register: _streamstack_grub
+
+- name: Install the StreamStack kernel-argument drop-in
+  when:
+    - streamstack_kernel_args | length > 0
+    - _streamstack_grub.stat.exists
+  block:
+    - name: Ensure the GRUB defaults drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/default/grub.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the StreamStack kernel-argument drop-in
+      ansible.builtin.copy:
+        dest: /etc/default/grub.d/93-curiosity-streamstack.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by the curiosity workstation role (streamstack-low-latency task group).
+          # Appends to whatever earlier GRUB files set; never replaces GRUB_CMDLINE_LINUX_DEFAULT.
+          GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }{{ streamstack_kernel_args | join(' ') }}"
+      register: _streamstack_grub_installed
+
+- name: Remove the StreamStack kernel-argument drop-in when no arguments are set
+  ansible.builtin.file:
+    path: /etc/default/grub.d/93-curiosity-streamstack.cfg
+    state: absent
+  when: streamstack_kernel_args | length == 0
+  register: _streamstack_grub_removed
+
+- name: Locate update-grub
+  ansible.builtin.stat:
+    path: /usr/sbin/update-grub
+  register: _streamstack_update_grub
+
+- name: Regenerate GRUB after the StreamStack kernel arguments changed
+  ansible.builtin.command: /usr/sbin/update-grub
+  when:
+    - (_streamstack_grub_installed is changed) or (_streamstack_grub_removed is changed)
+    - _streamstack_update_grub.stat.exists
+  changed_when: true
