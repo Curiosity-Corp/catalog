@@ -1,0 +1,15 @@
+/* system-bridge.css — the Canon bridge panel. Scoped like system.css: page stylesheets stay loaded after navigation. */
+@scope ([data-page="system"]) {
+  .cbr[hidden] { display: none; }
+  .cbr-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: var(--s-3); margin: 0; }
+  .cbr-stat { display: grid; gap: 0.15rem; padding: var(--s-2) var(--s-4); border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line); min-width: 0; }
+  .cbr-stat dt { font-size: var(--fs-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-3); }
+  .cbr-stat dd { margin: 0; font-family: var(--font-mono); font-size: var(--fs-md); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .cbr-stat[data-kind="gpu"] dd { color: var(--green); }
+  .cbr-stat[data-kind="cpu"] dd { color: var(--amber); }
+  .cbr-tried { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s-2); }
+  .cbr-tried li { font-size: var(--fs-xs); padding: 0.15rem 0.6rem; border-radius: var(--r-pill); border: 1px solid var(--line); color: var(--text-2); background: var(--surface-2); }
+  .cbr-tried li[data-ok="true"] { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+  .cbr-tried li[data-ok="false"] { color: var(--amber); }
+  .cbr-err { margin-top: var(--s-2); }
+}

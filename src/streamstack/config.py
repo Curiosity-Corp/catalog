@@ -30,10 +30,23 @@ DEFAULTS = {
     "STREAMSTACK_CAMERA_EXTERNAL": "false",
     "STREAMSTACK_CANON_BRIDGE": "gphoto2",
     "STREAMSTACK_CANON_COMMAND": "",
+    # native: the camera's own aspect, never enlarged; fill: crop to the canvas (the 0.2 behaviour)
+    "STREAMSTACK_CANON_OUTPUT": "native",
+    # auto tries Intel Quick Sync, then VA-API, then the CPU; or force qsv | vaapi | cpu
+    "STREAMSTACK_CANON_DECODE": "auto",
+    # auto uses python-gphoto2 (one shared USB session) when installed, else the gphoto2 command (pauses for changes)
+    "STREAMSTACK_CANON_BACKEND": "auto",
+    "STREAMSTACK_CANON_RENDER_NODE": "",
     "STREAMSTACK_VOICE_PRESET": "StreamStack Voice",
     # Name or part of the name/description of the call microphone; empty picks
     # an Elgato Wave, then the default input.
     "STREAMSTACK_MICROPHONE": "",
+    # The audio interface to drive: auto (detected by USB id), off, a profile id (scarlett-2i2-gen4, scarlett-2i2-gen3,
+    # wave-xlr) or a USB id such as 1235:8219.
+    "STREAMSTACK_INTERFACE": "auto",
+    # Wave XLR hardware control over its vendor USB interface: off (never opened),
+    # read, or write. See docs/interfaces.md.
+    "STREAMSTACK_WAVE_XLR_USB": "off",
     "STREAMSTACK_AUTO_BACKEND": "claude-cli",
     "STREAMSTACK_AUTO_MODEL": "",
     "STREAMSTACK_AUTO_INTERVAL": "15",
@@ -41,6 +54,31 @@ DEFAULTS = {
     "STREAMSTACK_AUTO_VIDEO": "true",
     "STREAMSTACK_AUTO_AUDIO": "true",
     "STREAMSTACK_AUTO_NOTIFY": "true",
+    # Auto-framing (optional extra: pip install 'streamstack[framing]', then streamstack framing --fetch).
+    # Mode at start when the Console has not remembered one: off | gentle | tight | follow. Detections per second
+    # (2 to 15). Device: auto (Intel GPU, then CPU) | gpu | cpu.
+    "STREAMSTACK_FRAMING_MODE": "off",
+    "STREAMSTACK_FRAMING_FPS": "8",
+    "STREAMSTACK_FRAMING_DEVICE": "auto",
+    # The director: stills per Claude pass (contact sheet), seconds between them, seconds of microphone analysed
+    # locally, and whether the persona's look is eased in between Claude passes.
+    "STREAMSTACK_AUTO_BURST": "4",
+    "STREAMSTACK_AUTO_BURST_SECONDS": "1.0",
+    "STREAMSTACK_AUTO_CLIP_SECONDS": "6",
+    "STREAMSTACK_AUTO_PERSONA_LOOK": "true",
+    # Hardware the director may drive when it is present (each is simply absent when its device is not there):
+    # the Canon's exposure compensation and Kelvin, Litra brightness and colour temperature, the audio interface's
+    # preamp gain, and the YuNet face finder (instead of the skin-colour heuristic) for metering the face.
+    "STREAMSTACK_AUTO_CANON": "true",
+    "STREAMSTACK_AUTO_LIGHTS": "true",
+    "STREAMSTACK_AUTO_HARDWARE_GAIN": "true",
+    "STREAMSTACK_AUTO_FACES": "true",
+    # Which interface input the director's gain follows: auto (the first with a gain), 1, 2, or a control id.
+    "STREAMSTACK_AUTO_INTERFACE_INPUT": "auto",
+    # Where the property is, for sunrise and sunset (computed offline). Empty: the time zone's city.
+    "STREAMSTACK_PROPERTY": "",
+    "STREAMSTACK_LATITUDE": "",
+    "STREAMSTACK_LONGITUDE": "",
 }
 
 

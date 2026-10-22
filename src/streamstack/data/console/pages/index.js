@@ -44,6 +44,16 @@ export const pages = [
     load: () => import('./system.js'),
   },
   {
+    id: 'lighting', title: 'Lighting', icon: 'lights', key: '6',
+    blurb: 'Logitech Litra lights: power, brightness and colour temperature, with presets.',
+    load: () => import('./lighting.js'),
+  },
+  {
+    id: 'interface', title: 'Interface', icon: 'sliders', key: '7',
+    blurb: 'Your audio interface: hardware gain, Autogain, 48V and Air for a Scarlett; gain and mute for a Wave XLR.',
+    load: () => import('./interface.js'),
+  },
+  {
     id: 'mini', title: 'Mini', icon: 'mini', nav: false, chrome: false,
     blurb: 'A compact strip for a small window next to the call.',
     load: () => import('./mini.js'),

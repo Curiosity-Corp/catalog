@@ -381,3 +381,62 @@ def test_scene_pads_on_the_camera_page(cam: App, rig: Rig) -> None:
     assert poll(rig, lambda s: s["video"]["program_scene"] == scenes[2])
     cam.press("1")
     assert poll(rig, lambda s: s["video"]["program_scene"] == scenes[0])
+
+
+# ---------------------------------------------------------------------------
+# Background blur (obs-backgroundremoval): toggle, strength, smoothness, cost guard, missing plugin
+# ---------------------------------------------------------------------------
+
+
+def blur_of(rig: Rig) -> dict:
+    state = rig.state()["video"]
+    return state["blur"]["sources"][state["selected_source"]]
+
+
+def test_blur_toggle_enables_the_filter_on_the_edited_camera_only(cam: App, rig: Rig) -> None:
+    first, second = rig.state()["video"]["sources"][:2]
+    toggle = cam.switch("Blur background")
+    expect(toggle).to_have_attribute("aria-checked", "false")
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-checked", "true")
+    state = poll(rig, lambda s: s["video"]["blur"]["sources"][first]["enabled"] and s["video"]["blur"])
+    assert state["sources"][second]["enabled"] is False
+    expect(cam.page.get_by_text("Within budget")).to_be_visible(timeout=LOADED)
+    toggle.click()
+    assert poll(rig, lambda s: not s["video"]["blur"]["on"])
+    expect(cam.page.get_by_text("Within budget")).to_have_count(0)
+
+
+def test_blur_strength_fader_sets_the_plugin_pass_count(cam: App, rig: Rig) -> None:
+    cam.switch("Blur background").click()
+    fader = cam.slider("Blur strength")
+    expect(fader).to_have_attribute("aria-valuenow", "8")
+    fader.focus()
+    fader.press("ArrowUp")
+    assert poll(rig, lambda s: blur_of(rig)["strength"] == 9 or None)
+    fader.press("End")
+    assert poll(rig, lambda s: blur_of(rig)["strength"] == 20 or None)
+    expect(fader).to_have_attribute("aria-valuenow", "20")
+
+
+def test_blur_smoothness_changes_the_mask_rate_and_the_smoothest_is_over_budget(cam: App, rig: Rig) -> None:
+    cam.switch("Blur background").click()
+    group = cam.region("Mask smoothness")
+    expect(group.get_by_role("button", name="Balanced")).to_have_attribute("aria-pressed", "true")
+    group.get_by_role("button", name="Light").click()
+    assert poll(rig, lambda s: blur_of(rig)["rate"] == 3 or None)
+    group.get_by_role("button", name="Smooth").click()
+    assert poll(rig, lambda s: blur_of(rig)["rate"] == 1 or None)
+    expect(cam.page.get_by_text("Over budget")).to_be_visible(timeout=LOADED)
+    check = poll(rig, lambda s: next((c for c in s["health"]["checks"] if c["id"] == "background-blur"), None))
+    assert check["state"] == "warn" and "budget" in check["title"]
+    group.get_by_role("button", name="Light").click()
+    expect(cam.page.get_by_text("Within budget")).to_be_visible(timeout=LOADED)
+
+
+def test_blur_without_the_plugin_says_how_to_install_it(cam: App, rig: Rig) -> None:
+    rig.act("video.blur.plugin", installed=False)
+    expect(cam.page.get_by_text("obs-backgroundremoval plugin", exact=False).first).to_be_visible(timeout=LOADED)
+    expect(cam.switch("Blur background")).to_be_disabled()
+    check = poll(rig, lambda s: next((c for c in s["health"]["checks"] if c["id"] == "background-blur"), None))
+    assert check["state"] == "warn" and check["hint"]

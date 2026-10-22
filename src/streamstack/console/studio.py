@@ -21,6 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from streamstack import camlink, cli, config, system
+from streamstack.console import director
 from streamstack.console.errors import ActionError
 
 APPS = ("obs", "easyeffects", "qpwgraph", "pavucontrol", "qv4l2")
@@ -63,7 +64,12 @@ def cpu_percent(before: tuple[int, int], after: tuple[int, int]) -> float:
     return round(100.0 * (after[0] - before[0]) / total, 1) if total > 0 else 0.0
 
 
-def event_kind(event: str) -> str:
+LIGHT_REASON = "Easing towards Daylight natural's light for the morning."
+CAMERA_REASON = "The face was 96 luma, below the 100-140 band; the camera's own exposure compensation moves first."
+GAIN_REASON = "Speech was quiet against the room."
+
+
+def event_kind(event: str, entry: dict | None = None) -> str:
     """The journal's event names folded into the four kinds the Console colours."""
     if "error" in event or event == "obs-unavailable":
         return "error"
@@ -71,7 +77,12 @@ def event_kind(event: str) -> str:
         return "audio"
     if event in ("exposure", "video", "video-paused"):
         return "video"
+    if event == "change":
+        return "audio" if (entry or {}).get("kind") in ("audio", "interface") else "video"
     return "ai"
+
+
+CHANGE_FIELDS = ("actuator", "target", "key", "before", "after", "reason", "source")
 
 
 def journal_entry(entry: dict) -> dict:
@@ -80,7 +91,15 @@ def journal_entry(entry: dict) -> dict:
         text = cli.describe(entry)
     except (KeyError, TypeError, ValueError, AttributeError):
         text = str(entry.get("error") or entry.get("reason") or "")
-    return {"time": entry.get("time"), "event": event, "text": text, "kind": event_kind(event)}
+    out = {"time": entry.get("time"), "event": event, "text": text, "kind": event_kind(event, entry)}
+    reason = entry.get("reason")
+    if event in ("exposure", "mic-gain", "change") and isinstance(reason, str):
+        out["reason"] = reason[:240]
+    if event == "change":
+        out["change"] = {k: entry.get(k) for k in CHANGE_FIELDS}
+    if event == "ai":
+        out["persona"], out["slot"] = entry.get("persona"), entry.get("slot")
+    return out
 
 
 def read_journal(path: Path, limit: int = JOURNAL_LIMIT) -> list[dict]:
@@ -120,7 +139,10 @@ def last_note(entries: list[dict]) -> tuple[str | None, str | None]:
 
 
 def public_entries(entries: list[dict]) -> list[dict]:
-    return [{k: e[k] for k in ("time", "event", "text", "kind")} for e in entries]
+    return [
+        {k: e[k] for k in ("time", "event", "text", "kind", "reason", "change", "persona", "slot") if k in e}
+        for e in entries
+    ]
 
 
 def probe_studio(cfg: dict[str, str]) -> dict:
@@ -211,6 +233,7 @@ class StudioController:
         }
         self._auto: dict = {"running": None, "can_undo": False, "last_note": None, "last_time": None, "journal": []}
         self._health: dict = {"updated": None, "summary": None, "checks": []}
+        self._director = director.DirectorPanel(self.cfg)
         self._cpu: float | None = None
         self._cpu_last = cpu_times()
         self._journal_key: tuple[float, int] | None = None
@@ -323,6 +346,7 @@ class StudioController:
             load: list[float] | None = [round(v, 2) for v in os.getloadavg()]
         except OSError:
             load = None
+        director_state = director.safe_state(self._director)
         with self._lock:
             studio = dict(
                 self._studio,
@@ -330,14 +354,25 @@ class StudioController:
                 program_label=self.cfg["STREAMSTACK_PROGRAM_LABEL"],
                 camera_label=self.cfg["STREAMSTACK_CAMERA_LABEL"],
             )
-            auto = dict(self._auto, busy=self._busy["auto"], backend=self.cfg["STREAMSTACK_AUTO_BACKEND"])
+            auto = dict(
+                self._auto,
+                busy=self._busy["auto"],
+                backend=self.cfg["STREAMSTACK_AUTO_BACKEND"],
+                director=director_state,
+            )
             health = dict(self._health)
             system_state = {"cpu_percent": self._cpu, "load": load, "cores": os.cpu_count() or 1}
         return {"studio": studio, "auto": auto, "health": health, "system": system_state}
 
     # -- actions --------------------------------------------------------------
 
+    def sheet(self) -> bytes | None:
+        """The last contact sheet Claude was shown, for the Auto page."""
+        return self._director.sheet()
+
     def act(self, action: str, params: dict) -> str | None:
+        if self._director.handles(action):
+            return self._director.act(action, params)
         if action == "studio.start":
             return self._job(
                 "studio",
@@ -449,6 +484,8 @@ class DemoStudio:
         self._can_undo = True
         self._checked = now_iso()
         self._journal = self._sample_journal()
+        self._journal_total = len(self._journal)
+        self._director = director.DemoPanel()
         self._t0 = clock()
 
     @staticmethod
@@ -458,20 +495,62 @@ class DemoStudio:
         def at(ago: float) -> str:
             return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(base - ago))
 
+        def change(
+            ago: float,
+            actuator: str,
+            kind: str,
+            key: str,
+            before: object,
+            after: object,
+            reason: str,
+            target: str = "Canon EOS 50D",
+            source: str = "claude",
+        ) -> dict:
+            return {
+                "time": at(ago),
+                "event": "change",
+                "text": f"{key}: {before} -> {after} ({reason})",
+                "kind": kind,
+                "reason": reason,
+                "change": {
+                    "actuator": actuator,
+                    "target": target,
+                    "key": key,
+                    "before": before,
+                    "after": after,
+                    "reason": reason,
+                    "source": source,
+                },
+            }
+
+        warm = "Skin read cooler than the persona's warmth, so warmth moved up one small step."
         return [
             {
                 "time": at(40),
                 "event": "mic-gain",
                 "text": "+0.0 dB -> +1.5 dB",
                 "kind": "audio",
+                "reason": "Speech was quiet against the room.",
             },
+            change(120, "litra", "video", "kelvin", 5600, 5300, LIGHT_REASON, "Litra Beam 1", "persona"),
+            change(150, "canon-exposure", "video", "exposure_comp", 0.0, 0.3, CAMERA_REASON, source="local"),
+            change(170, "interface-gain", "audio", "gain_db", 30.0, 32.0, GAIN_REASON, "gain.1", "local"),
+            change(190, "obs-look", "video", "warmth", 0.0, 0.12, warm),
             {
-                "time": at(190),
+                "time": at(191),
                 "event": "ai",
                 "text": "(0.8) Face slightly under-exposed; lifted gamma.",
                 "kind": "ai",
+                "persona": "daylight-natural",
+                "slot": "morning",
             },
-            {"time": at(260), "event": "exposure", "text": "Canon EOS 50D: frame luma 96", "kind": "video"},
+            {
+                "time": at(260),
+                "event": "exposure",
+                "text": "Canon EOS 50D: frame luma 96",
+                "kind": "video",
+                "reason": "The frame was 96 luma, below the 100-140 band for Daylight natural",
+            },
             {"time": at(600), "event": "ai-skipped", "text": "no camera with the StreamStack filters", "kind": "ai"},
             {"time": at(900), "event": "mic-gain", "text": "-1.0 dB -> +0.0 dB", "kind": "audio"},
         ]
@@ -514,6 +593,13 @@ class DemoStudio:
                 "ok",
                 "OBS encodes with AV1 on the GPU (VA-API)",
                 "av1_ffmpeg_vaapi_tex: /dev/dri/renderD128, Intel iHD driver, low-power mode",
+            ),
+            item(
+                "video",
+                "background-blur",
+                "ok",
+                "Background blur is available: obs-backgroundremoval 1.4.1",
+                "CPU; /usr/local/lib/obs-plugins/obs-backgroundremoval.so",
             ),
             item(
                 "audio",
@@ -568,6 +654,8 @@ class DemoStudio:
                     "last_note": note,
                     "last_time": when,
                     "journal": journal,
+                    "journal_total": self._journal_total,  # demo only: the journal list is capped, this keeps counting
+                    "director": director.safe_state(self._director),
                 },
                 "health": {"updated": self._checked, "summary": cli.summarize(checks), "checks": checks},
                 "system": {
@@ -579,7 +667,12 @@ class DemoStudio:
 
     # -- actions --------------------------------------------------------------
 
+    def sheet(self) -> bytes | None:
+        return self._director.sheet()
+
     def act(self, action: str, params: dict) -> str | None:
+        if self._director.handles(action):
+            return self._director.act(action, params)
         if action == "studio.start":
             return self._later("studio", "Starting the studio...", "Studio started", self._set_running, True)
         if action == "studio.stop":
@@ -629,11 +722,34 @@ class DemoStudio:
 
     def _add_review(self) -> None:
         self._can_undo = True
-        self._push("ai", "(0.9) Looks well exposed; nudged warmth up a touch.", "ai")
+        reason = "Skin read cooler than the persona's warmth, so warmth moved up one small step."
+        self._push(
+            "change",
+            f"warmth: 0.0 -> 0.12 ({reason})",
+            "video",
+            reason=reason,
+            change={
+                "actuator": "obs-look",
+                "target": "Canon EOS 50D",
+                "key": "warmth",
+                "before": 0.0,
+                "after": 0.12,
+                "reason": reason,
+                "source": "claude",
+            },
+        )
+        self._push(
+            "ai",
+            "(0.9) Looks well exposed; nudged warmth up a touch.",
+            "ai",
+            persona=self._director.chosen(),
+            slot=self._director.slot(),
+        )
 
     def _reset(self) -> None:
         self._can_undo = False
         self._push("reset", "restored the look, mic gain and voice preset", "ai")
 
-    def _push(self, event: str, text: str, kind: str) -> None:
-        self._journal.insert(0, {"time": now_iso(), "event": event, "text": text, "kind": kind})
+    def _push(self, event: str, text: str, kind: str, **extra: object) -> None:
+        self._journal.insert(0, {"time": now_iso(), "event": event, "text": text, "kind": kind, **extra})
+        self._journal_total += 1

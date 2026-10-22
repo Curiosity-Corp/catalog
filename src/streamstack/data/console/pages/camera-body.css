@@ -1,0 +1,43 @@
+/* camera-body.css — the Canon body tab. Scoped like camera.css: page stylesheets stay loaded after navigation. */
+@scope ([data-page="camera"]) {
+  .cam-side:has(.side-tabs:not([hidden])) { grid-template-rows: auto auto minmax(12rem, 1fr); }
+  .side-tabs { justify-self: start; }
+  .side-tabs[hidden] { display: none; }
+  .cam-side[data-tab="looks"] .c-body { display: none; }
+  .cam-side[data-tab="body"] .c-looks { display: none; }
+  .c-body { min-height: 0; }
+  .cb-scroll { display: grid; gap: var(--s-3); align-content: start; overflow-y: auto; min-height: 0; flex: 1; padding: 0.2rem; margin: -0.2rem; }
+  .cb-info { margin: 0; font-size: var(--fs-xs); color: var(--text-2); min-height: 1.1em; overflow-wrap: anywhere; }
+  .cb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2) var(--s-4); }
+  .cb-row { display: grid; gap: 0.2rem; min-width: 0; align-content: start; }
+  .cb-row[data-busy] { opacity: 0.7; }
+  .cb-label { font-size: var(--fs-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-3); }
+  .cb-ctl { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.2rem; align-items: stretch; }
+  .cb-select { min-width: 0; min-height: 2.2rem; padding: 0 var(--s-2); border-radius: var(--r-3); background: var(--surface-inset); border: 1px solid var(--line); color: var(--text); font: inherit; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .cb-select:focus-visible, .cb-step:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .cb-select:disabled { opacity: 0.55; cursor: not-allowed; }
+  .cb-step { width: 2rem; border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); display: grid; place-items: center; cursor: pointer; }
+  .cb-step:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+  .cb-step:disabled { opacity: 0.4; cursor: not-allowed; }
+  .cb-step .icon { width: 1rem; height: 1rem; }
+  .cb-prev .icon { transform: scaleX(-1); }
+  .cb-why { font-size: var(--fs-2xs); color: var(--amber); line-height: 1.25; }
+  .cb-kelvin { padding: var(--s-2) var(--s-3); border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line); --fader-groove: linear-gradient(90deg, #ff9d3d 0%, #ffd08a 30%, #e9ecf2 55%, #a9c6ff 80%, #4f8dff 100%); --fader-groove-h: 0.62rem; --fader-fill-opacity: 0; }
+  .cb-kelvin[data-active="false"] { opacity: 0.8; }
+  .cb-focus { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); padding-top: var(--s-2); border-top: 1px solid var(--line); }
+  .cb-nudge { display: inline-flex; gap: 0.15rem; margin-left: auto; }
+  .cb-nb { min-width: 2.2rem; min-height: 2rem; padding: 0 0.4rem; border-radius: var(--r-2); background: var(--surface-2); border: 1px solid var(--line-strong); color: var(--text); font-weight: 700; font-size: var(--fs-md); letter-spacing: -0.1em; cursor: pointer; }
+  .cb-nb:hover:not(:disabled) { background: var(--surface-3); }
+  .cb-nb:active:not(:disabled) { transform: scale(0.96); }
+  .cb-nb:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .cb-nb:disabled { opacity: 0.4; cursor: not-allowed; }
+  .cb-session, .cb-hint { margin: 0; }
+
+  @media (max-width: 860px) {
+    .side-tabs { display: none; }
+    .cam-side[data-tab] .c-looks, .cam-side[data-tab] .c-body { display: flex; }
+    .c-body { order: 6; }
+    .cb-scroll { overflow: visible; }
+  }
+  @media (max-width: 560px) { .cb-grid { grid-template-columns: minmax(0, 1fr); } }
+}

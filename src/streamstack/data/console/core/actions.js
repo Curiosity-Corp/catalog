@@ -15,6 +15,25 @@ import { postAction, ApiError } from './api.js';
 import { store } from './store.js';
 import { toast } from './toast.js';
 
+/** Dotted-path patches for the lights an action targets (`id`: a light id, or "all"/absent for every connected one). */
+function lightPatch(p, s, fields) {
+  const out = {};
+  s.lighting.lights.forEach((l, i) => {
+    if (!l.connected || !(p.id === undefined || p.id === 'all' || p.id === l.id)) return;
+    for (const [key, value] of Object.entries(fields(l))) out[`lighting.lights.${i}.${key}`] = value;
+  });
+  return out;
+}
+
+/** The master strip follows its lights: any-on / all-on from the patched power values. */
+function masterPatch(patch, s, extra = {}) {
+  const power = s.lighting.lights.map((l, i) => (l.connected ? (patch[`lighting.lights.${i}.power`] ?? l.power) : null)).filter((v) => v !== null);
+  return { ...patch, 'lighting.master.on': power.some(Boolean), 'lighting.master.all_on': power.length > 0 && power.every(Boolean), ...extra };
+}
+
+const lumenFor = (l, percent) => Math.round(l.lumen_range[0] + (l.lumen_range[1] - l.lumen_range[0]) * (percent - 1) / 99);
+const targetsAll = (p) => p.id === undefined || p.id === 'all';
+
 const NEUTRAL_LOOK = { brightness: 0, contrast: 0, gamma: 0, saturation: 0, warmth: 0 };
 
 export const OPTIMISTIC = {
@@ -39,12 +58,51 @@ export const OPTIMISTIC = {
     : { 'video.privacy': false }),
   'video.look': (p) => Object.fromEntries(Object.entries(p.values || {}).map(([k, v]) => [`video.look.${k}`, v])),
   'video.look.reset': () => Object.fromEntries(Object.entries(NEUTRAL_LOOK).map(([k, v]) => [`video.look.${k}`, v])),
+  'video.blur': (p, s) => {
+    const b = s.video.blur;
+    const names = p.source ? [p.source] : Object.keys(b.sources);
+    const sources = { ...b.sources };    // replaced whole: camera names may contain dots, so no per-source path
+    for (const name of names) {
+      const entry = sources[name] || { present: true, enabled: false, strength: b.strength, rate: b.rate };
+      sources[name] = {
+        ...entry,
+        present: true,
+        ...(typeof p.on === 'boolean' ? { enabled: p.on } : {}),
+        ...(p.strength !== undefined ? { strength: Number(p.strength) } : {}),
+        ...(p.rate !== undefined ? { rate: Number(p.rate) } : {}),
+      };
+    }
+    return {
+      'video.blur.sources': sources,
+      'video.blur.on': Object.values(sources).some((e) => e.enabled),
+      ...(p.strength !== undefined ? { 'video.blur.strength': Number(p.strength) } : {}),
+      ...(p.rate !== undefined ? { 'video.blur.rate': Number(p.rate) } : {}),
+    };
+  },
   'video.source': (p) => ({ 'video.selected_source': p.name }),
   'video.virtualcam': (p) => ({ 'video.virtualcam': !!p.on }),
   'video.record': (p, s) => ({ 'video.recording': { ...s.video.recording, active: !!p.on, paused: false } }),
   'video.stream': (p, s) => ({ 'video.streaming': { ...s.video.streaming, active: !!p.on } }),
+  'interface.set': (p, s) => ({ 'interface.controls': s.interface.controls.map((w) => (w.id === p.id ? { ...w, value: p.value } : w)) }),
   'auto.on': () => ({ 'auto.running': true }),
   'auto.off': () => ({ 'auto.running': false }),
+  'auto.persona': (p) => ({ 'auto.director.persona': p.id }),
+  'lighting.power': (p, s) => masterPatch(lightPatch(p, s, () => ({ power: !!p.on })), s),
+  'lighting.brightness': (p, s) => masterPatch(
+    lightPatch(p, s, (l) => ({ brightness: Number(p.percent), lumen: lumenFor(l, Number(p.percent)) })), s,
+    targetsAll(p) ? { 'lighting.master.brightness': Number(p.percent) } : {},
+  ),
+  'lighting.temperature': (p, s) => masterPatch(
+    lightPatch(p, s, () => ({ kelvin: Number(p.kelvin) })), s,
+    targetsAll(p) ? { 'lighting.master.kelvin': Number(p.kelvin) } : {},
+  ),
+  'lighting.preset': (p, s) => {
+    const preset = s.lighting.presets.find((x) => x.name === p.name);
+    if (!preset) return {};
+    const fields = (l) => (preset.on ? { power: true, brightness: preset.brightness, lumen: lumenFor(l, preset.brightness), kelvin: preset.kelvin } : { power: false });
+    const extra = preset.on ? { 'lighting.master.brightness': preset.brightness, 'lighting.master.kelvin': preset.kelvin } : {};
+    return masterPatch(lightPatch({}, s, fields), s, { 'lighting.preset': p.name, ...extra });
+  },
   'studio.start': () => ({ 'studio.busy': true }),
   'studio.stop': () => ({ 'studio.busy': true }),
 };

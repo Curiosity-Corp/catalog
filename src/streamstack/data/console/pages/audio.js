@@ -17,6 +17,7 @@ import { mmss } from '../core/time.js';
 const TARGET = [-24, -12];
 const HISTORY_S = 60;
 const SAMPLE_MS = 100;
+const LUFS_FLOOR = -70;   // BS.1770's absolute gate: quieter than this is not a loudness
 const SLOTS = HISTORY_S * 1000 / SAMPLE_MS;
 const DB_FLOOR = -60;
 
@@ -73,6 +74,15 @@ const TEMPLATE = `
   <ss-card class="au-hist" heading="Loudness, last 60 s" icon="pulse">
     <div class="legend" slot="actions" aria-hidden="true">
       <span class="lg lg-mic">Mic</span><span class="lg lg-voice">Voice</span><span class="lg lg-band">Target</span>
+    </div>
+    <div class="lufs" role="group" aria-label="Loudness in LUFS">
+      <div class="lufs-row" data-who="mic"><span class="lufs-who">Mic</span>
+        <span class="lufs-v" title="Momentary loudness, 400 ms (BS.1770 K-weighted)"><small>M</small><b data-ref="micM">&ndash;</b></span>
+        <span class="lufs-v" title="Short-term loudness, 3 s"><small>S</small><b data-ref="micS">&ndash;</b></span></div>
+      <div class="lufs-row" data-who="voice"><span class="lufs-who">Voice</span>
+        <span class="lufs-v" title="Momentary loudness, 400 ms (BS.1770 K-weighted)"><small>M</small><b data-ref="voiceM">&ndash;</b></span>
+        <span class="lufs-v" title="Short-term loudness, 3 s"><small>S</small><b data-ref="voiceS">&ndash;</b></span></div>
+      <span class="lufs-unit">LUFS</span>
     </div>
     <div class="hist-wrap" data-ref="histWrap">
       <canvas data-ref="hist" role="img" aria-label="Scrolling loudness history for the last 60 seconds. Mic and voice, average and peak, with the target band from minus 24 to minus 12 decibels."></canvas>
@@ -239,6 +249,17 @@ export async function mount(host, ctx) {
   };
   const tick = setInterval(push, SAMPLE_MS);
   off.push(() => clearInterval(tick));
+
+  // LUFS readouts: 4 updates a second is as fast as a number can be read
+  const lufsText = (v) => (Number.isFinite(v) && v > LUFS_FLOOR ? v.toFixed(1).replace('-', '\u2212') : '\u2013');
+  const showLufs = () => {
+    R.micM.textContent = lufsText(latest?.mic?.lufs_m);
+    R.micS.textContent = lufsText(latest?.mic?.lufs_s);
+    R.voiceM.textContent = lufsText(latest?.voice?.lufs_m);
+    R.voiceS.textContent = lufsText(latest?.voice?.lufs_s);
+  };
+  const lufsTick = setInterval(showLufs, 250);
+  off.push(() => clearInterval(lufsTick));
 
   const g = R.hist.getContext('2d');
   let cssW = 0;

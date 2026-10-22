@@ -21,7 +21,7 @@ from typing import Any
 
 from playwright.sync_api import Locator, Page, expect
 
-ROUTES = ("live", "camera", "audio", "auto", "system", "mini")
+ROUTES = ("live", "camera", "audio", "auto", "system", "lighting", "interface", "mini")
 # What proves each route has mounted (placeholders count until their real page lands).
 ROUTE_READY = {
     "live": ".cockpit",
@@ -29,6 +29,8 @@ ROUTE_READY = {
     "audio": ".au",
     "auto": ".aut",
     "system": ".sys",
+    "lighting": ".li",
+    "interface": ".ifc",
     "mini": ".mini",
 }
 TOKEN_HEADER = "X-StreamStack-Token"

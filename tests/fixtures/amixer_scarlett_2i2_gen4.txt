@@ -1,0 +1,112 @@
+# SYNTHESIZED from control names and ranges in Linux sound/usb/mixer_scarlett2.c; not captured from a device.
+numid=1,iface=CARD,name='Firmware Version'
+  ; type=INTEGER,access=r-------,values=1,min=0,max=0,step=1
+  : values=2417
+numid=2,iface=CARD,name='Minimum Firmware Version'
+  ; type=INTEGER,access=r-------,values=1,min=0,max=0,step=1
+  : values=2115
+numid=3,iface=MIXER,name='Sync Status'
+  ; type=ENUMERATED,access=r-------,values=1,items=2
+  ; Item #0 'Unlocked'
+  ; Item #1 'Locked'
+  : values=1
+numid=4,iface=MIXER,name='MSD Mode Switch'
+  ; type=BOOLEAN,access=rw---R--,values=1
+  : values=off
+numid=5,iface=MIXER,name='Line In 1 Level Capture Enum'
+  ; type=ENUMERATED,access=rw---R--,values=1,items=2
+  ; Item #0 'Line'
+  ; Item #1 'Inst'
+  : values=0
+numid=6,iface=MIXER,name='Line In 1 Gain Capture Volume'
+  ; type=INTEGER,access=rw---R--,values=1,min=0,max=70,step=1
+  : values=38
+  | dBminmax-min=0.00dB,max=69.00dB
+numid=7,iface=MIXER,name='Line In 1 Autogain Capture Switch'
+  ; type=BOOLEAN,access=rw---R--,values=1
+  : values=off
+numid=8,iface=MIXER,name='Line In 1 Autogain Status Capture Enum'
+  ; type=ENUMERATED,access=r-------,values=1,items=10
+  ; Item #0 'Running'
+  ; Item #1 'Success'
+  ; Item #2 'SuccessDRover'
+  ; Item #3 'WarnMinGainLimit'
+  ; Item #4 'FailDRunder'
+  ; Item #5 'FailMaxGainLimit'
+  ; Item #6 'FailClipped'
+  ; Item #7 'Cancelled'
+  ; Item #8 'Root'
+  ; Item #9 'Invalid'
+  : values=9
+numid=9,iface=MIXER,name='Line In 1 Air Capture Enum'
+  ; type=ENUMERATED,access=rw---R--,values=1,items=3
+  ; Item #0 'Off'
+  ; Item #1 'Presence'
+  ; Item #2 'Presence + Drive'
+  : values=0
+numid=10,iface=MIXER,name='Line In 1 Safe Capture Switch'
+  ; type=BOOLEAN,access=rw---R--,values=1
+  : values=off
+numid=11,iface=MIXER,name='Line In 1 Link Capture Switch'
+  ; type=BOOLEAN,access=rw---R--,values=1
+  : values=off
+numid=12,iface=MIXER,name='Line In 2 Level Capture Enum'
+  ; type=ENUMERATED,access=rw---R--,values=1,items=2
+  ; Item #0 'Line'
+  ; Item #1 'Inst'
+  : values=0
+numid=13,iface=MIXER,name='Line In 2 Gain Capture Volume'
+  ; type=INTEGER,access=rw---R--,values=1,min=0,max=70,step=1
+  : values=36
+  | dBminmax-min=0.00dB,max=69.00dB
+numid=14,iface=MIXER,name='Line In 2 Autogain Capture Switch'
+  ; type=BOOLEAN,access=rw---R--,values=1
+  : values=off
+numid=15,iface=MIXER,name='Line In 2 Autogain Status Capture Enum'
+  ; type=ENUMERATED,access=r-------,values=1,items=10
+  ; Item #0 'Running'
+  ; Item #1 'Success'
+  ; Item #2 'SuccessDRover'
+  ; Item #3 'WarnMinGainLimit'
+  ; Item #4 'FailDRunder'
+  ; Item #5 'FailMaxGainLimit'
+  ; Item #6 'FailClipped'
+  ; Item #7 'Cancelled'
+  ; Item #8 'Root'
+  ; Item #9 'Invalid'
+  : values=9
+numid=16,iface=MIXER,name='Line In 2 Air Capture Enum'
+  ; type=ENUMERATED,access=rw---R--,values=1,items=3
+  ; Item #0 'Off'
+  ; Item #1 'Presence'
+  ; Item #2 'Presence + Drive'
+  : values=0
+numid=17,iface=MIXER,name='Line In 2 Safe Capture Switch'
+  ; type=BOOLEAN,access=rw---R--,values=1
+  : values=off
+numid=18,iface=MIXER,name='Line In 2 Link Capture Switch'
+  ; type=BOOLEAN,access=rw---R--,values=1
+  : values=off
+numid=19,iface=MIXER,name='Autogain Mean Target'
+  ; type=INTEGER,access=rw---R--,values=1,min=-30,max=0,step=1
+  : values=-14
+numid=20,iface=MIXER,name='Autogain Peak Target'
+  ; type=INTEGER,access=rw---R--,values=1,min=-30,max=0,step=1
+  : values=-6
+numid=21,iface=MIXER,name='Input Select Capture Enum'
+  ; type=ENUMERATED,access=rw---R--,values=1,items=2
+  ; Item #0 'Input 1'
+  ; Item #1 'Input 2'
+  : values=0
+numid=22,iface=MIXER,name='Line In 1-2 Phantom Power Capture Switch'
+  ; type=BOOLEAN,access=rw---R--,values=1
+  : values=off
+numid=23,iface=MIXER,name='Direct Monitor Playback Enum'
+  ; type=ENUMERATED,access=rw---R--,values=1,items=3
+  ; Item #0 'Off'
+  ; Item #1 'Mono'
+  ; Item #2 'Stereo'
+  : values=0
+numid=24,iface=MIXER,name='Level Meter'
+  ; type=INTEGER,access=r-------,values=1,min=0,max=4095,step=1
+  : values=0

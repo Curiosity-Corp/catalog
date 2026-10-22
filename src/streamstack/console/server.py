@@ -273,6 +273,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._preview_still(query)
         if path == "/api/preview.mjpg":
             return self._preview_stream(query)
+        if path == "/api/director/sheet.jpg":
+            return self._director_sheet()
         if path.startswith("/api/clips/") and path.endswith(".wav"):
             return self._clip(path[len("/api/clips/") : -len(".wav")])
         return self._error(404, "Unknown endpoint.")
@@ -332,6 +334,12 @@ class Handler(BaseHTTPRequestHandler):
         if not frame:
             return self._error(503, "No picture from this source right now.")
         self._send(200, frame, "image/jpeg")
+
+    def _director_sheet(self) -> None:
+        sheet = self.server.rig.director_sheet()
+        if not sheet:
+            return self._error(404, "Claude has not been shown a contact sheet yet.")
+        self._send(200, sheet, "image/jpeg")
 
     def _preview_stream(self, query: dict[str, list[str]]) -> None:
         source, width, fps = self._preview_args(query)

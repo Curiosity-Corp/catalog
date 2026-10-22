@@ -31,7 +31,20 @@ export function emptyState() {
       look: { brightness: 0, contrast: 0, gamma: 0, saturation: 0, warmth: 0, sharpen_enabled: false, sharpen_amount: 0, lut_enabled: false, lut_amount: 0 },
       limits: { brightness: [-0.5, 0.5], contrast: [-1, 1], gamma: [-1, 1], saturation: [-1, 1], warmth: [-1, 1], sharpen_amount: [0, 1], lut_amount: [0, 1] },
       looks: [], virtualcam: false,
+      blur: {
+        available: null,
+        plugin: { installed: false, version: null, models_ok: false, loaded: null, devices: ['cpu'], device_labels: ['CPU'], device: 'cpu', hint: '' },
+        sources: {}, on: false, strength: 8, rate: 2,
+        limits: { strength: [1, 20], rate: [1, 6] }, presets: { light: 3, balanced: 2, smooth: 1 },
+        cost: { state: 'off', detail: '', limits: { p95_ms: 8, cpu_percent: 1 } },
+      },
       recording: { active: false, paused: false, timecode: null }, streaming: { active: false, timecode: null },
+      canon: {
+        available: false, state: 'disabled', message: null, session: null, usb: [],
+        decode: { path: null, label: null, tried: [], render_node: null, ffmpeg: null }, input: null, output: null,
+        fps_in: 0, fps_out: 0, grab_ms: 0, pipe_ms: 0, cpu: {}, frames: 0, restarts: { source: 0, encoder: 0 }, stalls: 0,
+        last_error: null, uptime_s: 0, controls: {},
+      },
     },
     audio: {
       mic: { name: null, description: null, present: false, gain_db: 0, muted: false, stalled: false, stalled_since: null, revive: { state: 'idle', message: null } },
@@ -42,8 +55,21 @@ export function emptyState() {
       mic_check: { state: 'idle', seconds: 6, clips: [] },
     },
     auto: { running: false, backend: null, can_undo: false, busy: false, last_note: null, last_time: null, journal: [] },
+    framing: {
+      mode: 'off', state: 'off', held: false, available: false, unavailable_hint: null, reason: null, backend: null, device: null,
+      detect_ms: null, detect_p95_ms: null, fps: null, model: null, zoom: 1, window: null, sources: [], skipped: [], modes: [],
+    },
     health: { updated: null, summary: 'ok', checks: [] },
     system: { cpu_percent: null, load: [0, 0, 0], cores: 0 },
+    lighting: {
+      scanned: false, lights: [], master: { on: false, all_on: false, brightness: 50, kelvin: 4500 },
+      presets: [], preset: null, problem: null, kelvin_range: [2700, 6500], kelvin_step: 100,
+    },
+    interface: {
+      present: false, checked: false, setting: 'auto', profile: null, label: null, usb: null, card: null, mode: null,
+      notice: null, error: null, info: [], controls: [], capabilities: {}, unsupported: [], devices: [],
+      software_gain: true, demo_profiles: [],
+    },
   };
 }
 

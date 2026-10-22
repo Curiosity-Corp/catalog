@@ -28,3 +28,7 @@ export function confirmThen(text, label, run) {
 }
 export const stopStudio = () => act('studio.stop');
 export const startStudio = () => act('studio.start');
+
+/** Every Litra on or off together (the L key and the palette). */
+export const toggleLights = () => act('lighting.power', { id: 'all', on: !store.state.lighting.master.on });
+export const selectLightPreset = (name) => act('lighting.preset', { name });

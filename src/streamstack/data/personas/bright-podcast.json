@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "id": "bright-podcast",
+  "name": "Bright podcast",
+  "tagline": "Energetic and clear",
+  "description": "Lively and open: a brighter, cleaner picture with lifted colour, and a forward, intelligible voice.",
+  "mood": [
+    "energetic",
+    "friendly",
+    "open",
+    "crisp",
+    "upbeat"
+  ],
+  "avoid": [
+    "dull or muddy shadows",
+    "grey skin",
+    "dark corners",
+    "dull or muffled voice",
+    "harsh sibilance"
+  ],
+  "swatch": [
+    "#12627a",
+    "#ffd166"
+  ],
+  "picture": {
+    "look": {
+      "brightness": 0.02,
+      "contrast": 0.12,
+      "gamma": 0.06,
+      "saturation": 0.12,
+      "warmth": 0.02
+    },
+    "face_luma": [
+      130,
+      165
+    ],
+    "frame_luma": [
+      112,
+      148
+    ],
+    "warmth_k": 5600,
+    "saturation": [
+      0.22,
+      0.4
+    ],
+    "contrast_spread": [
+      130,
+      215
+    ],
+    "max_clipped": 0.015
+  },
+  "voice": {
+    "preset": "StreamStack Voice Bright",
+    "speech_peak_db": [
+      -22,
+      -10
+    ],
+    "lufs": [
+      -26,
+      -15
+    ],
+    "targets": {
+      "depth": [
+        0.3,
+        0.7
+      ],
+      "clarity": [
+        0.45,
+        0.85
+      ],
+      "sibilance": [
+        0.0,
+        0.55
+      ]
+    },
+    "min_snr_db": 35,
+    "max_rt60_s": 0.5
+  },
+  "light": {
+    "brightness": 0.8,
+    "kelvin": 5600
+  }
+}

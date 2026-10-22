@@ -74,12 +74,14 @@ streamstack console --demo   # try every control without a camera or microphone
 | **Live** | The one screen for a call in progress. Program picture with an on-air tally, mic fader and live meter, big MUTE and PRIVACY pads, scene pads, voice presets, and the auto director switch. |
 | **Camera** | Picture grade: brightness, contrast, gamma, saturation and a warmth slider, sharpen and LUT, histogram and RGB parade or waveform scopes, thirds/safe/centre/zebra overlays, saved looks, scenes, virtual camera, record and stream. |
 | **Audio** | A channel strip: raw mic and processed voice meters side by side, the gain fader and a big mute, tone knobs (bass, presence, treble, pitch), voice presets with A/B bypass, a 60-second loudness history, and a mic check that records raw then processed audio for you to compare. |
-| **Auto** | The Claude director: on/off, ask it now, its latest note and confidence, a timeline of every change it made, and one-press undo. |
+| **Auto** | The Claude director: on/off, ask it now, persona cards, the contact sheet Claude saw, a voice read-out, the time-of-day strip, a timeline of every change with its reason, and one-press undo. |
 | **System** | Health checks with fixes, running services, shortcuts to OBS, Easy Effects, qpwgraph, pavucontrol and qv4l2, and the Teams and Zoom settings for this rig. |
+| **Lighting** | Logitech Litra Glow, Beam and Beam LX lights as big pads and faders: power, brightness and a warm-to-cool colour-temperature fader per light, an All lights master, presets (Key light, Soft, Warm evening, Daylight, Off) and your own, and Identify to find which light is which. Needs a one-time udev rule, see [docs/lighting.md](docs/lighting.md). |
+| **Interface** | The audio interface on the desk, found by USB id. A Focusrite Scarlett 2i2 shows its gain, Autogain, Air, Line/Inst, Safe and direct monitor, and 48V behind a press-and-hold; an Elgato Wave XLR shows gain, mute, 48V and headphone volume once hardware control is enabled. See [docs/interfaces.md](docs/interfaces.md). The Audio page's software gain stays as the fallback. |
 | **Mini** | MUTE, PRIVACY, the meter and the scenes in a window small enough to sit beside the call. |
 
 Everything works from the keyboard. `M` mutes, `P` turns on privacy, `B`
-bypasses the voice effects, `1`…`9` switch scenes, `Alt`+a number changes
+bypasses the voice effects, `L` turns every light on or off, `1`…`9` switch scenes, `Alt`+a number changes
 page, `Ctrl K` opens the command palette and `?` lists every shortcut. If the
 mic watchdog sees a stalled microphone (its ALSA capture counters stop
 moving), a banner with **Revive mic** appears and `Shift R` restarts it. It
@@ -138,7 +140,16 @@ streamstack voice           # list voice presets; `streamstack voice "StreamStac
 streamstack auto on|off     # the Claude auto-cinematographer and auto-audio
 streamstack call-settings   # the Teams and Zoom toggles that match this rig
 streamstack encoder         # which video encoder OBS can use here; --apply sets it (OBS closed)
+streamstack framing         # auto-framing: backends, device, face model; --fetch downloads it, --probe times it
 ```
+
+### Background blur
+
+With the [obs-backgroundremoval](https://github.com/royshil/obs-backgroundremoval) OBS plugin installed
+(workstation role, Curiosity-Corp/catalog#100), the Console's Camera page blurs the background of the camera you
+are editing and the Live page has a one-press "Blur" pad. It is off by default and runs on the CPU; a cost
+guard warns when it adds 8 ms or more per frame, 1 percent or more CPU or dropped frames, and
+`streamstack doctor` says how to install the plugin when it is missing. See docs/console.md.
 
 ### Video encoder
 
@@ -151,6 +162,13 @@ CBR, no B-frames and a two second keyframe interval; recordings use VBR at
 twice the bitrate. The active encoder shows in `streamstack doctor` and on
 the Console System page, which warns when a better one is available. Start
 OBS once before the first `encoder --apply` so it has listed its encoders.
+
+### Auto-framing
+
+An optional face detector keeps you framed by moving a smooth crop in OBS (no extra video latency). It runs on
+the Intel GPU through OpenVINO when there is one, else on the CPU. Install with
+`pip install 'streamstack[framing]'` and run `streamstack framing --fetch` once (YuNet, MIT licence, checksum
+verified). Pick Off, Gentle, Tight or Follow on the Console's Camera page. Details: docs/auto-framing.md.
 
 ### Voice presets
 
@@ -241,11 +259,54 @@ or touch-up, Zoom's automatic mic volume off. Make a test call first.
 
 ## Canon bridge
 
-`STREAMSTACK_CANON_BRIDGE=gphoto2` (default) streams live view through
-`gphoto2 --capture-movie | ffmpeg`, cropped to 16:9 at the configured size and
-frame rate, as the `streamstack-canon` user service. `command` runs
+`STREAMSTACK_CANON_BRIDGE=gphoto2` (default) is the `streamstack-canon` user
+service. It owns the camera: live-view JPEGs go to ffmpeg, which decodes them
+on the GPU and writes the loopback camera. `command` runs
 `STREAMSTACK_CANON_COMMAND` instead (with `STREAMSTACK_CAMERA_DEVICE` set);
 `none` is for HDMI-only cameras through the Cam Link.
+
+**Decode path.** `STREAMSTACK_CANON_DECODE=auto` tries Intel Quick Sync, then
+VA-API, then the CPU, and the old command line as a last resort. Each path is
+first run once on a real camera frame into a null sink, so a missing driver or
+a GPU that cannot decode this stream falls through at start, and a path that
+crashes or stalls while running is dropped until the next restart. Force one
+with `qsv`, `vaapi` or `cpu` (a forced GPU path still falls back to the CPU).
+The render node is picked automatically (Intel first); set
+`STREAMSTACK_CANON_RENDER_NODE=/dev/dri/renderD129` to choose. The System page
+shows the path in use, picture size in and out, frames per second, CPU use of
+the bridge and ffmpeg, and every restart; `streamstack canon status` prints the
+same.
+
+**Picture size.** `STREAMSTACK_CANON_OUTPUT=native` (default) keeps the
+camera's own aspect ratio and never enlarges: a 1056x704 live view is written
+as 1056x704, and only a bigger frame is shrunk to fit the canvas. `fill` is the
+0.2 behaviour: scale up and crop to the 16:9 canvas. The loopback format changes
+at the next bridge restart, so restart it between calls (`systemctl --user
+restart streamstack-canon.service`). Canon live view over USB is at most about
+1056x704; for a sharper picture use the HDMI output through the Cam Link.
+
+**Camera settings.** The Camera page's *Canon body* tab and `streamstack canon`
+set ISO, shutter, aperture, exposure compensation, white balance (and Kelvin),
+Picture Style, focus mode and live-view size, run autofocus and nudge focus,
+and read every value back from the camera. The settings use libgphoto2's own
+configuration names (`iso`, `shutterspeed`, `aperture`, `exposurecompensation`,
+`whitebalance`, `colortemperature`, `picturestyle`, `focusmode`,
+`liveviewsize`, `autofocusdrive`, `manualfocusdrive`), and the choices come
+from the camera, so any Canon that exposes them works. A setting the body
+refuses (aperture in Tv mode, say) is shown read-only with the reason.
+
+With the python `gphoto2` package installed (`pip install gphoto2`, extra
+`canon`), the bridge uses one libgphoto2 session for live view and settings, so
+changes are instant and the picture never stops. Without it the bridge uses the
+`gphoto2` command, which cannot share the camera: each change pauses live view
+for about a second (the last frame stays on the loopback camera) and then
+resumes. `STREAMSTACK_CANON_BACKEND=libgphoto2|cli` forces one. Autofocus in
+live view can blank the picture briefly on some bodies, and live-view autofocus
+needs a lens in AF mode.
+
+The bridge restarts a camera that stops sending frames (4 s) or an ffmpeg that
+stops writing (3 s) on its own; if the camera library itself hangs, the bridge
+exits so systemd starts a fresh one.
 
 When another tool on the host already owns the Canon's loopback node, set
 `STREAMSTACK_CAMERA_EXTERNAL=true` and point `STREAMSTACK_CAMERA_DEVICE` and
@@ -267,13 +328,23 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 | `STREAMSTACK_CAMERA_EXTERNAL` | `false` | another tool feeds the camera node |
 | `STREAMSTACK_CANON_BRIDGE` | `gphoto2` | `gphoto2`, `command` or `none` |
 | `STREAMSTACK_CANON_COMMAND` | | the bridge command for `command` |
+| `STREAMSTACK_CANON_OUTPUT` | `native` | `native` (camera aspect, never enlarged) or `fill` (crop to the canvas) |
+| `STREAMSTACK_CANON_DECODE` | `auto` | `auto` (Quick Sync, VA-API, CPU), or force `qsv`, `vaapi`, `cpu` |
+| `STREAMSTACK_CANON_BACKEND` | `auto` | `auto`, `libgphoto2` (shared session) or `cli` (pauses for changes) |
+| `STREAMSTACK_CANON_RENDER_NODE` | | GPU render node, e.g. `/dev/dri/renderD129`; empty picks Intel first |
 | `STREAMSTACK_VOICE_PRESET` | `StreamStack Voice` | preset `streamstack studio` loads |
 | `STREAMSTACK_MICROPHONE` | | part of the call mic's name; empty picks an Elgato Wave, then the default input |
+| `STREAMSTACK_INTERFACE` | `auto` | the audio interface to drive: `auto` (by USB id), `off`, a profile (`scarlett-2i2-gen4`, `scarlett-2i2-gen3`, `wave-xlr`) or a USB id |
+| `STREAMSTACK_WAVE_XLR_USB` | `off` | Wave XLR hardware control: `off` (never opened), `read` or `write`; see [docs/interfaces.md](docs/interfaces.md) |
 | `STREAMSTACK_AUTO_BACKEND` | `claude-cli` | `claude-cli`, `api` or `local` |
 | `STREAMSTACK_AUTO_MODEL` | | model for Claude passes (empty: the CLI default, `claude-sonnet-5-5` on the API) |
 | `STREAMSTACK_AUTO_INTERVAL` | `15` | seconds between local exposure/gain passes |
 | `STREAMSTACK_AUTO_AI_INTERVAL` | `300` | seconds between Claude passes (backs off to 4x when nothing changes) |
 | `STREAMSTACK_AUTO_VIDEO`, `_AUDIO`, `_NOTIFY` | `true` | turn parts of auto mode off |
+| `STREAMSTACK_AUTO_BURST`, `_BURST_SECONDS` | `4`, `1.0` | stills per review (joined into one contact sheet sent to Claude) and their spacing |
+| `STREAMSTACK_AUTO_CLIP_SECONDS` | `6` | voice clip analysed locally into numbers (the audio never leaves the computer) |
+| `STREAMSTACK_AUTO_PERSONA_LOOK` | `true` | the chosen persona sets the exposure bands the local loop meters towards |
+| `STREAMSTACK_PROPERTY`, `_LATITUDE`, `_LONGITUDE` | | where sunrise and sunset are computed (empty: the time zone's city) |
 
 ## Troubleshooting
 
@@ -299,7 +370,7 @@ make e2e         # Console browser tests against the demo rig (Playwright)
 ### Console e2e
 
 `tests/e2e` drives the Console in real browsers against its simulated rig (`streamstack console --demo`, started
-on a free port with a throwaway HOME): shell, Live, Camera, Audio, Auto, System, Mini, shortcuts, palette, reconnect,
+on a free port with a throwaway HOME): shell, Live, Camera, Audio, Auto, System, Lighting, Interface, Mini, shortcuts, palette, reconnect,
 mic revive, phone layout and an accessibility smoke. It is not part of `make test`. Set it up once in a venv:
 
 ```bash

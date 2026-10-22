@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import config, micwatch, system
+from . import loudness
 from .errors import ActionError
 
 log = logging.getLogger(__name__)
@@ -73,9 +74,9 @@ log = logging.getLogger(__name__)
 Notify = Callable[[str, str], None]
 
 SILENCE_DB = -90.0
-CLIP_DB = -0.5
-RATE = 16000
-FRAME_BYTES = RATE // 20 * 2  # 50 ms of 16 bit mono
+RATE = loudness.RATE  # the meter tap is the sources' native 48 kHz, 32 bit float, mono
+FRAME_BYTES = loudness.FRAME_SAMPLES * 4  # 20 ms
+READ_BYTES = FRAME_BYTES * 2
 STALE_S = 0.5  # a reader that sent nothing for this long is silent, whatever it last said
 
 GAIN_RANGE = (-30.0, 12.0)
@@ -123,16 +124,6 @@ def to_db(linear: float) -> float:
     if linear <= 0:
         return SILENCE_DB
     return max(SILENCE_DB, round(20 * math.log10(linear), 1))
-
-
-def frame_levels(samples: array.array[int]) -> tuple[float, float, bool]:
-    """(peak dBFS, RMS dBFS, clipped) of one frame of signed 16 bit samples."""
-    if not samples:
-        return SILENCE_DB, SILENCE_DB, False
-    peak = max(max(samples), -min(samples)) / 32768
-    rms = math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768
-    peak_db = to_db(peak)
-    return peak_db, to_db(rms), peak_db >= CLIP_DB
 
 
 def parse_volume_db(volume: object) -> float | None:
@@ -333,6 +324,31 @@ def stored_bypass() -> bool:
 # ---------------------------------------------------------------------------
 
 
+_SILENT_FRAME = (SILENCE_DB, SILENCE_DB, SILENCE_DB, False, SILENCE_DB, SILENCE_DB)
+
+
+def meter_frame(
+    peak_db: float = SILENCE_DB,
+    sample_db: float = SILENCE_DB,
+    rms_db: float = SILENCE_DB,
+    clip: bool = False,
+    lufs_m: float = SILENCE_DB,
+    lufs_s: float = SILENCE_DB,
+    latch: loudness.ClipLatch | None = None,
+) -> dict[str, Any]:
+    """One source's entry in a `meters` frame. `peak_db` is the true peak (dBTP), `sample_db` the sample peak (dBFS);
+    `clip` says this poll reached -1 dBTP or the rail, `latched` stays true until the latch is cleared."""
+    return {
+        "peak_db": peak_db,
+        "sample_db": sample_db,
+        "rms_db": rms_db,
+        "clip": clip,
+        "latched": latch.latched if latch else False,
+        "lufs_m": lufs_m,
+        "lufs_s": lufs_s,
+    }
+
+
 class Throttle:
     """At most one firing per interval; the newest value submitted wins (leading edge when idle, then trailing)."""
 
@@ -366,7 +382,7 @@ class Throttle:
 
 
 class LevelReader:
-    """One `parec` child turned into per-50 ms peak/RMS frames by a reader thread."""
+    """One `parec` child (48 kHz float) turned into 20 ms true-peak, RMS and LUFS frames by a reader thread."""
 
     def __init__(
         self,
@@ -374,8 +390,11 @@ class LevelReader:
         clock: Callable[[], float] = time.monotonic,
         spawn: Callable[..., subprocess.Popen[bytes]] | None = None,
         idle_since: float | None = None,
+        latch: loudness.ClipLatch | None = None,
     ) -> None:
         self.source = source
+        self.latch = latch or loudness.ClipLatch()
+        self._analyzer = loudness.Analyzer()
         self.started = clock()
         self._clock = clock
         self._origin = self.started if idle_since is None else idle_since
@@ -383,8 +402,9 @@ class LevelReader:
         self._spawn = spawn or subprocess.Popen
         self._lock = threading.Lock()
         self._buffer = b""
-        self._last = (SILENCE_DB, SILENCE_DB, False)
+        self._last = _SILENT_FRAME
         self._acc_peak = SILENCE_DB
+        self._acc_sample = SILENCE_DB
         self._acc_clip = False
         self._fresh = False
         self._stamp = -math.inf
@@ -398,10 +418,10 @@ class LevelReader:
                 [
                     "parec",
                     "--raw",
-                    "--format=s16le",
+                    "--format=float32le",
                     f"--rate={RATE}",
                     "--channels=1",
-                    "--latency-msec=50",
+                    "--latency-msec=20",
                     f"--device={self.source}",
                 ],
                 stdin=subprocess.DEVNULL,
@@ -421,28 +441,43 @@ class LevelReader:
         assert proc is not None and proc.stdout is not None  # noqa: S101 - set by start()
         try:
             fd = proc.stdout.fileno()
-            while chunk := os.read(fd, 4096):
+            while chunk := os.read(fd, READ_BYTES):
                 self.feed(chunk)
         except (OSError, ValueError):
             pass  # the pipe closed under us: stop() or the source went away
         self.dead = True
 
     def feed(self, data: bytes) -> None:
-        """Consume raw s16le bytes; every complete 50 ms frame updates the levels."""
+        """Consume raw float32le bytes; every complete 20 ms frame updates the levels."""
         if data:
             self._last_bytes = self._clock()
         self._buffer += data
         while len(self._buffer) >= FRAME_BYTES:
             frame, self._buffer = self._buffer[:FRAME_BYTES], self._buffer[FRAME_BYTES:]
-            samples = array.array("h")
+            samples = array.array("f")
             samples.frombytes(frame)
             if sys.byteorder == "big":
                 samples.byteswap()
-            peak, rms, clipped = frame_levels(samples)
+            try:
+                levels = self._analyzer.process(samples)
+            except (ArithmeticError, ValueError):  # a malformed frame must not kill the reader thread
+                log.exception("metering a frame from %s failed", self.source)
+                self._analyzer.reset()
+                continue
+            peak_db, sample_db = to_db(levels.true_peak), to_db(levels.sample_peak)
             with self._lock:
-                self._acc_peak = max(self._acc_peak, peak) if self._fresh else peak
+                clipped = self.latch.trip(sample_db, peak_db)
+                self._acc_peak = max(self._acc_peak, peak_db) if self._fresh else peak_db
+                self._acc_sample = max(self._acc_sample, sample_db) if self._fresh else sample_db
                 self._acc_clip = (self._acc_clip or clipped) if self._fresh else clipped
-                self._last = (peak, rms, clipped)
+                self._last = (
+                    peak_db,
+                    sample_db,
+                    to_db(levels.rms),
+                    clipped,
+                    round(levels.lufs_m, 1),
+                    round(levels.lufs_s, 1),
+                )
                 self._fresh = True
                 self._stamp = self._clock()
 
@@ -455,15 +490,15 @@ class LevelReader:
         return max(0.0, self._clock() - self.idle_since())
 
     def take(self) -> dict[str, Any]:
-        """Levels since the last call: the loudest peak (no frame is missed between polls) and the latest RMS."""
+        """Levels since the last call: the loudest peaks (no frame is missed between polls), the latest RMS and LUFS."""
         with self._lock:
             if self._clock() - self._stamp > STALE_S:
-                return {"peak_db": SILENCE_DB, "rms_db": SILENCE_DB, "clip": False}
-            peak, rms, clipped = self._last
+                return meter_frame(latch=self.latch)
+            peak, sample, rms, clipped, lufs_m, lufs_s = self._last
             if self._fresh:
-                peak, clipped = self._acc_peak, self._acc_clip
+                peak, sample, clipped = self._acc_peak, self._acc_sample, self._acc_clip
                 self._fresh = False
-            return {"peak_db": peak, "rms_db": rms, "clip": clipped}
+            return meter_frame(peak, sample, rms, clipped, lufs_m, lufs_s, self.latch)
 
     def stop(self) -> None:
         proc = self._proc
@@ -624,6 +659,8 @@ class AudioController:
         self._verify = verify or self._monitor.verify
         self._threads: list[threading.Thread] = []
         self._readers: dict[str, LevelReader | None] = {"mic": None, "voice": None}
+        # the clip latches outlive the readers: a restarted parec must not forget that the mic clipped
+        self._latches = {"mic": loudness.ClipLatch(), "voice": loudness.ClipLatch()}
         self._parec = True
 
         self._sources: dict[str, str] = {}
@@ -765,7 +802,7 @@ class AudioController:
                     reader.stop()
                     self._readers[slot] = reader = None
             if reader is None and source and self._parec:
-                fresh = LevelReader(source, self._clock, self._spawn, idle_since)
+                fresh = LevelReader(source, self._clock, self._spawn, idle_since, self._latches[slot])
                 if fresh.start():
                     self._readers[slot] = fresh
 
@@ -926,7 +963,7 @@ class AudioController:
     def meters(self) -> dict[str, Any]:
         with self._lock:
             mic, voice = self._readers["mic"], self._readers["voice"]
-        silent = {"peak_db": SILENCE_DB, "rms_db": SILENCE_DB, "clip": False}
+        silent = meter_frame(latch=self._latches["mic"])
         return {"t": time.time(), "mic": mic.take() if mic else silent, "voice": voice.take() if voice else None}
 
     def clip_path(self, clip_id: str) -> Path | None:
@@ -943,11 +980,17 @@ class AudioController:
             "audio.tone": self._act_tone,
             "audio.mic_check": self._act_mic_check,
             "audio.revive": self._act_revive,
+            "audio.clip_clear": self._act_clip_clear,
         }
         handler = handlers.get(action)
         if handler is None:
             raise ActionError(f"unknown audio action {action!r}", 400)
         return handler(params)
+
+    def _act_clip_clear(self, params: dict[str, Any]) -> str | None:
+        for latch in self._latches.values():
+            latch.clear()
+        return None
 
     def _need_mic(self) -> str:
         with self._lock:
@@ -1195,24 +1238,44 @@ def speech_peak_db(t: float) -> float | None:
 
 
 def demo_levels(t: float, gain_db: float, muted: bool, bypass: bool) -> tuple[dict[str, Any], dict[str, Any]]:
-    """(mic, voice) meter dicts: the voice is a few dB hotter than the mic and more compressed."""
+    """(mic, voice) meter dicts: the voice is a few dB hotter than the mic and more compressed.
+
+    Loudness is a pure function of time too: momentary averages the last 400 ms, short-term the last 3 s, of the
+    same RMS the meter shows (less 3 dB: a K-weighted mono signal reads about that far under its RMS).
+    """
     if muted:
-        silent = {"peak_db": SILENCE_DB, "rms_db": SILENCE_DB, "clip": False}
-        return dict(silent), dict(silent)
-    speech = speech_peak_db(t)
-    noise = -66 + 3 * math.sin(t * 7.3)
+        return meter_frame(), meter_frame()
 
-    def pack(peak: float, crest: float) -> dict[str, Any]:
+    def levels(at: float) -> tuple[tuple[float, float], tuple[float, float]]:
+        speech = speech_peak_db(at)
+        noise = -66 + 3 * math.sin(at * 7.3)
+        mic_peak = max(noise, speech if speech is not None else noise) + gain_db
+        if bypass:
+            return (mic_peak, 10), (mic_peak, 10)
+        if speech is None:
+            return (mic_peak, 10), (noise - 12, 4)
+        return (mic_peak, 10), (
+            -13 + 0.45 * (speech + gain_db + 20) + 3,
+            6,
+        )  # compressed towards a steady level, then lifted
+
+    def pack(index: int) -> dict[str, Any]:
+        peak, crest = levels(t)[index]
         peak = round(max(SILENCE_DB, min(0.0, peak)), 1)
-        return {"peak_db": peak, "rms_db": round(max(SILENCE_DB, peak - crest), 1), "clip": peak >= CLIP_DB}
+        rms = round(max(SILENCE_DB, peak - crest), 1)
 
-    mic_peak = max(noise, speech if speech is not None else noise) + gain_db
-    if bypass:
-        return pack(mic_peak, 10), pack(mic_peak, 10)
-    if speech is None:
-        return pack(mic_peak, 10), pack(noise - 12, 4)
-    voice_peak = -13 + 0.45 * (speech + gain_db + 20) + 3  # compressed towards a steady level, then lifted
-    return pack(mic_peak, 10), pack(voice_peak, 6)
+        def lufs(span: float, count: int) -> float:
+            powers = []
+            for k in range(count):
+                p, c = levels(max(0.0, t - span * k / count))[index]
+                powers.append(10 ** (max(SILENCE_DB, min(0.0, p) - c) / 10))
+            return round(max(SILENCE_DB, 10 * math.log10(sum(powers) / count) - 3.0), 1)
+
+        # the sample peak sits a hair under the true peak, which can top it by up to ~3 dB
+        sample = round(max(SILENCE_DB, peak - 0.3), 1)
+        return meter_frame(peak, sample, rms, peak >= loudness.CLIP_TP_DB, lufs(0.4, 4), lufs(3.0, 6))
+
+    return pack(0), pack(1)
 
 
 def synth_wav(path: Path, seconds: float, processed: bool) -> None:
@@ -1258,6 +1321,7 @@ class DemoAudio:
         self._stalled = False
         self._stalled_since: str | None = None
         self._revive = {"state": "idle", "message": None, "at": 0.0}
+        self._latches = {"mic": loudness.ClipLatch(), "voice": loudness.ClipLatch()}
 
     @staticmethod
     def _shipped_tone(name: str) -> dict[str, float]:
@@ -1342,6 +1406,9 @@ class DemoAudio:
         with self._lock:
             # a stalled microphone delivers nothing, and neither does the voice chain behind it
             mic, voice = demo_levels(self._clock() - self._t0, self._gain, self._muted or self._stalled, self._bypass)
+            for frame, latch in ((mic, self._latches["mic"]), (voice, self._latches["voice"])):
+                latch.trip(frame["sample_db"], frame["peak_db"])
+                frame["latched"] = latch.latched
         return {"t": time.time(), "mic": mic, "voice": voice}
 
     def health_checks(self) -> list[dict[str, str]]:
@@ -1395,6 +1462,14 @@ class DemoAudio:
             changes = _validate_tone(params)
             with self._lock:
                 self._tone.update(changes)
+            return None
+        if action == "audio.clip_clear":
+            for latch in self._latches.values():
+                latch.clear()
+            return None
+        if action == "audio.demo_clip":  # demo only: a clip now, for the e2e suite
+            for latch in self._latches.values():
+                latch.trip(0.0, 0.0)
             return None
         if action == "audio.demo_stall":  # demo only: the deterministic trigger for the e2e suite
             self._advance_revive()

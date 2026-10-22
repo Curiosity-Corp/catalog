@@ -51,6 +51,30 @@
                         "image_path": "/usr/share/obs/obs-plugins/obs-filters/LUTs/teal_lows_orange_highs.png",
                         "clut_amount": 0.35
                     }
+                },
+                {
+                    "id": "background_removal",
+                    "name": "Background Blur",
+                    "enabled": false,
+                    "settings": {
+                        "advanced": true,
+                        "useGPU": "cpu",
+                        "numThreads": 2,
+                        "model_select": "models/mediapipe.with_runtime_opt.ort",
+                        "mask_every_x_frames": 2,
+                        "enable_image_similarity": true,
+                        "image_similarity_threshold": 35.0,
+                        "temporal_smooth_factor": 0.85,
+                        "enable_threshold": true,
+                        "threshold": 0.5,
+                        "contour_filter": 0.05,
+                        "smooth_contour": 0.3,
+                        "feather": 0.05,
+                        "mask_expansion": 0,
+                        "enable_focal_blur": false,
+                        "stop_when_source_is_inactive": true,
+                        "blur_background": 8
+                    }
                 }
             ],
             "mixers": 0
@@ -88,6 +112,30 @@
                     "settings": {
                         "image_path": "/usr/share/obs/obs-plugins/obs-filters/LUTs/teal_lows_orange_highs.png",
                         "clut_amount": 0.35
+                    }
+                },
+                {
+                    "id": "background_removal",
+                    "name": "Background Blur",
+                    "enabled": false,
+                    "settings": {
+                        "advanced": true,
+                        "useGPU": "cpu",
+                        "numThreads": 2,
+                        "model_select": "models/mediapipe.with_runtime_opt.ort",
+                        "mask_every_x_frames": 2,
+                        "enable_image_similarity": true,
+                        "image_similarity_threshold": 35.0,
+                        "temporal_smooth_factor": 0.85,
+                        "enable_threshold": true,
+                        "threshold": 0.5,
+                        "contour_filter": 0.05,
+                        "smooth_contour": 0.3,
+                        "feather": 0.05,
+                        "mask_expansion": 0,
+                        "enable_focal_blur": false,
+                        "stop_when_source_is_inactive": true,
+                        "blur_background": 8
                     }
                 }
             ],

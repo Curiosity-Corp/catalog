@@ -6,7 +6,7 @@ import { store } from './store.js';
 import { toast } from './toast.js';
 
 const BACKOFF = [500, 1000, 2000, 4000, 8000, 10000];
-const WATCHDOG_MS = 20000;          // server pings every 15 s and meters every 50 ms
+const WATCHDOG_MS = 20000;          // server pings every 15 s and meters 30 times a second
 
 let source = null;
 let attempt = 0;
