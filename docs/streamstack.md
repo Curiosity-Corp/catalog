@@ -261,6 +261,40 @@ The bridge is the `streamstack-canon` user service. `streamstack studio`
 starts it; set `streamstack_canon_bridge_autostart: true` to start it at
 login.
 
+## AI helper dependencies
+
+StreamStack's background blur and auto-framing need packages it never installs
+itself. The role installs them as two optional groups; without them StreamStack
+works as before and says what is missing (`streamstack doctor`, the Console
+System page).
+
+| Group | Variable (default) | Tag | What it installs |
+|---|---|---|---|
+| Background blur | `streamstack_background_removal_enabled` (`true`) | `streamstack-background-removal` | The OBS plugin [obs-backgroundremoval](https://github.com/royshil/obs-backgroundremoval) (GPL-3.0-or-later, a separate package that StreamStack only reaches through obs-websocket), the upstream release `.deb` pinned by version and sha256 (`streamstack_backgroundremoval_*`), plus `libonnxruntime1.23` and `libopencv-core410`/`-imgproc410` from the archive. It installs under `/usr/local/lib/obs-plugins` and `/usr/local/share/obs/obs-plugins`. Skipped when the pinned version or a newer one is already installed. |
+| Auto-framing | `streamstack_framing_enabled` (`true`) | `streamstack-framing` | `python3-numpy`, `python3-opencv`, `python3-packaging`, `python3-pip`; the OpenVINO runtime and `openvino-telemetry` from pinned, checksummed wheels installed with `pip --target /usr/local/lib/streamstack` (the one directory the isolated `python3 -I` launcher adds; Ubuntu has no OpenVINO package and PEP 668 blocks system pip); and, per user in `dev_users`, the YuNet face model in `~/.local/share/streamstack/models/` (commit-pinned URL, sha256 checked, the same file `streamstack framing --fetch` verifies). |
+
+The Intel GPU compute runtime (`intel-opencl-icd`, `libze-intel-gpu1`,
+`libze1`, `libigdgmm12`, `ocl-icd-libopencl1`) is installed, and the desktop
+users join the `render` group, only when an Intel GPU is present
+(`/sys/class/drm/card*/device/vendor` is `0x8086`). Other hosts run face
+detection on the CPU (2 to 5 ms per frame); OpenVINO picks `GPU.0` itself where
+it exists. The OpenVINO wheel matches the system Python (`cp314`, x86_64); on
+another interpreter the role prints a notice and skips it, and StreamStack
+falls back to OpenCV's DNN on the CPU until `streamstack_openvino_*` is bumped.
+
+Nothing is restarted: OBS loads the plugin at its next start, and a new `render`
+group applies at the next login. To check a host (read-only):
+
+```
+dpkg -s obs-backgroundremoval | grep Version
+/usr/bin/python3 -I -c "import sys; sys.path.insert(0,'/usr/local/lib/streamstack'); import openvino, numpy, cv2; print(openvino.Core().available_devices)"
+streamstack doctor
+```
+
+To bump a pinned artifact, change its version, URL and sha256 together
+(`streamstack_backgroundremoval_*`, `streamstack_openvino_*`); the role
+re-downloads, verifies the checksum, and replaces the old version.
+
 ## Low latency
 
 `streamstack_low_latency` (default `true` on StreamStack hosts) applies

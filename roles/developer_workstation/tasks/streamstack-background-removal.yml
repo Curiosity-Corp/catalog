@@ -1,0 +1,86 @@
+---
+# =============================================================================
+# StreamStack: obs-backgroundremoval OBS plugin (Curiosity-Corp/catalog#100)
+# =============================================================================
+# StreamStack's "Blur background" adds an OBS filter of kind
+# `background_removal` (obs-backgroundremoval 1.4.1 or newer) to the camera
+# source. StreamStack never installs the plugin itself; without it the Console
+# shows a "Background blur plugin is not installed" warning and hides the blur
+# controls, and nothing else changes.
+#
+# Included from main.yml for StreamStack hosts (streamstack_enabled) while
+# streamstack_background_removal_enabled is true. Ubuntu has no package, so
+# the upstream release .deb is pinned by version and sha256. It installs under
+# /usr/local/lib/obs-plugins and /usr/local/share/obs/obs-plugins, which OBS
+# also searches. OBS loads plugins when it starts: this never restarts OBS, a
+# running OBS picks the plugin up at its next start. Inference is CPU only
+# (upstream has no OpenVINO backend). See docs/streamstack.md, "AI helpers".
+# =============================================================================
+
+- name: Check the host can take the obs-backgroundremoval amd64 package
+  ansible.builtin.debug:
+    msg: >-
+      obs-backgroundremoval is only pinned for amd64; {{ ansible_facts['architecture'] }}
+      keeps StreamStack without the background blur plugin.
+  when: ansible_facts['architecture'] != 'x86_64'
+
+- name: Install obs-backgroundremoval
+  when: ansible_facts['architecture'] == 'x86_64'
+  block:
+    - name: Install the shared libraries obs-backgroundremoval links against
+      ansible.builtin.apt:
+        name: "{{ streamstack_backgroundremoval_packages }}"
+        state: present
+
+    - name: Read the installed obs-backgroundremoval version
+      ansible.builtin.command:
+        argv:
+          - dpkg-query
+          - --show
+          - --showformat=${Version}
+          - obs-backgroundremoval
+      register: _streamstack_bgremoval_installed
+      changed_when: false
+      failed_when: false
+
+    # Install when absent or older than the pin; a newer version is left alone.
+    - name: Compare the installed obs-backgroundremoval with the pin
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --compare-versions
+          - "{{ _streamstack_bgremoval_installed.stdout }}"
+          - lt
+          - "{{ streamstack_backgroundremoval_deb_release }}"
+      register: _streamstack_bgremoval_older
+      changed_when: false
+      failed_when: _streamstack_bgremoval_older.rc not in [0, 1]
+      when: _streamstack_bgremoval_installed.stdout | default('') | length > 0
+
+    - name: Download and install the pinned obs-backgroundremoval package
+      when: >-
+        _streamstack_bgremoval_installed.stdout | default('') | length == 0
+        or _streamstack_bgremoval_older.rc | default(1) == 0
+      block:
+        - name: Ensure the verified artifact cache exists
+          ansible.builtin.file:
+            path: "{{ workstation_update_artifact_cache_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0750"
+
+        - name: Download obs-backgroundremoval {{ streamstack_backgroundremoval_release }}
+          ansible.builtin.get_url:
+            url: "{{ streamstack_backgroundremoval_url }}"
+            dest: "{{ workstation_update_artifact_cache_dir }}/obs-backgroundremoval-{{ streamstack_backgroundremoval_sha256 }}.deb"
+            checksum: "sha256:{{ streamstack_backgroundremoval_sha256 }}"
+            owner: root
+            group: root
+            mode: "0644"
+            force: false
+
+        - name: Install obs-backgroundremoval {{ streamstack_backgroundremoval_release }}
+          ansible.builtin.apt:
+            deb: "{{ workstation_update_artifact_cache_dir }}/obs-backgroundremoval-{{ streamstack_backgroundremoval_sha256 }}.deb"
+            state: present
