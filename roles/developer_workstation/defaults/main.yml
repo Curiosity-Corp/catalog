@@ -1588,3 +1588,37 @@ hardware_profiles:
 # skipped in containers and on hosts without /etc/default/grub.
 grub_autoboot_enabled: true
 grub_autoboot_dropin_path: /etc/default/grub.d/90-curiosity-autoboot.cfg
+
+# =============================================================================
+# PIA VPN daemon settings (applied when the hardware profile sets pia_vpn: true)
+# =============================================================================
+# Only the listed executables are routed through the VPN (PIA "include" split
+# tunnel); everything else on the host stays on the normal link. See
+# docs/pia-vpn-and-wifi.md.
+pia_split_tunnel_apps:
+  - /opt/brave.com/brave/brave
+# Keep the PIA DNS override for the tunnelled apps only, so Ziti/internal names
+# still resolve for the rest of the host.
+pia_split_tunnel_dns: true
+# "auto" blocks tunnelled apps when the VPN drops and never blocks the host.
+pia_killswitch: auto
+# Keep the daemon (and killswitch) active when the GUI client is not running.
+pia_persist_daemon: true
+# Root-only (0600) two-line file (username, password) provisioned outside git
+# from the ACTIVE Bitwarden item "Privateinternetaccess / p1793859". Empty or
+# missing skips `piactl login`; the daemon keeps any existing login.
+pia_login_file: ""
+
+# =============================================================================
+# Managed WiFi profile (netplan, NetworkManager renderer)
+# =============================================================================
+# Empty wifi_ssid leaves netplan untouched. Supply wifi_psk from extra-vars or a
+# vault, never from the repo. The match is interface-agnostic (wl*) so a card
+# that moves to another PCI slot (wlp6s0 -> wlp8s0) keeps its profile.
+wifi_ssid: ""
+wifi_psk: ""
+wifi_netplan_name: wifi
+wifi_netplan_match: "wl*"
+# Stable NetworkManager connection UUID; keep it so existing profiles are
+# replaced in place instead of duplicated.
+wifi_nm_uuid: ""

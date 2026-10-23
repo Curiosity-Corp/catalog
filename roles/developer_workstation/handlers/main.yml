@@ -149,3 +149,10 @@
     name: curiosity-ziti-health.timer
     state: restarted
     daemon_reload: true
+
+- name: Regenerate Netplan after managed WiFi change
+  ansible.builtin.command:
+    argv:
+      - netplan
+      - generate
+  changed_when: true
