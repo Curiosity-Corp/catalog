@@ -224,11 +224,34 @@ def main() -> None:
         raise SystemExit(
             "The Codex healthcheck must target the user-scoped standalone launcher"
         )
+    # Claude Code follows the same rule: the npm package next to the native
+    # install made Claude Code report a duplicate installation on every
+    # launch. The native installer is the only managed Claude Code.
+    if "@anthropic-ai/claude-code" in defaults.get("ai_assistant_packages", []):
+        raise SystemExit("Claude Code must not be refreshed through the npm package set")
+    if any(entry.get("command") == "claude" for entry in ai_command_links):
+        raise SystemExit("Claude Code must not have an npm command launcher")
+    claude_contract = additional_contracts.get("claude", {})
+    if claude_contract.get("installer") != "claude-native":
+        raise SystemExit("The Claude Code contract must use the native installer")
+    if claude_contract.get("healthcheck", [None])[0] != ".local/bin/claude":
+        raise SystemExit(
+            "The Claude Code healthcheck must target the user-scoped native launcher"
+        )
+    if "{{ npm_global_prefix }}/bin/claude" not in defaults.get("claude_retired_launchers", []):
+        raise SystemExit("The npm Claude Code launcher must be a retired launcher")
+    if "'@anthropic-ai/claude-code'" not in (ROLE / "tasks/node-packages.yml").read_text():
+        raise SystemExit("Root-scoped npm Claude Code copies must be removed")
     ai_assistants_text = (ROLE / "tasks/ai-assistants.yml").read_text()
     for required_fragment in (
         "Remove legacy npm-managed Codex",
         "Install standalone Codex CLI",
         "Remove broken system-level Codex symlink",
+        "Remove npm-managed Claude Code",
+        "Remove retired Claude Code launchers",
+        "Install native Claude Code",
+        "Move native Claude Code to the configured channel",
+        "Assert a single Claude Code installation",
     ):
         if required_fragment not in ai_assistants_text:
             raise SystemExit(f"ai-assistants.yml is missing '{required_fragment}'")
@@ -394,6 +417,13 @@ def main() -> None:
             )
 
     rollback_exclusions = defaults.get("workstation_update_rollback_excluded_paths", [])
+    for path in rollback_exclusions + defaults.get("workstation_update_managed_paths", []):
+        if path == "{{ npm_global_prefix }}/bin/claude":
+            raise SystemExit("The retired npm Claude Code launcher must not be a managed path")
+    if "{{ dev_user_home }}/.local/bin/claude" not in rollback_exclusions:
+        raise SystemExit(
+            "The native Claude Code launcher must be excluded from binary rollback"
+        )
     if '"{{ dev_user_home }}/.local/bin/codex"' not in defaults_text:
         raise SystemExit("The standalone Codex launcher must be a managed workstation path")
     if "{{ dev_user_home }}/.local/bin/codex" not in rollback_exclusions:

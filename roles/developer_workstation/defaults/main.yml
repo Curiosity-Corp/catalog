@@ -199,6 +199,7 @@ workstation_application_contracts:
   packer: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/packer, version]}
   m365-cli: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/m365", --version]}
   codex: {installer: codex-standalone, verification: official-installer, scope: user, enabled_when: codex_standalone_enabled, healthcheck: [.local/bin/codex, --version]}
+  claude: {installer: claude-native, verification: official-installer, scope: user, enabled_when: claude_native_enabled, healthcheck: [.local/bin/claude, --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
 
 # Dynamic includes are entered only when their include task carries the
@@ -326,6 +327,7 @@ workstation_update_managed_paths:
   - "{{ npm_global_prefix }}/bin/npm"
   - "{{ npm_global_prefix }}/bin/m365"
   - "{{ dev_user_home }}/.local/bin/codex"
+  - "{{ dev_user_home }}/.local/bin/claude"
   - "{{ npm_global_prefix }}/bin/pnpm"
   - "{{ npm_global_prefix }}/bin/yarn"
   - "{{ npm_global_prefix }}/bin/tsc"
@@ -336,7 +338,6 @@ workstation_update_managed_paths:
   - "{{ npm_global_prefix }}/bin/prettier"
   - "{{ npm_global_prefix }}/bin/mmdc"
   - "{{ npm_global_prefix }}/bin/playwright"
-  - "{{ npm_global_prefix }}/bin/claude"
   - "{{ npm_global_prefix }}/bin/gemini"
   - "{{ npm_global_prefix }}/bin/qwen"
   - "{{ npm_global_prefix }}/bin/codewhale"
@@ -388,11 +389,12 @@ npm_global_command_links:
 
 # AI coding assistants are also user-scoped and refreshed nightly. Keep the
 # package list in defaults so every workstation profile gets the same policy.
-# Codex is deliberately excluded: the official standalone installer owns
-# ~/.local/bin/codex (see codex_standalone_* below), and a nightly npm copy
-# created a second codex whose PATH order decided which install ran.
+# Codex and Claude Code are deliberately excluded: their official native
+# installers own ~/.local/bin/codex and ~/.local/bin/claude (see
+# codex_standalone_* and claude_native_* below). A nightly npm copy created a
+# second command whose PATH order decided which install ran, and Claude Code
+# reported the pair as a duplicate installation on every launch.
 ai_assistant_packages:
-  - "@anthropic-ai/claude-code"
   - "@google/gemini-cli"
   - "@qwen-code/qwen-code"
 
@@ -400,7 +402,6 @@ ai_assistant_packages:
 # image build left its global command shim absent. Keep the command contract
 # explicit so the Ansible run repairs the user-facing launchers idempotently.
 ai_assistant_command_links:
-  - {package: "@anthropic-ai/claude-code", command: claude, relative_path: bin/claude.exe}
   - {package: "@google/gemini-cli", command: gemini, relative_path: bundle/gemini.js}
   - {package: "@qwen-code/qwen-code", command: qwen, relative_path: cli-entry.js}
 
@@ -413,6 +414,23 @@ codex_standalone_installer_url: "https://chatgpt.com/codex/install.sh"
 codex_standalone_release: latest
 codex_standalone_install_dir: "{{ dev_user_home }}/.local/bin"
 codex_standalone_home_dir: "{{ dev_user_home }}/.codex"
+
+# Native Claude Code. The official installer owns ~/.local/bin/claude (a link
+# into ~/.local/share/claude/versions). Every run removes the npm package and
+# any other launcher, moves the native install to claude_native_channel
+# ("latest" or "stable", matching Claude Code's autoUpdatesChannel), and fails
+# if more than one `claude` remains on the user's PATH.
+claude_native_enabled: true
+claude_native_installer_url: "https://claude.ai/install.sh"
+claude_native_channel: latest
+claude_native_install_dir: "{{ dev_user_home }}/.local/bin"
+# Launchers left by earlier install methods: the npm global shim, the retired
+# ~/.claude/local "local" install, and a system-wide link. Root-prefix npm
+# copies are removed by node-packages.yml.
+claude_retired_launchers:
+  - "{{ npm_global_prefix }}/bin/claude"
+  - "{{ dev_user_home }}/.claude/local"
+  - /usr/local/bin/claude
 
 # Microsoft 365 CLI is kept in its own user-scoped package list (installed by
 # tasks/m365-cli.yml, tag: m365) rather than folded into npm_global_packages,
@@ -436,6 +454,7 @@ workstation_update_rollback_excluded_paths:
   - "{{ npm_global_prefix }}/bin/npm"
   - "{{ npm_global_prefix }}/bin/m365"
   - "{{ dev_user_home }}/.local/bin/codex"
+  - "{{ dev_user_home }}/.local/bin/claude"
   - "{{ npm_global_prefix }}/bin/pnpm"
   - "{{ npm_global_prefix }}/bin/yarn"
   - "{{ npm_global_prefix }}/bin/tsc"
@@ -446,7 +465,6 @@ workstation_update_rollback_excluded_paths:
   - "{{ npm_global_prefix }}/bin/prettier"
   - "{{ npm_global_prefix }}/bin/mmdc"
   - "{{ npm_global_prefix }}/bin/playwright"
-  - "{{ npm_global_prefix }}/bin/claude"
   - "{{ npm_global_prefix }}/bin/gemini"
   - "{{ npm_global_prefix }}/bin/qwen"
   - "{{ npm_global_prefix }}/bin/codewhale"
