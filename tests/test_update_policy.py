@@ -238,6 +238,9 @@ def main() -> None:
         raise SystemExit(
             "The Claude Code healthcheck must target the user-scoped native launcher"
         )
+    # Decision D910 (2026-10-23): always the latest channel, never "stable".
+    if defaults.get("claude_native_channel") != "latest":
+        raise SystemExit("claude_native_channel must be 'latest' (decision D910)")
     if "{{ npm_global_prefix }}/bin/claude" not in defaults.get("claude_retired_launchers", []):
         raise SystemExit("The npm Claude Code launcher must be a retired launcher")
     if "'@anthropic-ai/claude-code'" not in (ROLE / "tasks/node-packages.yml").read_text():
