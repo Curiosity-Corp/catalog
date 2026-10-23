@@ -511,9 +511,15 @@ minimal_desktop_xdg_autostart_hidden:
 
 The PolicyKit authentication agent for GUI privilege prompts is `lxpolkit`
 (`policykit-1-gnome` is not in Debian trixie). Its own autostart entry is not
-restricted to other desktops, so the XDG autostart starts it once under Openbox;
-the Openbox autostart does not launch it a second time. Sessions that were
-already running keep their current processes until they restart.
+restricted to other desktops, so the XDG autostart starts it once under Openbox.
+As a safety net, the managed Openbox autostart checks about ten seconds later
+(`CURIOSITY_POLKIT_AGENT_GRACE`, default 10) whether an `lxpolkit` runs on its
+own `DISPLAY`; if none does it starts one and writes "No PolicyKit agent on
+`:N` after XDG autostart" to stderr and, when `logger` exists, to the journal
+under `openbox-autostart`. That line, or its absence, is how to tell whether the
+XDG step failed in a session: a vt8 startx session once ran without an agent
+although both packages were installed. Sessions that were already running keep
+their current processes until they restart.
 
 Bitwarden Desktop asks polkit to confirm the user before it unlocks, through the
 action `com.bitwarden.Bitwarden.unlock`. The `.deb` does not ship that action's

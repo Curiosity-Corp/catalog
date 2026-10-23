@@ -295,8 +295,11 @@ def test_xdg_autostart_is_looped_over_dev_users_and_never_references_the_primary
     assert task["loop_control"]["loop_var"] == "dw_user"
 
 
-def _run_autostart(*, live_panel_display: str | None) -> tuple[subprocess.CompletedProcess[str], list[str], bool]:
-    """Run the autostart with stub commands and an optional pre-existing panel."""
+def _run_autostart(
+    *, live_panel_display: str | None, live_agent_display: str | None = None
+) -> tuple[subprocess.CompletedProcess[str], list[str], bool]:
+    """Run the autostart with stub commands, an optional pre-existing panel and
+    an optional PolicyKit agent already running on a display."""
 
     autostart = (FILES / "autostart").read_text()
     with tempfile.TemporaryDirectory(prefix="panel-autostart-") as temp_dir:
@@ -313,13 +316,22 @@ def _run_autostart(*, live_panel_display: str | None) -> tuple[subprocess.Comple
                 (proc_dir / str(previous_panel.pid) / "environ").write_bytes(
                     f"DISPLAY={live_panel_display}\0".encode()
                 )
+            if live_agent_display is not None:
+                (proc_dir / "4242424").mkdir(parents=True)
+                (proc_dir / "4242424" / "environ").write_bytes(
+                    f"DISPLAY={live_agent_display}\0".encode()
+                )
             stubs = {
-                "pgrep": '#!/bin/sh\ncase "$*" in\n  *tint2*) echo "$HARNESS_PANEL_PID" ;;\n  *) exit 1 ;;\nesac\n',
+                "pgrep": (
+                    '#!/bin/sh\ncase "$*" in\n  *tint2*) echo "$HARNESS_PANEL_PID" ;;\n'
+                    '  *lxpolkit*) [ -n "$HARNESS_AGENT_PID" ] && echo "$HARNESS_AGENT_PID" ;;\n'
+                    '  *) exit 1 ;;\nesac\n'
+                ),
                 "tint2": '#!/bin/sh\nprintf "tint2 %s\\n" "$*" >>"$HARNESS_LOG"\n',
             }
             for name in (
                 "xsetroot", "feh", "picom", "dunst", "nm-applet", "pasystray",
-                "blueman-applet", "flameshot", "xscreensaver",
+                "blueman-applet", "flameshot", "xscreensaver", "lxpolkit",
             ):
                 stubs[name] = f'#!/bin/sh\nprintf "{name}\\n" >>"$HARNESS_LOG"\n'
             for name, content in stubs.items():
@@ -342,6 +354,8 @@ def _run_autostart(*, live_panel_display: str | None) -> tuple[subprocess.Comple
                     "FOCUSPASS_PROC_ROOT": str(proc_dir),
                     "HARNESS_LOG": str(log),
                     "HARNESS_PANEL_PID": str(previous_panel.pid),
+                    "HARNESS_AGENT_PID": "4242424" if live_agent_display is not None else "",
+                    "CURIOSITY_POLKIT_AGENT_GRACE": "0",
                 }
             )
             result = subprocess.run(["/bin/sh", "-c", autostart], text=True, capture_output=True, env=environment, timeout=20)
@@ -371,9 +385,36 @@ def test_autostart_replaces_the_panel_on_this_display_only() -> None:
     assert alive is True
 
 
-def test_autostart_leaves_the_polkit_agent_to_xdg_autostart() -> None:
+def test_autostart_never_starts_the_polkit_agent_unconditionally() -> None:
+    """XDG autostart owns the agent; the autostart only backs it up when absent."""
+
     autostart = (FILES / "autostart").read_text()
     commands = [line.strip() for line in autostart.splitlines() if not line.lstrip().startswith("#")]
-    assert not any(command.startswith(("lxpolkit", "/usr/lib/policykit-1-gnome")) for command in commands)
+    assert not any(command.startswith("/usr/lib/policykit-1-gnome") for command in commands)
     assert "pkill" not in autostart
-    assert "lxpolkit" in autostart  # the reasoning stays documented next to the applets
+    launches = [index for index, command in enumerate(commands) if command == "lxpolkit &"]
+    assert len(launches) == 1, commands
+    guard = next(index for index, command in enumerate(commands) if command.startswith('if [ -z "$(display_polkit_agent_pids)"'))
+    assert guard < launches[0]
+    # It runs before the screen-lock block, whose early `exit 1` must not skip it.
+    assert launches[0] < next(index for index, command in enumerate(commands) if command.startswith("display_xscreensaver_pids()"))
+
+
+def test_autostart_starts_the_polkit_agent_when_none_runs_on_this_display() -> None:
+    result, log, _ = _run_autostart(live_panel_display=None)
+    assert result.returncode == 0, result.stderr
+    assert log.count("lxpolkit") == 1, log
+    assert "No PolicyKit agent on :test after XDG autostart; starting lxpolkit." in result.stderr
+
+
+def test_autostart_leaves_a_running_polkit_agent_alone() -> None:
+    result, log, _ = _run_autostart(live_panel_display=None, live_agent_display=":test")
+    assert result.returncode == 0, result.stderr
+    assert "lxpolkit" not in log, log
+    assert "No PolicyKit agent" not in result.stderr
+
+
+def test_an_agent_on_another_display_does_not_count() -> None:
+    result, log, _ = _run_autostart(live_panel_display=None, live_agent_display=":other")
+    assert result.returncode == 0, result.stderr
+    assert log.count("lxpolkit") == 1, log

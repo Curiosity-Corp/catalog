@@ -98,9 +98,38 @@ nm-applet &
 pasystray &
 blueman-applet &
 
-# The PolicyKit authentication agent (lxpolkit) is deliberately not started
-# here: its /etc/xdg/autostart entry has no OPENBOX exclusion, so
-# openbox-xdg-autostart (python3-xdg) starts it exactly once.
+# The PolicyKit authentication agent (lxpolkit) is normally started exactly
+# once by openbox-xdg-autostart (python3-xdg): its /etc/xdg/autostart entry has
+# no OPENBOX exclusion, and that step runs after this script. It is not started
+# unconditionally here.
+#
+# Safety net: on dm313red vt8 (2026-10-19) a startx session ran with no agent
+# although both packages were installed, and Bitwarden's pkexec then prompted
+# on the console tty, which stops every client of the session. Once the XDG step
+# has had time, start the agent only if none runs on this DISPLAY, and say so,
+# so the cause of a missing agent stays visible. Agents are per display, so one
+# on another display does not count. Backgrounded: it never delays the session.
+display_polkit_agent_pids() {
+    for pid in $(pgrep -u "$(id -u)" -x lxpolkit 2>/dev/null || true); do
+        [ -r "${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ" ] || continue
+        process_display=$(tr '\000' '\n' <"${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)
+        [ "$process_display" = "${DISPLAY:-}" ] && printf '%s\n' "$pid"
+    done
+}
+
+if command -v lxpolkit >/dev/null 2>&1; then
+    (
+        sleep "${CURIOSITY_POLKIT_AGENT_GRACE:-10}"
+        if [ -z "$(display_polkit_agent_pids)" ]; then
+            polkit_agent_note="No PolicyKit agent on ${DISPLAY:-unknown} after XDG autostart; starting lxpolkit."
+            echo "$polkit_agent_note" >&2
+            if command -v logger >/dev/null 2>&1; then
+                logger -t openbox-autostart "$polkit_agent_note" || true
+            fi
+            lxpolkit &
+        fi
+    ) &
+fi
 
 # Screenshot tray applet
 flameshot &
