@@ -26,6 +26,18 @@ For a VM or an existing user, pass the actual account and home directory. The
 role asserts that the account exists and that its home is a directory before it
 changes anything else.
 
+## Time zone
+
+`workstation_timezone` sets the system clock's IANA zone (empty, the default,
+leaves it alone). The properties run on Eastern time:
+
+```yaml
+workstation_timezone: America/New_York   # EST/EDT, switches with daylight saving
+```
+
+An unknown zone fails the run before the clock changes. Apply it alone with
+`--tags timezone`.
+
 ## Hardware profile opt-ins
 
 A hardware profile in `hardware_profiles` may set `litra_cli: true` to install

@@ -197,9 +197,11 @@ person tunes it on the Console's Lighting page, and only the person at the
 active seat can reach the light. See the app's
 [docs/lighting.md](../roles/developer_workstation/files/streamstack/docs/lighting.md).
 
-The schedule follows the sun at the property. These desktops keep their clock
-on UTC, so set where each property is per host (host_vars or a host-local
-override), or the lights are scheduled for Greenwich:
+The schedule follows the sun at the property. Without coordinates it takes the
+city of the system time zone, so set `workstation_timezone` per host (the
+properties run on `America/New_York`); a host left on UTC schedules the lights
+for Greenwich. For the exact sunrise and sunset, also set where the property is
+(host_vars or a host-local override):
 
 ```yaml
 streamstack_property: "Main office"

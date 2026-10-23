@@ -151,6 +151,14 @@
   tags: [systemd, user-systemd]
   when: workstation_user_linger | length > 0
 
+- name: Set the system time zone
+  ansible.builtin.include_tasks:
+    file: timezone.yml
+    apply:
+      tags: [timezone]
+  tags: [timezone]
+  when: workstation_timezone | length > 0
+
 - name: Enforce declarative user systemd policy
   ansible.builtin.include_tasks:
     file: user-systemd.yml

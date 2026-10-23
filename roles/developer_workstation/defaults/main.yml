@@ -13,6 +13,10 @@ dev_users:
 # Accounts whose systemd user manager must keep running without a login session
 # (`loginctl enable-linger`). Empty leaves lingering untouched.
 workstation_user_linger: []
+# IANA time zone for the system clock (`timedatectl`), e.g. America/New_York.
+# Empty leaves the host's zone untouched. StreamStack's light schedule takes its
+# sunrise and sunset from this zone unless streamstack_latitude/longitude are set.
+workstation_timezone: ""
 # Optional machine-local override file. Keep per-person/user values here on the
 # target host instead of committing host-specific maps to this repo.
 developer_workstation_local_vars_file: /etc/ansible/local-vars.yml
