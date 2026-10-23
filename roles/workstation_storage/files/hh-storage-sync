@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Copy /home/<user> into the new data volume's per-user subvolumes, or verify
+# that the copy matches. Never deletes or modifies anything under /home.
+#   seed    live copy, no --delete (safe while sessions run; repeatable)
+#   verify  read-only checksum comparison; prints a summary, exit 1 on drift
+#   final   copy with --delete (cutover only: run after writers have stopped)
+set -uo pipefail
+CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
+# shellcheck source=/dev/null
+. "$CONF" || { echo "cannot read $CONF" >&2; exit 2; }
+
+mode=${1:-}
+case "$mode" in seed|verify|final) ;; *) echo "usage: $0 seed|verify|final" >&2; exit 2 ;; esac
+[ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 2; }
+findmnt -n -o FSTYPE "$HH_DATA_MOUNT" | grep -qx btrfs || { echo "$HH_DATA_MOUNT is not a mounted btrfs" >&2; exit 2; }
+
+mkdir -p "$HH_STATE/logs"
+log="$HH_STATE/logs/sync-$mode-$(date +%Y%m%dT%H%M%S).log"
+base=(-aHAX --no-D -x --numeric-ids)
+worst=0
+for u in $HH_HOME_USERS; do
+  src="/home/$u/"; dst="$HH_DATA_MOUNT/@home/$u/"
+  [ -d "$src" ] || { echo "skip $u: no $src" | tee -a "$log"; continue; }
+  [ -d "$dst" ] || { echo "missing subvolume $dst" | tee -a "$log"; worst=2; continue; }
+  echo "=== $mode $u $(date -Is)" | tee -a "$log"
+  case "$mode" in
+    seed)   rsync "${base[@]}" --info=stats2 --bwlimit="${HH_SEED_BWLIMIT_KB:-300000}" "$src" "$dst" >>"$log" 2>&1 ;;
+    final)  rsync "${base[@]}" --delete --info=stats2 "$src" "$dst" >>"$log" 2>&1 ;;
+    verify) rsync "${base[@]}" -n -c --delete --itemize-changes "$src" "$dst" >"$log.$u.diff" 2>>"$log" ;;
+  esac
+  rc=$?
+  # 24 = source files vanished during the copy: expected on a live home.
+  if [ "$mode" = verify ]; then
+    # Directory-only metadata lines (".d..t......") are timestamp noise; a content drift is any other line.
+    drift=$(grep -vc '^\.d\.\.t\.\.\.\.\.\. ' "$log.$u.diff" || true)
+    echo "verify $u: rsync rc=$rc, differing entries=$drift (detail: $log.$u.diff)" | tee -a "$log"
+    [ "$rc" -le 24 ] && { [ "$rc" -eq 0 ] || [ "$rc" -eq 24 ]; } || worst=1
+    [ "$drift" -eq 0 ] || worst=1
+  else
+    echo "$mode $u: rsync rc=$rc" | tee -a "$log"
+    { [ "$rc" -eq 0 ] || [ "$rc" -eq 24 ]; } || worst=1
+  fi
+done
+echo "=== $mode finished worst=$worst $(date -Is) log=$log"
+exit "$worst"

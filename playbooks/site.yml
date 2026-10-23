@@ -9,3 +9,4 @@
   force_handlers: true
   roles:
     - developer_workstation
+    - workstation_storage

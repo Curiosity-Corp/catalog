@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# One-shot cutover of /home to the new data volume. Needs the explicit
+# --confirm flag, ends every user session, and finishes by rebooting.
+# Fail-safe: any failure before the fstab switch aborts with /etc/fstab and
+# /etc/crypttab untouched; the old /home stays intact on the OS drive.
+set -uo pipefail
+CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
+# shellcheck source=/dev/null
+. "$CONF" || { echo "cannot read $CONF" >&2; exit 2; }
+
+usage() { echo "usage: $0 --preflight | --confirm [--no-reboot]" >&2; exit 2; }
+mode=""; reboot=1
+for a in "$@"; do
+  case "$a" in
+    --preflight) mode=preflight ;;
+    --confirm) mode=run ;;
+    --no-reboot) reboot=0 ;;
+    *) usage ;;
+  esac
+done
+[ -n "$mode" ] || usage
+[ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 2; }
+
+ts=$(date +%Y%m%dT%H%M%S)
+mkdir -p "$HH_STATE/logs" "$HH_STATE/manifests"
+LOG="$HH_STATE/logs/cutover-$ts.log"
+say() { echo "[$(date +%T)] $*" | tee -a "$LOG"; }
+die() { say "ABORT: $*  (fstab/crypttab untouched; old /home intact)"; exit 1; }
+
+staged_fstab="$HH_STATE/staged/fstab"
+staged_crypttab="$HH_STATE/staged/crypttab"
+
+preflight() {
+  [ ! -e "$HH_MARKER" ] || die "cutover marker $HH_MARKER already exists"
+  [ -s "$staged_fstab" ] && [ -s "$staged_crypttab" ] || die "staged fstab/crypttab missing in $HH_STATE/staged"
+  findmnt --verify --tab-file "$staged_fstab" >>"$LOG" 2>&1 || say "warning: findmnt --verify reported issues (see log)"
+  grep -q "UUID=$HH_FS_UUID" "$staged_fstab" || die "staged fstab does not reference UUID=$HH_FS_UUID"
+  grep -q "UUID=$HH_LUKS_UUID" "$staged_crypttab" || die "staged crypttab does not reference UUID=$HH_LUKS_UUID"
+  [ "$(findmnt -n -o UUID "$HH_DATA_MOUNT")" = "$HH_FS_UUID" ] || die "$HH_DATA_MOUNT is not the expected filesystem"
+  cryptsetup luksDump "/dev/disk/by-uuid/$HH_LUKS_UUID" 2>/dev/null | grep -q systemd-tpm2 || die "no TPM2 token on the LUKS volume"
+  for u in $HH_HOME_USERS; do [ -d "$HH_DATA_MOUNT/@home/$u" ] || die "missing subvolume @home/$u"; done
+  free_gb=$(df -BG --output=avail "$HH_DATA_MOUNT" | tail -1 | tr -dc 0-9)
+  [ "$free_gb" -ge 50 ] || die "data volume has only ${free_gb}G free"
+  say "preflight OK"
+}
+
+manifest() {
+  m="$HH_STATE/manifests/sessions-$ts.txt"
+  {
+    echo "# sessions at cutover $(date -Is)"
+    for u in $HH_HOME_USERS; do
+      uid=$(id -u "$u" 2>/dev/null) || continue
+      for sock in /tmp/tmux-"$uid"/*; do
+        [ -S "$sock" ] || continue
+        echo "## $u socket $(basename "$sock")"
+        runuser -u "$u" -- env -u TMUX tmux -S "$sock" list-sessions -F '#{session_name}  cwd=#{session_path}' 2>&1
+        runuser -u "$u" -- env -u TMUX tmux -S "$sock" list-panes -a -F '#{session_name}:#{pane_index} #{pane_current_command} #{pane_current_path}' 2>&1
+      done
+    done
+    echo "## goal files"; ls -1 "/home/${HH_HOME_USERS%% *}/.local/state/triage/"*.goal.md 2>/dev/null
+  } >"$m"
+  say "session manifest: $m"
+}
+
+stop_sessions() {
+  systemctl stop curiosity-ansible-pull.timer curiosity-ansible-pull.service 2>>"$LOG" || true
+  for u in $HH_HOME_USERS; do loginctl terminate-user "$u" 2>>"$LOG" || true; done
+  for _ in $(seq 1 60); do
+    busy=0
+    for u in $HH_HOME_USERS; do pgrep -u "$u" >/dev/null 2>&1 && busy=1; done
+    [ "$busy" -eq 0 ] && return 0
+    sleep 2
+  done
+  for u in $HH_HOME_USERS; do pkill -KILL -u "$u" 2>>"$LOG" || true; done
+  sleep 3
+  for u in $HH_HOME_USERS; do pgrep -u "$u" >/dev/null 2>&1 && die "processes of $u still running"; done
+}
+
+if [ "$mode" = preflight ]; then preflight; manifest; exit 0; fi
+
+preflight
+manifest
+say "stopping sessions and users"
+stop_sessions
+say "final copy"
+HH_STORAGE_CONF=$CONF /usr/local/sbin/hh-storage-sync final | tee -a "$LOG" || die "final copy failed"
+say "checksum verification (must show zero differences)"
+HH_STORAGE_CONF=$CONF /usr/local/sbin/hh-storage-sync verify | tee -a "$LOG" || die "verification found differences"
+say "baseline snapshots"
+for u in $HH_HOME_USERS; do
+  btrfs subvolume snapshot -r "$HH_DATA_MOUNT/@home/$u" "$HH_DATA_MOUNT/@snapshots/$u.cutover-$ts" >>"$LOG" 2>&1 || die "snapshot of $u failed"
+done
+sync
+say "installing fstab/crypttab"
+cp -a /etc/fstab /etc/fstab.pre-cutover && cp -a /etc/crypttab /etc/crypttab.pre-cutover 2>/dev/null || true
+install -m 0644 "$staged_fstab" /etc/fstab.new && mv /etc/fstab.new /etc/fstab || die "fstab install failed"
+install -m 0644 "$staged_crypttab" /etc/crypttab.new && mv /etc/crypttab.new /etc/crypttab || { cp -a /etc/fstab.pre-cutover /etc/fstab; die "crypttab install failed, fstab restored"; }
+mkdir -p /etc/systemd/system/user@.service.d
+printf '[Unit]\nRequiresMountsFor=/home\n' >/etc/systemd/system/user@.service.d/10-require-home.conf
+systemctl daemon-reload
+date -Is >"$HH_MARKER"
+say "cutover staged. Rollback: cp /etc/fstab.pre-cutover /etc/fstab; cp /etc/crypttab.pre-cutover /etc/crypttab; rm $HH_MARKER /etc/systemd/system/user@.service.d/10-require-home.conf"
+if [ "$reboot" -eq 1 ]; then say "rebooting"; systemctl reboot; else say "--no-reboot: not rebooting"; fi

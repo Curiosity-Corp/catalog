@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly btrfs snapshots of the home subvolumes
+ConditionPathExists=/var/lib/hh-storage/cutover-complete
+RequiresMountsFor=/mnt/hh-data
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/btrbk -c /etc/btrbk/hh-storage.conf run
+Nice=10
+IOSchedulingClass=idle

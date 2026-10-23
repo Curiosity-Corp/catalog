@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly restic backup of home snapshots to the OS drive
+ConditionPathExists=/var/lib/hh-storage/cutover-complete
+RequiresMountsFor=/mnt/hh-data
+After=hh-btrbk.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/btrbk -c /etc/btrbk/hh-storage.conf snapshot
+ExecStart=/usr/local/sbin/hh-backup
+Nice=15
+IOSchedulingClass=idle
+CPUWeight=20

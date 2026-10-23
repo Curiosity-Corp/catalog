@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Read-only health check after the cutover reboot.
+set -uo pipefail
+CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
+# shellcheck source=/dev/null
+. "$CONF" || { echo "cannot read $CONF" >&2; exit 2; }
+fail=0
+ok() { printf 'ok    %s\n' "$*"; }
+bad() { printf 'FAIL  %s\n' "$*"; fail=1; }
+
+[ "$(findmnt -n -o UUID /home)" = "$HH_FS_UUID" ] && ok "/home is on the data volume" || bad "/home is not on the data volume"
+findmnt -n -o OPTIONS /home | grep -q 'subvol=/@home' && ok "/home subvol=@home" || bad "/home subvolume"
+[ "$(findmnt -n -o UUID /.snapshots)" = "$HH_FS_UUID" ] && ok "/.snapshots mounted" || bad "/.snapshots missing"
+cryptsetup status "$HH_MAPPER" 2>/dev/null | grep -q 'is active' && ok "LUKS $HH_MAPPER active" || bad "LUKS $HH_MAPPER not active"
+for u in $HH_HOME_USERS; do
+  [ -d "/home/$u" ] && ok "/home/$u present ($(stat -c %U "/home/$u"))" || bad "/home/$u missing"
+done
+btrfs filesystem show "$HH_DATA_MOUNT" >/dev/null 2>&1 && ok "btrfs readable" || bad "btrfs not readable"
+btrfs device stats "$HH_DATA_MOUNT" 2>/dev/null | awk '$2!=0{e=1} END{exit e}' && ok "btrfs device errors: none" || bad "btrfs device errors"
+systemctl is-active --quiet "user@$(id -u "${HH_HOME_USERS%% *}").service" && ok "user manager running" || bad "user manager not running"
+for t in hh-btrbk.timer hh-backup.timer hh-btrfs-scrub.timer; do
+  systemctl is-enabled --quiet "$t" 2>/dev/null && ok "$t enabled" || bad "$t not enabled"
+done
+echo "next: restore sessions with 'hyperharness restore' (see the session manifest in $HH_STATE/manifests)"
+exit "$fail"

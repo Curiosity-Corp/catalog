@@ -1,0 +1,4 @@
+---
+- name: Reload systemd for storage units
+  ansible.builtin.systemd:
+    daemon_reload: true

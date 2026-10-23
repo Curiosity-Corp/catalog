@@ -1,0 +1,2 @@
+{{ workstation_storage_crypttab_base | trim }}
+{{ lookup('ansible.builtin.template', 'crypttab-entry.j2') | trim }}
