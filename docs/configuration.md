@@ -515,6 +515,25 @@ restricted to other desktops, so the XDG autostart starts it once under Openbox;
 the Openbox autostart does not launch it a second time. Sessions that were
 already running keep their current processes until they restart.
 
+Bitwarden Desktop asks polkit to confirm the user before it unlocks, through the
+action `com.bitwarden.Bitwarden.unlock`. The `.deb` does not ship that action's
+policy and the app would otherwise install it by running `pkexec`. In a
+startx/Openbox session that is a background process group on the console tty,
+so with no agent running `pkexec` prompts on the tty and the kernel stops the
+whole session's process group; every window freezes while Xorg and Openbox stay
+up. With `bitwarden_desktop_enabled`, the role installs
+`/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy` itself (root-owned,
+`0644`: `allow_active` is `auth_self`, `allow_any` and `allow_inactive` are `no`)
+and fails the run unless `pkaction --action-id com.bitwarden.Bitwarden.unlock`
+reports that. Applying the role needs no logout or restart: polkit watches the
+actions directory. If a session does freeze this way, `kill -CONT -- -<openbox pgid>` resumes it once the
+offending `pkexec` has been killed.
+
+The per-user pieces stay outside the role: each user signs in to the desktop app
+themselves, and the Firefox extension is force-installed by the policy in
+`collaboration.yml` (Chrome and Edge are not managed). The `bw` CLI session
+helper is not part of the catalog.
+
 The branded FocusPass screen-lock package is an optional local-PAM integration.
 It is installed only when all three variables below are supplied for a
 desktop or thin-client profile with the minimal desktop enabled:

@@ -236,3 +236,93 @@ def test_contract_participates_in_health_rollback_and_tags() -> None:
     assert "/usr/bin/bitwarden" in DEFAULTS["workstation_update_managed_paths"]
     assert "/usr/bin/bitwarden" in DEFAULTS["workstation_update_non_removable_paths"]
     assert "bitwarden" in DEFAULTS["workstation_update_transaction_tags"]
+
+
+# --- polkit unlock policy ----------------------------------------------------
+#
+# The app writes this policy itself through pkexec when it is missing, which
+# froze the whole startx session on dm313red vt8 (no graphical agent, tty
+# prompt from a background process group). The role must own the file instead.
+
+UNLOCK_ACTION = "com.bitwarden.Bitwarden.unlock"
+POLICY_DEST = f"/usr/share/polkit-1/actions/{UNLOCK_ACTION[:-len('.unlock')]}.policy"
+POLICY_SRC = ROLE / "files/bitwarden/com.bitwarden.Bitwarden.policy"
+
+PKACTION_OK = """\
+com.bitwarden.Bitwarden.unlock:
+  description:       Unlock Bitwarden
+  message:           Authenticate to unlock Bitwarden
+  vendor:            
+  vendor_url:        
+  icon:              
+  implicit any:      no
+  implicit inactive: no
+  implicit active:   auth_self
+"""
+
+
+def test_policy_file_defines_only_the_unlock_action_for_the_active_user() -> None:
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(POLICY_SRC.read_text())
+    actions = root.findall("action")
+    assert [a.get("id") for a in actions] == [UNLOCK_ACTION]
+    defaults = {child.tag: (child.text or "").strip() for child in actions[0].find("defaults")}
+    assert defaults == {
+        "allow_any": "no",
+        "allow_inactive": "no",
+        "allow_active": "auth_self",
+    }
+
+
+def test_policy_is_installed_root_owned_and_not_group_writable() -> None:
+    copy = _task(INSTALL, "Install the Bitwarden unlock polkit policy")["ansible.builtin.copy"]
+    assert copy["src"] == "bitwarden/com.bitwarden.Bitwarden.policy"
+    assert copy["dest"] == POLICY_DEST
+    assert (copy["owner"], copy["group"], copy["mode"]) == ("root", "root", "0644")
+
+
+def test_policy_is_installed_after_the_package_and_checked_with_polkit() -> None:
+    names = [t["name"] for t in INSTALL]
+    install = names.index("Install the Bitwarden desktop .deb (with dependencies)")
+    place = names.index("Install the Bitwarden unlock polkit policy")
+    read = names.index("Read the Bitwarden unlock action as polkit resolves it")
+    gate = names.index("Require polkit to ask the active user to authenticate for Bitwarden unlock")
+    assert install < place < read < gate
+    command = _task(INSTALL, "Read the Bitwarden unlock action as polkit resolves it")
+    assert command["ansible.builtin.command"]["argv"][-3:] == ["--action-id", UNLOCK_ACTION, "--verbose"]
+    # Read-only, so it must also run in check mode; the gate must not, because
+    # the file is not there yet on a first dry run.
+    assert command["check_mode"] is False
+    assert command["changed_when"] is False
+    assert _task(INSTALL, INSTALL[gate]["name"])["when"] == "not ansible_check_mode"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "rc", "accepted"),
+    [
+        (PKACTION_OK, 0, True),
+        (PKACTION_OK.replace("auth_self", "yes"), 0, False),
+        (PKACTION_OK.replace("auth_self", "auth_admin"), 0, False),
+        (PKACTION_OK.replace("implicit any:      no", "implicit any:      yes"), 0, False),
+        ("", 1, False),
+    ],
+)
+def test_polkit_gate_accepts_only_auth_self_for_active_sessions(stdout, rc, accepted) -> None:
+    gate = _task(
+        INSTALL, "Require polkit to ask the active user to authenticate for Bitwarden unlock"
+    )["ansible.builtin.assert"]["that"]
+    # An unquoted "key: value" inside a condition parses as a YAML mapping.
+    assert all(isinstance(condition, str) for condition in gate)
+    env = _environment()
+    context = {"_bitwarden_polkit_action": {"stdout": stdout, "rc": rc}}
+    results = [env.compile_expression(str(c).strip())(**context) for c in gate]
+    assert all(results) is accepted
+
+
+def test_polkit_directory_gate_requires_polkit_to_be_installed() -> None:
+    gate = _task(INSTALL, "Require polkit before installing the Bitwarden unlock policy")
+    env = _environment()
+    check = env.compile_expression(gate["ansible.builtin.assert"]["that"][0])
+    assert check(_bitwarden_polkit_actions_dir={"stat": {"isdir": True}}) is True
+    assert check(_bitwarden_polkit_actions_dir={"stat": {"exists": False}}) is False

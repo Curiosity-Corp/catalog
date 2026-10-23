@@ -18,6 +18,17 @@
 # Electron's network stack is Chromium's, which trusts the per-user NSS database
 # (see internal-cas.yml), not NODE_EXTRA_CA_CERTS.
 #
+# Biometric/system unlock goes through the polkit action
+# com.bitwarden.Bitwarden.unlock. The .deb does not ship its policy: the app
+# writes it itself, by running pkexec, the first time it needs it. In a
+# startx/Openbox session that is a background process group on the console tty,
+# so without a graphical agent pkexec prompts on the tty, the kernel stops the
+# whole session's process group, and the desktop freezes (dm313red vt8,
+# 2026-10-19). The role therefore installs the policy itself, root-owned and
+# 0644, so the app finds it and never runs pkexec. The agent that shows the
+# prompt as a window (lxpolkit, started by XDG autostart) comes from
+# minimal-desktop-packages.yml.
+#
 # Only an x86_64 .deb is selected here, so the include is skipped on other
 # architectures (see managed-updates.yml).
 # =============================================================================
@@ -85,3 +96,49 @@
     fail_msg: >-
       Bitwarden desktop {{ _bitwarden_desktop_version }} was not installed
       correctly (dpkg reports '{{ _bitwarden_desktop_installed.stdout }}').
+
+- name: Check the polkit actions directory
+  ansible.builtin.stat:
+    path: /usr/share/polkit-1/actions
+  register: _bitwarden_polkit_actions_dir
+
+- name: Require polkit before installing the Bitwarden unlock policy
+  ansible.builtin.assert:
+    that:
+      - _bitwarden_polkit_actions_dir.stat.isdir | default(false)
+    fail_msg: >-
+      /usr/share/polkit-1/actions is missing, so polkit is not installed and
+      the Bitwarden unlock policy cannot be placed.
+
+- name: Install the Bitwarden unlock polkit policy
+  ansible.builtin.copy:
+    src: bitwarden/com.bitwarden.Bitwarden.policy
+    dest: /usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy
+    owner: root
+    group: root
+    mode: "0644"
+
+# Read-only, so it also runs in check mode.
+- name: Read the Bitwarden unlock action as polkit resolves it
+  ansible.builtin.command:
+    argv:
+      - pkaction
+      - --action-id
+      - com.bitwarden.Bitwarden.unlock
+      - --verbose
+  register: _bitwarden_polkit_action
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Require polkit to ask the active user to authenticate for Bitwarden unlock
+  ansible.builtin.assert:
+    that:
+      - _bitwarden_polkit_action.rc == 0
+      - "_bitwarden_polkit_action.stdout is regex('(?m)^ *implicit active: +auth_self *$')"
+      - "_bitwarden_polkit_action.stdout is regex('(?m)^ *implicit any: +no *$')"
+    fail_msg: >-
+      polkit does not resolve com.bitwarden.Bitwarden.unlock to auth_self for
+      an active session (pkaction rc={{ _bitwarden_polkit_action.rc }}); the
+      policy is missing or malformed.
+  when: not ansible_check_mode
