@@ -1,0 +1,310 @@
+---
+# =============================================================================
+# hhtest: unprivileged, resource-capped test-bed account
+# =============================================================================
+# Local test suites must never run as a real user on a production host: they
+# kill tmux servers and `systemd --user` units. This account gives them their
+# own uid (own /tmp/tmux-<uid>, own user manager, no signal rights over other
+# users' processes), no sudo, no privileged groups and a capped user slice.
+#
+# Safety properties pinned by tests/test_hhtest.py:
+#   * never touches dev_user, any other account, or any existing unit;
+#   * the only systemd objects it writes are its own: user-<hhtest_uid>.slice.d,
+#     hhtest-cleanup.{service,timer} and linger for hhtest itself;
+#   * converges only when the live hostname equals hhtest_required_hostname.
+# See docs/hhtest.md.
+# =============================================================================
+
+- name: Validate hhtest inputs
+  ansible.builtin.assert:
+    that:
+      - hhtest_user is match('^[a-z][a-z0-9_-]*$')
+      - hhtest_user != dev_user
+      - hhtest_user not in (dev_users | map(attribute='name') | list)
+      - hhtest_uid | int >= 1000
+      - hhtest_uid | int < 60000
+      - hhtest_home == '/home/' ~ hhtest_user
+      - hhtest_memory_max is match('^[1-9][0-9]*[KMGT]$')
+      - hhtest_memory_high is match('^[1-9][0-9]*[KMGT]$')
+      - hhtest_cpu_quota is match('^[1-9][0-9]*%$')
+      - hhtest_tasks_max | string is match('^[1-9][0-9]*$')
+      - hhtest_cleanup_age_days | string is match('^[1-9][0-9]*$')
+      - hhtest_authorized_keys is sequence
+      - hhtest_authorized_keys is not string
+      - >-
+        hhtest_authorized_keys
+        | reject('match', '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+|sk-ssh-ed25519@openssh[.]com|sk-ecdsa-sha2-nistp256@openssh[.]com) [A-Za-z0-9+/=]+( [^\\n]*)?$')
+        | list | length == 0
+    fail_msg: >-
+      hhtest_* variables are invalid: the user must differ from dev_user, the
+      uid must be 1000-59999, the home must be /home/<user>, the caps must look
+      like 16G / 1200% / 4096, and every authorized key must be one single-line
+      public key (private keys are never accepted).
+
+- name: Read every passwd entry to find the uid owner
+  ansible.builtin.getent:
+    database: passwd
+    split: ":"
+
+- name: Refuse a uid that belongs to another account
+  ansible.builtin.assert:
+    that:
+      - >-
+        (getent_passwd | dict2items
+         | selectattr('value.1', 'equalto', hhtest_uid | string)
+         | map(attribute='key') | list) | difference([hhtest_user]) | length == 0
+    fail_msg: "uid {{ hhtest_uid }} is already used by another account; pick a free hhtest_uid."
+
+- name: Create the hhtest account (no sudo, no supplementary groups, no password)
+  ansible.builtin.user:
+    name: "{{ hhtest_user }}"
+    uid: "{{ hhtest_uid }}"
+    comment: hyperharness test bed (unprivileged)
+    home: "{{ hhtest_home }}"
+    create_home: true
+    shell: /bin/bash
+    groups: []
+    append: false
+    password: "*"
+    update_password: on_create
+    state: present
+
+- name: Keep the home directory private to the account
+  ansible.builtin.file:
+    path: "{{ hhtest_home }}"
+    state: directory
+    owner: "{{ hhtest_user }}"
+    group: "{{ hhtest_user }}"
+    mode: "0700"
+
+- name: Create the account's working directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ hhtest_user }}"
+    group: "{{ hhtest_user }}"
+    mode: "0700"
+  loop:
+    - "{{ hhtest_home }}/work"
+    - "{{ hhtest_home }}/.ssh"
+    - "{{ hhtest_home }}/.local"
+    - "{{ hhtest_home }}/.local/bin"
+    - "{{ hhtest_home }}/.local/share"
+    - "{{ hhtest_home }}/.cache"
+
+- name: Install the operator public keys (exclusive; public keys only)
+  ansible.builtin.copy:
+    content: "{{ hhtest_authorized_keys | join('\n') }}\n"
+    dest: "{{ hhtest_home }}/.ssh/authorized_keys"
+    owner: "{{ hhtest_user }}"
+    group: "{{ hhtest_user }}"
+    mode: "0600"
+  when: hhtest_authorized_keys | length > 0
+
+- name: Prove the account has no supplementary groups
+  ansible.builtin.command:
+    argv: [id, -Gn, "{{ hhtest_user }}"]
+  register: _hhtest_groups
+  changed_when: false
+  failed_when: _hhtest_groups.stdout | trim != hhtest_user
+
+# ---- Resource caps -----------------------------------------------------------
+
+- name: Create the user slice drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/user-{{ hhtest_uid }}.slice.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Cap the hhtest user slice
+  ansible.builtin.template:
+    src: hhtest-slice.conf.j2
+    dest: "/etc/systemd/system/user-{{ hhtest_uid }}.slice.d/50-hhtest-caps.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+# The handler would run at the end of the play; the slice must be capped before
+# the user manager starts below, so reload now when the drop-in changed.
+- name: Apply the slice caps before the user manager starts
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the current lingering state
+  ansible.builtin.stat:
+    path: "/var/lib/systemd/linger/{{ hhtest_user }}"
+  register: _hhtest_linger
+
+- name: Enable lingering for hhtest (user systemd manager for scope/unit tests)
+  ansible.builtin.command:
+    argv: [loginctl, enable-linger, "{{ hhtest_user }}"]
+  when: not _hhtest_linger.stat.exists
+  changed_when: true
+
+# ---- Toolchain ---------------------------------------------------------------
+
+- name: Install the tmux build dependencies
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - pkgconf
+      - libevent-dev
+      - libncurses-dev
+      - python3-venv
+    state: present
+
+- name: Create the shared toolchain directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ hhtest_tools_dir }}"
+    - "{{ hhtest_tools_dir }}/bin"
+    - "{{ hhtest_tools_dir }}/src"
+
+- name: Read the installed tmux version
+  ansible.builtin.command:
+    argv: ["{{ hhtest_tools_dir }}/bin/tmux", -V]
+  register: _hhtest_tmux_version
+  changed_when: false
+  failed_when: false
+
+- name: Build the pinned tmux release
+  when: _hhtest_tmux_version.stdout | default('') | trim != 'tmux ' ~ hhtest_tmux_version
+  block:
+    - name: Download the tmux source release (checksum pinned)
+      ansible.builtin.get_url:
+        url: "https://github.com/tmux/tmux/releases/download/{{ hhtest_tmux_version }}/tmux-{{ hhtest_tmux_version }}.tar.gz"
+        dest: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}.tar.gz"
+        checksum: "sha256:{{ hhtest_tmux_sha256 }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Unpack the tmux source
+      ansible.builtin.unarchive:
+        src: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}.tar.gz"
+        dest: "{{ hhtest_tools_dir }}/src"
+        remote_src: true
+        creates: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}/configure"
+
+    - name: Configure tmux
+      ansible.builtin.command:
+        argv: [./configure, "--prefix={{ hhtest_tools_dir }}/tmux-{{ hhtest_tmux_version }}"]
+        chdir: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}"
+      changed_when: true
+
+    - name: Build and install tmux
+      ansible.builtin.command:
+        argv: [make, -j4, install]
+        chdir: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}"
+      changed_when: true
+
+    - name: Link tmux into the toolchain bin directory
+      ansible.builtin.file:
+        src: "{{ hhtest_tools_dir }}/tmux-{{ hhtest_tmux_version }}/bin/tmux"
+        dest: "{{ hhtest_tools_dir }}/bin/tmux"
+        state: link
+
+- name: Install or update uv in an isolated virtualenv  # noqa package-latest
+  ansible.builtin.pip:
+    name: uv
+    state: latest
+    virtualenv: "{{ hhtest_tools_dir }}/uv-venv"
+    virtualenv_command: python3 -m venv
+
+- name: Link uv and uvx into the toolchain bin directory
+  ansible.builtin.file:
+    src: "{{ hhtest_tools_dir }}/uv-venv/bin/{{ item }}"
+    dest: "{{ hhtest_tools_dir }}/bin/{{ item }}"
+    state: link
+  loop: [uv, uvx]
+
+- name: Install the cleanup helper
+  ansible.builtin.copy:
+    src: hhtest-cleanup
+    dest: "{{ hhtest_tools_dir }}/bin/hhtest-cleanup"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Put the toolchain on the account's PATH (before the interactive guard)
+  ansible.builtin.blockinfile:
+    path: "{{ hhtest_home }}/.bashrc"
+    create: true
+    owner: "{{ hhtest_user }}"
+    group: "{{ hhtest_user }}"
+    mode: "0644"
+    insertbefore: BOF
+    marker: "# {mark} ANSIBLE MANAGED: hhtest toolchain"
+    block: "{{ lookup('ansible.builtin.template', 'hhtest-bashrc.j2') }}"
+
+- name: Install Playwright (npm) for the account
+  ansible.builtin.command:
+    argv:
+      - npm
+      - install
+      - --no-fund
+      - --no-audit
+      - --prefix
+      - "{{ hhtest_home }}/.local/share/playwright"
+      - playwright@latest
+    chdir: "{{ hhtest_home }}"
+  become: true
+  become_user: "{{ hhtest_user }}"
+  environment:
+    HOME: "{{ hhtest_home }}"
+  register: _hhtest_playwright_npm
+  changed_when: "'added' in _hhtest_playwright_npm.stdout or 'changed' in _hhtest_playwright_npm.stdout"
+
+- name: Link the playwright CLI
+  ansible.builtin.file:
+    src: "{{ hhtest_home }}/.local/share/playwright/node_modules/.bin/playwright"
+    dest: "{{ hhtest_home }}/.local/bin/playwright"
+    owner: "{{ hhtest_user }}"
+    group: "{{ hhtest_user }}"
+    state: link
+
+- name: Install the Playwright Chromium browser into the account's cache
+  ansible.builtin.command:
+    argv: ["{{ hhtest_home }}/.local/bin/playwright", install, chromium]
+    chdir: "{{ hhtest_home }}"
+  become: true
+  become_user: "{{ hhtest_user }}"
+  environment:
+    HOME: "{{ hhtest_home }}"
+    PLAYWRIGHT_BROWSERS_PATH: "{{ hhtest_playwright_browsers_path }}"
+  register: _hhtest_playwright_browsers
+  changed_when: "'Downloading' in _hhtest_playwright_browsers.stdout or 'Downloading' in _hhtest_playwright_browsers.stderr"
+
+# ---- Nightly cleanup (runs as hhtest, never root) ------------------------------
+
+- name: Install the hhtest cleanup service
+  ansible.builtin.template:
+    src: hhtest-cleanup.service.j2
+    dest: /etc/systemd/system/hhtest-cleanup.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install the hhtest cleanup timer
+  ansible.builtin.template:
+    src: hhtest-cleanup.timer.j2
+    dest: /etc/systemd/system/hhtest-cleanup.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable the hhtest cleanup timer
+  ansible.builtin.systemd:
+    name: hhtest-cleanup.timer
+    enabled: true
+    state: started
+    daemon_reload: true

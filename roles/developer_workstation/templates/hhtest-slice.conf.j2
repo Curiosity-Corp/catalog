@@ -1,0 +1,10 @@
+# Managed by Ansible (developer_workstation, tasks/hhtest.yml). Caps the whole
+# user-{{ hhtest_uid }}.slice so test runs cannot starve other users' sessions.
+[Slice]
+MemoryAccounting=yes
+CPUAccounting=yes
+TasksAccounting=yes
+MemoryMax={{ hhtest_memory_max }}
+MemoryHigh={{ hhtest_memory_high }}
+CPUQuota={{ hhtest_cpu_quota }}
+TasksMax={{ hhtest_tasks_max }}

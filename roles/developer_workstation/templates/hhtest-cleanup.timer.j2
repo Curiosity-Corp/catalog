@@ -1,0 +1,11 @@
+# Managed by Ansible (developer_workstation, tasks/hhtest.yml).
+[Unit]
+Description=Nightly hhtest cleanup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

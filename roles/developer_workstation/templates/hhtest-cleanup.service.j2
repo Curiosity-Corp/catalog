@@ -1,0 +1,11 @@
+# Managed by Ansible (developer_workstation, tasks/hhtest.yml).
+[Unit]
+Description=Clean old hhtest work files and /tmp leftovers
+
+[Service]
+Type=oneshot
+User={{ hhtest_user }}
+Group={{ hhtest_user }}
+ExecStart={{ hhtest_tools_dir }}/bin/hhtest-cleanup {{ hhtest_cleanup_age_days }} {{ hhtest_home }}/work /tmp
+Nice=19
+IOSchedulingClass=idle
