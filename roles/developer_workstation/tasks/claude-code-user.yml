@@ -1,0 +1,114 @@
+---
+# Included once per item of dev_users with loop_var dw_user (see
+# ai-assistants.yml). The official native installer owns
+# ~/.local/bin/claude; the npm package and older launchers are removed, the
+# install follows claude_native_channel, and a second `claude` on the
+# user's PATH fails the run.
+- name: Remove npm-managed Claude Code
+  community.general.npm:
+    name: "@anthropic-ai/claude-code"
+    global: true
+    state: absent
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dw_user.name }}"
+  environment:
+    HOME: "{{ dw_user.home }}"
+    NPM_CONFIG_PREFIX: "{{ dw_user.home }}/.npm-global"
+    PATH: "{{ dw_user.home }}/.npm-global/bin:{{ dw_user.home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _claude_npm_removal
+  failed_when: _claude_npm_removal is failed
+
+- name: Remove retired Claude Code launchers
+  ansible.builtin.file:
+    path: "{{ dw_user.home }}/{{ item }}"
+    state: absent
+  become: true
+  become_user: "{{ dw_user.name }}"
+  loop: "{{ claude_retired_user_launchers }}"
+
+- name: Check native Claude Code launcher
+  ansible.builtin.command: "{{ dw_user.home }}/.local/bin/claude --version"
+  register: _claude_native_check
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ dw_user.name }}"
+  environment:
+    HOME: "{{ dw_user.home }}"
+
+- name: Download official Claude Code native installer
+  ansible.builtin.get_url:
+    url: "{{ claude_native_installer_url }}"
+    dest: /tmp/install-claude-{{ dw_user.name }}.sh
+    mode: "0700"
+    force: true
+  become: true
+  become_user: "{{ dw_user.name }}"
+  when: _claude_native_check.rc != 0
+
+- name: Install native Claude Code
+  ansible.builtin.command:
+    cmd: /bin/bash /tmp/install-claude-{{ dw_user.name }}.sh {{ claude_native_channel }}
+  environment:
+    HOME: "{{ dw_user.home }}"
+  register: _claude_native_install
+  failed_when: _claude_native_install.rc != 0
+  changed_when: _claude_native_install.rc == 0
+  become: true
+  become_user: "{{ dw_user.name }}"
+  when: _claude_native_check.rc != 0
+
+- name: Move native Claude Code to the configured channel
+  # `claude install <channel>` is a no-op when the newest release of the
+  # channel is already linked, so compare versions to report a change.
+  ansible.builtin.command:
+    cmd: "{{ dw_user.home }}/.local/bin/claude install {{ claude_native_channel }}"
+  environment:
+    HOME: "{{ dw_user.home }}"
+  register: _claude_native_update
+  changed_when: false
+  become: true
+  become_user: "{{ dw_user.name }}"
+  when: _claude_native_check.rc == 0
+
+- name: Verify native Claude Code launcher
+  ansible.builtin.command: "{{ dw_user.home }}/.local/bin/claude --version"
+  register: _claude_native_verify
+  changed_when: >-
+    _claude_native_check.rc == 0
+    and _claude_native_verify.stdout != _claude_native_check.stdout
+  failed_when: _claude_native_verify.rc != 0
+  become: true
+  become_user: "{{ dw_user.name }}"
+  environment:
+    HOME: "{{ dw_user.home }}"
+
+- name: Clean up Claude Code native installer
+  ansible.builtin.file:
+    path: /tmp/install-claude-{{ dw_user.name }}.sh
+    state: absent
+  when: _claude_native_check.rc != 0
+
+- name: List every Claude Code launcher on the user PATH
+  ansible.builtin.command:
+    argv: [/bin/sh, -c, 'IFS=:; for d in $PATH; do [ -x "$d/claude" ] && readlink -f "$d/claude"; done; true']
+    # The shell, not Ansible, must expand $PATH and $d.
+    expand_argument_vars: false
+  register: _claude_launchers
+  changed_when: false
+  become: true
+  become_user: "{{ dw_user.name }}"
+  environment:
+    HOME: "{{ dw_user.home }}"
+    PATH: "{{ dw_user.home }}/.local/bin:{{ dw_user.home }}/bin:{{ dw_user.home }}/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+
+- name: Assert a single Claude Code installation
+  ansible.builtin.assert:
+    that:
+      - _claude_launchers.stdout_lines | unique | length == 1
+    fail_msg: >-
+      Expected exactly one Claude Code install for {{ dw_user.name }} (the
+      native {{ dw_user.home }}/.local/bin/claude), found:
+      {{ _claude_launchers.stdout_lines | unique | join(', ') }}
+    quiet: true
