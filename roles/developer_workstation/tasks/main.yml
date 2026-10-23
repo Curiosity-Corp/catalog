@@ -621,6 +621,16 @@
   tags: [hardware]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
+- name: Manage the WiFi profile with netplan
+  ansible.builtin.include_tasks:
+    file: wifi-netplan.yml
+    apply:
+      tags: [networking, wifi]
+  tags: [networking, wifi]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - wifi_ssid | length > 0
+
 - name: Configure the Logitech G604 button profile
   ansible.builtin.include_tasks:
     file: logitech-g604.yml

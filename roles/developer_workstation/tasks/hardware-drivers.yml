@@ -199,3 +199,7 @@
     enabled: true
     state: started
   when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Converge PIA VPN daemon settings
+  ansible.builtin.include_tasks: pia-vpn.yml
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)

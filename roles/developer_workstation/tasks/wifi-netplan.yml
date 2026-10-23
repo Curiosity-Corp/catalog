@@ -1,0 +1,102 @@
+---
+# =============================================================================
+# Managed WiFi profile via netplan (NetworkManager renderer)
+# =============================================================================
+# Included from main.yml when wifi_ssid is set. Root cause this prevents
+# (2026-10-23): a netplan file pinned to wlp6s0 left no profile for the same
+# card after it was renamed wlp8s0, so WiFi stayed down after reboot and
+# netplan-wpa-wlp6s0 stalled boot ~90 s waiting for a missing device.
+#
+# The profile matches `wl*`, the PSK is system-owned in /etc/netplan (0600
+# root), and NetworkManager autoconnects by default. Only `netplan generate`
+# runs here; `netplan apply` is left to an explicit maintenance window so live
+# links are never bounced by a converge.
+# =============================================================================
+
+- name: Validate managed WiFi inputs
+  ansible.builtin.assert:
+    that:
+      - wifi_ssid | length > 0
+      - wifi_psk | length >= 8
+      - wifi_nm_uuid | regex_search('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') is not none
+      - wifi_netplan_name is match('^[a-z0-9-]+$')
+    fail_msg: wifi_ssid, wifi_psk (8+ chars) and a lowercase wifi_nm_uuid are required to manage WiFi
+  no_log: true
+
+- name: Create a scratch root to validate the WiFi netplan file
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: netplan-wifi-
+  register: _wifi_scratch
+  changed_when: false
+
+- name: Validate and install the managed WiFi profile
+  block:
+    - name: Create the scratch netplan directory
+      ansible.builtin.file:
+        path: "{{ _wifi_scratch.path }}/etc/netplan"
+        state: directory
+        mode: "0700"
+      changed_when: false
+
+    - name: Render the WiFi netplan file into the scratch root
+      ansible.builtin.template:
+        src: netplan-wifi.yaml.j2
+        dest: "{{ _wifi_scratch.path }}/etc/netplan/90-wifi-{{ wifi_netplan_name }}.yaml"
+        mode: "0600"
+      changed_when: false
+      no_log: true
+
+    - name: Validate the WiFi netplan file with netplan generate --root-dir
+      ansible.builtin.command:
+        argv:
+          - netplan
+          - generate
+          - --root-dir
+          - "{{ _wifi_scratch.path }}"
+      changed_when: false
+
+    - name: Find legacy WiFi netplan files pinned to a fixed interface
+      ansible.builtin.find:
+        paths: /etc/netplan
+        patterns:
+          - "50-wifi-*.yaml"
+          - "90-NM-{{ wifi_nm_uuid }}.yaml"
+      register: _wifi_legacy
+
+    - name: Back up legacy WiFi netplan files
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "/var/backups/netplan-wifi/{{ item.path | basename }}"
+        remote_src: true
+        mode: "0600"
+        directory_mode: "0700"
+        force: false
+      loop: "{{ _wifi_legacy.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Remove legacy WiFi netplan files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _wifi_legacy.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      notify: Regenerate Netplan after managed WiFi change
+
+    - name: Install the managed WiFi netplan file
+      ansible.builtin.template:
+        src: netplan-wifi.yaml.j2
+        dest: "/etc/netplan/90-wifi-{{ wifi_netplan_name }}.yaml"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Regenerate Netplan after managed WiFi change
+  always:
+    - name: Remove the scratch root
+      ansible.builtin.file:
+        path: "{{ _wifi_scratch.path }}"
+        state: absent
+      changed_when: false

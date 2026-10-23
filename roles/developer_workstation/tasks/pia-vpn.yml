@@ -1,0 +1,91 @@
+---
+# =============================================================================
+# PIA VPN daemon settings: Brave-only split tunnel, declarative and idempotent
+# =============================================================================
+# Included from hardware-drivers.yml after the daemon is enabled. The daemon
+# persists these in /opt/piavpn/etc/settings.json; this file only converges the
+# keys below by comparing `piactl dump daemon-settings` first, so a converged
+# host reports no change. Credentials are never stored here (see pia_login_file).
+#
+# Mode must be "include" for split-tunnel rules; "vpn" is rejected by piactl.
+# The PIA GUI autostart entry (~/.config/autostart/pia-client.desktop) and its
+# connectOnLaunch client setting handle connecting at desktop login.
+# =============================================================================
+
+- name: Check for the PIA command-line client
+  ansible.builtin.stat:
+    path: /opt/piavpn/bin/piactl
+  register: _pia_piactl
+
+- name: Converge PIA daemon settings
+  when: _pia_piactl.stat.exists
+  block:
+    - name: Check PIA login state
+      ansible.builtin.slurp:
+        src: /opt/piavpn/etc/account.json
+      register: _pia_account
+      failed_when: false
+
+    - name: Check for the PIA login file
+      ansible.builtin.stat:
+        path: "{{ pia_login_file }}"
+      register: _pia_login_stat
+      when: pia_login_file | length > 0
+
+    - name: Log in to PIA
+      ansible.builtin.command:
+        argv:
+          - /opt/piavpn/bin/piactl
+          - login
+          - "{{ pia_login_file }}"
+      no_log: true
+      changed_when: true
+      when:
+        - pia_login_file | length > 0
+        - _pia_login_stat.stat.exists
+        - _pia_account.content is not defined or not ((_pia_account.content | b64decode | from_json).loggedIn | default(false))
+
+    - name: Read current PIA daemon settings
+      ansible.builtin.command:
+        argv:
+          - /opt/piavpn/bin/piactl
+          - -u
+          - dump
+          - daemon-settings
+      register: _pia_settings
+      changed_when: false
+
+    - name: Build the desired PIA settings
+      ansible.builtin.set_fact:
+        _pia_desired:
+          splitTunnelEnabled: true
+          defaultRoute: false
+          splitTunnelDNS: "{{ pia_split_tunnel_dns | bool }}"
+          killswitch: "{{ pia_killswitch }}"
+          persistDaemon: "{{ pia_persist_daemon | bool }}"
+          splitTunnelRules: >-
+            {%- set rules = [] -%}
+            {%- for app in pia_split_tunnel_apps -%}
+            {%- set _ = rules.append({'path': app, 'linkTarget': '', 'mode': 'include'}) -%}
+            {%- endfor -%}
+            {{ rules }}
+
+    - name: Work out PIA settings drift
+      ansible.builtin.set_fact:
+        _pia_drift: >-
+          {%- set current = _pia_settings.stdout | from_json -%}
+          {%- set drift = {} -%}
+          {%- for key, value in _pia_desired.items() -%}
+          {%- if current.get(key) != value -%}{%- set _ = drift.update({key: value}) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ drift }}
+
+    - name: Apply drifted PIA daemon settings
+      ansible.builtin.command:
+        argv:
+          - /opt/piavpn/bin/piactl
+          - -u
+          - applysettings
+          - "{{ _pia_drift | to_json }}"
+      changed_when: true
+      when: _pia_drift | length > 0
