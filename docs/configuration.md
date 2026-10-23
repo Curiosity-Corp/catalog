@@ -511,9 +511,34 @@ minimal_desktop_xdg_autostart_hidden:
 
 The PolicyKit authentication agent for GUI privilege prompts is `lxpolkit`
 (`policykit-1-gnome` is not in Debian trixie). Its own autostart entry is not
-restricted to other desktops, so the XDG autostart starts it once under Openbox;
-the Openbox autostart does not launch it a second time. Sessions that were
-already running keep their current processes until they restart.
+restricted to other desktops, so the XDG autostart starts it once under Openbox.
+As a safety net, the managed Openbox autostart checks about ten seconds later
+(`CURIOSITY_POLKIT_AGENT_GRACE`, default 10) whether an `lxpolkit` runs on its
+own `DISPLAY`; if none does it starts one and writes "No PolicyKit agent on
+`:N` after XDG autostart" to stderr and, when `logger` exists, to the journal
+under `openbox-autostart`. That line, or its absence, is how to tell whether the
+XDG step failed in a session: a vt8 startx session once ran without an agent
+although both packages were installed. Sessions that were already running keep
+their current processes until they restart.
+
+Bitwarden Desktop asks polkit to confirm the user before it unlocks, through the
+action `com.bitwarden.Bitwarden.unlock`. The `.deb` does not ship that action's
+policy and the app would otherwise install it by running `pkexec`. In a
+startx/Openbox session that is a background process group on the console tty,
+so with no agent running `pkexec` prompts on the tty and the kernel stops the
+whole session's process group; every window freezes while Xorg and Openbox stay
+up. With `bitwarden_desktop_enabled`, the role installs
+`/usr/share/polkit-1/actions/com.bitwarden.Bitwarden.policy` itself (root-owned,
+`0644`: `allow_active` is `auth_self`, `allow_any` and `allow_inactive` are `no`)
+and fails the run unless `pkaction --action-id com.bitwarden.Bitwarden.unlock`
+reports that. Applying the role needs no logout or restart: polkit watches the
+actions directory. If a session does freeze this way, `kill -CONT -- -<openbox pgid>` resumes it once the
+offending `pkexec` has been killed.
+
+The per-user pieces stay outside the role: each user signs in to the desktop app
+themselves, and the Firefox extension is force-installed by the policy in
+`collaboration.yml` (Chrome and Edge are not managed). The `bw` CLI session
+helper is not part of the catalog.
 
 The branded FocusPass screen-lock package is an optional local-PAM integration.
 It is installed only when all three variables below are supplied for a
