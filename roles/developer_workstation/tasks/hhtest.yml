@@ -170,17 +170,17 @@
 - name: Read the installed tmux version
   ansible.builtin.command:
     argv: ["{{ hhtest_tools_dir }}/bin/tmux", -V]
-  register: _hhtest_tmux_version
+  register: _hhtest_tmux_release
   changed_when: false
   failed_when: false
 
 - name: Build the pinned tmux release
-  when: _hhtest_tmux_version.stdout | default('') | trim != 'tmux ' ~ hhtest_tmux_version
+  when: _hhtest_tmux_release.stdout | default('') | trim != 'tmux ' ~ hhtest_tmux_release
   block:
     - name: Download the tmux source release (checksum pinned)
       ansible.builtin.get_url:
-        url: "https://github.com/tmux/tmux/releases/download/{{ hhtest_tmux_version }}/tmux-{{ hhtest_tmux_version }}.tar.gz"
-        dest: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}.tar.gz"
+        url: "https://github.com/tmux/tmux/releases/download/{{ hhtest_tmux_release }}/tmux-{{ hhtest_tmux_release }}.tar.gz"
+        dest: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_release }}.tar.gz"
         checksum: "sha256:{{ hhtest_tmux_sha256 }}"
         owner: root
         group: root
@@ -188,26 +188,26 @@
 
     - name: Unpack the tmux source
       ansible.builtin.unarchive:
-        src: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}.tar.gz"
+        src: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_release }}.tar.gz"
         dest: "{{ hhtest_tools_dir }}/src"
         remote_src: true
-        creates: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}/configure"
+        creates: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_release }}/configure"
 
     - name: Configure tmux
       ansible.builtin.command:
-        argv: [./configure, "--prefix={{ hhtest_tools_dir }}/tmux-{{ hhtest_tmux_version }}"]
-        chdir: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}"
+        argv: [./configure, "--prefix={{ hhtest_tools_dir }}/tmux-{{ hhtest_tmux_release }}"]
+        chdir: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_release }}"
       changed_when: true
 
     - name: Build and install tmux
       ansible.builtin.command:
         argv: [make, -j4, install]
-        chdir: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_version }}"
+        chdir: "{{ hhtest_tools_dir }}/src/tmux-{{ hhtest_tmux_release }}"
       changed_when: true
 
     - name: Link tmux into the toolchain bin directory
       ansible.builtin.file:
-        src: "{{ hhtest_tools_dir }}/tmux-{{ hhtest_tmux_version }}/bin/tmux"
+        src: "{{ hhtest_tools_dir }}/tmux-{{ hhtest_tmux_release }}/bin/tmux"
         dest: "{{ hhtest_tools_dir }}/bin/tmux"
         state: link
 

@@ -89,7 +89,7 @@ def test_slice_caps_match_the_issue() -> None:
 
 
 def test_tmux_is_pinned_by_checksum() -> None:
-    assert DEFAULTS["hhtest_tmux_version"] == "3.7b"
+    assert DEFAULTS["hhtest_tmux_release"] == "3.7b"
     assert re.fullmatch(r"[0-9a-f]{64}", DEFAULTS["hhtest_tmux_sha256"])
 
 

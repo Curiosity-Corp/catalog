@@ -34,7 +34,7 @@ shared with any other account, linger setting, user slice or unit.
 | `hhtest_cpu_quota` | `1200%` |
 | `hhtest_tasks_max` | `4096` |
 | `hhtest_cleanup_age_days` | `3` |
-| `hhtest_tmux_version` / `hhtest_tmux_sha256` | `3.7b` / pinned |
+| `hhtest_tmux_release` / `hhtest_tmux_sha256` | `3.7b` / pinned |
 
 Run only this group with `--tags hhtest`.
 
