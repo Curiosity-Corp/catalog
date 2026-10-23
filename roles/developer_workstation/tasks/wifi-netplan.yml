@@ -29,6 +29,7 @@
     prefix: netplan-wifi-
   register: _wifi_scratch
   changed_when: false
+  check_mode: false
 
 - name: Validate and install the managed WiFi profile
   block:
@@ -38,6 +39,7 @@
         state: directory
         mode: "0700"
       changed_when: false
+      check_mode: false
 
     - name: Render the WiFi netplan file into the scratch root
       ansible.builtin.template:
@@ -45,6 +47,7 @@
         dest: "{{ _wifi_scratch.path }}/etc/netplan/90-wifi-{{ wifi_netplan_name }}.yaml"
         mode: "0600"
       changed_when: false
+      check_mode: false
       no_log: true
 
     - name: Validate the WiFi netplan file with netplan generate --root-dir
@@ -55,6 +58,7 @@
           - --root-dir
           - "{{ _wifi_scratch.path }}"
       changed_when: false
+      check_mode: false
 
     - name: Find legacy WiFi netplan files pinned to a fixed interface
       ansible.builtin.find:
@@ -64,14 +68,24 @@
           - "90-NM-{{ wifi_nm_uuid }}.yaml"
       register: _wifi_legacy
 
+    - name: Ensure the legacy WiFi netplan backup directory exists
+      ansible.builtin.file:
+        path: /var/backups/netplan-wifi
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: _wifi_legacy.files | length > 0
+
     - name: Back up legacy WiFi netplan files
       ansible.builtin.copy:
         src: "{{ item.path }}"
         dest: "/var/backups/netplan-wifi/{{ item.path | basename }}"
         remote_src: true
         mode: "0600"
-        directory_mode: "0700"
         force: false
+      # Check mode does not create the backup directory above, so the copy cannot run.
+      when: not ansible_check_mode
       loop: "{{ _wifi_legacy.files }}"
       loop_control:
         label: "{{ item.path | basename }}"
@@ -100,3 +114,4 @@
         path: "{{ _wifi_scratch.path }}"
         state: absent
       changed_when: false
+      check_mode: false
