@@ -18,14 +18,14 @@ case "$age_days" in
     ;;
 esac
 
-me="$(id -un)"
-if [[ "$(id -u)" -eq 0 ]]; then
+me="$(id -u)"
+if [[ "$me" -eq 0 ]]; then
   echo "hhtest-cleanup: refusing to run as root" >&2
   exit 2
 fi
 
 for root in "$@"; do
   [[ -d "$root" ]] || continue
-  find "$root" -xdev -mindepth 1 -user "$me" \( -type f -o -type l \) -mtime "+$age_days" -delete
-  find "$root" -xdev -mindepth 1 -depth -user "$me" -type d -empty -mmin +60 -delete
+  find "$root" -xdev -mindepth 1 -uid "$me" \( -type f -o -type l \) -mtime "+$age_days" -delete
+  find "$root" -xdev -mindepth 1 -depth -uid "$me" -type d -empty -mmin +60 -delete
 done
