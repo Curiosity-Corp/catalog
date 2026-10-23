@@ -64,7 +64,7 @@ test:
 # match the image tag exactly or the browser builds differ.
 e2e:
   stage: e2e
-  image: mcr.microsoft.com/playwright/python:v1.64.0-noble
+  image: mcr.microsoft.com/playwright/python:v1.64.1-noble
   variables:
     E2E_ARTIFACTS: $CI_PROJECT_DIR/e2e-artifacts
     E2E_TIMEOUT_SCALE: "3"
