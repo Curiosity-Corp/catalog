@@ -1,0 +1,26 @@
+---
+# =============================================================================
+# System time zone
+# =============================================================================
+# The clock people read, cron/systemd calendar times and StreamStack's daylight
+# schedule (sunrise and sunset from the zone's city) all follow this zone.
+# =============================================================================
+- name: Check the requested time zone exists
+  ansible.builtin.stat:
+    path: "/usr/share/zoneinfo/{{ workstation_timezone }}"
+  register: workstation_timezone_file
+
+- name: Refuse an unknown time zone
+  ansible.builtin.assert:
+    that:
+      - workstation_timezone is match('^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$')
+      - workstation_timezone_file.stat.exists
+      - not workstation_timezone_file.stat.isdir
+    fail_msg: >-
+      workstation_timezone={{ workstation_timezone }} is not an IANA zone in
+      /usr/share/zoneinfo (for example America/New_York).
+    quiet: true
+
+- name: Set the system time zone
+  community.general.timezone:
+    name: "{{ workstation_timezone }}"
