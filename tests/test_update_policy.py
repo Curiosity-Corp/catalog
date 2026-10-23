@@ -241,17 +241,23 @@ def main() -> None:
     # Decision D910 (2026-10-23): always the latest channel, never "stable".
     if defaults.get("claude_native_channel") != "latest":
         raise SystemExit("claude_native_channel must be 'latest' (decision D910)")
-    if "{{ npm_global_prefix }}/bin/claude" not in defaults.get("claude_retired_launchers", []):
+    if ".npm-global/bin/claude" not in defaults.get("claude_retired_user_launchers", []):
         raise SystemExit("The npm Claude Code launcher must be a retired launcher")
     if "'@anthropic-ai/claude-code'" not in (ROLE / "tasks/node-packages.yml").read_text():
         raise SystemExit("Root-scoped npm Claude Code copies must be removed")
+    # Claude Code is converged for every dev_users account, not only dev_user:
+    # a second desktop user kept an unmanaged, outdated install.
     ai_assistants_text = (ROLE / "tasks/ai-assistants.yml").read_text()
+    if "file: claude-code-user.yml" not in ai_assistants_text or 'loop: "{{ dev_users }}"' not in ai_assistants_text:
+        raise SystemExit("Claude Code must be converged for every dev_users account")
+    ai_assistants_text += (ROLE / "tasks/claude-code-user.yml").read_text()
     for required_fragment in (
         "Remove legacy npm-managed Codex",
         "Install standalone Codex CLI",
         "Remove broken system-level Codex symlink",
         "Remove npm-managed Claude Code",
         "Remove retired Claude Code launchers",
+        "Remove retired system-wide Claude Code launchers",
         "Install native Claude Code",
         "Move native Claude Code to the configured channel",
         "Assert a single Claude Code installation",

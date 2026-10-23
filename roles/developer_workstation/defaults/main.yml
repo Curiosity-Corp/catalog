@@ -415,24 +415,25 @@ codex_standalone_release: latest
 codex_standalone_install_dir: "{{ dev_user_home }}/.local/bin"
 codex_standalone_home_dir: "{{ dev_user_home }}/.codex"
 
-# Native Claude Code. The official installer owns ~/.local/bin/claude (a link
-# into ~/.local/share/claude/versions). Every run removes the npm package and
-# any other launcher, moves the native install to claude_native_channel
-# ("latest" or "stable", matching Claude Code's autoUpdatesChannel), and fails
-# if more than one `claude` remains on the user's PATH.
+# Native Claude Code, for every dev_users account. The official installer owns
+# ~/.local/bin/claude (a link into ~/.local/share/claude/versions). Every run
+# removes the npm package and any other launcher, moves the native install to
+# claude_native_channel ("latest" or "stable", matching Claude Code's
+# autoUpdatesChannel), and fails if more than one `claude` remains on the
+# user's PATH.
 claude_native_enabled: true
 claude_native_installer_url: "https://claude.ai/install.sh"
 # Decided 2026-10-23 (decision log D910, instarlab/connections): workstations
 # follow the "latest" channel under the standing rule of always running the
 # latest versions. tests/test_update_policy.py fails on any other value.
 claude_native_channel: latest
-claude_native_install_dir: "{{ dev_user_home }}/.local/bin"
-# Launchers left by earlier install methods: the npm global shim, the retired
-# ~/.claude/local "local" install, and a system-wide link. Root-prefix npm
-# copies are removed by node-packages.yml.
-claude_retired_launchers:
-  - "{{ npm_global_prefix }}/bin/claude"
-  - "{{ dev_user_home }}/.claude/local"
+# Launchers left by earlier install methods, relative to each dev_users
+# home: the npm global shim and the retired ~/.claude/local "local" install.
+# Root-prefix npm copies are removed by node-packages.yml.
+claude_retired_user_launchers:
+  - .npm-global/bin/claude
+  - .claude/local
+claude_retired_system_launchers:
   - /usr/local/bin/claude
 
 # Microsoft 365 CLI is kept in its own user-scoped package list (installed by
