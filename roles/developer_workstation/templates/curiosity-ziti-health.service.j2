@@ -1,0 +1,22 @@
+# Managed by curiosity.workstation (ziti_health_check_enabled)
+[Unit]
+Description=Restart ziti-edge-tunnel when an identity is not loaded
+Documentation=file://{{ ziti_health_check_script_path }}
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=ZITI_HEALTH_UNIT={{ ziti_service_name }}
+Environment=ZITI_HEALTH_IDENTITIES={{ ziti_health_check_identities | join(',') }}
+Environment=ZITI_HEALTH_PROBE_HOSTS={{ ziti_health_check_probe_hosts | join(',') }}
+Environment=ZITI_HEALTH_GRACE={{ ziti_health_check_grace }}
+Environment=ZITI_HEALTH_MIN_INTERVAL={{ ziti_health_check_min_interval }}
+Environment=ZITI_HEALTH_TIMEOUT={{ ziti_health_check_timeout }}
+StateDirectory=curiosity-ziti-health
+StateDirectoryMode=0700
+ExecStart={{ ziti_health_check_script_path }}
+TimeoutStartSec=3min
+Nice=10
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectKernelModules=yes

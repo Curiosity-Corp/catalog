@@ -1,0 +1,11 @@
+# Managed by curiosity.workstation (ziti_health_check_enabled)
+[Unit]
+Description=Check that ziti-edge-tunnel has loaded its identities
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ ziti_health_check_interval }}
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

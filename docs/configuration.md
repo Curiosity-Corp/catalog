@@ -289,6 +289,23 @@ Use `ziti_service_name` and `ziti_manage_service: false` when a separate
 operator-managed tunnel unit owns the interface. Pins are refreshed only for
 names explicitly supplied by the operator.
 
+### Tunnel health check
+
+With `ziti_enabled`, `curiosity-ziti-health.timer` (every
+`ziti_health_check_interval`, default 2 minutes) runs a root check that restarts
+`ziti_service_name` when `ziti-edge-tunnel tunnel_status` shows a watched identity
+Active but not Loaded for at least `ziti_health_check_grace` seconds (60), or when an
+identity is Loaded yet a host in `ziti_health_check_probe_hosts` (empty by default,
+because the public role knows no private names; set it per host, for example
+`[registry.lab.example.edu]`) does not resolve. Restarts are limited to
+one per `ziti_health_check_min_interval` seconds (600), so a tunnel that cannot
+authenticate is not restarted in a loop. `ziti_health_check_identities` limits the
+watched identities (empty means all the system tunnel reports). The check queries
+only the system tunnel's default IPC socket and restarts only the one unit; a
+hand-started tunneler with its own IPC prefix is never touched. Set
+`ziti_health_check_enabled: false` to remove it. Activity:
+`journalctl -u curiosity-ziti-health --since today`.
+
 ## User-scoped systemd masks
 
 `workstation_user_systemd_masked_units` is an opt-in list of bare user-unit

@@ -299,6 +299,84 @@
     - _ziti_edge_tunnel_enabled_state.stdout | default('') != 'masked'
 
 # -----------------------------------------------------------------------------
+# Tunnel health check
+# -----------------------------------------------------------------------------
+# curiosity-ziti-health.timer restarts the tunnel when an identity is Active but
+# not Loaded (or a loaded tunnel cannot resolve the probe host), at most once
+# per ziti_health_check_min_interval. See files/curiosity-ziti-health.
+- name: Validate Ziti health check inputs
+  ansible.builtin.assert:
+    that:
+      - ziti_health_check_interval is match('^[1-9][0-9]*(s|sec|min|m|h)$')
+      - ziti_health_check_identities is sequence
+      - ziti_health_check_identities is not string
+      - ziti_health_check_probe_hosts is sequence
+      - ziti_health_check_probe_hosts is not string
+      - ziti_health_check_probe_hosts | select('match', '^[A-Za-z0-9._-]+$') | list | length == ziti_health_check_probe_hosts | length
+      - ziti_health_check_identities | select('match', '^[A-Za-z0-9._@-]+$') | list | length == ziti_health_check_identities | length
+      - ziti_health_check_grace | int >= 0
+      - ziti_health_check_min_interval | int >= 0
+      - ziti_health_check_timeout | int >= 1
+    quiet: true
+  when: ziti_health_check_enabled | bool
+
+- name: Install Ziti health check script
+  ansible.builtin.copy:
+    src: curiosity-ziti-health
+    dest: "{{ ziti_health_check_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: ziti_health_check_enabled | bool
+
+- name: Install Ziti health check systemd service
+  ansible.builtin.template:
+    src: curiosity-ziti-health.service.j2
+    dest: /etc/systemd/system/curiosity-ziti-health.service
+    owner: root
+    group: root
+    mode: "0644"
+  when: ziti_health_check_enabled | bool
+  notify: Reload systemd
+
+- name: Install Ziti health check systemd timer
+  ansible.builtin.template:
+    src: curiosity-ziti-health.timer.j2
+    dest: /etc/systemd/system/curiosity-ziti-health.timer
+    owner: root
+    group: root
+    mode: "0644"
+  when: ziti_health_check_enabled | bool
+  notify: Restart curiosity ziti-health timer
+
+- name: Enable Ziti health check timer
+  ansible.builtin.systemd:
+    name: curiosity-ziti-health.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: ziti_health_check_enabled | bool
+
+- name: Stop and disable Ziti health check timer when it is not wanted
+  ansible.builtin.systemd:
+    name: curiosity-ziti-health.timer
+    enabled: false
+    state: stopped
+  failed_when: false
+  when: not (ziti_health_check_enabled | bool)
+
+- name: Remove Ziti health check files when it is not wanted
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/curiosity-ziti-health.timer
+    - /etc/systemd/system/curiosity-ziti-health.service
+    - "{{ ziti_health_check_script_path }}"
+  notify: Reload systemd
+  when: not (ziti_health_check_enabled | bool)
+
+# -----------------------------------------------------------------------------
 # /etc/hosts pins for Ziti-only hostnames
 # -----------------------------------------------------------------------------
 # Some Ziti services may require a local resolver pin. Their names are

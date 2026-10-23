@@ -568,6 +568,29 @@ ziti_oidc_provider: ""
 ziti_etc_hosts_pins: []
 ziti_intercept_domains: []
 
+# Tunnel health check (curiosity-ziti-health.service + timer, root).
+#
+# After a crash ziti-edge-tunnel can restart with an identity Active but not
+# Loaded, which silently kills ziti0 DNS until the unit is restarted by hand.
+# The timer restarts ziti_service_name when a watched identity stays
+# Active-but-not-Loaded for ziti_health_check_grace seconds, or when the tunnel
+# has a Loaded identity yet a probe host does not resolve. At most one restart
+# per ziti_health_check_min_interval seconds. It queries only the system
+# tunnel's default IPC socket and never touches a hand-started tunneler that
+# uses its own IPC prefix.
+ziti_health_check_enabled: true
+ziti_health_check_interval: "2min"
+# Identity names to watch; empty watches every identity the system tunnel reports.
+ziti_health_check_identities: []
+# Hostnames that must resolve while an identity is loaded; empty disables the
+# probe. The public role knows no private service names, so set this per host
+# (host_vars) to a name the host's identity can reach.
+ziti_health_check_probe_hosts: []
+ziti_health_check_grace: 60
+ziti_health_check_min_interval: 600
+ziti_health_check_timeout: 15
+ziti_health_check_script_path: /usr/local/sbin/curiosity-ziti-health
+
 # Optional certificates for private lab services. `src` is read from the
 # Ansible controller, which is also the target when using ansible-pull.
 # Example (keep the source outside this repository):

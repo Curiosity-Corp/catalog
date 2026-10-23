@@ -1,0 +1,248 @@
+#!/usr/bin/python3
+"""Managed by curiosity.workstation. Restart ziti-edge-tunnel when it is half-up.
+
+Run by curiosity-ziti-health.timer as root. After a crash the system tunnel can
+come back with an identity Active but not Loaded ("ziti context not found"), so
+ziti0 DNS stays dead until someone restarts the unit by hand. This check
+restarts the unit when
+
+  * a watched identity has been Active but not Loaded for at least
+    ZITI_HEALTH_GRACE seconds, or
+  * the tunnel reports a Loaded identity yet a probe hostname does not resolve.
+
+It asks only the system tunnel's default IPC socket (`ziti-edge-tunnel
+tunnel_status`, no -p prefix) and restarts only ZITI_HEALTH_UNIT. A second
+tunneler started by hand with its own IPC prefix is never queried or touched.
+
+A restart is allowed at most once per ZITI_HEALTH_MIN_INTERVAL seconds, so a
+tunnel that cannot come up (bad credentials, controller down) is not restarted
+in a loop. A unit that is not active (stopped, masked, failed) is left to
+systemd and the operator. Every decision is logged to the journal.
+
+Environment:
+  ZITI_HEALTH_UNIT          unit to restart            (ziti-edge-tunnel.service)
+  ZITI_HEALTH_TUNNEL_BIN    tunnel binary              (ziti-edge-tunnel)
+  ZITI_HEALTH_IDENTITIES    comma-separated identity names to watch; empty
+                            watches every identity the system tunnel reports
+  ZITI_HEALTH_PROBE_HOSTS   comma-separated hostnames that must resolve; empty
+                            disables the DNS probe
+  ZITI_HEALTH_GRACE         seconds a fault must persist, and the unit must
+                            have been up, before a restart       (60)
+  ZITI_HEALTH_MIN_INTERVAL  minimum seconds between restarts      (600)
+  ZITI_HEALTH_TIMEOUT       per-command timeout in seconds        (15)
+  ZITI_HEALTH_STATE_FILE    state file (default $STATE_DIRECTORY/state.json)
+
+Exit status: 0 healthy, skipped or restarted; 1 the check itself could not run.
+View activity: journalctl -u curiosity-ziti-health --since today
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+
+class CheckError(Exception):
+    """The check could not determine the tunnel's health."""
+
+
+def log(level: str, message: str) -> None:
+    # The <N> prefix is the syslog priority journald reads from a service's stdout.
+    priority = {"err": 3, "warning": 4, "info": 6}[level]
+    print(f"<{priority}>curiosity-ziti-health: {message}", flush=True)
+
+
+def csv_env(name: str) -> list[str]:
+    return [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
+
+
+def int_env(name: str, default: int, minimum: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise CheckError(f"{name}={raw!r} is not an integer") from exc
+    if value < minimum:
+        raise CheckError(f"{name}={value} is below the minimum of {minimum}")
+    return value
+
+
+def run(argv: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CheckError(f"`{' '.join(argv)}` timed out after {timeout}s") from exc
+    except OSError as exc:
+        raise CheckError(f"cannot run `{argv[0]}`: {exc}") from exc
+
+
+def unit_uptime(unit: str, timeout: int) -> float | None:
+    """Seconds the unit has been active, or None when it is not active."""
+    result = run(
+        ["systemctl", "show", unit, "-p", "ActiveState", "-p", "ActiveEnterTimestampMonotonic"],
+        timeout,
+    )
+    if result.returncode != 0:
+        raise CheckError(f"systemctl show {unit} failed: {result.stderr.strip() or result.returncode}")
+    props = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if props.get("ActiveState") != "active":
+        return None
+    try:
+        entered_us = int(props.get("ActiveEnterTimestampMonotonic", ""))
+        uptime_s = float(Path("/proc/uptime").read_text().split()[0])
+    except (ValueError, IndexError, OSError) as exc:
+        raise CheckError(f"cannot read the age of {unit}: {exc}") from exc
+    return max(0.0, uptime_s - entered_us / 1_000_000)
+
+
+def tunnel_identities(binary: str, timeout: int) -> list[dict[str, Any]]:
+    result = run([binary, "tunnel_status"], timeout)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()[:300]
+        raise CheckError(f"tunnel_status exited {result.returncode}: {detail or 'no output'}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise CheckError(
+            f"tunnel_status printed invalid JSON ({exc}): {result.stdout.strip()[:200]!r}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise CheckError("tunnel_status JSON is not an object")
+    if payload.get("Success") is False:
+        raise CheckError(f"tunnel_status reported failure: {payload.get('Error', 'no detail')}")
+    data = payload.get("Data")
+    identities = data.get("Identities") if isinstance(data, dict) else None
+    if not isinstance(identities, list):
+        raise CheckError("tunnel_status JSON has no Data.Identities list")
+    return [item for item in identities if isinstance(item, dict)]
+
+
+def resolves(host: str, timeout: int) -> bool:
+    try:
+        result = run(["getent", "ahosts", host], timeout)
+    except CheckError as exc:
+        log("warning", f"probe {host}: {exc}")
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def load_state(path: Path) -> dict[str, float | None]:
+    try:
+        raw = json.loads(path.read_text())
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        log("warning", f"ignoring unreadable state file {path}: {exc}")
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: raw[key] for key in ("bad_since", "last_restart")
+        if isinstance(raw.get(key), (int, float))
+    }
+
+
+def save_state(path: Path, state: dict[str, float | None]) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        tmp.replace(path)
+    except OSError as exc:
+        raise CheckError(f"cannot write state file {path}: {exc}") from exc
+
+
+def main() -> int:
+    unit = os.environ.get("ZITI_HEALTH_UNIT", "ziti-edge-tunnel.service")
+    binary = os.environ.get("ZITI_HEALTH_TUNNEL_BIN", "ziti-edge-tunnel")
+    watched = csv_env("ZITI_HEALTH_IDENTITIES")
+    probes = csv_env("ZITI_HEALTH_PROBE_HOSTS")
+    grace = int_env("ZITI_HEALTH_GRACE", 60, 0)
+    min_interval = int_env("ZITI_HEALTH_MIN_INTERVAL", 600, 0)
+    timeout = int_env("ZITI_HEALTH_TIMEOUT", 15, 1)
+    state_file = Path(
+        os.environ.get("ZITI_HEALTH_STATE_FILE")
+        or os.path.join(os.environ.get("STATE_DIRECTORY", "/var/lib/curiosity-ziti-health"), "state.json")
+    )
+
+    uptime = unit_uptime(unit, timeout)
+    if uptime is None:
+        log("info", f"{unit} is not active; leaving it to systemd")
+        return 0
+    state = load_state(state_file)
+    now = time.time()
+    if uptime < grace:
+        log("info", f"{unit} started {uptime:.0f}s ago; waiting out the {grace}s grace period")
+        return 0
+
+    identities = tunnel_identities(binary, timeout)
+    if watched:
+        known = {str(item.get("Name")) for item in identities}
+        for name in watched:
+            if name not in known:
+                log("warning", f"watched identity {name!r} is not reported by the tunnel")
+        identities = [item for item in identities if item.get("Name") in watched]
+
+    faults = [
+        f"identity {item.get('Name')!r} is Active but not Loaded"
+        for item in identities
+        if item.get("Active") is True and item.get("Loaded") is not True
+    ]
+    if not faults and probes:
+        if any(item.get("Loaded") is True for item in identities):
+            faults = [f"{host} does not resolve" for host in probes if not resolves(host, timeout)]
+        else:
+            log("info", "no identity is loaded; skipping the DNS probe")
+
+    if not faults:
+        if state.get("bad_since") is not None:
+            log("info", "tunnel recovered on its own")
+        state["bad_since"] = None
+        save_state(state_file, state)
+        log("info", f"healthy ({len(identities)} identities checked, {len(probes)} probes)")
+        return 0
+
+    bad_since = state.get("bad_since")
+    if bad_since is None or bad_since > now:
+        state["bad_since"] = now
+        save_state(state_file, state)
+        log("warning", f"fault seen, restart if it persists {grace}s: {'; '.join(faults)}")
+        return 0
+    persisted = now - bad_since
+    if persisted < grace:
+        log("warning", f"fault for {persisted:.0f}s of {grace}s: {'; '.join(faults)}")
+        return 0
+
+    last = state.get("last_restart")
+    if last is not None and 0 <= now - last < min_interval:
+        wait = min_interval - (now - last)
+        log("warning", f"fault persists ({'; '.join(faults)}) but the last restart was "
+                       f"{now - last:.0f}s ago; backing off for another {wait:.0f}s")
+        return 0
+
+    log("warning", f"restarting {unit}: {'; '.join(faults)} (for {persisted:.0f}s)")
+    state["last_restart"] = now
+    state["bad_since"] = None
+    save_state(state_file, state)
+    result = run(["systemctl", "restart", unit], max(timeout, 60))
+    if result.returncode != 0:
+        raise CheckError(f"systemctl restart {unit} failed: {result.stderr.strip() or result.returncode}")
+    log("info", f"restarted {unit}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except CheckError as error:
+        log("err", str(error))
+        sys.exit(1)

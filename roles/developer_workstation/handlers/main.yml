@@ -143,3 +143,9 @@
     name: curiosity-tmp-pressure.timer
     state: restarted
     daemon_reload: true
+
+- name: Restart curiosity ziti-health timer
+  ansible.builtin.systemd:
+    name: curiosity-ziti-health.timer
+    state: restarted
+    daemon_reload: true
