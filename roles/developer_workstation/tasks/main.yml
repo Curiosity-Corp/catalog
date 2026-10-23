@@ -436,6 +436,21 @@
     - ansible_architecture == 'x86_64'
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
+- name: Include the hhtest unprivileged test-bed account
+  ansible.builtin.include_tasks:
+    file: hhtest.yml
+    apply:
+      tags: [hhtest, system]
+  tags: [hhtest, system]
+  # Opt-in per machine through the hardware profile's `hhtest_host`, and only on
+  # that exact hostname. Adds one new account and its own units; never edits
+  # dev_user or any other existing account or unit.
+  when:
+    - hhtest_enabled | bool
+    - ansible_facts['hostname'] == hhtest_required_hostname
+    - ansible_system == 'Linux'
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include /tmp hygiene (age-based cleanup and pressure relief)
   ansible.builtin.include_tasks:
     file: tmp-hygiene.yml

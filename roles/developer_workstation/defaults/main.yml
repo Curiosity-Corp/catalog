@@ -902,6 +902,45 @@ pro_mimic_motd_news_enabled: false
 # =============================================================================
 hardware_profile: generic
 
+# =============================================================================
+# hhtest: unprivileged test-bed account (tasks/hhtest.yml, docs/hhtest.md)
+# =============================================================================
+# A dedicated, resource-capped account for running a project's local test
+# suites on a production host without any chance of touching the real users'
+# sessions: its own uid (own /tmp/tmux-<uid>, own `systemd --user`, no signal
+# rights over other users' processes), no sudo and no privileged groups.
+# Opt-in per machine through the hardware profile's `hhtest_host` key, the
+# hostname the account may be created on. The task file also checks the live
+# hostname, so selecting the profile on another machine does nothing.
+hhtest_required_hostname: "{{ (hardware_profiles.get(hardware_profile, {})).get('hhtest_host', '') }}"
+hhtest_enabled: "{{ hhtest_required_hostname | length > 0 }}"
+hhtest_user: hhtest
+# Fixed uid so the user-<uid>.slice drop-in can be written before the account
+# has ever logged in. Must be unused; the task asserts that.
+hhtest_uid: 1500
+hhtest_home: /home/hhtest
+# Public SSH keys (full authorized_keys lines) allowed to log in. Public keys
+# only; never private keys. Profiles may set `hhtest_authorized_keys`.
+hhtest_authorized_keys: "{{ (hardware_profiles.get(hardware_profile, {})).get('hhtest_authorized_keys', []) }}"
+# user-<uid>.slice resource caps, so a runaway test shard cannot pressure the
+# production sessions that share the machine.
+hhtest_memory_max: 16G
+hhtest_memory_high: 14G
+hhtest_cpu_quota: 1200%
+hhtest_tasks_max: 4096
+# Nightly cleanup: files under ~/work and /tmp owned by the account and older
+# than this many days are removed by a timer that runs AS the account.
+hhtest_cleanup_age_days: 3
+# tmux is built from the pinned upstream release into hhtest_tools_dir so the
+# distribution tmux (and every other user's tmux) is never replaced.
+hhtest_tools_dir: /opt/hhtest
+# Deliberate pin (not an application default): the test bed must run the same
+# tmux as the fleet it protects (3.7b), so a test result is comparable.
+hhtest_tmux_release: 3.7b
+hhtest_tmux_sha256: 87f2e99e3b685973f2ca002ffd6ed7e51a5744f7009daae5a15670b6d532db96
+# Playwright browsers live where the CI image keeps them.
+hhtest_playwright_browsers_path: "{{ hhtest_home }}/.cache/ms-playwright"
+
 # Logitech Litra CLI (timrogers/litra-rs, installed to /usr/local/bin/litra).
 # Derived from the selected hardware profile's optional `litra_cli` flag, so
 # only profiles that opt in (and hosts that override this variable) download or
@@ -1322,6 +1361,12 @@ hardware_profiles:
 
   deskmeet-b760:
     description: "ASRock DeskMeet B760 — Intel Arc A380 + desk USB hub peripherals"
+    # Unprivileged, resource-capped test-bed account for local test suites (see
+    # the hhtest_* variables). Only converges on this hostname.
+    hhtest_host: deskmeet1
+    hhtest_authorized_keys:
+      # Operator agent key (public half only).
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJKeZmld6PEcb2qywt5Q7/4iwNTgfNhwn2Rthznfoj8O mrh@mrh-ThinkPad-T560"
     # Sits on a shared-house Wi-Fi: deny inbound from the LAN. Remote access
     # is Ziti (deskmeet1-ssh/-mosh, terminating on localhost) or the direct
     # cable on the onboard Ethernet port; no mDNS announcements, MTA on

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Nightly cleanup for the hhtest test-bed account. Runs AS that account (never
+# root), so it can only ever delete what that account owns. Removes regular
+# files and symlinks older than N days under the directories given (the service passes ~/work and /tmp), then prunes the
+# empty directories they leave behind. Sockets (a live tmux server's) and
+# anything newer than the age are left alone. Never follows symlinks.
+set -euo pipefail
+
+usage="usage: hhtest-cleanup <age-days> <dir>..."
+age_days="${1:?$usage}"
+shift
+[[ $# -ge 1 ]] || { echo "hhtest-cleanup: $usage" >&2; exit 2; }
+
+case "$age_days" in
+  '' | *[!0-9]* | 0)
+    echo "hhtest-cleanup: age must be a positive integer, got '$age_days'" >&2
+    exit 2
+    ;;
+esac
+
+me="$(id -u)"
+if [[ "$me" -eq 0 ]]; then
+  echo "hhtest-cleanup: refusing to run as root" >&2
+  exit 2
+fi
+
+for root in "$@"; do
+  [[ -d "$root" ]] || continue
+  find "$root" -xdev -mindepth 1 -uid "$me" \( -type f -o -type l \) -mtime "+$age_days" -delete
+  find "$root" -xdev -mindepth 1 -depth -uid "$me" -type d -empty -mmin +60 -delete
+done

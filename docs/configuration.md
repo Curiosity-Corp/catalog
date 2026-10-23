@@ -572,6 +572,11 @@ It is skipped on the `workspace` profile and in containers. See
 [`docs/tmp-hygiene.md`](tmp-hygiene.md) for the design, safety properties, and
 how to retire a hand-installed cleaner.
 
+## hhtest test-bed account
+
+A hardware profile with `hhtest_host` creates an unprivileged, resource-capped
+test-bed account on that one host. See [`docs/hhtest.md`](hhtest.md).
+
 ## Free Ubuntu-Pro equivalents (pro-mimic)
 
 The `pro-mimic` plane (tags `pro-mimic, security`, `tasks/pro-mimic.yml`)
