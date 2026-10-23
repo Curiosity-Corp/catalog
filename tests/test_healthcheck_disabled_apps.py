@@ -24,6 +24,7 @@ EXPECTED_CONDITIONS = {
     "aws": "cloud_clis_enabled",
     "glab": "cloud_clis_enabled",
     "codex": "codex_standalone_enabled",
+    "claude": "claude_native_enabled",
     "litra": "litra_cli_enabled",
     "bitwarden_desktop": "bitwarden_desktop_enabled",
 }
