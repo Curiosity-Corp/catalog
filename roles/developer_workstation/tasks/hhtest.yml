@@ -148,6 +148,7 @@
 - name: Install the tmux build dependencies
   ansible.builtin.apt:
     name:
+      - bison
       - build-essential
       - pkgconf
       - libevent-dev
