@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Nightly restic backup of the newest btrbk snapshot of each home subvolume.
+# The repository lives on a different physical drive than the data volume.
+# Reading a read-only snapshot through a stable path keeps restic's parent
+# detection working and gives a consistent point-in-time copy.
+set -uo pipefail
+CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
+# shellcheck source=/dev/null
+. "$CONF" || { echo "cannot read $CONF" >&2; exit 2; }
+[ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 2; }
+
+export RESTIC_REPOSITORY=$HH_BACKUP_REPO
+export RESTIC_PASSWORD_FILE=$HH_BACKUP_PASSWORD_FILE
+export RESTIC_CACHE_DIR=${HH_BACKUP_CACHE:-/var/cache/hh-restic}
+[ -r "$RESTIC_PASSWORD_FILE" ] || { echo "missing $RESTIC_PASSWORD_FILE" >&2; exit 2; }
+restic cat config >/dev/null 2>&1 || { echo "no restic repository at $RESTIC_REPOSITORY (run: restic init)" >&2; exit 2; }
+
+free_gb=$(df -BG --output=avail "$(dirname "$HH_BACKUP_REPO")" | tail -1 | tr -dc 0-9)
+if [ "$free_gb" -lt "${HH_BACKUP_MIN_FREE_GB:-120}" ]; then
+  echo "refusing to back up: only ${free_gb}G free where the repository lives (minimum ${HH_BACKUP_MIN_FREE_GB:-120}G)" >&2
+  exit 3
+fi
+
+rc=0
+for u in $HH_HOME_USERS; do
+  snap=$(find "$HH_SNAPSHOT_DIR" -maxdepth 1 -name "$u.*" -type d | sort | tail -1)
+  [ -n "$snap" ] || { echo "no snapshot for $u in $HH_SNAPSHOT_DIR" >&2; rc=1; continue; }
+  mnt=/run/hh-backup/$u
+  mkdir -p "$mnt"
+  mountpoint -q "$mnt" && umount "$mnt"
+  mount --bind -o ro "$snap" "$mnt" || { echo "bind mount of $snap failed" >&2; rc=1; continue; }
+  echo "=== backup $u from $(basename "$snap")"
+  # The tree is read relative to the stable mount so the path never changes between runs.
+  (cd "$mnt" && restic backup . --tag "$u" --host "$(hostname)" --exclude-caches --one-file-system \
+      --exclude-file "$HH_BACKUP_EXCLUDES" --exclude-if-present .nobackup)
+  r=$?
+  # restic exits 3 when some files could not be read (sockets, vanished): still a usable snapshot.
+  { [ "$r" -eq 0 ] || [ "$r" -eq 3 ]; } || rc=1
+  umount "$mnt"
+done
+
+if [ "$rc" -eq 0 ]; then
+  for u in $HH_HOME_USERS; do
+    restic forget --tag "$u" --keep-daily 14 --keep-weekly 8 --keep-monthly 6 >/dev/null || rc=1
+  done
+  # Prune and a partial integrity check once a week.
+  if [ "$(date +%u)" = 7 ]; then
+    restic prune || rc=1
+    restic check --read-data-subset=5% || rc=1
+  fi
+fi
+[ "$rc" -eq 0 ] && { mkdir -p "$HH_STATE"; touch "$HH_STATE/backup-ok"; }
+exit "$rc"

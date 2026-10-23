@@ -1,0 +1,3 @@
+UUID={{ workstation_storage_fs_uuid }} {{ workstation_storage_data_mount }} btrfs {{ workstation_storage_mount_options }},nodev,nosuid,noexec,subvolid=5,{{ workstation_storage_mount_extra }} 0 0
+UUID={{ workstation_storage_fs_uuid }} /home btrfs {{ workstation_storage_mount_options }},nodev,nosuid,subvol=@home,{{ workstation_storage_mount_extra }} 0 0
+UUID={{ workstation_storage_fs_uuid }} /.snapshots btrfs {{ workstation_storage_mount_options }},nodev,nosuid,noexec,subvol=@snapshots,{{ workstation_storage_mount_extra }} 0 0

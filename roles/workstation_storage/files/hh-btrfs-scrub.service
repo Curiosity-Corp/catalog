@@ -1,0 +1,10 @@
+[Unit]
+Description=Scrub the data volume
+ConditionPathExists=/var/lib/hh-storage/cutover-complete
+RequiresMountsFor=/mnt/hh-data
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hh-btrfs-scrub
+Nice=15
+IOSchedulingClass=idle

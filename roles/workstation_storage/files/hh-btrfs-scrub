@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Scrub the data volume and fail loudly if it finds uncorrectable errors.
+set -uo pipefail
+CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
+# shellcheck source=/dev/null
+. "$CONF" || { echo "cannot read $CONF" >&2; exit 2; }
+mountpoint -q "$HH_DATA_MOUNT" || { echo "$HH_DATA_MOUNT not mounted" >&2; exit 2; }
+btrfs scrub start -B -c 3 "$HH_DATA_MOUNT"

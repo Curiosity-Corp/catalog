@@ -1,0 +1,40 @@
+---
+# Runs only once /var/lib/hh-storage/cutover-complete exists.
+- name: Keep the data volume in crypttab
+  ansible.builtin.lineinfile:
+    path: /etc/crypttab
+    regexp: "^{{ workstation_storage_mapper }}\\s"
+    line: "{{ lookup('ansible.builtin.template', 'crypttab-entry.j2') | trim }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Keep the data volume mounts in fstab
+  ansible.builtin.blockinfile:
+    path: /etc/fstab
+    marker: "# {mark} workstation_storage"
+    block: "{{ lookup('ansible.builtin.template', 'fstab-entries.j2') | trim }}"
+  notify: Reload systemd for storage units
+
+- name: Do not start user managers on an unmounted /home
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/user@.service.d/10-require-home.conf
+    content: |
+      [Unit]
+      RequiresMountsFor=/home
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd for storage units
+
+- name: Enable snapshot, backup and scrub timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - hh-btrbk.timer
+    - hh-backup.timer
+    - hh-btrfs-scrub.timer

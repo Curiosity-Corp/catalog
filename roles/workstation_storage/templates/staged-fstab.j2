@@ -1,0 +1,4 @@
+{{ workstation_storage_fstab_base | trim }}
+# BEGIN workstation_storage
+{{ lookup('ansible.builtin.template', 'fstab-entries.j2') | trim }}
+# END workstation_storage

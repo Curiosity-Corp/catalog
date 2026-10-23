@@ -1,0 +1,171 @@
+---
+# Encrypted btrfs /home volume. Before the cutover this role only installs
+# packages, scripts, units and configs and stages fstab/crypttab; it never
+# touches the live /etc/fstab, /etc/crypttab, any mount or any session. After
+# the cutover marker exists it keeps the active entries and the timers in
+# place. See docs/storage.md.
+
+- name: Opt-in storage layout
+  when: workstation_storage_enabled | bool
+  block:
+    - name: Validate storage inputs
+      ansible.builtin.assert:
+        that:
+          - workstation_storage_luks_uuid is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+          - workstation_storage_fs_uuid is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+          - workstation_storage_mapper is match('^[a-z][a-z0-9_-]*$')
+          - workstation_storage_data_mount is match('^/[A-Za-z0-9/_.-]+$')
+          - workstation_storage_users | length > 0
+          - workstation_storage_users | map(attribute='name') | reject('match', '^[a-z_][a-z0-9_-]*$') | list | length == 0
+          - workstation_storage_backup_repo is match('^/[A-Za-z0-9/_.-]+$')
+          - workstation_storage_backup_min_free_gb | string is match('^[1-9][0-9]*$')
+        fail_msg: >-
+          workstation_storage_* variables are invalid: UUIDs must be lowercase
+          hex, users must be a non-empty list of {name: ...}, paths absolute.
+
+    - name: Install storage packages
+      ansible.builtin.apt:
+        name: [btrfs-progs, cryptsetup, btrbk, restic, rsync]
+        state: present
+
+    - name: Create storage state directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /etc/hh-storage, mode: "0755"}
+        - {path: /var/lib/hh-storage, mode: "0700"}
+        - {path: /var/lib/hh-storage/staged, mode: "0700"}
+        - {path: /var/lib/hh-storage/logs, mode: "0700"}
+        - {path: /var/lib/hh-storage/manifests, mode: "0700"}
+        - {path: /var/cache/hh-restic, mode: "0700"}
+        - {path: /.snapshots, mode: "0755"}
+        - {path: "{{ workstation_storage_data_mount }}", mode: "0755"}
+
+    - name: Install storage scripts
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/usr/local/sbin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - hh-storage-sync
+        - hh-storage-cutover
+        - hh-storage-postboot
+        - hh-storage-reclaim
+        - hh-storage-provision
+        - hh-backup
+        - hh-btrfs-scrub
+
+    - name: Install storage configuration
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - {src: storage.conf.j2, dest: /etc/hh-storage/storage.conf}
+        - {src: btrbk.conf.j2, dest: /etc/btrbk/hh-storage.conf}
+
+    - name: Read the live fstab and crypttab
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop: [/etc/fstab, /etc/crypttab]
+      register: workstation_storage_live
+
+    - name: Compute the staged fstab and crypttab bases
+      ansible.builtin.set_fact:
+        workstation_storage_fstab_base: >-
+          {{ (workstation_storage_live.results[0].content | b64decode)
+          | regex_replace('(?ms)^# BEGIN workstation_storage\n.*?^# END workstation_storage\n?', '') }}
+        workstation_storage_crypttab_base: >-
+          {{ (workstation_storage_live.results[1].content | b64decode)
+          | regex_replace('(?m)^' ~ workstation_storage_mapper ~ '\\s.*\n?', '') }}
+
+    - name: Stage fstab and crypttab (never the live files)
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "/var/lib/hh-storage/staged/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0600"
+      loop:
+        - {src: staged-fstab.j2, name: fstab}
+        - {src: staged-crypttab.j2, name: crypttab}
+
+    - name: Install backup exclude list
+      ansible.builtin.copy:
+        src: hh-backup-excludes
+        dest: /etc/hh-storage/backup-excludes
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install storage units
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - hh-btrbk.service
+        - hh-btrbk.timer
+        - hh-backup.service
+        - hh-backup.timer
+        - hh-btrfs-scrub.service
+        - hh-btrfs-scrub.timer
+      notify: Reload systemd for storage units
+
+    - name: Generate the restic repository password once
+      ansible.builtin.shell:
+        cmd: umask 077 && openssl rand -base64 33 > "{{ workstation_storage_backup_password_file }}"
+        creates: "{{ workstation_storage_backup_password_file }}"
+      no_log: true
+
+    - name: Check for the restic repository
+      ansible.builtin.command:
+        cmd: restic cat config
+      environment:
+        RESTIC_REPOSITORY: "{{ workstation_storage_backup_repo }}"
+        RESTIC_PASSWORD_FILE: "{{ workstation_storage_backup_password_file }}"
+        RESTIC_CACHE_DIR: /var/cache/hh-restic
+      register: workstation_storage_restic
+      changed_when: false
+      failed_when: false
+
+    - name: Initialise the restic repository
+      ansible.builtin.command:
+        cmd: restic init
+      environment:
+        RESTIC_REPOSITORY: "{{ workstation_storage_backup_repo }}"
+        RESTIC_PASSWORD_FILE: "{{ workstation_storage_backup_password_file }}"
+        RESTIC_CACHE_DIR: /var/cache/hh-restic
+      changed_when: true
+      when: workstation_storage_restic.rc != 0
+
+    - name: Provision the data volume on a blank device
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/sbin/hh-storage-provision {{ workstation_storage_device }}
+          {{ workstation_storage_luks_size }} {{ workstation_storage_luks_key_file }}
+          {{ workstation_storage_tpm2_pcrs }}
+        creates: /var/lib/hh-storage/luks-header-hh-data.img
+      when:
+        - workstation_storage_provision | bool
+        - workstation_storage_device | length > 0
+        - workstation_storage_luks_key_file | length > 0
+
+    - name: Check for the cutover marker
+      ansible.builtin.stat:
+        path: /var/lib/hh-storage/cutover-complete
+      register: workstation_storage_cutover
+
+    - name: Keep the active mounts and timers after the cutover
+      ansible.builtin.include_tasks: after_cutover.yml
+      when: workstation_storage_cutover.stat.exists

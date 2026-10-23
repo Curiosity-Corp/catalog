@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+timestamp_format        long
+snapshot_preserve_min   {{ workstation_storage_snapshot_min }}
+snapshot_preserve       {{ workstation_storage_retention_default }}
+lockfile                /run/hh-btrbk.lock
+
+volume {{ workstation_storage_data_mount }}
+  snapshot_dir          @snapshots
+  snapshot_create       onchange
+{% for u in workstation_storage_users %}
+  subvolume @home/{{ u.name }}
+    snapshot_name       {{ u.name }}
+{% if u.retention is defined %}
+    snapshot_preserve   {{ u.retention }}
+{% endif %}
+{% endfor %}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Monthly scrub of the data volume
+
+[Timer]
+OnCalendar=*-*-01 04:30:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

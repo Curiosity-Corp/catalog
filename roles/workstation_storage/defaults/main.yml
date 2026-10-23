@@ -1,0 +1,34 @@
+---
+# Everything here is off or empty by default: the role does nothing on a
+# machine that does not opt in through host variables.
+workstation_storage_enabled: false
+
+# Encrypted btrfs data volume that holds /home. Devices are identified by
+# UUID only (kernel names change between boots).
+workstation_storage_luks_uuid: ""
+workstation_storage_fs_uuid: ""
+workstation_storage_mapper: crypthome
+workstation_storage_tpm2: true
+workstation_storage_data_mount: /mnt/hh-data
+workstation_storage_mount_options: noatime,compress=zstd:1,discard=async
+workstation_storage_mount_extra: nofail,x-systemd.device-timeout=60s
+
+# Accounts whose /home/<user> is a per-user btrfs subvolume (@home/<user>).
+workstation_storage_users: []
+# Hourly snapshot retention. A user can override it with a `retention` key.
+workstation_storage_retention_default: 48h 14d 8w 6m
+workstation_storage_snapshot_min: 2d
+
+# Nightly restic backup of the newest snapshot to a different physical drive.
+workstation_storage_backup_repo: /var/backups/hh-restic
+workstation_storage_backup_password_file: /etc/hh-storage/restic-password
+workstation_storage_backup_min_free_gb: 120
+workstation_storage_soak_days: 14
+
+# Destructive: partition, encrypt and format a blank device. Needs the device,
+# a root-only passphrase file and a device without any signature.
+workstation_storage_provision: false
+workstation_storage_device: ""
+workstation_storage_luks_size: ""
+workstation_storage_luks_key_file: ""
+workstation_storage_tpm2_pcrs: "7"

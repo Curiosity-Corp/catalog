@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Provision a blank drive as the encrypted btrfs data volume. Refuses any
+# device that carries a signature or partition. The LUKS passphrase comes from
+# a root-only file; store it in the secret manager, then remove the file.
+#   hh-storage-provision <by-id device> <luks size e.g. 3500GiB> <key file> [pcrs]
+set -euo pipefail
+dev=${1:?device}; size=${2:?size}; keyfile=${3:?key file}; pcrs=${4:-7}
+[ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 2; }
+[ -b "$dev" ] || { echo "$dev is not a block device" >&2; exit 2; }
+[ "$(stat -c %a "$keyfile")" = 600 ] || { echo "$keyfile must be mode 0600" >&2; exit 2; }
+if [ -n "$(wipefs -n "$dev" | tail -n +2)" ] || [ "$(lsblk -n -o NAME "$dev" | wc -l)" -gt 1 ]; then
+  echo "refusing: $dev already has signatures or partitions" >&2; exit 1
+fi
+sgdisk -n "1:0:+$size" -t 1:8309 -c 1:hh-data-luks "$dev"
+partprobe "$dev"; udevadm settle
+part=$(lsblk -n -o PATH,PARTLABEL "$dev" | awk '$2=="hh-data-luks"{print $1}')
+cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --pbkdf argon2id \
+  --sector-size 4096 --label hh-data-luks --batch-mode --key-file "$keyfile" "$part"
+systemd-cryptenroll --unlock-key-file="$keyfile" --tpm2-device=auto --tpm2-pcrs="$pcrs" "$part"
+cryptsetup open --key-file "$keyfile" --allow-discards --perf-no_read_workqueue --perf-no_write_workqueue "$part" crypthome
+mkfs.btrfs -L hh-data -m dup -d single -O block-group-tree /dev/mapper/crypthome
+mkdir -p /mnt/hh-data
+mount -o noatime,compress=zstd:1,discard=async /dev/mapper/crypthome /mnt/hh-data
+btrfs subvolume create /mnt/hh-data/@home
+btrfs subvolume create /mnt/hh-data/@snapshots
+cryptsetup luksHeaderBackup "$part" --header-backup-file "/var/lib/hh-storage/luks-header-hh-data.img"
+chmod 0600 /var/lib/hh-storage/luks-header-hh-data.img
+echo "provisioned. LUKS UUID: $(cryptsetup luksUUID "$part")  btrfs UUID: $(blkid -s UUID -o value /dev/mapper/crypthome)"
+echo "create per-user subvolumes: btrfs subvolume create /mnt/hh-data/@home/<user>"
