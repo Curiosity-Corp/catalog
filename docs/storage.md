@@ -55,7 +55,7 @@ final `--delete` copy, requires zero checksum differences, takes a baseline
 snapshot, installs the staged `fstab`/`crypttab`, writes
 `/var/lib/hh-storage/cutover-complete` and reboots. Any failure before the fstab
 switch aborts with the live files untouched. Run it as a transient system unit
-(`systemd-run`) so ending the user sessions cannot kill it. A session manifest
+(`systemd-run -p MemoryHigh=6G -p MemoryMax=10G`) so ending the user sessions cannot kill it and the copy's page cache cannot starve other sessions. A session manifest
 is written to `/var/lib/hh-storage/manifests/`.
 
 Rollback: `cp /etc/fstab.pre-cutover /etc/fstab`, `cp /etc/crypttab.pre-cutover /etc/crypttab`,
@@ -72,3 +72,12 @@ unmounted `/home`) and the timers `hh-btrbk.timer` (hourly snapshots),
 `hh-storage-postboot` checks the result. After the soak period
 (`workstation_storage_soak_days`) `hh-storage-reclaim --confirm` removes the old
 copy of `/home` from the OS drive, once a backup less than two days old exists.
+
+## Memory
+
+Copies and checksum passes read and write hundreds of gigabytes. Always run
+`hh-storage-sync` and `hh-backup` in a transient unit or timer unit with
+`MemoryHigh`/`MemoryMax` (the shipped units set them), so page cache is
+reclaimed inside the job's cgroup instead of pressuring the whole host. On a
+workstation running many agent sessions, an unbounded run was followed by a
+host-wide out-of-memory storm.
