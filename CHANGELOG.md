@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- earlyoom thresholds and `--prefer` / `--avoid` process-name regexes are now role variables (`earlyoom_mem_percent`, `earlyoom_swap_percent`, `earlyoom_prefer_regex`, `earlyoom_avoid_regex`). Defaults reproduce the previous `-m 5 -s 50` behavior. A workstation that runs long-lived agent sessions can make earlyoom kill browsers and Playwright before the agents after an out-of-memory incident.
+
 ### Security
 
 - Hardened SSH never took effect on cloud-init images: sshd keeps the first value it reads, and `50-cloud-init.conf` (`PasswordAuthentication yes`) loaded before the role's `60-pro-mimic.conf`. The drop-in is now `00-pro-mimic.conf`, the legacy file is removed, and every run checks the effective `sshd -T` output and fails if password or keyboard-interactive login is still offered (#96).

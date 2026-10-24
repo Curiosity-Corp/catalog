@@ -13,6 +13,16 @@ dev_users:
 # Accounts whose systemd user manager must keep running without a login session
 # (`loginctl enable-linger`). Empty leaves lingering untouched.
 workstation_user_linger: []
+# earlyoom thresholds (percent of available memory / free swap). earlyoom acts
+# only when BOTH memory and swap are below their limits. Defaults keep the
+# historical 5% memory and 50% swap behavior (SIGKILL at half of each).
+earlyoom_mem_percent: "5"
+earlyoom_swap_percent: "50"
+# Optional process-name regexes (matched against the kernel comm name, 15 chars).
+# Empty adds no --prefer / --avoid flag. Hosts that run long-lived agent
+# sessions set these so browsers die before the agents do.
+earlyoom_prefer_regex: ""
+earlyoom_avoid_regex: ""
 # IANA time zone for the system clock (`timedatectl`), e.g. America/New_York.
 # Empty leaves the host's zone untouched. StreamStack's light schedule takes its
 # sunrise and sunset from this zone unless streamstack_latitude/longitude are set.

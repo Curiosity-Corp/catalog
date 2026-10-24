@@ -102,11 +102,15 @@
     state: present
 
 - name: Configure earlyoom thresholds
+  vars:
+    _earlyoom_prefer: "{{ (' --prefer ' ~ (earlyoom_prefer_regex | quote)) if earlyoom_prefer_regex | length > 0 else '' }}"
+    _earlyoom_avoid: "{{ (' --avoid ' ~ (earlyoom_avoid_regex | quote)) if earlyoom_avoid_regex | length > 0 else '' }}"
+    _earlyoom_args: "-r 60 -m {{ earlyoom_mem_percent }} -s {{ earlyoom_swap_percent }}{{ _earlyoom_prefer }}{{ _earlyoom_avoid }}"
   ansible.builtin.copy:
     content: |
       # Managed by Ansible — developer-workstation role
-      # Report every 60s, SIGTERM at 5% mem + 50% swap, SIGKILL at 2.5% mem + 25% swap
-      EARLYOOM_ARGS="-r 60 -m 5 -s 50"
+      # Report every 60s; SIGTERM at {{ earlyoom_mem_percent }}% mem + {{ earlyoom_swap_percent }}% swap (SIGKILL at half of each).
+      EARLYOOM_ARGS="{{ _earlyoom_args }}"
     dest: /etc/default/earlyoom
     owner: root
     group: root
