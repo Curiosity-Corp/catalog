@@ -1,3 +1,6 @@
 UUID={{ workstation_storage_fs_uuid }} {{ workstation_storage_data_mount }} btrfs {{ workstation_storage_mount_options }},nodev,nosuid,noexec,subvolid=5,{{ workstation_storage_mount_extra }} 0 0
 UUID={{ workstation_storage_fs_uuid }} /home btrfs {{ workstation_storage_mount_options }},nodev,nosuid,subvol=@home,{{ workstation_storage_mount_extra }} 0 0
 UUID={{ workstation_storage_fs_uuid }} /.snapshots btrfs {{ workstation_storage_mount_options }},nodev,nosuid,noexec,subvol=@snapshots,{{ workstation_storage_mount_extra }} 0 0
+{% for hp in workstation_storage_hot_paths %}
+UUID={{ workstation_storage_fs_uuid }} {{ hp.path }} btrfs {{ workstation_storage_mount_options }},{% if hp.extra %}{{ hp.extra }},{% endif %}subvol={{ hp.subvol }},nofail,x-systemd.requires=systemd-cryptsetup@{{ workstation_storage_mapper }}.service,x-systemd.device-timeout=60s 0 0
+{% endfor %}

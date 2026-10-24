@@ -15,15 +15,15 @@ workstation_storage_mount_extra: nofail,x-systemd.device-timeout=60s
 
 # Accounts whose /home/<user> is a per-user btrfs subvolume (@home/<user>).
 workstation_storage_users: []
-# Hourly snapshot retention. A user can override it with a `retention` key.
-workstation_storage_retention_default: 48h 14d 8w 6m
-workstation_storage_snapshot_min: 2d
-
-# Nightly restic backup of the newest snapshot to a different physical drive.
-workstation_storage_backup_repo: /var/backups/hh-restic
-workstation_storage_backup_password_file: /etc/hh-storage/restic-password
-workstation_storage_backup_min_free_gb: 120
+# No local snapshots and no backups: GitLab and chezmoi are the recovery path
+# (see docs/storage.md). Only the monthly scrub and fstrim run.
 workstation_storage_soak_days: 14
+
+# Write-heavy paths outside /home that live on the data volume as btrfs
+# subvolumes of the top-level volume, mounted straight onto the path.
+workstation_storage_hot_paths:
+  - {subvol: "@var-tmp", path: /var/tmp, extra: "nodev,nosuid"}
+  - {subvol: "@containers", path: /var/lib/containers, extra: ""}
 
 # Destructive: partition, encrypt and format a blank device. Needs the device,
 # a root-only passphrase file and a device without any signature.

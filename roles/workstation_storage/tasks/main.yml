@@ -17,15 +17,13 @@
           - workstation_storage_data_mount is match('^/[A-Za-z0-9/_.-]+$')
           - workstation_storage_users | length > 0
           - workstation_storage_users | map(attribute='name') | reject('match', '^[a-z_][a-z0-9_-]*$') | list | length == 0
-          - workstation_storage_backup_repo is match('^/[A-Za-z0-9/_.-]+$')
-          - workstation_storage_backup_min_free_gb | string is match('^[1-9][0-9]*$')
         fail_msg: >-
           workstation_storage_* variables are invalid: UUIDs must be lowercase
           hex, users must be a non-empty list of {name: ...}, paths absolute.
 
     - name: Install storage packages
       ansible.builtin.apt:
-        name: [btrfs-progs, cryptsetup, btrbk, restic, rsync]
+        name: [btrfs-progs, cryptsetup, rsync]
         state: present
 
     - name: Create storage state directories
@@ -41,7 +39,6 @@
         - {path: /var/lib/hh-storage/staged, mode: "0700"}
         - {path: /var/lib/hh-storage/logs, mode: "0700"}
         - {path: /var/lib/hh-storage/manifests, mode: "0700"}
-        - {path: /var/cache/hh-restic, mode: "0700"}
         - {path: /.snapshots, mode: "0755"}
         - {path: "{{ workstation_storage_data_mount }}", mode: "0755"}
 
@@ -59,7 +56,6 @@
         - hh-storage-postreboot
         - hh-storage-reclaim
         - hh-storage-provision
-        - hh-backup
         - hh-btrfs-scrub
 
     - name: Install storage configuration
@@ -71,7 +67,6 @@
         mode: "0644"
       loop:
         - {src: storage.conf.j2, dest: /etc/hh-storage/storage.conf}
-        - {src: btrbk.conf.j2, dest: /etc/btrbk/hh-storage.conf}
 
     - name: Read the live fstab and crypttab
       ansible.builtin.slurp:
@@ -99,14 +94,6 @@
         - {src: staged-fstab.j2, name: fstab}
         - {src: staged-crypttab.j2, name: crypttab}
 
-    - name: Install backup exclude list
-      ansible.builtin.copy:
-        src: hh-backup-excludes
-        dest: /etc/hh-storage/backup-excludes
-        owner: root
-        group: root
-        mode: "0644"
-
     - name: Install storage units
       ansible.builtin.copy:
         src: "{{ item }}"
@@ -115,40 +102,16 @@
         group: root
         mode: "0644"
       loop:
-        - hh-btrbk.service
-        - hh-btrbk.timer
-        - hh-backup.service
-        - hh-backup.timer
         - hh-btrfs-scrub.service
         - hh-btrfs-scrub.timer
       notify: Reload systemd for storage units
 
-    - name: Generate the restic repository password once
-      ansible.builtin.shell:
-        cmd: umask 077 && openssl rand -base64 33 > "{{ workstation_storage_backup_password_file }}"
-        creates: "{{ workstation_storage_backup_password_file }}"
-      no_log: true
-
-    - name: Check for the restic repository
-      ansible.builtin.command:
-        cmd: restic cat config
-      environment:
-        RESTIC_REPOSITORY: "{{ workstation_storage_backup_repo }}"
-        RESTIC_PASSWORD_FILE: "{{ workstation_storage_backup_password_file }}"
-        RESTIC_CACHE_DIR: /var/cache/hh-restic
-      register: workstation_storage_restic
-      changed_when: false
-      failed_when: false
-
-    - name: Initialise the restic repository
-      ansible.builtin.command:
-        cmd: restic init
-      environment:
-        RESTIC_REPOSITORY: "{{ workstation_storage_backup_repo }}"
-        RESTIC_PASSWORD_FILE: "{{ workstation_storage_backup_password_file }}"
-        RESTIC_CACHE_DIR: /var/cache/hh-restic
-      changed_when: true
-      when: workstation_storage_restic.rc != 0
+    - name: Remove retired snapshot and backup units
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop: [hh-btrbk.service, hh-btrbk.timer, hh-backup.service, hh-backup.timer]
+      notify: Reload systemd for storage units
 
     - name: Provision the data volume on a blank device
       ansible.builtin.command:

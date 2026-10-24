@@ -18,7 +18,7 @@ DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 MAIN_TEXT = (ROLE / "tasks/main.yml").read_text()
 AFTER_TEXT = (ROLE / "tasks/after_cutover.yml").read_text()
 SITE = yaml.safe_load((ROOT / "playbooks/site.yml").read_text())
-SCRIPTS = sorted(p for p in FILES.iterdir() if p.name.startswith(("hh-storage-", "hh-backup", "hh-btrfs")) and "." not in p.name and p.name != "hh-backup-excludes")
+SCRIPTS = sorted(p for p in FILES.iterdir() if p.name.startswith(("hh-storage-", "hh-btrfs")) and "." not in p.name)
 
 
 def test_role_is_off_by_default_and_runs_after_the_workstation_role() -> None:
@@ -42,11 +42,11 @@ def test_live_files_and_timers_only_after_the_cutover_marker() -> None:
     assert "when: workstation_storage_cutover.stat.exists" in MAIN_TEXT
     assert "path: /etc/fstab" in AFTER_TEXT
     assert "RequiresMountsFor=/home" in AFTER_TEXT
-    assert "hh-btrbk.timer" not in MAIN_TEXT.replace("hh-btrbk.timer\n", "")
+    assert "hh-btrfs-scrub.timer" not in MAIN_TEXT.replace("hh-btrfs-scrub.timer\n", "")
 
 
 def test_scripts_are_valid_bash() -> None:
-    assert len(SCRIPTS) >= 7
+    assert len(SCRIPTS) >= 6
     for script in SCRIPTS:
         subprocess.run(["bash", "-n", str(script)], check=True)
 
@@ -70,13 +70,6 @@ def test_sync_never_deletes_in_seed_mode_and_never_writes_home() -> None:
     assert '"$src" "$dst"' in text
 
 
-def test_backup_reads_snapshots_and_refuses_low_space() -> None:
-    text = (FILES / "hh-backup").read_text()
-    assert "mount --bind -o ro" in text
-    assert "HH_BACKUP_MIN_FREE_GB" in text
-    assert "--exclude-caches" in text
-
-
 def test_provision_refuses_a_device_with_signatures() -> None:
     text = (FILES / "hh-storage-provision").read_text()
     assert "wipefs -n" in text
@@ -84,13 +77,13 @@ def test_provision_refuses_a_device_with_signatures() -> None:
 
 
 def test_units_do_nothing_before_the_cutover() -> None:
-    for unit in ("hh-btrbk", "hh-backup", "hh-btrfs-scrub"):
+    for unit in ("hh-btrfs-scrub",):
         text = (FILES / f"{unit}.service").read_text()
         assert "ConditionPathExists=/var/lib/hh-storage/cutover-complete" in text
 
 
 def test_storage_units_are_memory_capped() -> None:
-    for unit in ("hh-btrbk", "hh-backup", "hh-btrfs-scrub"):
+    for unit in ("hh-btrfs-scrub",):
         text = (FILES / f"{unit}.service").read_text()
         assert "MemoryHigh=" in text and "MemoryMax=" in text
 
@@ -106,5 +99,28 @@ def test_postreboot_is_idempotent_and_documents_the_rollback() -> None:
     text = (FILES / "hh-storage-postreboot").read_text()
     assert ".done" in text and "skip" in text
     assert "fstab.pre-cutover" in text and "crypttab.pre-cutover" in text
-    assert "hh-storage-postboot" in text and "restic" in text and "scrub" in text
+    assert "hh-storage-postboot" in text and "scrub" in text and "restic" not in text
     assert "hh-storage-postreboot" in (ROLE / "tasks" / "main.yml").read_text()
+
+
+def test_no_snapshot_or_backup_machinery_ships() -> None:
+    for name in ("hh-backup", "hh-btrbk.service", "hh-btrbk.timer", "hh-backup.timer"):
+        assert not (FILES / name).exists()
+    assert not (ROLE / "templates/btrbk.conf.j2").exists()
+    for text in (MAIN_TEXT, AFTER_TEXT):
+        assert "restic init" not in text and "btrbk.conf" not in text
+
+
+def test_crypttab_never_blocks_boot_on_the_data_volume() -> None:
+    entry = (ROLE / "templates/crypttab-entry.j2").read_text()
+    assert "nofail" in entry and "headless=true" in entry
+
+
+def test_hot_paths_are_subvolumes_mounted_after_the_unlock() -> None:
+    paths = {hp["path"] for hp in DEFAULTS["workstation_storage_hot_paths"]}
+    assert paths == {"/var/tmp", "/var/lib/containers"}
+    fstab = (ROLE / "templates/fstab-entries.j2").read_text()
+    assert "workstation_storage_hot_paths" in fstab
+    assert "nofail" in fstab and "x-systemd.requires=systemd-cryptsetup@" in fstab
+    assert "btrfs subvolume create" in AFTER_TEXT
+    assert "fstrim.timer" in AFTER_TEXT and "hh-btrfs-scrub.timer" in AFTER_TEXT
