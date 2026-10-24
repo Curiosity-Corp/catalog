@@ -93,3 +93,10 @@ def test_storage_units_are_memory_capped() -> None:
     for unit in ("hh-btrbk", "hh-backup", "hh-btrfs-scrub"):
         text = (FILES / f"{unit}.service").read_text()
         assert "MemoryHigh=" in text and "MemoryMax=" in text
+
+
+def test_sync_has_a_stable_verify_that_reads_from_disk() -> None:
+    text = (FILES / "hh-storage-sync").read_text()
+    assert "verify-stable" in text
+    assert "drop_caches" in text
+    assert text.index("drop_caches") < text.index('"$0" seed')
