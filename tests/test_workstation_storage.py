@@ -87,3 +87,9 @@ def test_units_do_nothing_before_the_cutover() -> None:
     for unit in ("hh-btrbk", "hh-backup", "hh-btrfs-scrub"):
         text = (FILES / f"{unit}.service").read_text()
         assert "ConditionPathExists=/var/lib/hh-storage/cutover-complete" in text
+
+
+def test_storage_units_are_memory_capped() -> None:
+    for unit in ("hh-btrbk", "hh-backup", "hh-btrfs-scrub"):
+        text = (FILES / f"{unit}.service").read_text()
+        assert "MemoryHigh=" in text and "MemoryMax=" in text

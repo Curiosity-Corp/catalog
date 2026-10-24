@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format follows
 
 - earlyoom thresholds and `--prefer` / `--avoid` process-name regexes are now role variables (`earlyoom_mem_percent`, `earlyoom_swap_percent`, `earlyoom_prefer_regex`, `earlyoom_avoid_regex`). Defaults reproduce the previous `-m 5 -s 50` behavior. A workstation that runs long-lived agent sessions can make earlyoom kill browsers and Playwright before the agents after an out-of-memory incident.
 
+### Fixed
+
+- PIA no longer stays disconnected after its daemon is OOM-killed: a `piavpn.service` drop-in reconnects on every daemon start and sets `OOMScoreAdjust=-900`, so Brave is not left blocked by the killswitch. Applied with `daemon-reload` only, never a daemon restart (`pia_autoconnect_on_daemon_start`, `pia_daemon_oom_score_adjust`).
+
 ### Security
 
 - Hardened SSH never took effect on cloud-init images: sshd keeps the first value it reads, and `50-cloud-init.conf` (`PasswordAuthentication yes`) loaded before the role's `60-pro-mimic.conf`. The drop-in is now `00-pro-mimic.conf`, the legacy file is removed, and every run checks the effective `sshd -T` output and fails if password or keyboard-interactive login is still offered (#96).

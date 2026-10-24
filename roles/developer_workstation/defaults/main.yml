@@ -1618,6 +1618,11 @@ pia_split_tunnel_dns: true
 pia_killswitch: auto
 # Keep the daemon (and killswitch) active when the GUI client is not running.
 pia_persist_daemon: true
+# Reconnect the VPN whenever piavpn.service (re)starts, e.g. after an OOM kill,
+# instead of waiting for the GUI client that may be dead too.
+pia_autoconnect_on_daemon_start: true
+# Negative values make the OOM killer pick other processes first.
+pia_daemon_oom_score_adjust: -900
 # Root-only (0600) two-line file (username, password) provisioned outside git
 # from the ACTIVE Bitwarden item "Privateinternetaccess / p1793859". Empty or
 # missing skips `piactl login`; the daemon keeps any existing login.

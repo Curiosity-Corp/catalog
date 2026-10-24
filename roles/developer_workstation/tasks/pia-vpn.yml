@@ -10,12 +10,38 @@
 # Mode must be "include" for split-tunnel rules; "vpn" is rejected by piactl.
 # The PIA GUI autostart entry (~/.config/autostart/pia-client.desktop) and its
 # connectOnLaunch client setting handle connecting at desktop login.
+#
+# A systemd drop-in makes the daemon reconnect itself on every start and a
+# last-choice OOM victim (2026-10-23: the OOM killer killed it three times and
+# it came back Disconnected, leaving Brave blocked by the killswitch). Only
+# `systemctl daemon-reload` runs on change; the daemon is never restarted by a
+# converge, so the setting applies at its next restart.
 # =============================================================================
 
 - name: Check for the PIA command-line client
   ansible.builtin.stat:
     path: /opt/piavpn/bin/piactl
   register: _pia_piactl
+
+- name: Install the PIA daemon auto-connect and OOM-protection drop-in
+  when: _pia_piactl.stat.exists
+  block:
+    - name: Create the piavpn.service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/piavpn.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the piavpn.service auto-connect and OOM drop-in
+      ansible.builtin.template:
+        src: piavpn-autoconnect-oom.conf.j2
+        dest: /etc/systemd/system/piavpn.service.d/10-autoconnect-oom.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
 
 - name: Converge PIA daemon settings
   when: _pia_piactl.stat.exists
