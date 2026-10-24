@@ -141,3 +141,22 @@ it was not involved. Re-entering the password in nm-applet created
 Fix: a single interface-agnostic profile (`wl*`) in `/etc/netplan`, the stale
 `wlp6s0` file removed, PSK stored system-wide, autoconnect on. A future slot
 change cannot orphan the profile.
+
+## PARKED: WiFi persistence proof awaits a reboot (2026-10-24)
+
+The only unverified claim is that WiFi autoconnects after a boot with the managed
+`90-wifi-wifi.yaml` profile. Everything else is verified on the live host.
+
+- **Why parked:** the workstation runs many live sessions, so rebooting, logging out or
+  restarting the display manager is deferred to a maintenance window. Policy is tracked
+  in the `policy-gap` item "Maintenance-window and reboot policy" in `mrh/okto`.
+- **Deferred since:** the netplan fix was applied 2026-10-23 18:00 local; the machine
+  last booted 2026-10-23 15:12, before the fix.
+- **What runs after the next reboot:** `bash scripts/pia-vpn-postreboot-verify.sh`
+  (read-only, idempotent; exits 2 while the boot predates the fix, 1 on a failed check,
+  0 when everything passes).
+- **Evidence that proves it:** exit 0 means the netplan-wpa failure and "secrets are
+  required" are absent from this boot's journal, `wlp*` is connected with autoconnect
+  `yes` and `psk-flags 0`, PIA is Connected, and Brave's cgroup egress IP differs from
+  the host's. If a check fails, fix forward from its output.
+- **Rollback:** see the header of the script (restore `/var/backups/netplan-wifi`).
