@@ -63,6 +63,30 @@ be `Connected`, the internal name must resolve, and every Brave PID must show
 | `Privateinternetaccess / p4443450` | Deprecated, do not use. |
 | `Privateinternetaccess / p7891906` | Deprecated, do not use. |
 
+### Postmortem: PIA left Disconnected after OOM kills (2026-10-23)
+
+Symptom: PIA showed Disconnected and Brave had no network.
+
+Root cause: the kernel OOM killer killed `piavpn.service` three times (18:45,
+18:56 and 19:09). systemd restarted the daemon each time (`Restart=always`),
+but a restarted daemon does not reconnect by itself. Auto-connect
+(`connectOnLaunch`) only fires from the GUI client, which the same OOM event
+had also killed. With the VPN down the killswitch kept Brave blocked, as
+designed, while the rest of the host stayed online.
+
+Fix: the drop-in `/etc/systemd/system/piavpn.service.d/10-autoconnect-oom.conf`
+(template `piavpn-autoconnect-oom.conf.j2`) sets `OOMScoreAdjust=-900`, so the
+daemon is a last-choice OOM victim, and an `ExecStartPost` waits for the daemon
+socket and runs `piactl connect` on every start. Variables:
+`pia_daemon_oom_score_adjust` and `pia_autoconnect_on_daemon_start`. A converge
+only runs `systemctl daemon-reload`; it never restarts the daemon, so a live VPN
+is not bounced and the drop-in takes effect at the next daemon restart.
+
+Verified on the host with `systemctl restart piavpn` and with
+`systemctl kill -s KILL piavpn` (the signal the OOM killer sends): both times
+the daemon came back Connected on its own, Brave's cgroup exited through a PIA
+address, the host stayed on its normal line, and `oom_score_adj` read `-900`.
+
 ## Managed WiFi (netplan, NetworkManager renderer)
 
 Applied by `tasks/wifi-netplan.yml` when `wifi_ssid` is set. Supply `wifi_ssid`,
