@@ -1191,6 +1191,14 @@ streamstack_longitude: ""
 # crash when a GTK status icon docks.
 streamstack_tray_autostart: false
 # USB vendor:product ids that get the /dev/streamstack/camlink symlink.
+# Accounts that take calls on the studio host. They join the `video` group so
+# apps can open /dev/video43 "StreamStack Camera" and the Cam Link even without
+# a logind seat (remote or headless sessions get no uaccess ACL). Names without
+# an account on the host are skipped, never created. Takes effect at the user's
+# next login.
+streamstack_video_group_users:
+  - mrh
+  - seantech
 streamstack_camlink_usb_ids:
   - "0fd9:0066"  # Elgato Cam Link 4K
 # Low-latency audio/video tuning and current Intel media drivers

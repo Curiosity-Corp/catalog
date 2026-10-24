@@ -178,6 +178,21 @@
       {% endfor %}
   register: _streamstack_udev
 
+# The nodes are root:video 0660; the uaccess ACL only reaches the seat's user,
+# so call users on remote or headless sessions need the group itself. Accounts
+# are looked up first: ansible.builtin.user would otherwise create a missing one.
+- name: Look up the accounts on this host
+  ansible.builtin.getent:
+    database: passwd
+  changed_when: false
+
+- name: Let the call users open the StreamStack cameras
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: video
+    append: true
+  loop: "{{ streamstack_video_group_users | select('in', getent_passwd.keys()) | list }}"
+
 - name: Reload udev rules for StreamStack  # noqa: no-handler
   ansible.builtin.command: udevadm control --reload
   when: _streamstack_udev is changed
