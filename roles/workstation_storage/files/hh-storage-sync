@@ -3,6 +3,9 @@
 # that the copy matches. Never deletes or modifies anything under /home.
 #   seed    live copy, no --delete (safe while sessions run; repeatable)
 #   verify  read-only checksum comparison; prints a summary, exit 1 on drift
+#   verify-stable  like verify, but on a live home: seeds, then ignores entries whose
+#           mtime or ctime is newer than the seed's start (live churn) and deletions;
+#           exit 1 if any other entry differs
 #   final   copy with --delete (cutover only: run after writers have stopped)
 set -uo pipefail
 CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
@@ -10,11 +13,43 @@ CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
 . "$CONF" || { echo "cannot read $CONF" >&2; exit 2; }
 
 mode=${1:-}
-case "$mode" in seed|verify|final) ;; *) echo "usage: $0 seed|verify|final" >&2; exit 2 ;; esac
+case "$mode" in seed|verify|verify-stable|final) ;; *) echo "usage: $0 seed|verify|verify-stable|final" >&2; exit 2 ;; esac
 [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 2; }
 findmnt -n -o FSTYPE "$HH_DATA_MOUNT" | grep -qx btrfs || { echo "$HH_DATA_MOUNT is not a mounted btrfs" >&2; exit 2; }
 
 mkdir -p "$HH_STATE/logs"
+if [ "$mode" = verify-stable ]; then
+  # Cached pages are not trusted as evidence: compare against what is on disk.
+  sync; echo 3 >/proc/sys/vm/drop_caches
+  t0=$(date +%s)
+  "$0" seed || exit 1
+  worst=0
+  for u in $HH_HOME_USERS; do
+    diff="$HH_STATE/logs/stable-$u-$t0.diff"
+    rsync -aHAXxn --no-D -c --itemize-changes --numeric-ids "/home/$u/" "$HH_DATA_MOUNT/@home/$u/" >"$diff" 2>/dev/null
+    n=$(python3 - "$diff" "/home/$u" "$t0" <<'PY'
+import os, sys
+diff, root, t0 = sys.argv[1], sys.argv[2], int(sys.argv[3])
+bad = 0
+for line in open(diff, errors="replace"):
+    flags, _, path = line.rstrip("\n").partition(" ")
+    if not line.strip() or line.startswith((".d", "cd", "*deleting")):
+        continue
+    try:
+        st = os.lstat(os.path.join(root, path))
+    except OSError:
+        continue
+    if max(st.st_mtime, st.st_ctime) < t0:
+        print(path, file=sys.stderr)
+        bad += 1
+print(bad)
+PY
+)
+    echo "verify-stable $u: entries differing but unchanged since before the seed = $n (detail: $diff)"
+    [ "$n" = 0 ] || worst=1
+  done
+  exit "$worst"
+fi
 log="$HH_STATE/logs/sync-$mode-$(date +%Y%m%dT%H%M%S).log"
 base=(-aHAX --no-D -x --numeric-ids)
 worst=0
