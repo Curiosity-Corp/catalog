@@ -142,7 +142,7 @@ Fix: a single interface-agnostic profile (`wl*`) in `/etc/netplan`, the stale
 `wlp6s0` file removed, PSK stored system-wide, autoconnect on. A future slot
 change cannot orphan the profile.
 
-## PARKED: WiFi persistence proof awaits a reboot (2026-10-24)
+## Post-reboot proof (parked 2026-10-24, verified after the 2026-10-24 18:44 reboot)
 
 The only unverified claim is that WiFi autoconnects after a boot with the managed
 `90-wifi-wifi.yaml` profile. Everything else is verified on the live host.
@@ -160,3 +160,11 @@ The only unverified claim is that WiFi autoconnects after a boot with the manage
   `yes` and `psk-flags 0`, PIA is Connected, and Brave's cgroup egress IP differs from
   the host's. If a check fails, fix forward from its output.
 - **Rollback:** see the header of the script (restore `/var/backups/netplan-wifi`).
+
+**Verified 2026-10-24 after the CEO-approved reboot (boot 18:44:57):** the verify script
+exits 0 with all 19 checks passing. `Ravonics` auto-activated on `wlp8s0` at 18:45:11, before
+the greeter (18:45:12) and the first user login (18:45:22), with no secret-agent request, so
+the system-owned PSK was used. PIA reconnected on its own; Brave egressed via 193.56.117.4
+while the host stayed on 173.87.244.66. The first run flagged NetworkManager's routine
+"secrets are required" line, which it always logs before "No new secrets needed"; the check
+now fails only on an unresolved need-auth or a `no-secrets` reason.

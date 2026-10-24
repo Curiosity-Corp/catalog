@@ -36,7 +36,13 @@ wl=$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1; exit}')
 chk "wifi device ${wl:-?} is connected"          bash -c "nmcli -t -f DEVICE,STATE device | grep -q '^${wl}:connected'"
 chk "Ravonics autoconnect is yes"                bash -c '[ "$(nmcli -g connection.autoconnect connection show Ravonics)" = yes ]'
 chk "Ravonics PSK is system-owned (flags 0)"     bash -c '[ "$(nmcli -g 802-11-wireless-security.psk-flags connection show Ravonics)" = 0 ]'
-chk "wifi came up without a manual password"     bash -c '! journalctl -b --no-pager -u NetworkManager 2>/dev/null | grep -q "secrets are required"'
+# NetworkManager always logs "secrets are required" once, then "No new secrets needed" when it
+# finds the system-owned PSK. A manual password shows up as a need-auth that never resolves
+# (reason 'no-secrets') or an extra "secrets are required" without the matching resolution.
+chk "wifi came up without a manual password"     bash -c '
+  j=$(journalctl -b --no-pager -u NetworkManager 2>/dev/null)
+  req=$(grep -c "secrets are required" <<<"$j"); ok=$(grep -c "No new secrets needed" <<<"$j")
+  ! grep -q "reason .no-secrets." <<<"$j" && [ "$req" -le "$ok" ]'
 
 # --- PIA daemon and split tunnel ---
 chk "piavpn enabled"                             bash -c '[ "$(systemctl is-enabled piavpn)" = enabled ]'
