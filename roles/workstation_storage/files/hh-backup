@@ -15,6 +15,9 @@ export RESTIC_CACHE_DIR=${HH_BACKUP_CACHE:-/var/cache/hh-restic}
 [ -r "$RESTIC_PASSWORD_FILE" ] || { echo "missing $RESTIC_PASSWORD_FILE" >&2; exit 2; }
 restic cat config >/dev/null 2>&1 || { echo "no restic repository at $RESTIC_REPOSITORY (run: restic init)" >&2; exit 2; }
 
+# A killed run leaves its lock behind; `unlock` removes only stale locks (the unit is single-instance).
+restic unlock >/dev/null 2>&1 || true
+
 free_gb=$(df -BG --output=avail "$(dirname "$HH_BACKUP_REPO")" | tail -1 | tr -dc 0-9)
 if [ "$free_gb" -lt "${HH_BACKUP_MIN_FREE_GB:-120}" ]; then
   echo "refusing to back up: only ${free_gb}G free where the repository lives (minimum ${HH_BACKUP_MIN_FREE_GB:-120}G)" >&2
