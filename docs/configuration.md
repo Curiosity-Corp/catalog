@@ -536,9 +536,21 @@ actions directory. If a session does freeze this way, `kill -CONT -- -<openbox p
 offending `pkexec` has been killed.
 
 The per-user pieces stay outside the role: each user signs in to the desktop app
-themselves, and the Firefox extension is force-installed by the policy in
-`collaboration.yml` (Chrome and Edge are not managed). The `bw` CLI session
-helper is not part of the catalog.
+and the browser extension themselves. The extension itself is force-installed in
+every managed browser by `collaboration.yml`: Firefox through its enterprise
+policy, and Chrome, Edge and Brave through one managed-policy file each,
+`20-bitwarden-extension.json` in `/etc/opt/chrome/policies/managed`,
+`/etc/opt/edge/policies/managed` and `/etc/brave/policies/managed`. Each file
+holds a single `ExtensionInstallForcelist` entry (Chrome and Brave use the
+Chrome Web Store id, Edge its own Add-ons id) and is written only when that
+browser's binary exists. Browsers that are already running pick the policy up
+without a restart and install the extension in every profile, which opens
+Bitwarden's first-run tab once per profile. A browser keeps only the last
+policy file that sets `ExtensionInstallForcelist`, so any other file that sets it
+must list the Bitwarden entry too. To opt out, for example on a host whose
+Chromium-family browsers are driven by automation that must not see the first-run
+tab, set `bitwarden_browser_extensions_enabled: false`; the Firefox policy is not
+affected by that switch. The `bw` CLI session helper is not part of the catalog.
 
 The branded FocusPass screen-lock package is an optional local-PAM integration.
 It is installed only when all three variables below are supplied for a

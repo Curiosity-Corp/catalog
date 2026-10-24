@@ -126,6 +126,31 @@ latest_github_release_tag_prefixes:
 # credentials or vault data.
 bitwarden_desktop_enabled: true
 
+# Force-install the Bitwarden browser extension into the Chromium-family
+# browsers, the way the Firefox policy already does for Firefox
+# (collaboration.yml). One managed-policy file per browser is written only when
+# that browser's binary is installed; it lists a single ExtensionInstallForcelist
+# entry and never touches a user's profile, vault or credentials. Set false on a
+# host whose Chromium-family browsers are driven by automation that must not see
+# a first-run Bitwarden tab.
+bitwarden_browser_extensions_enabled: true
+bitwarden_chromium_extension_targets:
+  - name: chrome
+    binary: /opt/google/chrome/chrome
+    policy_dir: /etc/opt/chrome/policies/managed
+    extension_id: nngceckbapebfimnlniiiahkandclblb
+    update_url: https://clients2.google.com/service/update2/crx
+  - name: edge
+    binary: /opt/microsoft/msedge/msedge
+    policy_dir: /etc/opt/edge/policies/managed
+    extension_id: jbkfoedolllekgbhcbcoahefnbanhhlh
+    update_url: https://edge.microsoft.com/extensionwebstorebase/v1/crx
+  - name: brave
+    binary: /opt/brave.com/brave/brave
+    policy_dir: /etc/brave/policies/managed
+    extension_id: nngceckbapebfimnlniiiahkandclblb
+    update_url: https://clients2.google.com/service/update2/crx
+
 # Every API-backed release source also has an explicit application contract.
 # The contract is inventory/provenance data, not a release pin: it says how an
 # application is obtained and how its installed result can be checked.

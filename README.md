@@ -111,6 +111,7 @@ The most important variables are:
 | `ziti_enabled` | `false` | Opt into OpenZiti and supply local domains/provider |
 | `sunshine_enabled` | `false` | Opt into remote desktop streaming |
 | `streamstack_enabled` | profile flag | Teams/Zoom/OBS studio: DSLR + capture card cameras, voice chain, `streamstack doctor` ([docs](docs/streamstack.md)) |
+| `bitwarden_browser_extensions_enabled` | `true` | Force-install the Bitwarden extension in Chrome, Edge and Brave (one managed-policy file per installed browser; `bitwarden_chromium_extension_targets` lists them). Firefox is covered by its own policy. Set `false` where automation-driven browsers must not see the first-run tab |
 | `bitwarden_desktop_enabled` | `true` | Install the official Bitwarden desktop `.deb` system-wide on x86_64 `desktop` workstations (users sign in themselves) and its polkit unlock policy, so the app never runs `pkexec` itself |
 | `litra_cli_enabled` | from hardware profile (`false` unless the profile sets `litra_cli: true`, as `deskmeet-b760` does) | Install the `litra` CLI to control Logitech Litra lightbars |
 | `logitech_g604_enabled` | from hardware profile (`false` unless the profile sets `logitech_g604: true`, as `deskmeet-b760` does) | Map the G604 wheel tilt to copy/paste and thumb button 3 to a Litra lightbar toggle while the mouse is attached |
