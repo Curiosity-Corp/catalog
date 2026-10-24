@@ -128,6 +128,52 @@
     - /usr/lib/firefox/distribution/policies.json
 
 # =============================================================================
+# Chromium-family managed policy — Bitwarden Extension
+# =============================================================================
+# Same job as the Firefox policy above for Chrome, Edge and Brave: one
+# root-owned managed-policy file per installed browser force-installs the
+# Bitwarden extension from that browser's own store. The file is named
+# 20-bitwarden-extension.json so it never replaces another policy file; a
+# browser keeps only the last file that sets a given policy, so any other file
+# that sets ExtensionInstallForcelist must list the Bitwarden entry too.
+# Skipped for a browser that is not installed, and everywhere when
+# bitwarden_browser_extensions_enabled is false.
+# =============================================================================
+
+- name: Detect installed Chromium-family browsers for the Bitwarden extension
+  ansible.builtin.stat:
+    path: "{{ item.binary }}"
+  loop: "{{ bitwarden_chromium_extension_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _bitwarden_browser_binaries
+  when: bitwarden_browser_extensions_enabled | default(true) | bool
+
+- name: Ensure Chromium-family managed policy directories exist
+  ansible.builtin.file:
+    path: "{{ item.policy_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ (_bitwarden_browser_binaries | default({})).results | default([]) | selectattr('stat', 'defined') | selectattr('stat.exists') | map(attribute='item') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: bitwarden_browser_extensions_enabled | default(true) | bool
+
+- name: Force-install the Bitwarden extension in Chromium-family browsers
+  ansible.builtin.copy:
+    content: "{{ {'ExtensionInstallForcelist': [item.extension_id ~ ';' ~ item.update_url]} | to_nice_json }}\n"
+    dest: "{{ item.policy_dir }}/20-bitwarden-extension.json"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ (_bitwarden_browser_binaries | default({})).results | default([]) | selectattr('stat', 'defined') | selectattr('stat.exists') | map(attribute='item') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: bitwarden_browser_extensions_enabled | default(true) | bool
+
+# =============================================================================
 # Snap Firefox — custom CA trust
 # =============================================================================
 # Snap Firefox is sandboxed and may not read the host CA store. Add configured
