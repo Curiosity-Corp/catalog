@@ -19,6 +19,8 @@
           - workstation_storage_users | map(attribute='name') | reject('match', '^[a-z_][a-z0-9_-]*$') | list | length == 0
           - workstation_storage_backup_repo is match('^/[A-Za-z0-9/_.-]+$')
           - workstation_storage_backup_min_free_gb | string is match('^[1-9][0-9]*$')
+          - workstation_storage_extra_mounts | map(attribute='subvol') | reject('match', '^@[A-Za-z0-9_-]+$') | list | length == 0
+          - workstation_storage_extra_mounts | map(attribute='path') | reject('match', '^/[A-Za-z0-9/_.-]+$') | list | length == 0
         fail_msg: >-
           workstation_storage_* variables are invalid: UUIDs must be lowercase
           hex, users must be a non-empty list of {name: ...}, paths absolute.

@@ -23,6 +23,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `workstation_storage_extra_mounts`: further subvolumes of the encrypted data volume (for example `/var/tmp` and `/var/lib/containers`) are kept in the managed fstab block after the cutover, so hot write paths moved off the OS drive by hand become reproducible; the role refuses a missing subvolume and removes the hand-added duplicate lines.
 - `zam-plugins` joins `streamstack_packages`: the gate, de-esser, compressor and limiter of the StreamStack voice chain.
 - StreamStack hosts: the call users in `streamstack_video_group_users` (default `mrh`, `seantech`; accounts absent from the host are skipped, never created) join the `video` group so apps can open `/dev/video43` "StreamStack Camera" and the Cam Link without a logind seat.
 - Bitwarden browser extension force-installed in Chrome, Edge and Brave, as the Firefox policy already did for Firefox: one root-owned `20-bitwarden-extension.json` managed-policy file per installed browser (`bitwarden_browser_extensions_enabled`, `bitwarden_chromium_extension_targets`; `tasks/collaboration.yml`, `docs/configuration.md`). Browsers that are already running install it without a restart; set the switch to `false` where automation-driven browsers must not see Bitwarden's first-run tab

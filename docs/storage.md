@@ -11,6 +11,7 @@ is true in host variables.
 | Item | Where |
 |---|---|
 | OS, `/boot`, `/boot/efi`, `/var`, `/opt`, swap | stays on the OS drive |
+| Hot write paths (optional) | one subvolume each from `workstation_storage_extra_mounts`; dm313red moves `/var/tmp` (`@var-tmp`) and `/var/lib/containers` (`@containers`) |
 | `/home` | `@home` subvolume on the data volume (`nodev,nosuid`) |
 | Per-user home | nested subvolume `@home/<user>`, one per account in `workstation_storage_users` |
 | Snapshots | `@snapshots`, mounted at `/.snapshots` |
@@ -35,6 +36,14 @@ the role. See `roles/workstation_storage/defaults/main.yml`.
   path), `workstation_storage_luks_size`, `workstation_storage_luks_key_file`
   (root-only passphrase file): partition, encrypt and format a blank device.
   `hh-storage-provision` refuses a device with any signature or partition.
+- `workstation_storage_extra_mounts` (list of `{subvol, path, options?}`): more
+  subvolumes of the data volume mounted outside `/home`, written into the
+  managed fstab block after the cutover with `nofail` and a dependency on the
+  crypt unit. The role never creates or fills them; it fails if the subvolume
+  is missing. Create it, copy the data with `rsync -aHAX`, then list it. They are
+  not snapshotted or backed up (scratch and rebuildable image data). Lines
+  added by hand below the managed block (`subvol=` as the first option) are
+  removed when the role adopts the same path.
 
 ## Before the cutover
 

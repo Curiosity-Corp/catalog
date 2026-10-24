@@ -13,6 +13,13 @@ workstation_storage_data_mount: /mnt/hh-data
 workstation_storage_mount_options: noatime,compress=zstd:1,discard=async
 workstation_storage_mount_extra: nofail,x-systemd.device-timeout=60s
 
+# Further subvolumes of the data volume mounted outside /home, for example hot
+# write paths moved off the OS drive. Each item is {subvol, path, options};
+# options are added to the common mount options (containers need suid/dev, so
+# there is no default). The role mounts them only after the cutover and never
+# creates or fills them: create the subvolume and copy the data first.
+workstation_storage_extra_mounts: []
+
 # Accounts whose /home/<user> is a per-user btrfs subvolume (@home/<user>).
 workstation_storage_users: []
 # Hourly snapshot retention. A user can override it with a `retention` key.

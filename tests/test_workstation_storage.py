@@ -120,3 +120,24 @@ def test_postreboot_enables_timers_and_runs_a_strict_frozen_source_compare() -> 
     assert "systemctl enable --now hh-btrbk.timer hh-backup.timer hh-btrfs-scrub.timer" in text
     assert "remount,ro,bind" in text and ".cutover-*" in text and "-c --delete" in text
     assert text.index("step strict") < text.index("step scrub")
+
+
+def test_extra_mounts_render_into_the_managed_block_and_replace_hand_lines() -> None:
+    import jinja2
+
+    assert DEFAULTS["workstation_storage_extra_mounts"] == []
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(ROLE / "templates")), keep_trailing_newline=True, trim_blocks=True)  # Ansible defaults
+    variables = dict(DEFAULTS, workstation_storage_fs_uuid="u", workstation_storage_extra_mounts=[
+        {"subvol": "@var-tmp", "path": "/var/tmp", "options": "nodev,nosuid"},
+        {"subvol": "@containers", "path": "/var/lib/containers"},
+    ])
+    lines = env.get_template("fstab-entries.j2").render(**variables).strip().splitlines()
+    assert len(lines) == 5
+    tmp, containers = lines[3].split(), lines[4].split()
+    assert tmp[1] == "/var/tmp" and "nodev,nosuid,subvol=@var-tmp," in tmp[3]
+    assert containers[1] == "/var/lib/containers" and "nodev" not in containers[3]
+    for fields in (tmp, containers):
+        assert not fields[3].startswith("subvol="), "managed lines must not match the hand-line migration regex"
+        assert "nofail" in fields[3] and "x-systemd.requires=systemd-cryptsetup@crypthome.service" in fields[3]
+    removal = AFTER_TEXT.index("Drop hand-added copies of the extra mounts")
+    assert AFTER_TEXT.index("Refuse to mount a subvolume") < removal < AFTER_TEXT.index("Keep the data volume mounts in fstab")
