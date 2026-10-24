@@ -6,5 +6,7 @@ RequiresMountsFor=/mnt/hh-data
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/btrbk -c /etc/btrbk/hh-storage.conf run
+MemoryHigh=512M
+MemoryMax=1G
 Nice=10
 IOSchedulingClass=idle
