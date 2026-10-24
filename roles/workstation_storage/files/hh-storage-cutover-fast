@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# CEO-ordered fast cutover (2026-10-24): same steps as hh-storage-cutover, but the full-home
+# checksum verify is replaced by a read-only bind of /home plus a fast sanity check, because
+# live writers (kubectl/okto caches, timestamp-only churn) aborted three checksum runs.
+# The old /home stays intact on the OS drive as the rollback source.
+set -uo pipefail
+CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
+# shellcheck source=/dev/null
+. "$CONF" || { echo "cannot read $CONF" >&2; exit 2; }
+[ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 2; }
+ts=$(date +%Y%m%dT%H%M%S)
+LOG="$HH_STATE/logs/cutover-fast-$ts.log"
+say() { echo "[$(date +%T)] $*" | tee -a "$LOG"; }
+RO_BOUND=0
+die() {
+  say "ABORT: $*  (fstab/crypttab untouched; old /home intact)"
+  if [ "$RO_BOUND" -eq 1 ]; then umount /home 2>>"$LOG" && say "read-only bind removed"; fi
+  exit 1
+}
+staged_fstab="$HH_STATE/staged/fstab"
+staged_crypttab="$HH_STATE/staged/crypttab"
+
+[ ! -e "$HH_MARKER" ] || die "cutover marker already exists"
+[ -s "$staged_fstab" ] && [ -s "$staged_crypttab" ] || die "staged files missing"
+grep -q "UUID=$HH_FS_UUID" "$staged_fstab" || die "staged fstab lacks the fs UUID"
+grep -q "UUID=$HH_LUKS_UUID" "$staged_crypttab" || die "staged crypttab lacks the luks UUID"
+grep -q nofail "$staged_crypttab" || die "staged crypttab lacks nofail"
+[ "$(findmnt -n -o UUID "$HH_DATA_MOUNT")" = "$HH_FS_UUID" ] || die "$HH_DATA_MOUNT is not the expected filesystem"
+cryptsetup luksDump "/dev/disk/by-uuid/$HH_LUKS_UUID" 2>/dev/null | grep -q systemd-tpm2 || die "no TPM2 token"
+say "preflight OK"
+
+say "stopping users"
+systemctl stop ansible-pull.timer ansible-pull.service curiosity-ansible-pull.timer curiosity-ansible-pull.service >>"$LOG" 2>&1 || true
+systemctl mask --runtime user@1000.service user@1001.service >>"$LOG" 2>&1 || true
+for u in $HH_HOME_USERS; do loginctl terminate-user "$u" 2>>"$LOG" || true; done
+sleep 3
+for u in $HH_HOME_USERS; do pkill -KILL -u "$u" 2>>"$LOG" || true; done
+sleep 2
+say "remaining user processes: $(for u in $HH_HOME_USERS; do pgrep -c -u "$u" || true; done | tr '\n' ' ')"
+
+say "binding /home read-only so writers fail loudly"
+mount --bind /home /home && mount -o remount,ro,bind /home || die "read-only bind failed"
+RO_BOUND=1
+findmnt -n -o TARGET,OPTIONS /home | tee -a "$LOG"
+if touch /home/mrh/.ro-test 2>/dev/null; then rm -f /home/mrh/.ro-test; die "/home is still writable"; fi
+say "/home is read-only"
+
+say "final copy (--delete, no checksum)"
+HH_STORAGE_CONF=$CONF /usr/local/sbin/hh-storage-sync final | tee -a "$LOG" || die "final copy failed"
+
+say "fast sanity check: counts, sizes, key paths"
+bad=0
+for u in $HH_HOME_USERS; do
+  src="/home/$u"; dst="$HH_DATA_MOUNT/@home/$u"
+  sc=$(find "$src" -xdev -not -type s -not -type p 2>/dev/null | wc -l)
+  dc=$(find "$dst" -xdev -not -type s -not -type p 2>/dev/null | wc -l)
+  ss=$(du -sxb --apparent-size "$src" 2>/dev/null | cut -f1)
+  ds=$(du -sxb --apparent-size "$dst" 2>/dev/null | cut -f1)
+  say "$u: files src=$sc dst=$dc ; bytes src=$ss dst=$ds"
+  diff=$(( sc > dc ? sc - dc : dc - sc ))
+  [ "$diff" -le $(( sc / 2000 + 3 )) ] || { say "$u: file count differs by $diff"; bad=1; }
+  bd=$(( ss > ds ? ss - ds : ds - ss ))
+  [ "$bd" -le $(( ss / 1000 + 1048576 )) ] || { say "$u: byte size differs by $bd"; bad=1; }
+  n=$(rsync -aHAXxn --no-D --delete --itemize-changes --numeric-ids "$src/" "$dst/" 2>/dev/null | grep -vc '^skipping')
+  say "$u: quick rsync dry-run (size/mtime, no checksum) pending entries = $n"
+  [ "$n" -le 5 ] || { say "$u: dry-run shows $n pending entries"; bad=1; }
+done
+for p in .ssh .config/hyperharness .local/state/triage repos; do
+  [ -e "$HH_DATA_MOUNT/@home/mrh/$p" ] || { say "missing on new volume: mrh/$p"; bad=1; }
+done
+[ "$bad" -eq 0 ] || die "sanity check failed"
+say "sanity check OK"
+
+say "baseline snapshots"
+for u in $HH_HOME_USERS; do
+  btrfs subvolume snapshot -r "$HH_DATA_MOUNT/@home/$u" "$HH_DATA_MOUNT/@snapshots/$u.cutover-$ts" >>"$LOG" 2>&1 || die "snapshot of $u failed"
+done
+sync
+say "installing fstab/crypttab"
+cp -a /etc/fstab /etc/fstab.pre-cutover && { cp -a /etc/crypttab /etc/crypttab.pre-cutover 2>/dev/null || true; }
+install -m 0644 "$staged_fstab" /etc/fstab.new && mv /etc/fstab.new /etc/fstab || die "fstab install failed"
+install -m 0644 "$staged_crypttab" /etc/crypttab.new && mv /etc/crypttab.new /etc/crypttab || { cp -a /etc/fstab.pre-cutover /etc/fstab; die "crypttab install failed, fstab restored"; }
+mkdir -p /etc/systemd/system/user@.service.d
+printf '[Unit]\nRequiresMountsFor=/home\n' >/etc/systemd/system/user@.service.d/10-require-home.conf
+systemctl daemon-reload
+findmnt --verify >>"$LOG" 2>&1 || say "warning: findmnt --verify reported issues (see log)"
+date -Is >"$HH_MARKER"
+say "cutover staged. Rollback: cp /etc/fstab.pre-cutover /etc/fstab; cp /etc/crypttab.pre-cutover /etc/crypttab; rm $HH_MARKER /etc/systemd/system/user@.service.d/10-require-home.conf"
+say "rebooting"
+systemctl reboot

@@ -63,7 +63,8 @@ manifest() {
 }
 
 stop_sessions() {
-  systemctl stop curiosity-ansible-pull.timer curiosity-ansible-pull.service 2>>"$LOG" || true
+  # ansible-pull must not run mid-cutover; the unit is ansible-pull.* (older hosts: curiosity-ansible-pull.*)
+  systemctl stop ansible-pull.timer ansible-pull.service curiosity-ansible-pull.timer curiosity-ansible-pull.service 2>>"$LOG" || true
   for u in $HH_HOME_USERS; do loginctl terminate-user "$u" 2>>"$LOG" || true; done
   for _ in $(seq 1 60); do
     busy=0

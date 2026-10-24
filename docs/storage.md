@@ -69,7 +69,7 @@ With the marker present the role keeps the active fstab/crypttab entries, a
 unmounted `/home`) and the timers `hh-btrbk.timer` (hourly snapshots),
 `hh-backup.timer` (nightly restic from the newest snapshot, refuses below
 `workstation_storage_backup_min_free_gb`) and `hh-btrfs-scrub.timer` (monthly).
-`hh-storage-postboot` checks the result; `hh-storage-postreboot` runs it, then a scrub and a full `restic check --read-data`, skips finished steps on a rerun, and reports whether a clean memory test was recorded (`/var/lib/hh-storage/ram-cleared`). Its header carries the rollback note. After the soak period
+`hh-storage-postboot` checks the result. `hh-storage-cutover-fast` is the variant used on dm313red on 2026-10-24: it makes `/home` read-only after stopping users and replaces the pre-switch checksum pass with counts, sizes and an mtime dry-run, leaving the exact compare to `hh-storage-postreboot`; `hh-storage-postreboot` enables the timers, runs it, compares the frozen old `/home` on the OS drive with the cutover baseline snapshots by full checksum (must be zero differences), then runs a scrub and a full `restic check --read-data`, skips finished steps on a rerun, and reports whether a clean memory test was recorded (`/var/lib/hh-storage/ram-cleared`). Its header carries the rollback note. After the soak period
 (`workstation_storage_soak_days`) `hh-storage-reclaim --confirm` removes the old
 copy of `/home` from the OS drive, once a backup less than two days old exists.
 
