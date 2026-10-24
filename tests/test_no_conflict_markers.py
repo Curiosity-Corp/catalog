@@ -1,7 +1,7 @@
 """Fail when a tracked text file still contains git merge-conflict markers."""
 
+import os
 import re
-import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,11 +10,16 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKER = re.compile(r"^(?:(?:<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)(?: |$)|======= )")
 
 
+SKIP_DIRS = {".git", ".ci-venv", ".venv", "node_modules", "__pycache__", ".pytest_cache"}
+
+
 def tracked_files() -> list[Path]:
-    out = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True
-    ).stdout
-    return [ROOT / p for p in out.decode().split("\0") if p]
+    """Walk the checkout; the CI image has no git binary."""
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        found.extend(Path(dirpath) / name for name in filenames)
+    return found
 
 
 def test_no_leftover_conflict_markers() -> None:
