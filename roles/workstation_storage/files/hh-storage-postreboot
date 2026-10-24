@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Run once after the cutover reboot; safe to run again (finished steps are skipped).
+#   1. verify   the new layout (hh-storage-postboot, read-only)
+#   2. scrub    the data volume (no checksum errors)
+#   3. restic   full read-data check of the backup repository
+#   4. ram      report whether the operator recorded a clean memory test
+# Run it under caps:  systemd-run --wait -p MemoryHigh=6G -p MemoryMax=10G hh-storage-postreboot
+# Roll back (before the soak ends, nothing was deleted from the OS drive):
+#   restore /etc/fstab.pre-cutover and /etc/crypttab.pre-cutover, remove
+#   /var/lib/hh-storage/cutover-complete and /etc/systemd/system/user@.service.d/10-require-home.conf,
+#   then reboot. The old /home on the OS drive is untouched until hh-storage-reclaim --confirm.
+set -uo pipefail
+CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
+# shellcheck source=/dev/null
+. "$CONF" || { echo "cannot read $CONF" >&2; exit 2; }
+[ -e "$HH_MARKER" ] || { echo "no cutover marker: nothing to verify" >&2; exit 2; }
+D="$HH_STATE/postreboot"
+mkdir -p "$D"
+fail=0
+step() { # name, command...
+  local name=$1; shift
+  if [ -e "$D/$name.done" ]; then printf 'skip  %s (done %s)\n' "$name" "$(cat "$D/$name.done")"; return; fi
+  if "$@"; then date -Is >"$D/$name.done"; printf 'ok    %s\n' "$name"; else printf 'FAIL  %s\n' "$name"; fail=1; fi
+}
+# The health check is cheap and must hold on every run, so it is never skipped.
+if /usr/local/sbin/hh-storage-postboot; then printf 'ok    verify\n'; else printf 'FAIL  verify\n'; fail=1; fi
+[ "$fail" -eq 0 ] || { echo "layout check failed; see the rollback note at the top of $0" >&2; exit 1; }
+step scrub btrfs scrub start -B -c 3 "$HH_DATA_MOUNT"
+step restic env RESTIC_REPOSITORY="$HH_BACKUP_REPO" RESTIC_PASSWORD_FILE="$HH_BACKUP_PASSWORD_FILE" RESTIC_CACHE_DIR=/var/cache/hh-restic restic check --read-data
+if [ -e "$HH_STATE/ram-cleared" ]; then printf 'ok    ram (%s)\n' "$(cat "$HH_STATE/ram-cleared")"
+else printf 'WARN  ram: no clean memtest recorded; after memtest86+ passes run: date -Is > %s/ram-cleared\n' "$HH_STATE"; fail=1; fi
+if [ "$fail" -eq 0 ]; then date -Is >"$D/complete"; echo "complete: next is the soak, then hh-storage-reclaim --confirm"; fi
+exit "$fail"

@@ -100,3 +100,11 @@ def test_sync_has_a_stable_verify_that_reads_from_disk() -> None:
     assert "verify-stable" in text
     assert "drop_caches" in text
     assert text.index("drop_caches") < text.index('"$0" seed')
+
+
+def test_postreboot_is_idempotent_and_documents_the_rollback() -> None:
+    text = (FILES / "hh-storage-postreboot").read_text()
+    assert ".done" in text and "skip" in text
+    assert "fstab.pre-cutover" in text and "crypttab.pre-cutover" in text
+    assert "hh-storage-postboot" in text and "restic" in text and "scrub" in text
+    assert "hh-storage-postreboot" in (ROLE / "tasks" / "main.yml").read_text()
