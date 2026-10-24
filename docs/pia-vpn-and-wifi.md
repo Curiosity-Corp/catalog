@@ -87,6 +87,26 @@ Verified on the host with `systemctl restart piavpn` and with
 the daemon came back Connected on its own, Brave's cgroup exited through a PIA
 address, the host stayed on its normal line, and `oom_score_adj` read `-900`.
 
+#### What caused the memory exhaustion (found 2026-10-23)
+
+The machine was not leaking memory on its own. Between 17:45 and 18:30 three
+unbounded `sudo systemd-run` jobs launched from a session in
+`~/repos/hypervoid/overview` overlapped: `hh-seed`
+(`/var/lib/hh-storage/seed.sh`, 38.1G memory peak over 16 min),
+`hh-backup-test` (`/usr/local/sbin/hh-backup`, restic, 9.9G peak) and
+`hh-verify` (`hh-storage-sync verify`, 6G peak). None had `MemoryMax`, so
+together they used all 61G of RAM and the 16G of swap (`earlyoom` logged swap
+at 0% free). The kernel then killed small processes one after another
+(`piavpn`, claude sessions, `canonctl-ptp-webcam`, `ffmpeg`, `rsync`) before
+the jobs themselves ended with `Failed with result 'oom-kill'`. The 12 minute
+rhythm of the `piavpn` restarts matches those jobs, not a PIA problem.
+
+Follow-up for the owner of the `hh-*` scripts: launch them with
+`--property=MemoryMax=<limit>` (and `MemorySwapMax=0`) so a runaway job is
+killed inside its own cgroup instead of taking the host's services with it,
+and do not run the seed, backup and verify jobs at the same time. The
+`OOMScoreAdjust=-900` on `piavpn.service` above only protects the VPN daemon.
+
 ## Managed WiFi (netplan, NetworkManager renderer)
 
 Applied by `tasks/wifi-netplan.yml` when `wifi_ssid` is set. Supply `wifi_ssid`,
