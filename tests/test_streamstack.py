@@ -296,3 +296,15 @@ def test_the_property_location_reaches_the_settings_and_is_validated() -> None:
     assert not _location_ok(streamstack_latitude="0", streamstack_longitude="-181")
     assert not _location_ok(streamstack_latitude="40N", streamstack_longitude="74W")
     assert not _location_ok(streamstack_property="Bob's place")
+
+
+def test_call_users_join_the_video_group_without_creating_accounts() -> None:
+    assert DEFAULTS["streamstack_video_group_users"] == ["mrh", "seantech"]
+    task = _task("Let the call users open the StreamStack cameras")
+    user = task["ansible.builtin.user"]
+    assert user["groups"] == "video"
+    assert user["append"] is True, "append keeps every other group of the account"
+    # Only accounts that exist: ansible.builtin.user would create the others.
+    assert "select('in', getent_passwd.keys())" in task["loop"]
+    lookup = _task("Look up the accounts on this host")["ansible.builtin.getent"]
+    assert lookup["database"] == "passwd"
