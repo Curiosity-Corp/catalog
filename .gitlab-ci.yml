@@ -30,7 +30,20 @@ variables:
     - export PATH="$CI_PROJECT_DIR/.ci-venv/bin:$PATH"
     - python -m pip install --upgrade pip
     - python -m pip install ansible-core ansible-lint yamllint pyyaml pytest
-    - ansible-galaxy collection install -r requirements.yml
+    # galaxy.ansible.com occasionally resets the connection mid-download, and a
+    # single failed job cancels the rest of the pipeline, so retry a few times.
+    - |
+      attempt=1
+      until ansible-galaxy collection install -r requirements.yml; do
+        rc=$?
+        if [ "$attempt" -ge 3 ]; then
+          echo "ansible-galaxy collection install failed after $attempt attempts (exit $rc)" >&2
+          exit "$rc"
+        fi
+        echo "ansible-galaxy collection install attempt $attempt failed (exit $rc); retrying in 10s" >&2
+        attempt=$((attempt + 1))
+        sleep 10
+      done
 
 # One pipeline per change: merge request pipelines for feature branches, branch
 # pipelines only for the default branch. A plain push to a branch that has (or
