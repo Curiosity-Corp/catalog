@@ -1,0 +1,10 @@
+# Managed by Ansible (developer_workstation: pia-vpn.yml). Do not edit.
+# 2026-10-23: the kernel OOM killer killed piavpn.service three times; systemd
+# restarted it but PIA came back Disconnected (the GUI that auto-connects was
+# also dead), leaving Brave blocked by the killswitch. Reconnect on every
+# daemon start and make the daemon a last-choice OOM victim.
+[Service]
+OOMScoreAdjust={{ pia_daemon_oom_score_adjust }}
+{% if pia_autoconnect_on_daemon_start | bool %}
+ExecStartPost=-/usr/bin/timeout 90 /bin/sh -c 'for i in $(seq 1 45); do /opt/piavpn/bin/piactl -t 3 get connectionstate >/dev/null 2>&1 && break; sleep 1; done; /opt/piavpn/bin/piactl connect'
+{% endif %}
