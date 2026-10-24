@@ -1355,6 +1355,9 @@ streamstack_packages:
   - easyeffects
   - lsp-plugins-lv2
   - calf-plugins
+  # ZamGate, ZamDynamicEQ, ZamComp and ZaMaximX2: the gate, de-esser, compressor
+  # and limiter of StreamStack's voice chain (docs/audio-chain.md upstream).
+  - zam-plugins
   - qpwgraph
   - pavucontrol
   - pulseaudio-utils

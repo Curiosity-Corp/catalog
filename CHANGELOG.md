@@ -23,6 +23,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `zam-plugins` joins `streamstack_packages`: the gate, de-esser, compressor and limiter of the StreamStack voice chain.
 - StreamStack hosts: the call users in `streamstack_video_group_users` (default `mrh`, `seantech`; accounts absent from the host are skipped, never created) join the `video` group so apps can open `/dev/video43` "StreamStack Camera" and the Cam Link without a logind seat.
 - Bitwarden browser extension force-installed in Chrome, Edge and Brave, as the Firefox policy already did for Firefox: one root-owned `20-bitwarden-extension.json` managed-policy file per installed browser (`bitwarden_browser_extensions_enabled`, `bitwarden_chromium_extension_targets`; `tasks/collaboration.yml`, `docs/configuration.md`). Browsers that are already running install it without a restart; set the switch to `false` where automation-driven browsers must not see Bitwarden's first-run tab
 - PIA VPN daemon settings (`tasks/pia-vpn.yml`): Brave-only include split tunnel, split DNS, `auto` killswitch and a persistent daemon, converged idempotently from `piactl dump daemon-settings`; login only from a root-only `pia_login_file`. Managed WiFi profile (`tasks/wifi-netplan.yml`): an interface-agnostic `wl*` netplan profile with a system-owned PSK that replaces legacy interface-pinned files, after a card slot change left a pinned profile orphaned. See `docs/pia-vpn-and-wifi.md`.
