@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Run once after the cutover reboot; safe to run again (finished steps are skipped).
-#   1. verify   the new layout (hh-storage-postboot, read-only)
-#   2. scrub    the data volume (no checksum errors)
-#   3. restic   full read-data check of the backup repository
-#   4. ram      report whether the operator recorded a clean memory test
+#   1. timers   enable the snapshot, backup and scrub timers (idempotent, every run)
+#   2. verify   the new layout (hh-storage-postboot, read-only)
+#   3. strict   full-checksum compare of the frozen old /home on the OS drive against the
+#               cutover baseline snapshots: must be 0 differing entries
+#   4. scrub    the data volume (no checksum errors)
+#   5. restic   full read-data check of the backup repository
+#   6. ram      report whether the operator recorded a clean memory test
 # Run it under caps:  systemd-run --wait -p MemoryHigh=6G -p MemoryMax=10G hh-storage-postreboot
 # Roll back (before the soak ends, nothing was deleted from the OS drive):
 #   restore /etc/fstab.pre-cutover and /etc/crypttab.pre-cutover, remove
@@ -22,9 +25,29 @@ step() { # name, command...
   if [ -e "$D/$name.done" ]; then printf 'skip  %s (done %s)\n' "$name" "$(cat "$D/$name.done")"; return; fi
   if "$@"; then date -Is >"$D/$name.done"; printf 'ok    %s\n' "$name"; else printf 'FAIL  %s\n' "$name"; fail=1; fi
 }
-# The health check is cheap and must hold on every run, so it is never skipped.
+# Timers and the health check are cheap and must hold on every run, so they are never skipped.
+systemctl enable --now hh-btrbk.timer hh-backup.timer hh-btrfs-scrub.timer >/dev/null 2>&1 && printf 'ok    timers\n' || { printf 'FAIL  timers\n'; fail=1; }
 if /usr/local/sbin/hh-storage-postboot; then printf 'ok    verify\n'; else printf 'FAIL  verify\n'; fail=1; fi
 [ "$fail" -eq 0 ] || { echo "layout check failed; see the rollback note at the top of $0" >&2; exit 1; }
+# The old /home is hidden under the new mount and nobody writes to it after the cutover, so a
+# checksum compare against the baseline snapshot taken right after the final copy is exact.
+strict() {
+  local o=/run/hh-oldroot u snap out n rc=0
+  mkdir -p "$o"
+  mount --bind / "$o" && mount -o remount,ro,bind "$o" || return 1
+  for u in $HH_HOME_USERS; do
+    snap=$(ls -1d "$HH_SNAPSHOT_DIR/$u".cutover-* 2>/dev/null | tail -1)
+    if [ ! -d "$o/home/$u" ] || [ -z "$snap" ]; then echo "strict $u: old home or cutover snapshot missing"; rc=1; continue; fi
+    out="$HH_STATE/logs/strict-postcutover-$u.diff"
+    rsync -aHAXxn --no-D -c --delete --itemize-changes "$o/home/$u/" "$snap/" >"$out" 2>&1 || rc=1
+    n=$(grep -cvE '^skipping non-regular file' "$out")
+    echo "strict $u: differing entries=$n (detail: $out)"
+    [ "$n" -eq 0 ] || rc=1
+  done
+  umount "$o"
+  return "$rc"
+}
+step strict strict
 step scrub btrfs scrub start -B -c 3 "$HH_DATA_MOUNT"
 step restic env RESTIC_REPOSITORY="$HH_BACKUP_REPO" RESTIC_PASSWORD_FILE="$HH_BACKUP_PASSWORD_FILE" RESTIC_CACHE_DIR=/var/cache/hh-restic restic check --read-data
 if [ -e "$HH_STATE/ram-cleared" ]; then printf 'ok    ram (%s)\n' "$(cat "$HH_STATE/ram-cleared")"

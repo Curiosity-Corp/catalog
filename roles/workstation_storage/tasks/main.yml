@@ -57,6 +57,7 @@
         - hh-storage-cutover
         - hh-storage-postboot
         - hh-storage-postreboot
+        - hh-storage-cutover-fast
         - hh-storage-reclaim
         - hh-storage-provision
         - hh-backup

@@ -108,3 +108,15 @@ def test_postreboot_is_idempotent_and_documents_the_rollback() -> None:
     assert "fstab.pre-cutover" in text and "crypttab.pre-cutover" in text
     assert "hh-storage-postboot" in text and "restic" in text and "scrub" in text
     assert "hh-storage-postreboot" in (ROLE / "tasks" / "main.yml").read_text()
+
+
+def test_cutover_stops_the_real_ansible_pull_unit() -> None:
+    for name in ("hh-storage-cutover", "hh-storage-cutover-fast"):
+        assert "systemctl stop ansible-pull.timer ansible-pull.service" in (FILES / name).read_text()
+
+
+def test_postreboot_enables_timers_and_runs_a_strict_frozen_source_compare() -> None:
+    text = (FILES / "hh-storage-postreboot").read_text()
+    assert "systemctl enable --now hh-btrbk.timer hh-backup.timer hh-btrfs-scrub.timer" in text
+    assert "remount,ro,bind" in text and ".cutover-*" in text and "-c --delete" in text
+    assert text.index("step strict") < text.index("step scrub")
