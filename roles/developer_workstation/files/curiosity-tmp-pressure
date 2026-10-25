@@ -2,21 +2,28 @@
 # Managed by curiosity.workstation. Relieve /tmp pressure with systemd-tmpfiles.
 #
 # Run hourly by curiosity-tmp-pressure.timer. When the filesystem holding /tmp
-# is at or above the threshold, it
+# is at or above the block threshold (`df -P`) or the inode threshold
+# (`df -iP`), it
 #   1. runs the standard age-based cleanup scoped to /tmp
 #      (`systemd-tmpfiles --clean --prefix=/tmp`), then
-#   2. if usage is still at or above the threshold and an aggressive config is
+#   2. if either is still at or above its threshold and an aggressive config is
 #      supplied, runs one shorter-age pass scoped to /tmp. The config's static
 #      exclusions are merged at run time with every x/X rule under /tmp that
 #      installed packages ship, so live sockets and session directories keep
 #      their protection, and the merged file lives in the unit's runtime
 #      directory (never in /tmp and never in tmpfiles.d).
 # It never deletes by name pattern and never touches anything outside /tmp.
-# A pass that cannot reduce usage below the threshold logs a warning and the
+# A pass that cannot reduce usage below the thresholds logs a warning and the
 # service still exits 0; nothing here is fatal to the machine.
 #
+# A tmpfs runs out of inodes long before blocks when it holds many tiny files
+# (agent session trees, pytest directories, virtualenvs), so both are watched.
+# Filesystems that do not report inodes (`df -iP` prints `-`) are judged on
+# blocks alone.
+#
 # Environment:
-#   TMP_PRESSURE_THRESHOLD  percent (1-100), default 85
+#   TMP_PRESSURE_THRESHOLD        block percent (1-100), default 85
+#   TMP_PRESSURE_INODE_THRESHOLD  inode percent (1-100), default the block one
 #   TMP_PRESSURE_CONFIG     tmpfiles.d-format file for the aggressive pass;
 #                           empty or unset disables the second pass
 #   TMP_PRESSURE_PATH       directory to watch, default /tmp
@@ -27,6 +34,7 @@ set -euo pipefail
 
 TARGET="${TMP_PRESSURE_PATH:-/tmp}"
 THRESHOLD="${TMP_PRESSURE_THRESHOLD:-85}"
+INODE_THRESHOLD="${TMP_PRESSURE_INODE_THRESHOLD:-$THRESHOLD}"
 CONFIG="${TMP_PRESSURE_CONFIG:-}"
 
 # Under systemd, stdout goes to the journal and a <N> prefix sets the priority.
@@ -41,12 +49,16 @@ die() {
     exit "${2:-1}"
 }
 
-case "$THRESHOLD" in
-'' | *[!0-9]*) die "TMP_PRESSURE_THRESHOLD must be an integer, got '${THRESHOLD}'" 2 ;;
-esac
-if [ "$THRESHOLD" -lt 1 ] || [ "$THRESHOLD" -gt 100 ]; then
-    die "TMP_PRESSURE_THRESHOLD must be between 1 and 100, got '${THRESHOLD}'" 2
-fi
+check_percent() {
+    case "$2" in
+    '' | *[!0-9]*) die "$1 must be an integer, got '$2'" 2 ;;
+    esac
+    if [ "$2" -lt 1 ] || [ "$2" -gt 100 ]; then
+        die "$1 must be between 1 and 100, got '$2'" 2
+    fi
+}
+check_percent TMP_PRESSURE_THRESHOLD "$THRESHOLD"
+check_percent TMP_PRESSURE_INODE_THRESHOLD "$INODE_THRESHOLD"
 
 usage_percent() {
     local pct
@@ -55,6 +67,38 @@ usage_percent() {
     '' | *[!0-9]*) return 1 ;;
     esac
     printf '%s' "$pct"
+}
+
+# Prints the inode percentage, or `-` when the filesystem does not report
+# inodes. Anything else is an error.
+inode_percent() {
+    local pct
+    pct=$(df -iP -- "$TARGET" | awk 'NR == 2 { gsub(/%/, "", $5); print $5 }') || return 1
+    case "$pct" in
+    -) ;;
+    '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "$pct"
+}
+
+# True when blocks ($1) or inodes ($2, possibly `-`) are at or above threshold.
+over_threshold() {
+    [ "$1" -ge "$THRESHOLD" ] && return 0
+    [ "$2" != - ] && [ "$2" -ge "$INODE_THRESHOLD" ]
+}
+
+# "90% blocks, 97% inodes" or "90% blocks, inodes not reported".
+describe() {
+    if [ "$2" = - ]; then
+        printf '%s%% blocks, inodes not reported' "$1"
+    else
+        printf '%s%% blocks, %s%% inodes' "$1" "$2"
+    fi
+}
+
+measure() {
+    blocks=$(usage_percent) || die "cannot determine usage of ${TARGET}${1}"
+    inodes=$(inode_percent) || die "cannot determine inode usage of ${TARGET}${1}"
 }
 
 # A nonzero exit (for example from an unrelated package config problem) must
@@ -94,29 +138,35 @@ aggressive_pass() {
     fi
 }
 
-before=$(usage_percent) || die "cannot determine usage of ${TARGET}"
-if [ "$before" -lt "$THRESHOLD" ]; then
+measure ""
+before=$blocks ibefore=$inodes
+if ! over_threshold "$before" "$ibefore"; then
     exit 0
 fi
 
-log "${TARGET} at ${before}% (threshold ${THRESHOLD}%): running age-based cleanup"
+thresholds="thresholds ${THRESHOLD}% blocks, ${INODE_THRESHOLD}% inodes"
+log "${TARGET} at $(describe "$before" "$ibefore") (${thresholds}): running age-based cleanup"
 run_tmpfiles
-after=$(usage_percent) || die "cannot determine usage of ${TARGET} after cleanup"
-log "${TARGET} at ${after}% after the standard age-based pass"
+measure " after cleanup"
+log "${TARGET} at $(describe "$blocks" "$inodes") after the standard age-based pass"
 
-if [ "$after" -ge "$THRESHOLD" ]; then
+if over_threshold "$blocks" "$inodes"; then
     if [ -z "$CONFIG" ]; then
-        warn "${TARGET} still at ${after}%: no aggressive pass configured"
+        warn "${TARGET} still at $(describe "$blocks" "$inodes"): no aggressive pass configured"
     elif [ ! -r "$CONFIG" ]; then
-        warn "${TARGET} still at ${after}%: aggressive config ${CONFIG} is not readable"
+        warn "${TARGET} still at $(describe "$blocks" "$inodes"): aggressive config ${CONFIG} is not readable"
     else
-        log "${TARGET} still at ${after}%: running shorter-age pass from ${CONFIG}"
+        log "${TARGET} still at $(describe "$blocks" "$inodes"): running shorter-age pass from ${CONFIG}"
         aggressive_pass
-        after=$(usage_percent) || die "cannot determine usage of ${TARGET} after cleanup"
+        measure " after cleanup"
     fi
 fi
 
-if [ "$after" -ge "$THRESHOLD" ]; then
-    warn "${TARGET} still at ${after}% (threshold ${THRESHOLD}%): nothing more can be removed safely; investigate large recent files"
+if over_threshold "$blocks" "$inodes"; then
+    warn "${TARGET} still at $(describe "$blocks" "$inodes") (${thresholds}): nothing more can be removed safely; investigate large recent files or directories with many small files"
 fi
-log "cleanup done: ${before}% -> ${after}%"
+if [ "$ibefore" = - ] || [ "$inodes" = - ]; then
+    log "cleanup done: blocks ${before}% -> ${blocks}%, inodes not reported"
+else
+    log "cleanup done: blocks ${before}% -> ${blocks}%, inodes ${ibefore}% -> ${inodes}%"
+fi
