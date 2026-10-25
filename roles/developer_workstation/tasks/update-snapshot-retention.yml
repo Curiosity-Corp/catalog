@@ -1,0 +1,94 @@
+---
+# =============================================================================
+# Count-based retention for local update snapshots
+# =============================================================================
+# update-foundation.yml copies every managed binary into
+# snapshots/<run_id> before each pull (several GB per run). Rollback restores
+# only from the current run's snapshot (workstation_update_snapshot_dir), and
+# the quarantine marker names the run whose transaction failed. This file is
+# included by update-transaction.yml only after the transaction block has
+# finished without entering rescue, so a failed or rolled-back run never prunes
+# anything. It keeps the newest workstation_update_snapshot_keep snapshots and
+# never removes the current run's snapshot or the one a quarantine marker
+# still names. Directories whose names are not <epoch>-<suffix> run IDs are
+# left alone. The age-based workstation_update_snapshot_retention pass in
+# update-foundation.yml still applies on top of this.
+# =============================================================================
+
+- name: Find local update snapshots for count-based retention
+  ansible.builtin.find:
+    paths: "{{ workstation_update_state_dir }}/snapshots"
+    file_type: directory
+    recurse: false
+    use_regex: true
+    patterns:
+      - '^[0-9]+-[0-9A-Za-z]+$'
+  register: _workstation_update_snapshot_candidates
+
+- name: Check for a quarantine marker that still names a snapshot
+  ansible.builtin.stat:
+    path: "{{ workstation_update_state_dir }}/quarantine.json"
+  register: _workstation_update_retention_quarantine
+
+- name: Read the quarantine marker before pruning snapshots
+  ansible.builtin.slurp:
+    src: "{{ workstation_update_state_dir }}/quarantine.json"
+  register: _workstation_update_retention_quarantine_content
+  when: _workstation_update_retention_quarantine.stat.exists | default(false)
+
+# A regex instead of from_json: a truncated or hand-edited marker must not fail
+# a pull whose transaction already succeeded. Any run_id it names is protected.
+# The expressions avoid backslash escapes, whose handling differs between
+# ansible-core templating versions.
+- name: Collect the snapshot run IDs that retention must never remove
+  ansible.builtin.set_fact:
+    _workstation_update_protected_run_ids: >-
+      {{ ([workstation_update_run_id | string | trim] +
+          ((_workstation_update_retention_quarantine_content.content | default('') | b64decode)
+           | regex_findall('"run_id"[^"]*"([^"]+)"')))
+         | map('trim') | reject('equalto', '') | unique | list }}
+
+# Order newest first by the epoch prefix of the run ID, then by directory
+# mtime as a tie-breaker. Both keys are zero-padded so a string sort is a
+# numeric sort even if the epoch ever changes width.
+- name: Build the snapshot retention order
+  ansible.builtin.set_fact:
+    _workstation_update_snapshot_order: >-
+      {{ _workstation_update_snapshot_order | default([]) + [
+        {
+          'path': item.path,
+          'run_id': item.path | basename,
+          'key': '%020d' | format((item.path | basename).split('-') | first | int)
+                 ~ '-' ~ '%020d' | format(item.mtime | default(0) | int)
+        }
+      ] }}
+  loop: "{{ _workstation_update_snapshot_candidates.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+# batch(N) | first is the newest N entries; everything else that is not
+# protected is pruned.
+- name: Select the newest update snapshots to keep
+  ansible.builtin.set_fact:
+    _workstation_update_snapshots_kept: >-
+      {{ (_workstation_update_snapshot_order | default([])
+          | sort(attribute='key', reverse=true)
+          | batch(workstation_update_snapshot_keep | int)
+          | first | default([]))
+         | map(attribute='run_id') | list }}
+
+- name: Select update snapshots beyond the retention count
+  ansible.builtin.set_fact:
+    _workstation_update_snapshots_to_prune: >-
+      {{ _workstation_update_snapshot_order | default([])
+         | rejectattr('run_id', 'in', _workstation_update_snapshots_kept + _workstation_update_protected_run_ids)
+         | sort(attribute='key')
+         | list }}
+
+- name: Delete update snapshots beyond the retention count
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _workstation_update_snapshots_to_prune }}"
+  loop_control:
+    label: "{{ item.run_id }}"

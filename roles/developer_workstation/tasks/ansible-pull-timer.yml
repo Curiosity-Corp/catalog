@@ -5,7 +5,7 @@
 # Sets up periodic ansible-pull runs for ongoing workstation updates.
 # Variables come from defaults/main.yml:
 #   ansible_pull_repo, ansible_pull_branch, ansible_pull_playbook,
-#   ansible_pull_interval, ansible_pull_dir
+#   ansible_pull_interval, ansible_pull_dir, workstation_ansible_pull_memory_high
 # =============================================================================
 
 - name: Create ansible-pull wrapper
@@ -88,6 +88,7 @@
       ExecStart=/usr/bin/flock -n /var/lock/ansible-pull.lock \
         /usr/local/sbin/curiosity-ansible-pull
       TimeoutStartSec=3600
+      MemoryHigh={{ workstation_ansible_pull_memory_high }}
       StandardOutput=journal
       StandardError=journal
     dest: /etc/systemd/system/ansible-pull.service

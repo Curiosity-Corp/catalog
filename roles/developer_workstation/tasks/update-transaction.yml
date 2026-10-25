@@ -36,3 +36,15 @@
         apply:
           tags: [always]
       tags: [always]
+
+# Reached only when the block above finished without entering rescue: the
+# rescue path restores the snapshot and then fails the pull, so a failed or
+# rolled-back transaction never prunes snapshots. Kept outside the block so a
+# pruning error can never trigger a rollback of a healthy update.
+- name: Prune old update snapshots after a successful transaction
+  ansible.builtin.include_tasks:
+    file: update-snapshot-retention.yml
+    apply:
+      tags: [always]
+  tags: [always]
+  when: (workstation_update_status | default('')) == 'success'
