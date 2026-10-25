@@ -10,6 +10,41 @@
     group: root
     mode: "0644"
 
+- name: Check that each extra mount's subvolume exists
+  ansible.builtin.stat:
+    path: "{{ workstation_storage_data_mount }}/{{ item.subvol }}"
+  loop: "{{ workstation_storage_extra_mounts }}"
+  register: workstation_storage_extra_subvols
+
+- name: Refuse to mount a subvolume that was never created
+  ansible.builtin.assert:
+    that: item.stat.isdir | default(false)
+    fail_msg: >-
+      {{ item.item.subvol }} does not exist on the data volume: create it and
+      copy {{ item.item.path }} into it before listing it in
+      workstation_storage_extra_mounts.
+  loop: "{{ workstation_storage_extra_subvols.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+# One-time migration: hot paths were first added by hand below the managed
+# block with "subvol=" as the first option. Managed lines start with the common
+# mount options instead, so this only removes the hand-added copies.
+- name: Drop hand-added copies of the extra mounts
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: "^UUID={{ workstation_storage_fs_uuid }}\\s+{{ item.path | regex_escape }}\\s+btrfs\\s+subvol="
+    state: absent
+  loop: "{{ workstation_storage_extra_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Drop the hand-added hot path comment
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: "# hot write paths on the 4 TB volume (subvolumes of hh-data)"
+    state: absent
+
 - name: Keep the data volume mounts in fstab
   ansible.builtin.blockinfile:
     path: /etc/fstab
@@ -28,13 +63,12 @@
     mode: "0644"
   notify: Reload systemd for storage units
 
-- name: Enable snapshot, backup and scrub timers
+- name: Enable the monthly scrub and the weekly trim
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
     state: started
     daemon_reload: true
   loop:
-    - hh-btrbk.timer
-    - hh-backup.timer
     - hh-btrfs-scrub.timer
+    - fstrim.timer

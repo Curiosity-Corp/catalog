@@ -1,3 +1,6 @@
 UUID={{ workstation_storage_fs_uuid }} {{ workstation_storage_data_mount }} btrfs {{ workstation_storage_mount_options }},nodev,nosuid,noexec,subvolid=5,{{ workstation_storage_mount_extra }} 0 0
 UUID={{ workstation_storage_fs_uuid }} /home btrfs {{ workstation_storage_mount_options }},nodev,nosuid,subvol=@home,{{ workstation_storage_mount_extra }} 0 0
 UUID={{ workstation_storage_fs_uuid }} /.snapshots btrfs {{ workstation_storage_mount_options }},nodev,nosuid,noexec,subvol=@snapshots,{{ workstation_storage_mount_extra }} 0 0
+{% for m in workstation_storage_extra_mounts %}
+UUID={{ workstation_storage_fs_uuid }} {{ m.path }} btrfs {{ workstation_storage_mount_options }},{{ (m.options ~ ',') if m.options | default('') else '' }}subvol={{ m.subvol }},{{ workstation_storage_mount_extra }},x-systemd.requires=systemd-cryptsetup@{{ workstation_storage_mapper }}.service 0 0
+{% endfor %}

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # After the soak period, free the old /home copy that is still on the OS
 # drive underneath the new /home mount. Refuses unless the new /home is
-# mounted, healthy and has a recent backup. Uses a bind mount of / to reach
+# mounted and healthy and the soak period is over (no backups are kept: GitLab
+# and chezmoi are the recovery path, see docs/storage.md). Uses a bind mount of / to reach
 # the shadowed directory.
 set -uo pipefail
 CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
@@ -13,8 +14,6 @@ CONF=${HH_STORAGE_CONF:-/etc/hh-storage/storage.conf}
 [ "$(findmnt -n -o UUID /home)" = "$HH_FS_UUID" ] || { echo "new /home not mounted" >&2; exit 1; }
 age=$(( $(date +%s) - $(date -d "$(cat "$HH_MARKER")" +%s) ))
 [ "$age" -ge $(( ${HH_SOAK_DAYS:-14} * 86400 )) ] || { echo "soak period (${HH_SOAK_DAYS:-14} days) not over" >&2; exit 1; }
-last=$(find "$HH_STATE/backup-ok" -mtime -2 2>/dev/null | head -1)
-[ -n "$last" ] || { echo "no successful backup in the last 2 days" >&2; exit 1; }
 tmp=$(mktemp -d); mount --bind / "$tmp" || exit 1
 trap 'umount "$tmp"; rmdir "$tmp"' EXIT
 find "$tmp/home" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system {} +

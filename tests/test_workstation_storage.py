@@ -42,7 +42,7 @@ def test_live_files_and_timers_only_after_the_cutover_marker() -> None:
     assert "when: workstation_storage_cutover.stat.exists" in MAIN_TEXT
     assert "path: /etc/fstab" in AFTER_TEXT
     assert "RequiresMountsFor=/home" in AFTER_TEXT
-    assert "hh-btrbk.timer" not in MAIN_TEXT.replace("hh-btrbk.timer\n", "")
+    assert "hh-btrfs-scrub.timer" in AFTER_TEXT and "fstrim.timer" in AFTER_TEXT
 
 
 def test_scripts_are_valid_bash() -> None:
@@ -70,11 +70,33 @@ def test_sync_never_deletes_in_seed_mode_and_never_writes_home() -> None:
     assert '"$src" "$dst"' in text
 
 
-def test_backup_reads_snapshots_and_refuses_low_space() -> None:
-    text = (FILES / "hh-backup").read_text()
-    assert "mount --bind -o ro" in text
-    assert "HH_BACKUP_MIN_FREE_GB" in text
-    assert "--exclude-caches" in text
+def test_no_snapshot_schedule_or_backup_ships() -> None:
+    # Workstations are disposable (ADMIRAL policy 6): GitLab and chezmoi are the
+    # recovery path, so the role ships no snapshot schedule and no backup.
+    for name in ("hh-backup", "hh-backup-excludes", "hh-backup.service", "hh-backup.timer", "hh-btrbk.service", "hh-btrbk.timer"):
+        assert not (FILES / name).exists(), name
+    assert not (ROLE / "templates/btrbk.conf.j2").exists()
+    for text in (MAIN_TEXT, AFTER_TEXT, (FILES / "hh-storage-postreboot").read_text()):
+        assert "restic init" not in text and "restic check" not in text
+        assert "enable --now hh-btrbk" not in text and "hh-backup.timer hh-btrfs" not in text
+    assert not any(k.startswith(("workstation_storage_backup", "workstation_storage_retention", "workstation_storage_snapshot")) for k in DEFAULTS)
+    enabled = AFTER_TEXT[AFTER_TEXT.index("Enable the monthly scrub and the weekly trim"):]
+    assert "hh-btrbk" not in enabled and "hh-backup" not in enabled
+
+
+def test_retired_timers_are_stopped_before_their_units_are_removed() -> None:
+    stop = MAIN_TEXT.index("Stop and disable retired snapshot and backup timers")
+    remove = MAIN_TEXT.index("Remove retired snapshot and backup units")
+    assert MAIN_TEXT.index("Look for retired snapshot and backup timers") < stop < remove
+    block = MAIN_TEXT[stop:remove]
+    assert "enabled: false" in block and "state: stopped" in block
+    for unit in ("hh-btrbk.timer", "hh-btrbk.service", "hh-backup.timer", "hh-backup.service"):
+        assert f"/etc/systemd/system/{unit}" in MAIN_TEXT[remove:]
+
+
+def test_crypttab_never_blocks_boot_on_the_data_volume() -> None:
+    entry = (ROLE / "templates/crypttab-entry.j2").read_text()
+    assert "nofail" in entry and "headless=true" in entry
 
 
 def test_provision_refuses_a_device_with_signatures() -> None:
@@ -84,13 +106,13 @@ def test_provision_refuses_a_device_with_signatures() -> None:
 
 
 def test_units_do_nothing_before_the_cutover() -> None:
-    for unit in ("hh-btrbk", "hh-backup", "hh-btrfs-scrub"):
+    for unit in ("hh-btrfs-scrub",):
         text = (FILES / f"{unit}.service").read_text()
         assert "ConditionPathExists=/var/lib/hh-storage/cutover-complete" in text
 
 
 def test_storage_units_are_memory_capped() -> None:
-    for unit in ("hh-btrbk", "hh-backup", "hh-btrfs-scrub"):
+    for unit in ("hh-btrfs-scrub",):
         text = (FILES / f"{unit}.service").read_text()
         assert "MemoryHigh=" in text and "MemoryMax=" in text
 
@@ -106,7 +128,7 @@ def test_postreboot_is_idempotent_and_documents_the_rollback() -> None:
     text = (FILES / "hh-storage-postreboot").read_text()
     assert ".done" in text and "skip" in text
     assert "fstab.pre-cutover" in text and "crypttab.pre-cutover" in text
-    assert "hh-storage-postboot" in text and "restic" in text and "scrub" in text
+    assert "hh-storage-postboot" in text and "scrub" in text
     assert "hh-storage-postreboot" in (ROLE / "tasks" / "main.yml").read_text()
 
 
@@ -117,6 +139,27 @@ def test_cutover_stops_the_real_ansible_pull_unit() -> None:
 
 def test_postreboot_enables_timers_and_runs_a_strict_frozen_source_compare() -> None:
     text = (FILES / "hh-storage-postreboot").read_text()
-    assert "systemctl enable --now hh-btrbk.timer hh-backup.timer hh-btrfs-scrub.timer" in text
+    assert "systemctl enable --now hh-btrfs-scrub.timer fstrim.timer" in text
     assert "remount,ro,bind" in text and ".cutover-*" in text and "-c --delete" in text
     assert text.index("step strict") < text.index("step scrub")
+
+
+def test_extra_mounts_render_into_the_managed_block_and_replace_hand_lines() -> None:
+    import jinja2
+
+    assert DEFAULTS["workstation_storage_extra_mounts"] == []
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(ROLE / "templates")), keep_trailing_newline=True, trim_blocks=True)  # Ansible defaults
+    variables = dict(DEFAULTS, workstation_storage_fs_uuid="u", workstation_storage_extra_mounts=[
+        {"subvol": "@var-tmp", "path": "/var/tmp", "options": "nodev,nosuid"},
+        {"subvol": "@containers", "path": "/var/lib/containers"},
+    ])
+    lines = env.get_template("fstab-entries.j2").render(**variables).strip().splitlines()
+    assert len(lines) == 5
+    tmp, containers = lines[3].split(), lines[4].split()
+    assert tmp[1] == "/var/tmp" and "nodev,nosuid,subvol=@var-tmp," in tmp[3]
+    assert containers[1] == "/var/lib/containers" and "nodev" not in containers[3]
+    for fields in (tmp, containers):
+        assert not fields[3].startswith("subvol="), "managed lines must not match the hand-line migration regex"
+        assert "nofail" in fields[3] and "x-systemd.requires=systemd-cryptsetup@crypthome.service" in fields[3]
+    removal = AFTER_TEXT.index("Drop hand-added copies of the extra mounts")
+    assert AFTER_TEXT.index("Refuse to mount a subvolume") < removal < AFTER_TEXT.index("Keep the data volume mounts in fstab")

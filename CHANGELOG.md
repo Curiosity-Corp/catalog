@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `workstation_storage` takes no snapshots and makes no backups: workstations are disposable, GitLab and chezmoi are the recovery path. The hourly btrbk snapshot timer, the nightly restic backup (`hh-backup`, its units, excludes and `btrbk.conf`) and the `workstation_storage_backup_*`, `_retention_default` and `_snapshot_min` variables are gone; hosts that had them get the timers stopped and disabled and the units removed (existing snapshot and restic data is left alone). After the cutover the role enables only `hh-btrfs-scrub.timer` and `fstrim.timer`, `hh-storage-postreboot` drops its restic check and `hh-storage-reclaim` no longer waits for a backup. The crypttab entry gains `nofail,headless=true`, so a missing or locked data volume never blocks boot.
 - earlyoom thresholds and `--prefer` / `--avoid` process-name regexes are now role variables (`earlyoom_mem_percent`, `earlyoom_swap_percent`, `earlyoom_prefer_regex`, `earlyoom_avoid_regex`). Defaults reproduce the previous `-m 5 -s 50` behavior. A workstation that runs long-lived agent sessions can make earlyoom kill browsers and Playwright before the agents after an out-of-memory incident.
 
 ### Fixed
@@ -23,6 +24,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `workstation_storage_extra_mounts`: further subvolumes of the encrypted data volume (for example `/var/tmp` and `/var/lib/containers`) are kept in the managed fstab block after the cutover, so hot write paths moved off the OS drive by hand become reproducible; the role refuses a missing subvolume and removes the hand-added duplicate lines.
 - `zam-plugins` joins `streamstack_packages`: the gate, de-esser, compressor and limiter of the StreamStack voice chain.
 - StreamStack hosts: the call users in `streamstack_video_group_users` (default `mrh`, `seantech`; accounts absent from the host are skipped, never created) join the `video` group so apps can open `/dev/video43` "StreamStack Camera" and the Cam Link without a logind seat.
 - Bitwarden browser extension force-installed in Chrome, Edge and Brave, as the Firefox policy already did for Firefox: one root-owned `20-bitwarden-extension.json` managed-policy file per installed browser (`bitwarden_browser_extensions_enabled`, `bitwarden_chromium_extension_targets`; `tasks/collaboration.yml`, `docs/configuration.md`). Browsers that are already running install it without a restart; set the switch to `false` where automation-driven browsers must not see Bitwarden's first-run tab

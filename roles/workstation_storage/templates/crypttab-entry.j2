@@ -1,1 +1,1 @@
-{{ workstation_storage_mapper }} UUID={{ workstation_storage_luks_uuid }} none luks{% if workstation_storage_tpm2 %},tpm2-device=auto{% endif %},discard,no-read-workqueue,no-write-workqueue
+{{ workstation_storage_mapper }} UUID={{ workstation_storage_luks_uuid }} none luks{% if workstation_storage_tpm2 %},tpm2-device=auto{% endif %},discard,no-read-workqueue,no-write-workqueue,nofail,headless=true

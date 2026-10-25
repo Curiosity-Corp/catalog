@@ -18,7 +18,7 @@ done
 btrfs filesystem show "$HH_DATA_MOUNT" >/dev/null 2>&1 && ok "btrfs readable" || bad "btrfs not readable"
 btrfs device stats "$HH_DATA_MOUNT" 2>/dev/null | awk '$2!=0{e=1} END{exit e}' && ok "btrfs device errors: none" || bad "btrfs device errors"
 systemctl is-active --quiet "user@$(id -u "${HH_HOME_USERS%% *}").service" && ok "user manager running" || bad "user manager not running"
-for t in hh-btrbk.timer hh-backup.timer hh-btrfs-scrub.timer; do
+for t in hh-btrfs-scrub.timer fstrim.timer; do
   systemctl is-enabled --quiet "$t" 2>/dev/null && ok "$t enabled" || bad "$t not enabled"
 done
 echo "next: restore sessions with 'hyperharness restore' (see the session manifest in $HH_STATE/manifests)"

@@ -3,7 +3,7 @@
 # packages, scripts, units and configs and stages fstab/crypttab; it never
 # touches the live /etc/fstab, /etc/crypttab, any mount or any session. After
 # the cutover marker exists it keeps the active entries and the timers in
-# place. See docs/storage.md.
+# place (scrub and trim only: no snapshots, no backups). See docs/storage.md.
 
 - name: Opt-in storage layout
   when: workstation_storage_enabled | bool
@@ -17,15 +17,15 @@
           - workstation_storage_data_mount is match('^/[A-Za-z0-9/_.-]+$')
           - workstation_storage_users | length > 0
           - workstation_storage_users | map(attribute='name') | reject('match', '^[a-z_][a-z0-9_-]*$') | list | length == 0
-          - workstation_storage_backup_repo is match('^/[A-Za-z0-9/_.-]+$')
-          - workstation_storage_backup_min_free_gb | string is match('^[1-9][0-9]*$')
+          - workstation_storage_extra_mounts | map(attribute='subvol') | reject('match', '^@[A-Za-z0-9_-]+$') | list | length == 0
+          - workstation_storage_extra_mounts | map(attribute='path') | reject('match', '^/[A-Za-z0-9/_.-]+$') | list | length == 0
         fail_msg: >-
           workstation_storage_* variables are invalid: UUIDs must be lowercase
           hex, users must be a non-empty list of {name: ...}, paths absolute.
 
     - name: Install storage packages
       ansible.builtin.apt:
-        name: [btrfs-progs, cryptsetup, btrbk, restic, rsync]
+        name: [btrfs-progs, cryptsetup, rsync]
         state: present
 
     - name: Create storage state directories
@@ -41,7 +41,6 @@
         - {path: /var/lib/hh-storage/staged, mode: "0700"}
         - {path: /var/lib/hh-storage/logs, mode: "0700"}
         - {path: /var/lib/hh-storage/manifests, mode: "0700"}
-        - {path: /var/cache/hh-restic, mode: "0700"}
         - {path: /.snapshots, mode: "0755"}
         - {path: "{{ workstation_storage_data_mount }}", mode: "0755"}
 
@@ -60,7 +59,6 @@
         - hh-storage-cutover-fast
         - hh-storage-reclaim
         - hh-storage-provision
-        - hh-backup
         - hh-btrfs-scrub
 
     - name: Install storage configuration
@@ -72,7 +70,6 @@
         mode: "0644"
       loop:
         - {src: storage.conf.j2, dest: /etc/hh-storage/storage.conf}
-        - {src: btrbk.conf.j2, dest: /etc/btrbk/hh-storage.conf}
 
     - name: Read the live fstab and crypttab
       ansible.builtin.slurp:
@@ -100,14 +97,6 @@
         - {src: staged-fstab.j2, name: fstab}
         - {src: staged-crypttab.j2, name: crypttab}
 
-    - name: Install backup exclude list
-      ansible.builtin.copy:
-        src: hh-backup-excludes
-        dest: /etc/hh-storage/backup-excludes
-        owner: root
-        group: root
-        mode: "0644"
-
     - name: Install storage units
       ansible.builtin.copy:
         src: "{{ item }}"
@@ -116,40 +105,45 @@
         group: root
         mode: "0644"
       loop:
-        - hh-btrbk.service
-        - hh-btrbk.timer
-        - hh-backup.service
-        - hh-backup.timer
         - hh-btrfs-scrub.service
         - hh-btrfs-scrub.timer
       notify: Reload systemd for storage units
 
-    - name: Generate the restic repository password once
-      ansible.builtin.shell:
-        cmd: umask 077 && openssl rand -base64 33 > "{{ workstation_storage_backup_password_file }}"
-        creates: "{{ workstation_storage_backup_password_file }}"
-      no_log: true
+    # Workstations are disposable: no local snapshots and no backups. Earlier
+    # versions of this role installed an hourly btrbk snapshot timer and a
+    # nightly restic timer; stop them where they exist, then remove their units
+    # and configuration. Existing snapshot and restic data is left in place.
+    - name: Look for retired snapshot and backup timers
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/systemd/system/hh-btrbk.timer
+        - /etc/systemd/system/hh-backup.timer
+        - /usr/lib/systemd/system/btrbk.timer
+      register: workstation_storage_retired_timers
 
-    - name: Check for the restic repository
-      ansible.builtin.command:
-        cmd: restic cat config
-      environment:
-        RESTIC_REPOSITORY: "{{ workstation_storage_backup_repo }}"
-        RESTIC_PASSWORD_FILE: "{{ workstation_storage_backup_password_file }}"
-        RESTIC_CACHE_DIR: /var/cache/hh-restic
-      register: workstation_storage_restic
-      changed_when: false
-      failed_when: false
+    - name: Stop and disable retired snapshot and backup timers
+      ansible.builtin.systemd:
+        name: "{{ item.item | basename }}"
+        enabled: false
+        state: stopped
+      loop: "{{ workstation_storage_retired_timers.results | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item | basename }}"
 
-    - name: Initialise the restic repository
-      ansible.builtin.command:
-        cmd: restic init
-      environment:
-        RESTIC_REPOSITORY: "{{ workstation_storage_backup_repo }}"
-        RESTIC_PASSWORD_FILE: "{{ workstation_storage_backup_password_file }}"
-        RESTIC_CACHE_DIR: /var/cache/hh-restic
-      changed_when: true
-      when: workstation_storage_restic.rc != 0
+    - name: Remove retired snapshot and backup units, scripts and configuration
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/hh-btrbk.timer
+        - /etc/systemd/system/hh-btrbk.service
+        - /etc/systemd/system/hh-backup.timer
+        - /etc/systemd/system/hh-backup.service
+        - /usr/local/sbin/hh-backup
+        - /etc/btrbk/hh-storage.conf
+        - /etc/hh-storage/backup-excludes
+      notify: Reload systemd for storage units
 
     - name: Provision the data volume on a blank device
       ansible.builtin.command:
