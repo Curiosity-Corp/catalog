@@ -1,0 +1,23 @@
+# Managed by curiosity.workstation (tmp_hygiene_nr_inodes). Do not edit.
+{#
+  _tmp_hygiene_tmp_mount_options holds the Options= value of the unit that
+  defines tmp.mount, verbatim (systemd specifiers such as %% stay escaped).
+  Only nr_inodes changes: it is replaced in place, or appended when absent, so
+  every other option and the order are kept.
+#}
+{% set ns = namespace(options=[], replaced=false) %}
+{% for option in _tmp_hygiene_tmp_mount_options.split(',') if option %}
+{% if option.startswith('nr_inodes=') %}
+{% if not ns.replaced %}
+{% set ns.options = ns.options + ['nr_inodes=' ~ _tmp_hygiene_nr_inodes] %}
+{% set ns.replaced = true %}
+{% endif %}
+{% else %}
+{% set ns.options = ns.options + [option] %}
+{% endif %}
+{% endfor %}
+{% if not ns.replaced %}
+{% set ns.options = ns.options + ['nr_inodes=' ~ _tmp_hygiene_nr_inodes] %}
+{% endif %}
+[Mount]
+Options={{ ns.options | join(',') }}

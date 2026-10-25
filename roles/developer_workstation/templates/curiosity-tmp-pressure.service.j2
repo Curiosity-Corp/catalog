@@ -9,6 +9,7 @@ ConditionPathIsMountPoint=/tmp
 [Service]
 Type=oneshot
 Environment=TMP_PRESSURE_THRESHOLD={{ tmp_hygiene_pressure_threshold }}
+Environment=TMP_PRESSURE_INODE_THRESHOLD={{ tmp_hygiene_pressure_inode_threshold }}
 {% if tmp_hygiene_pressure_age | length > 0 %}
 Environment=TMP_PRESSURE_CONFIG={{ tmp_hygiene_pressure_config_path }}
 {% endif %}

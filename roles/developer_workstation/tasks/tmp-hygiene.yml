@@ -10,7 +10,9 @@
 #   * curiosity-tmp-pressure.{service,timer} run the same cleanup early when
 #     the tmpfs holding /tmp is nearly full, optionally followed by one
 #     shorter-age pass that is scoped to /tmp and keeps every package-declared
-#     exclusion.
+#     exclusion;
+#   * a tmp.mount drop-in raises the tmpfs inode cap (nr_inodes), sized from
+#     RAM by default, and the running /tmp is remounted with it.
 #
 # It never deletes by name pattern and never touches systemd-private-*
 # directories of running services. When tmp_hygiene_enabled is false (or the
@@ -28,6 +30,10 @@
           - tmp_hygiene_pressure_threshold | string is match('^[0-9]+$')
           - tmp_hygiene_pressure_threshold | int >= 1
           - tmp_hygiene_pressure_threshold | int <= 100
+          - tmp_hygiene_pressure_inode_threshold | string is match('^[0-9]+$')
+          - tmp_hygiene_pressure_inode_threshold | int >= 1
+          - tmp_hygiene_pressure_inode_threshold | int <= 100
+          - tmp_hygiene_nr_inodes | string is match('^(auto|[1-9][0-9]*[kmg]?)?$')
           - tmp_hygiene_pressure_age is string
           - tmp_hygiene_pressure_age == '' or tmp_hygiene_pressure_age is match('^[1-9][0-9]*(m|h|d|w)$')
           - tmp_hygiene_pressure_interval is string
@@ -45,7 +51,9 @@
         fail_msg: >-
           tmp_hygiene_max_age and tmp_hygiene_pressure_age must be a systemd
           time span such as 3d (units m, h, d, w; the age may be empty only for
-          tmp_hygiene_pressure_age), tmp_hygiene_pressure_threshold must be 1-100,
+          tmp_hygiene_pressure_age), tmp_hygiene_pressure_threshold and
+          tmp_hygiene_pressure_inode_threshold must be 1-100,
+          tmp_hygiene_nr_inodes must be auto, empty or a count such as 4m,
           tmp_hygiene_pressure_interval must look like 1h, and every exclusion
           must be a tmpfiles.d 'x' or 'X' line for a path under /tmp (no spaces,
           no '..').
@@ -70,6 +78,99 @@
     path: "{{ tmp_hygiene_tmpfiles_path }}"
     state: absent
   when: not (tmp_hygiene_enabled | bool)
+
+# ---- Inode cap ----
+# systemd mounts /tmp with nr_inodes=1m. Many tiny files (agent session trees,
+# pytest directories, virtualenvs) exhaust that with most blocks still free.
+# An inode costs memory only once a file exists, so a high cap is cheap.
+# `auto` is the tmpfs size (50% of RAM) divided by 4 KiB, which is the kernel's
+# own tmpfs default: every non-empty file takes at least one page, so inodes
+# and blocks run out at about the same point. Bounded to 1m (no drop-in) .. 16m.
+
+- name: Resolve the /tmp inode cap
+  ansible.builtin.set_fact:
+    _tmp_hygiene_nr_inodes: >-
+      {%- set requested = tmp_hygiene_nr_inodes | string | trim -%}
+      {%- if requested == 'auto' -%}
+      {%- set kib = [((ansible_memtotal_mb | int) * 128 / 1024) | round | int, 16384] | min -%}
+      {{- '' if kib <= 1024 else ((kib // 1024) ~ 'm' if kib % 1024 == 0 else kib ~ 'k') -}}
+      {%- else -%}
+      {{- requested -}}
+      {%- endif -%}
+  when: tmp_hygiene_enabled | bool
+
+- name: Derive the tmp.mount options for the inode cap
+  when:
+    - tmp_hygiene_enabled | bool
+    - _tmp_hygiene_nr_inodes | string | length > 0
+  block:
+    # The unit that defines tmp.mount: the vendor file, an admin override in
+    # /etc, or the fstab generator's unit. Empty when tmp.mount does not exist.
+    - name: Find the unit file that defines tmp.mount
+      ansible.builtin.command:
+        argv: [systemctl, show, --property=FragmentPath, --value, tmp.mount]
+      register: _tmp_hygiene_tmp_mount_fragment
+      changed_when: false
+
+    - name: Read the unit file that defines tmp.mount
+      ansible.builtin.slurp:
+        src: "{{ _tmp_hygiene_tmp_mount_fragment.stdout | trim }}"
+      register: _tmp_hygiene_tmp_mount_unit
+      when:
+        - _tmp_hygiene_tmp_mount_fragment.stdout | trim is match('^/')
+        - _tmp_hygiene_tmp_mount_fragment.stdout | trim != '/dev/null'
+
+    # Only a tmpfs tmp.mount whose last Options= line is a plain option list
+    # (no line continuation) is managed; nr_inodes would break any other type.
+    - name: Record the tmp.mount type and options
+      ansible.builtin.set_fact:
+        _tmp_hygiene_tmp_mount_options: "{{ _tmp_hygiene_unit_options }}"
+        _tmp_hygiene_tmp_mount_derivable: >-
+          {{ (_tmp_hygiene_unit_lines | select('match', 'Type=') | map('regex_replace', '^Type=\s*', '')
+              | list | last | default('')) == 'tmpfs'
+             and _tmp_hygiene_unit_options is match('^[^\s\\]*$') }}
+      vars:
+        _tmp_hygiene_unit_lines: >-
+          {{ (_tmp_hygiene_tmp_mount_unit.content | b64decode).splitlines() | map('trim') | list
+             if _tmp_hygiene_tmp_mount_unit.content is defined else [] }}
+        _tmp_hygiene_unit_options: >-
+          {{ _tmp_hygiene_unit_lines | select('match', 'Options=') | map('regex_replace', '^Options=\s*', '')
+             | list | last | default('') }}
+
+    - name: Report a tmp.mount the inode cap cannot manage
+      ansible.builtin.debug:
+        msg: >-
+          tmp.mount is defined by '{{ _tmp_hygiene_tmp_mount_fragment.stdout | trim }}',
+          which is missing, not a tmpfs or has an Options= line that cannot be
+          rewritten safely; leaving the /tmp inode cap at its current value.
+      when: not (_tmp_hygiene_tmp_mount_derivable | bool)
+
+- name: Install the /tmp inode cap drop-in
+  ansible.builtin.template:
+    src: curiosity-tmp-inodes.mount.conf.j2
+    dest: "{{ tmp_hygiene_nr_inodes_dropin_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - tmp_hygiene_enabled | bool
+    - _tmp_hygiene_nr_inodes | string | length > 0
+    - _tmp_hygiene_tmp_mount_derivable | bool
+  notify:
+    - Reload systemd
+    - Remount /tmp with the managed inode cap
+
+# The running mount keeps its current cap until the next boot; lowering it
+# live could fail while the inodes are in use.
+- name: Remove the /tmp inode cap drop-in when it is not wanted
+  ansible.builtin.file:
+    path: "{{ tmp_hygiene_nr_inodes_dropin_path }}"
+    state: absent
+  when: >-
+    not ((tmp_hygiene_enabled | bool)
+         and (_tmp_hygiene_nr_inodes | default('') | string | length > 0)
+         and (_tmp_hygiene_tmp_mount_derivable | default(false) | bool))
+  notify: Reload systemd
 
 # ---- Pressure relief ----
 

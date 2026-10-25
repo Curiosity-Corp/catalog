@@ -741,8 +741,11 @@ tmp_hygiene_max_age: 3d
 # Hourly pressure check. Set tmp_hygiene_pressure_enabled false to keep only
 # the daily age-based cleanup.
 tmp_hygiene_pressure_enabled: true
-# Act when the filesystem holding /tmp is at or above this percentage.
+# Act when the filesystem holding /tmp is at or above this percentage of its
+# blocks, or at or above tmp_hygiene_pressure_inode_threshold percent of its
+# inodes (a tmpfs full of tiny files runs out of inodes first).
 tmp_hygiene_pressure_threshold: 85
+tmp_hygiene_pressure_inode_threshold: 85
 # When the standard pass leaves /tmp at or above the threshold, run one more
 # pass with this shorter age. Empty disables the second pass (warn only).
 tmp_hygiene_pressure_age: 1d
@@ -774,6 +777,15 @@ tmp_hygiene_extra_exclusions: []
 tmp_hygiene_tmpfiles_path: /etc/tmpfiles.d/00-curiosity-tmp.conf
 tmp_hygiene_pressure_script_path: /usr/local/sbin/curiosity-tmp-pressure
 tmp_hygiene_pressure_config_path: /etc/curiosity/tmp-pressure-tmpfiles.conf
+# Inode cap for the tmpfs /tmp (systemd's tmp.mount defaults to nr_inodes=1m).
+# `auto` is the tmpfs size (size=50% of RAM) divided by 4 KiB, that is
+# ansible_memtotal_mb * 128 inodes (the kernel's own tmpfs default), rounded
+# to whole k, never below the 1m default (no drop-in is installed then) and
+# never above 16m. An explicit value such as 4m or 2048k overrides auto; empty
+# leaves the systemd default. Applied with a drop-in derived from the unit that
+# defines tmp.mount, plus a live remount. See docs/tmp-hygiene.md.
+tmp_hygiene_nr_inodes: auto
+tmp_hygiene_nr_inodes_dropin_path: /etc/systemd/system/tmp.mount.d/50-curiosity-inodes.conf
 
 # Minimal desktop (Openbox + LightDM + Firefox)
 # Lightweight GUI for machines that only need a browser and terminal.

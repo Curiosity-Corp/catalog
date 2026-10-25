@@ -156,3 +156,35 @@
       - netplan
       - generate
   changed_when: true
+
+# Applies a changed tmp_hygiene_nr_inodes to the running tmpfs; the drop-in
+# makes it permanent. Only a tmpfs /tmp mount point is remounted.
+- name: Check that /tmp is a tmpfs mount point before remounting
+  ansible.builtin.command:
+    argv: [findmnt, --noheadings, --output, FSTYPE, --mountpoint, /tmp]
+  register: _tmp_hygiene_tmp_fstype
+  changed_when: false
+  failed_when: _tmp_hygiene_tmp_fstype.rc not in [0, 1]
+  listen: Remount /tmp with the managed inode cap
+
+- name: Remount /tmp with the managed inode cap
+  ansible.builtin.command:
+    argv: [mount, -o, "remount,nr_inodes={{ _tmp_hygiene_nr_inodes }}", /tmp]
+  register: _tmp_hygiene_remount
+  changed_when: _tmp_hygiene_remount.rc == 0
+  # tmpfs refuses a cap below the inodes already in use; the drop-in still
+  # applies from the next boot, so report it instead of failing the pull.
+  failed_when: false
+  when: _tmp_hygiene_tmp_fstype.stdout | trim == 'tmpfs'
+  listen: Remount /tmp with the managed inode cap
+
+- name: Warn when the live /tmp inode cap could not be changed
+  ansible.builtin.debug:
+    msg: >-
+      mount -o remount,nr_inodes={{ _tmp_hygiene_nr_inodes }} /tmp failed
+      (rc {{ _tmp_hygiene_remount.rc }}: {{ _tmp_hygiene_remount.stderr | trim }});
+      the new cap applies from the next boot.
+  when:
+    - _tmp_hygiene_remount is not skipped
+    - _tmp_hygiene_remount.rc != 0
+  listen: Remount /tmp with the managed inode cap
