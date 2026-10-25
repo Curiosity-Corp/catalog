@@ -2,8 +2,8 @@
 galaxy_info:
   author: Curiosity Research Corporation
   description: >-
-    Optional encrypted btrfs /home volume with snapshots, restic backups and
-    a scripted cutover, for workstations that opt in.
+    Optional encrypted btrfs /home volume with the write-heavy paths on it
+    and a scripted cutover, for workstations that opt in.
   company: Curiosity Research Corporation
   license: Apache-2.0
   min_ansible_version: "2.15"
@@ -14,5 +14,5 @@ galaxy_info:
   galaxy_tags:
     - storage
     - btrfs
-    - backup
+    - luks
 dependencies: []

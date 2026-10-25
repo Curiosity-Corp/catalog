@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `workstation_storage` takes no snapshots and makes no backups: workstations are disposable, GitLab and chezmoi are the recovery path. The hourly btrbk snapshot timer, the nightly restic backup (`hh-backup`, its units, excludes and `btrbk.conf`) and the `workstation_storage_backup_*`, `_retention_default` and `_snapshot_min` variables are gone; hosts that had them get the timers stopped and disabled and the units removed (existing snapshot and restic data is left alone). After the cutover the role enables only `hh-btrfs-scrub.timer` and `fstrim.timer`, `hh-storage-postreboot` drops its restic check and `hh-storage-reclaim` no longer waits for a backup. The crypttab entry gains `nofail,headless=true`, so a missing or locked data volume never blocks boot.
 - earlyoom thresholds and `--prefer` / `--avoid` process-name regexes are now role variables (`earlyoom_mem_percent`, `earlyoom_swap_percent`, `earlyoom_prefer_regex`, `earlyoom_avoid_regex`). Defaults reproduce the previous `-m 5 -s 50` behavior. A workstation that runs long-lived agent sessions can make earlyoom kill browsers and Playwright before the agents after an out-of-memory incident.
 
 ### Fixed

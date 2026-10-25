@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Run once after the cutover reboot; safe to run again (finished steps are skipped).
-#   1. timers   enable the snapshot, backup and scrub timers (idempotent, every run)
+#   1. timers   enable the scrub and trim timers (idempotent, every run; no snapshot or backup timers)
 #   2. verify   the new layout (hh-storage-postboot, read-only)
 #   3. strict   full-checksum compare of the frozen old /home on the OS drive against the
-#               cutover baseline snapshots: must be 0 differing entries
+#               one-off cutover baseline snapshots: must be 0 differing entries
 #   4. scrub    the data volume (no checksum errors)
-#   5. restic   full read-data check of the backup repository
-#   6. ram      report whether the operator recorded a clean memory test
+#   5. ram      report whether the operator recorded a clean memory test
 # Run it under caps:  systemd-run --wait -p MemoryHigh=6G -p MemoryMax=10G hh-storage-postreboot
 # Roll back (before the soak ends, nothing was deleted from the OS drive):
 #   restore /etc/fstab.pre-cutover and /etc/crypttab.pre-cutover, remove
@@ -26,7 +25,7 @@ step() { # name, command...
   if "$@"; then date -Is >"$D/$name.done"; printf 'ok    %s\n' "$name"; else printf 'FAIL  %s\n' "$name"; fail=1; fi
 }
 # Timers and the health check are cheap and must hold on every run, so they are never skipped.
-systemctl enable --now hh-btrbk.timer hh-backup.timer hh-btrfs-scrub.timer >/dev/null 2>&1 && printf 'ok    timers\n' || { printf 'FAIL  timers\n'; fail=1; }
+systemctl enable --now hh-btrfs-scrub.timer fstrim.timer >/dev/null 2>&1 && printf 'ok    timers\n' || { printf 'FAIL  timers\n'; fail=1; }
 if /usr/local/sbin/hh-storage-postboot; then printf 'ok    verify\n'; else printf 'FAIL  verify\n'; fail=1; fi
 [ "$fail" -eq 0 ] || { echo "layout check failed; see the rollback note at the top of $0" >&2; exit 1; }
 # The old /home is hidden under the new mount and nobody writes to it after the cutover, so a
@@ -49,7 +48,6 @@ strict() {
 }
 step strict strict
 step scrub btrfs scrub start -B -c 3 "$HH_DATA_MOUNT"
-step restic env RESTIC_REPOSITORY="$HH_BACKUP_REPO" RESTIC_PASSWORD_FILE="$HH_BACKUP_PASSWORD_FILE" RESTIC_CACHE_DIR=/var/cache/hh-restic restic check --read-data
 if [ -e "$HH_STATE/ram-cleared" ]; then printf 'ok    ram (%s)\n' "$(cat "$HH_STATE/ram-cleared")"
 else printf 'WARN  ram: no clean memtest recorded; after memtest86+ passes run: date -Is > %s/ram-cleared\n' "$HH_STATE"; fail=1; fi
 if [ "$fail" -eq 0 ]; then date -Is >"$D/complete"; echo "complete: next is the soak, then hh-storage-reclaim --confirm"; fi
