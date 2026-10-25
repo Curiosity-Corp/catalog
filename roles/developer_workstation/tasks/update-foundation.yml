@@ -18,6 +18,15 @@
       workstation_update_ring must be canary, early, or general and must have
       an age and timer policy.
 
+- name: Validate update snapshot retention count
+  ansible.builtin.assert:
+    that:
+      - workstation_update_snapshot_keep | string is match('^[0-9]+$')
+      - workstation_update_snapshot_keep | int >= 1
+    fail_msg: >-
+      workstation_update_snapshot_keep must be a whole number of at least 1 so
+      the current run's rollback snapshot is always kept.
+
 - name: Validate catalog integrity policy
   ansible.builtin.assert:
     that:

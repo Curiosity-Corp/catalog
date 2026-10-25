@@ -18,7 +18,9 @@ roles/developer_workstation/tasks/main.yml
 The role is intentionally stateful on the managed host. Before a managed
 update it snapshots files listed in `workstation_update_managed_paths`; after
 the update it runs application health checks and writes a manifest. A failed
-health gate restores the snapshot and records a quarantine window. The control
+health gate restores the snapshot and records a quarantine window. After a
+successful transaction only the newest `workstation_update_snapshot_keep`
+snapshots are kept, never the current run's or a quarantined run's. The control
 plane is local so it can work without a central service or a network connection
 to Curiosity infrastructure.
 

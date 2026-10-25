@@ -296,6 +296,11 @@ workstation_update_artifact_cache_dir: /var/cache/curiosity/artifacts
 workstation_update_manifest_path: /var/lib/curiosity/workstation-updates/last-run.json
 workstation_update_sbom_path: /var/lib/curiosity/workstation-updates/sbom.cdx.json
 workstation_update_snapshot_retention: 3
+# Count-based retention for snapshots/<run_id> (each holds a copy of every
+# managed binary, several GB). After a successful update transaction the newest
+# N are kept; the current run's snapshot and any run a quarantine marker names
+# are never removed. Must be at least 1.
+workstation_update_snapshot_keep: 3
 workstation_update_cache_retention_days: 30
 workstation_update_quarantine_seconds: 3600
 workstation_update_healthcheck_enabled: true
@@ -553,6 +558,11 @@ ansible_pull_extra_vars: ""
 # when ansible-pull cannot update it; leave this disabled by default.
 ansible_pull_force_on_update_failure: false
 ansible_pull_verify_commit: "{{ catalog_integrity_mode == 'enforce' }}"
+# Soft memory limit for ansible-pull.service. Above it the kernel reclaims the
+# run's page cache (update snapshots, downloads) instead of letting it press on
+# the rest of the host; there is deliberately no MemoryMax, so a run is never
+# OOM-killed by its own cgroup. Any systemd size value, or "infinity".
+workstation_ansible_pull_memory_high: 8G
 authd_archive_distribution: "{{ ansible_distribution_release }}"
 authd_archive_key_fingerprint: "155D766F2E771AED"
 authd_archive_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x{{ authd_archive_key_fingerprint }}"

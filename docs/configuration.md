@@ -593,6 +593,34 @@ interactively. If enabling cleanup, test the retention window on a disposable
 shared machine. If enabling automatic updates, choose an update ring and keep
 the local rollback state on a persistent filesystem.
 
+## Update snapshots and the pull service
+
+Before each managed update the role copies every regular file in
+`workstation_update_managed_paths` into
+`/var/lib/curiosity/workstation-updates/snapshots/<run_id>` (`<epoch>-<host
+hash>`), which can be several GB per pull. Rollback restores only from the
+current run's snapshot; the quarantine marker (`quarantine.json`) names the run
+that failed.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `workstation_update_snapshot_keep` | `3` | Snapshots kept after a successful update transaction, newest first by the run ID's epoch (directory mtime breaks ties). At least `1`. |
+| `workstation_update_snapshot_retention` | `3` | Days; older snapshots are also removed at the start of every pull. |
+| `workstation_ansible_pull_memory_high` | `8G` | `MemoryHigh=` on `ansible-pull.service`. |
+
+Count-based pruning (`tasks/update-snapshot-retention.yml`) runs only after the
+transaction block has finished healthy with status `success`. A failed health
+gate restores the snapshot and fails the pull first, so a rolled-back or held
+run never prunes. It never removes the current run's snapshot or a snapshot
+whose run ID the quarantine marker names, and it ignores directories whose
+names are not run IDs. Nothing outside
+`snapshots/` is touched.
+
+`MemoryHigh=` makes the kernel reclaim the pull's page cache (snapshot copies
+and downloads) above the limit instead of letting it press on the rest of the
+host. There is deliberately no `MemoryMax=`, so the pull's own cgroup never
+OOM-kills it. Use any systemd size value, or `infinity` to remove the limit.
+
 ## Console tuning
 
 `console_tuning_enabled` (default `false`) opts a large or mixed-size-display

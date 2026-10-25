@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Update snapshots no longer fill the OS drive: every pull copied the managed binaries into `/var/lib/curiosity/workstation-updates/snapshots/<run_id>` (3.3G each on dm313red, 8 kept inside the 3-day age window). After a successful update transaction the role now keeps the newest `workstation_update_snapshot_keep` (default 3) snapshots, ordered by the run ID's epoch, and never removes the current run's snapshot or one the quarantine marker names; a failed or rolled-back run prunes nothing (`tasks/update-snapshot-retention.yml`). `ansible-pull.service` gets `MemoryHigh={{ workstation_ansible_pull_memory_high }}` (default `8G`, no `MemoryMax`), so the pull's page cache is reclaimed under pressure instead of crowding the host. `tests/test_update_snapshot_retention.py` runs the retention tasks against a temporary directory in the CI `policy` job (#113).
 - PIA no longer stays disconnected after its daemon is OOM-killed: a `piavpn.service` drop-in reconnects on every daemon start and sets `OOMScoreAdjust=-900`, so Brave is not left blocked by the killswitch. Applied with `daemon-reload` only, never a daemon restart (`pia_autoconnect_on_daemon_start`, `pia_daemon_oom_score_adjust`).
 
 ### Security
