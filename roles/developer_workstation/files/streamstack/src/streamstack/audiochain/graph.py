@@ -33,7 +33,7 @@ PLUGINS: dict[str, dict[str, str]] = {
         "file": "libdeep_filter_ladspa.so",
         "label": "deep_filter_mono",
         "name": "DeepFilterNet",
-        "package": "the DeepFilterNet LADSPA plugin (github.com/Rikorose/DeepFilterNet releases)",
+        "package": "the DeepFilterNet LADSPA plugin (`streamstack chain install-plugin`, built by CI)",
     },
     "rnnoise": {
         "file": "librnnoise_ladspa.so",
@@ -91,8 +91,14 @@ def latency(quantum: int | None, rate: int) -> str | None:
     return f"{quantum}/{rate}" if quantum else None
 
 
+def user_ladspa_dir() -> Path:
+    """Where `streamstack chain install-plugin` puts the CI-built plugins: no root needed, searched before /usr."""
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "streamstack" / "ladspa"
+
+
 def ladspa_dirs() -> list[str]:
-    return [p for p in os.environ.get("LADSPA_PATH", "").split(":") if p] + list(LADSPA_DIRS)
+    return [p for p in os.environ.get("LADSPA_PATH", "").split(":") if p] + [str(user_ladspa_dir()), *LADSPA_DIRS]
 
 
 def find_plugin(kind: str) -> Path | None:

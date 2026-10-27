@@ -51,6 +51,10 @@ DeepFilterNet takes the floor down by 20 dB and the gaps by 22 dB while the spee
 clean signal and the waveform moves closer to the clean speech (correlation 0.962 to 0.976). RNNoise was not measured:
 its plugin is not installed on this machine.
 
+## Getting the plugin
+
+`streamstack chain install-plugin` fetches the CI-built, checksummed DeepFilterNet3 plugin into `~/.local/share/streamstack/ladspa/` (see `docs/audio-chain.md`).
+
 ## Not verified
 
 * How DeepFilterNet sounds on the Wave XLR or a Scarlett 2i2 against RNNoise.

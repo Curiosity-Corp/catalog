@@ -63,6 +63,7 @@ class Rig:
         self.recorded: list[tuple[str, float]] = []
         self.record_ok = True
         self.procs: list[FakeProc] = []
+        self.default_source = audio.VOICE_SOURCE_NAME  # the voice chain is running, so it is already the default
 
     def spawn(self, argv: list[str], **_: Any) -> FakeProc:
         """Every parec the code under test starts is a fake: tests never read the real microphone."""
@@ -75,7 +76,7 @@ class Rig:
         if argv[0] == "pactl" and "list" in argv:
             return subprocess.CompletedProcess(argv, 0, self.pactl_out, "")
         if argv[0] == "pactl" and argv[1] == "get-default-source":
-            return subprocess.CompletedProcess(argv, 0, MIC + "\n", "")
+            return subprocess.CompletedProcess(argv, 0, self.default_source + "\n", "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     def record(self, source: str, seconds: float, path: str) -> bool:
@@ -571,6 +572,7 @@ def test_state_shape_and_mic_readback(ctl: AudioController) -> None:
         "muted": False,
         "stalled": False,
         "stalled_since": None,
+        "stall_kind": "",
         "revive": {"state": "idle", "message": None},
     }
     assert state["gain_range"] == [-30.0, 12.0]
@@ -1420,3 +1422,67 @@ def test_demo_revive_refuses_a_healthy_microphone_like_the_real_one() -> None:
     with pytest.raises(ActionError) as err:
         demo.act("audio.revive", {})
     assert err.value.status == 409
+
+
+# ---------------------------------------------------------------------------
+# Digital silence: pointers move, every sample is zero
+# ---------------------------------------------------------------------------
+
+
+def zero_frame() -> bytes:
+    return bytes(audio.FRAME_BYTES)
+
+
+def feed_zeros_for(rig: Rig, ctl: AudioController, seconds: int) -> None:
+    for _ in range(seconds):
+        rig.clock.advance(1.0)
+        reader = ctl._readers["mic"]
+        assert reader is not None
+        reader.feed(zero_frame())
+        ctl._probe()
+
+
+def test_a_run_of_exact_zeros_is_flagged_as_digital_silence_not_a_stall(rig: Rig) -> None:
+    ctl, toasts = watcher(rig, Probe(HEALTHY))
+    feed_zeros_for(rig, ctl, 3)
+    assert ctl.state()["mic"]["stalled"] is False  # not yet a whole window
+    feed_zeros_for(rig, ctl, 3)
+    mic = ctl.state()["mic"]
+    assert mic["stalled"] is True and mic["stall_kind"] == "silence"
+    assert [level for level, _ in toasts] == ["warn"] and "digital silence" in toasts[0][1]
+    assert pactl_mutations(rig) == []  # offered, never done alone
+    item = ctl.health_checks()[0]
+    assert item["id"] == "mic-digital-silence" and item["state"] == "fail"
+
+
+def test_a_noise_floor_breaks_the_run_of_zeros(rig: Rig) -> None:
+    ctl, _ = watcher(rig, Probe(HEALTHY))
+    feed_zeros_for(rig, ctl, 3)
+    rig.clock.advance(1.0)
+    reader = ctl._readers["mic"]
+    assert reader is not None
+    reader.feed(frame(1000))
+    ctl._probe()
+    feed_zeros_for(rig, ctl, 3)
+    assert ctl.state()["mic"]["stalled"] is False
+
+
+def test_revive_of_digital_silence_resyncs_the_capture_controls_first(rig: Rig) -> None:
+    resynced: list[int] = []
+    ctl, _ = watcher(
+        rig,
+        Probe(HEALTHY),
+        Verify([False]),
+        signal=lambda mic, seconds: micwatch.SignalSample(int(micwatch.SIGNAL_BYTES_PER_S * seconds), 99),
+        resync=lambda card: lambda: resynced.append(card) or "re-wrote the controls",
+    )
+    listing = json.loads(pactl_json())
+    listing[0]["properties"] = {"device.api": "alsa", "alsa.card": "3", "alsa.device": "0"}
+    rig.pactl_out = json.dumps(listing)
+    feed_zeros_for(rig, ctl, 6)
+    assert ctl.state()["mic"]["stall_kind"] == "silence"
+    ctl.act("audio.revive", {})
+    revive = wait_revive(ctl)
+    assert revive["state"] == "ok" and "capture controls re-written" in revive["message"]
+    assert resynced == [3]
+    assert pactl_mutations(rig) == []  # the resync alone fixed it

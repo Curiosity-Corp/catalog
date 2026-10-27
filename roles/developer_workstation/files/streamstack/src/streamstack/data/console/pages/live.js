@@ -190,7 +190,7 @@ export async function mount(host, ctx) {
   off.push(mountReviveBanner(R.revive, ctx));
   sub((s) => s.audio.mic, (mic) => {
     const view = reviveView(mic);
-    if (view === 'stalled' || view === 'failed') R.micCard.setAttribute('tone', 'live');
+    if (view === 'stalled' || view === 'silent' || view === 'failed') R.micCard.setAttribute('tone', 'live');
     else if (view === 'reviving') R.micCard.setAttribute('tone', 'warn');
     else R.micCard.removeAttribute('tone');
   });

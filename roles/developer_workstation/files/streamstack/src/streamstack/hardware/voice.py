@@ -20,7 +20,7 @@ from streamstack import config, system
 from streamstack.audiochain import graph
 
 from .found import probe_now
-from .plan import Plan
+from .plan import VOICE_SOURCE, Plan
 from .redact import redact
 
 log = logging.getLogger("streamstack.hardware.voice")
@@ -129,5 +129,61 @@ def activate_card(card: str, profile: str, runner: Runner | None = None) -> bool
     if result is None or result.returncode != 0:
         detail = (result.stderr or result.stdout).strip() if result is not None else "pactl did not run"
         log.warning("cannot switch %s to %s: %s", redact(card), profile, detail)
+        return False
+    return True
+
+
+# -- the default source ------------------------------------------------------------------------------------------------
+
+DEFAULT_SOURCE_FIX = "run `streamstack default-source`"
+
+
+def wanted_default_source(microphone: str | None, voice_present: bool) -> str | None:
+    """The source call apps should get as PipeWire's default: what the voice chain publishes while it runs (the
+    processed voice), else the resolved raw microphone, else nothing."""
+    if voice_present:
+        return VOICE_SOURCE
+    return microphone or None
+
+
+def default_source_row(
+    default: str | None, microphone: str | None, voice_present: bool, label: Callable[[str], str] | None = None
+) -> dict[str, str] | None:
+    """A doctor row (same shape as `cli.check`) for the PipeWire default source, None when there is nothing to judge.
+
+    Call apps that follow the system default pick whatever PipeWire says; on a replug it can fall back to the Cam
+    Link's HDMI audio (2026-10-27). Warns with the fix when the default is not the wanted source.
+    """
+    wanted = wanted_default_source(microphone, voice_present)
+    if wanted is None or not default:
+        return None
+    name = label or (lambda node: node)
+    which = "StreamStack Mic (the voice chain)" if voice_present else f"the microphone {name(wanted)}"
+    if default == wanted:
+        return {
+            "id": "default-source",
+            "group": "audio",
+            "state": "ok",
+            "title": f"default microphone is {which}",
+            "detail": "",
+            "hint": "",
+        }
+    return {
+        "id": "default-source",
+        "group": "audio",
+        "state": "warn",
+        "title": f"default microphone is {name(default)}, not {which}",
+        "detail": "call apps that follow the system default will pick it",
+        "hint": DEFAULT_SOURCE_FIX + f" (it runs `pactl set-default-source {wanted}`)",
+    }
+
+
+def set_default_source(source: str, runner: Runner | None = None) -> bool:
+    """Make `source` PipeWire's default source (`pactl set-default-source`); True when pactl accepted it."""
+    run = runner or (lambda argv: system.run(argv, timeout=10))
+    result = run(["pactl", "set-default-source", source])
+    if result is None or result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip() if result is not None else "pactl did not run"
+        log.warning("cannot make %s the default source: %s", redact(source), detail)
         return False
     return True

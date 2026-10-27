@@ -13,7 +13,9 @@ user and never needs root.
     streamstack camlink         the Cam Link's HDMI mode, the best one on offer
     streamstack preview [cam]   watch a camera feed (canon, camlink, program, /dev/videoN)
     streamstack mic-check [s]   record a few seconds and play them back
-    streamstack mic-revive      bring back a stalled microphone (suspend/resume, then a card profile cycle)
+    streamstack mic-revive      bring back a stalled or digitally silent microphone (capture-control resync,
+                                suspend/resume, card profile cycle; --reprobe adds a WirePlumber restart)
+    streamstack default-source  make call apps' default microphone the voice chain (or the resolved microphone)
     streamstack voice [preset]  list or load a voice preset (bass, treble, pitch)
     streamstack console         the visual control surface: faders, meters, scenes, live picture
     streamstack canon-bridge    run the Canon live view -> loopback camera bridge
@@ -55,10 +57,13 @@ from streamstack.audiochain import cli as chain_cli
 from streamstack.audiochain import control as voicechain
 from streamstack.audiochain import graph as voice_graph
 from streamstack.audiochain import migrate
+from streamstack.audiochain import plugin as voice_plugin
 from streamstack.canon import run as canon_run
 from streamstack.config import camera_external, load_settings
 from streamstack.framing import cli as framing_cli
 from streamstack.framing import health as framing_health
+from streamstack.hardware import capturehold, duplex
+from streamstack.hardware import voice as hw_voice
 from streamstack.hardware.doctor import report as hardware_report
 from streamstack.hardware.found import Found, probe_now
 from streamstack.system import (
@@ -297,8 +302,29 @@ def run_checks(
         )
     if mic and stall_probe:
         probe = _watch_microphone(mic)
-        if stall_item := micwatch.check_item(probe.stalled, probe.detail):
+        if stall_item := micwatch.check_item(probe.stalled, probe.detail, probe.kind):
             checks.append(stall_item)
+    if capturehold.is_wave_xlr(mic) and have("pw-dump"):
+        dump = system.run(["pw-dump"], timeout=10)
+        effective = capturehold.always_process(dump.stdout, mic) if dump and dump.returncode == 0 else None
+        if hold_row := capturehold.check_row(mic, effective):
+            checks.append(hold_row)
+    if have("amixer"):
+        checks.append(check("audio", "alsa-utils", "ok", "amixer is installed (alsa-utils)"))
+    else:
+        checks.append(
+            check(
+                "audio",
+                "alsa-utils",
+                "warn",
+                "amixer is missing: the digital-silence fix and the interface controls cannot run",
+                hint="sudo apt install alsa-utils",
+            )
+        )
+    if default_row := hw_voice.default_source_row(
+        system.default_device("source"), mic or None, VOICE_SOURCE in sources, lambda node: sources.get(node) or node
+    ):
+        checks.append(default_row)
     if VOICE_SOURCE in sources:
         checks.append(check("audio", "voice-chain", "ok", "StreamStack Mic (processed voice) is available"))
     elif missing := voice_graph.missing_required():
@@ -322,14 +348,25 @@ def run_checks(
             )
         )
     checks.extend(virtualdevices.mic_checks(virtualdevices.mic_report()))
-    if not voice_graph.available_engines():
+    engines = voice_graph.available_engines()
+    if not engines:
         checks.append(
             check(
                 "audio",
                 "voice-denoise",
                 "warn",
                 "no neural noise removal installed (DeepFilterNet or RNNoise)",
-                hint="install the DeepFilterNet LADSPA plugin; see docs/audio-chain.md",
+                hint=voice_plugin.missing_hint(),
+            )
+        )
+    elif "deepfilternet" not in engines:
+        checks.append(
+            check(
+                "audio",
+                "voice-denoise",
+                "warn",
+                "DeepFilterNet (the default noise removal) is not installed; the chain uses RNNoise",
+                hint=voice_plugin.missing_hint(),
             )
         )
 
@@ -680,25 +717,86 @@ def cmd_mic_check(args: argparse.Namespace) -> int:
 
 
 def _watch_microphone(mic: str) -> micwatch.StallProbe:
-    """Sample the microphone's ALSA PCM once a second for a full window and judge it (blocks ~5 s)."""
+    """Judge the microphone for a full window (blocks ~5 s): its ALSA PCM once a second for a stall, and, from a
+    parec capture running alongside, whether the samples are all exact zeros (digital silence)."""
     monitor = micwatch.StallMonitor()
+    capture = micwatch.SignalCapture(mic) if have("parec") else None
+    listening = capture is not None and capture.start()
+    if listening:
+        time.sleep(0.5)  # let our own capture wake the source, so the PCM is judged while it runs
     deadline = time.monotonic() + micwatch.WINDOW_S + 1.5
-    while True:
-        listing = system.run(["pactl", "-f", "json", "list", "sources"], timeout=micwatch.PACTL_TIMEOUT)
-        probe = monitor.probe(mic, listing.stdout if listing and listing.returncode == 0 else "")
-        if probe.state != "watching" or time.monotonic() >= deadline:
-            return probe
-        time.sleep(micwatch.SAMPLE_S)
+    try:
+        while True:
+            listing = system.run(["pactl", "-f", "json", "list", "sources"], timeout=micwatch.PACTL_TIMEOUT)
+            probe = monitor.probe(mic, listing.stdout if listing and listing.returncode == 0 else "")
+            if probe.state != "watching" or time.monotonic() >= deadline:
+                break
+            time.sleep(micwatch.SAMPLE_S)
+    finally:
+        sample = capture.stop() if capture is not None and listening else None
+    if sample is not None and sample.digital_silence() is True:
+        probe = micwatch.silence_verdict(probe, sample.seconds)
+    return probe
+
+
+def _still_silent(mic: str) -> bool | None:
+    """After a revive step: True when a short capture is still all zeros, False when audio arrives, None unknown."""
+    sample = micwatch.capture_signal(mic, micwatch.VERIFY_SIGNAL_S) if have("parec") else None
+    return None if sample is None else sample.digital_silence(micwatch.VERIFY_MIN_S)
+
+
+def _alsa_card_for(found: Found | None, mic: str) -> int | None:
+    """The ALSA card to re-write the capture controls of: the Plan's interface, else the microphone's own card."""
+    if found is not None:
+        interface = found.plan.audio_interface()
+        if interface is not None and interface.alsa_card is not None:
+            return interface.alsa_card
+    listing = system.run(["pactl", "-f", "json", "list", "sources"], timeout=micwatch.PACTL_TIMEOUT)
+    info = micwatch.parse_source(listing.stdout, mic) if listing and listing.returncode == 0 else None
+    return info.pcm.card if info is not None and info.pcm is not None else None
+
+
+def _reprobe(found: Found | None) -> micwatch.ReviveResult:
+    """The explicit last resort: restart WirePlumber and wait for the interface's card to show an input profile."""
+    interface = found.plan.audio_interface() if found is not None else None
+    card = interface.pipewire_card if interface is not None else None
+
+    def ready() -> bool:
+        cards = system.run(["pactl", "-f", "json", "list", "cards"], timeout=micwatch.PACTL_TIMEOUT)
+        if not (cards and cards.returncode == 0):
+            return False
+        if card:
+            return duplex.cards_have_input(cards.stdout, card)
+        return bool(audio_sources())
+
+    return micwatch.reprobe_wireplumber(ready=ready, say=lambda text: print(text, flush=True))
 
 
 def cmd_mic_revive(args: argparse.Namespace) -> int:
-    """Revive a stalled microphone: suspend/resume the source, then cycle its card profile if that was not enough."""
+    """Revive a stalled or digitally silent microphone: re-write the capture controls (digital silence only), suspend
+    and resume the source, cycle its card profile; with --reprobe restart WirePlumber as the last resort."""
     if not have("pactl"):
         print("streamstack: pactl is missing (install pulseaudio-utils)", file=sys.stderr)
         return 1
     cfg = load_settings()
+    found = probe_now(cfg)
+    if found is not None and (lost := duplex.lost_input(found.plan, found.snapshot)) is not None:
+        label = found.plan.audio_interface()
+        print(
+            f"{label.label if label else 'The audio interface'}: its sound card ({lost.profile}) has no input profile."
+        )
+        if not args.reprobe:
+            print(
+                "WirePlumber has to probe the card again: run `streamstack mic-revive --reprobe`. That restarts "
+                "WirePlumber and briefly drops every audio stream, so not during a call.",
+                file=sys.stderr,
+            )
+            return 1
+        result = _reprobe(found)
+        print(result.message, file=sys.stdout if result.ok else sys.stderr)
+        return 0 if result.ok else 1
     sources = audio_sources()
-    mic = call_microphone(cfg, sources)
+    mic = call_microphone(cfg, sources, found)
     if not mic:
         print("streamstack: no microphone found (plug it in, or set STREAMSTACK_MICROPHONE)", file=sys.stderr)
         return 1
@@ -713,11 +811,49 @@ def cmd_mic_revive(args: argparse.Namespace) -> int:
         print("Cannot tell whether the microphone is stalled, so it is left alone (--force cycles it anyway).")
         return 0
 
+    card = _alsa_card_for(found, mic)
     monitor = micwatch.StallMonitor()
-    result = micwatch.revive_mic(mic, say=lambda text: print(text, flush=True), stalled=lambda: monitor.verify(mic))
+    result = micwatch.revive_mic(
+        mic,
+        say=lambda text: print(text, flush=True),
+        stalled=lambda: monitor.verify(mic),
+        kind=probe.kind,
+        resync=micwatch.feature_unit_resync(card) if card is not None else None,
+        silent=lambda: _still_silent(mic),
+    )
     print(f"Did: {', '.join(result.steps)}")
     print(result.message, file=sys.stdout if result.ok else sys.stderr)
+    if not result.ok and args.reprobe:
+        result = _reprobe(found)
+        print(result.message, file=sys.stdout if result.ok else sys.stderr)
     return 0 if result.ok else 1
+
+
+def cmd_default_source(args: argparse.Namespace) -> int:
+    """Make PipeWire's default source what call apps should get: StreamStack Mic while the voice chain runs, else the
+    resolved microphone."""
+    if not have("pactl"):
+        print("streamstack: pactl is missing (install pulseaudio-utils)", file=sys.stderr)
+        return 1
+    cfg = load_settings()
+    sources = audio_sources()
+    wanted = hw_voice.wanted_default_source(call_microphone(cfg, sources), VOICE_SOURCE in sources)
+    if wanted is None:
+        print(
+            "streamstack: no microphone and no voice chain to make the default (see `streamstack doctor`)",
+            file=sys.stderr,
+        )
+        return 1
+    current = system.default_device("source")
+    label = sources.get(wanted) or wanted
+    if current == wanted:
+        print(f"The default microphone is already {label}.")
+        return 0
+    if not hw_voice.set_default_source(wanted):
+        print(f"streamstack: pactl did not accept {wanted} as the default source", file=sys.stderr)
+        return 1
+    print(f"The default microphone is now {label} (it was {sources.get(current) or current or 'unset'}).")
+    return 0
 
 
 def cmd_voice(args: argparse.Namespace) -> int:
@@ -747,6 +883,9 @@ def cmd_chain(args: argparse.Namespace) -> int:
         "stop": chain_cli.stop,
         "status": chain_cli.status,
         "print-config": chain_cli.print_config,
+        "claim-default": chain_cli.claim_default,
+        "release-default": chain_cli.release_default,
+        "install-plugin": chain_cli.install_plugin,
     }
     return actions[args.action](cfg)
 
@@ -1120,15 +1259,34 @@ def build_parser() -> argparse.ArgumentParser:
     mic.set_defaults(func=cmd_mic_check)
     revive = sub.add_parser("mic-revive", help="bring back a stalled microphone")
     revive.add_argument("--force", action="store_true", help="cycle the microphone even when it looks healthy")
+    revive.add_argument(
+        "--reprobe",
+        action="store_true",
+        help="also restart WirePlumber when nothing else helps or the card has no input profile "
+        "(drops every audio stream for a moment)",
+    )
     revive.set_defaults(func=cmd_mic_revive)
+    sub.add_parser("default-source", help="make the voice chain (or the microphone) the default source").set_defaults(
+        func=cmd_default_source
+    )
     voice = sub.add_parser("voice", help="list or load a voice preset")
     voice.add_argument("preset", nargs="?")
     voice.set_defaults(func=cmd_voice)
     chain_parser = sub.add_parser("chain", help="start, stop or inspect the voice chain behind StreamStack Mic")
     chain_parser.add_argument(
         "action",
-        choices=("start", "stop", "status", "print-config", "run"),
-        help="run is for service managers (stays in the foreground as the PipeWire host)",
+        choices=(
+            "start",
+            "stop",
+            "status",
+            "print-config",
+            "run",
+            "claim-default",
+            "release-default",
+            "install-plugin",
+        ),
+        help="run is for service managers (stays in the foreground as the PipeWire host); claim-default and "
+        "release-default are its ExecStartPost and ExecStopPost; install-plugin fetches the DeepFilterNet plugin",
     )
     chain_parser.set_defaults(func=cmd_chain)
     canon_run.add_parser(sub)

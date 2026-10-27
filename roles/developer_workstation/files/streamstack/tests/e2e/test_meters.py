@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
-from support import LOADED, TOKEN_HEADER, App, Rig
+from support import HTTP_TIMEOUT, LOADED, TOKEN_HEADER, App, Rig
 
 LIT = ("data-on", "")
 
@@ -142,7 +142,7 @@ def stream_meters(rig: Rig, seconds: float) -> list[tuple[dict[str, Any], int]]:
     frames: list[tuple[dict[str, Any], int]] = []
     end = time.monotonic() + seconds
     event = ""
-    with urllib.request.urlopen(req, timeout=10) as res:
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as res:
         while time.monotonic() < end:
             raw = res.readline()
             if not raw:

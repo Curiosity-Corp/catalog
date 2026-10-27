@@ -8,6 +8,9 @@ Wants=pipewire.service
 
 [Service]
 ExecStart=streamstack chain run
+# StreamStack Mic becomes the default microphone once the host is up, and the raw one comes back when it stops.
+ExecStartPost=-streamstack chain claim-default
+ExecStopPost=-streamstack chain release-default
 Restart=on-failure
 RestartSec=3
 Nice=-5

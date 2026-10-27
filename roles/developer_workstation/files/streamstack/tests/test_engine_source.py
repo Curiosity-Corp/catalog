@@ -156,6 +156,36 @@ def test_render_node_prefers_the_configured_then_intel(tmp_path: Path) -> None:
     assert probe.render_node("", tmp_path / "none") == "/dev/dri/renderD128"
 
 
+def _drm(root: Path, nodes: dict[str, tuple[str, str, str]]) -> Path:
+    """A fake /sys/class/drm whose render nodes link to PCI devices, as the kernel lays it out."""
+    sysfs = root / "class" / "drm"
+    sysfs.mkdir(parents=True)
+    for name, (address, vendor, device) in nodes.items():
+        pci = root / "devices" / "pci0000:00" / address
+        pci.mkdir(parents=True, exist_ok=True)
+        (pci / "vendor").write_text(vendor + "\n")
+        (pci / "device").write_text(device + "\n")
+        (sysfs / name).mkdir()
+        (sysfs / name / "device").symlink_to(pci)
+    return sysfs
+
+
+def test_render_node_picks_the_arc_by_pci_device_not_by_node_number(tmp_path: Path) -> None:
+    # deskmeet1: the UHD 770 iGPU enumerates first as renderD128, the Arc A380 is renderD129.
+    deskmeet1 = _drm(
+        tmp_path / "deskmeet1",
+        {"renderD128": ("0000:00:02.0", "0x8086", "0xa780"), "renderD129": ("0000:03:00.0", "0x8086", "0x56a5")},
+    )
+    assert probe.render_node("", deskmeet1) == "/dev/dri/renderD129"
+    # dm313red: the Arc alone, as renderD128.
+    dm313red = _drm(tmp_path / "dm313red", {"renderD128": ("0000:03:00.0", "0x8086", "0x56a5")})
+    assert probe.render_node("", dm313red) == "/dev/dri/renderD128"
+    # An iGPU-only machine still gets its Intel GPU, and an explicit node always wins.
+    igpu = _drm(tmp_path / "igpu", {"renderD128": ("0000:00:02.0", "0x8086", "0xa780")})
+    assert probe.render_node("", igpu) == "/dev/dri/renderD128"
+    assert probe.render_node("/dev/dri/renderD128", deskmeet1) == "/dev/dri/renderD128"
+
+
 def test_probe_backend_is_vulkan_only_when_the_graph_runs() -> None:
     ok = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, b"", b"")  # noqa: E731
     bad = lambda argv, **kw: subprocess.CompletedProcess(argv, 1, b"", b"first\nlibplacebo: no device\n")  # noqa: E731

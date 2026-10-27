@@ -8,6 +8,7 @@ USERUNITDIR ?= $(DESTDIR)$(PREFIX)/lib/systemd/user
 UDEVDIR ?= $(DESTDIR)$(PREFIX)/lib/udev/rules.d
 MODPROBEDIR ?= $(DESTDIR)$(PREFIX)/lib/modprobe.d
 MODULESLOADDIR ?= $(DESTDIR)$(PREFIX)/lib/modules-load.d
+WPCONFDIR ?= $(DESTDIR)/etc/wireplumber/wireplumber.conf.d
 
 .PHONY: all test e2e lint build install uninstall clean
 
@@ -44,6 +45,8 @@ install:
 	install -D -m 644 packaging/modprobe.d/streamstack-v4l2loopback.conf $(MODPROBEDIR)/streamstack-v4l2loopback.conf
 	install -D -m 644 packaging/modules-load.d/streamstack-v4l2loopback.conf \
 		$(MODULESLOADDIR)/streamstack-v4l2loopback.conf
+	install -D -m 644 packaging/wireplumber/wireplumber.conf.d/52-streamstack-wave-xlr-capture-hold.conf \
+		$(WPCONFDIR)/52-streamstack-wave-xlr-capture-hold.conf
 	install -D -m 644 src/streamstack/data/icons/streamstack-live.svg \
 		$(SHAREDIR)/icons/hicolor/scalable/apps/streamstack.svg
 	for state in live raw warn off; do \
@@ -60,6 +63,7 @@ uninstall:
 	rm -f $(SHAREDIR)/applications/streamstack*.desktop $(UDEVDIR)/60-streamstack-litra.rules
 	rm -f $(UDEVDIR)/61-streamstack-video.rules $(MODPROBEDIR)/streamstack-v4l2loopback.conf \
 		$(MODULESLOADDIR)/streamstack-v4l2loopback.conf
+	rm -f $(WPCONFDIR)/52-streamstack-wave-xlr-capture-hold.conf
 	rm -f $(SHAREDIR)/icons/hicolor/scalable/apps/streamstack.svg $(SHAREDIR)/icons/hicolor/scalable/status/streamstack-*.svg
 
 clean:

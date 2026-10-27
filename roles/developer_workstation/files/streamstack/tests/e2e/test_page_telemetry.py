@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page, expect
 
-from support import LOADED, App, Rig, poll
+from support import HTTP_TIMEOUT, LOADED, App, Rig, poll
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -33,7 +33,7 @@ def tidy(rig: Rig) -> Iterator[None]:
 def scrape(rig: Rig, headers: dict[str, str]) -> tuple[int, str]:
     req = urllib.request.Request(rig.base + "metrics", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=15) as res:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as res:
             return res.status, res.read().decode()
     except urllib.error.HTTPError as err:
         return err.code, err.read().decode(errors="replace")

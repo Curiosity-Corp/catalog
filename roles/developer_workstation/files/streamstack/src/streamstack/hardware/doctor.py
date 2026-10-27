@@ -6,7 +6,8 @@ title, detail, hint) and every row that is not `ok` names the fix. The rows, in 
 * `hw-rig`        "rig: <id> (selected by <reason>)"
 * `hw-device-*`   one per device the rig expects: present, absent (required: fail, optional: fine) or denied
 * `hw-gpu-*`      one per GPU role (grade, encode, decode, blur) with the render node it resolved to, and `hw-encoder`
-* `hw-audio-*`    the interface at its rate and format, the call microphone, the monitor output
+* `hw-audio-*`    the interface at its rate and format, the call microphone, the monitor output; `hw-audio-duplex`
+                  fails when the interface is attached but its sound card has no input profile (duplex guard)
 * `hw-capture`    the capture card's modes; `hw-loopback-*` the two v4l2loopback devices by label
 * `hw-source-*`   a probe source that was denied or failed, with the fix; `hw-notice-*` any other Plan warning
 
@@ -22,6 +23,7 @@ from typing import Any
 
 from streamstack.audiochain import graph
 
+from . import duplex
 from .found import Found
 from .model import Snapshot
 from .plan import DUMMY_SINK, DeviceRow, GpuRole, Plan
@@ -204,6 +206,7 @@ def _off_cards(snapshot: Snapshot) -> str:
 def _audio_rows(plan: Plan, snapshot: Snapshot, target: VoiceTarget) -> list[dict[str, str]]:
     audio = plan.audio
     iface = plan.audio_interface()
+    lost = duplex.lost_input(plan, snapshot) if iface is not None else None
     rows: list[dict[str, str]] = []
     if iface is None:
         if target.state == ABSENT:
@@ -250,6 +253,21 @@ def _audio_rows(plan: Plan, snapshot: Snapshot, target: VoiceTarget) -> list[dic
                 else "switch the card to a profile with an input in pavucontrol (Configuration)"
             )
             rows.append(row("fail", cid, f"{iface.label}: its sound card is at profile off", card, fix))
+        elif lost is not None:
+            profile = lost.profile or "a profile without a source"
+            wanted = audio.card_profile or "output:analog-stereo+input:mono-fallback"
+            rows.append(
+                row(
+                    "fail",
+                    "hw-audio-duplex",
+                    f"{iface.label}: its sound card has no input profile, so there is no microphone",
+                    f"{card} is at {profile}; a second user's WirePlumber probing the card at the same moment can "
+                    "leave it output-only",
+                    f"pactl set-card-profile {card} {wanted}; if PipeWire refuses it, run "
+                    "`streamstack mic-revive --reprobe` (restarts WirePlumber so it probes the card again; that "
+                    "briefly drops every audio stream, so not during a call)",
+                )
+            )
         elif target.microphone is None:
             rows.append(
                 row(
@@ -283,10 +301,13 @@ def _audio_rows(plan: Plan, snapshot: Snapshot, target: VoiceTarget) -> list[dic
         )
         rows.append(
             row(
-                "ok",
+                "warn" if lost is not None else "ok",
                 "hw-audio-mic",
                 f"call microphone: {redact(target.microphone)}",
                 f"{label} source; {target.reason}",
+                f"this is not {iface.label if iface else 'the interface'}: fix the input profile first"
+                if lost is not None
+                else "",
             )
         )
     if audio.monitor is None:
