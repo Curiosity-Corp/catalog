@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 
 SLOTS = ("night", "dawn", "morning", "afternoon", "evening")
@@ -43,7 +43,7 @@ SLOT_NOTES = {
     "evening": "Daylight is fading and turns warm (golden hour), then drops away as room lights take over. "
     "Exposure falls and colour goes orange.",
 }
-# Starting hints (OBS look offsets) used only until the director has learned what you kept in a slot.
+# Starting hints (picture look offsets) used only until the director has learned what you kept in a slot.
 SLOT_PRIORS: dict[str, dict[str, float]] = {
     "night": {"gamma": 0.05},
     "dawn": {"gamma": 0.04},
@@ -217,7 +217,7 @@ def resolve_location(
 
 
 def julian_day(when: datetime) -> float:
-    utc = when.astimezone(timezone.utc)
+    utc = when.astimezone(UTC)
     seconds = utc.hour * 3600 + utc.minute * 60 + utc.second + utc.microsecond / 1e6
     year, month = utc.year, utc.month
     if month <= 2:
@@ -256,7 +256,7 @@ def solar_position(when: datetime, latitude: float, longitude: float) -> tuple[f
         - 0.5 * y * y * math.sin(4 * l0r)
         - 1.25 * e * e * math.sin(2 * m)
     )
-    utc = when.astimezone(timezone.utc)
+    utc = when.astimezone(UTC)
     minutes = utc.hour * 60 + utc.minute + utc.second / 60 + utc.microsecond / 6e7
     solar_minutes = (minutes + eq_time + 4 * longitude) % 1440
     hour_angle = solar_minutes / 4 - 180
@@ -405,7 +405,7 @@ def sun_state(when: datetime, loc: Location) -> SunState:
 
 def day_strip(when: datetime, loc: Location, step_minutes: int = 10) -> list[dict]:
     """The local day as consecutive slot segments (minutes from midnight), for the Console's time-of-day strip."""
-    start, end = day_bounds(when.date(), when.tzinfo or timezone.utc)
+    start, end = day_bounds(when.date(), when.tzinfo or UTC)
     segments: list[dict] = []
     moment = start
     while moment < end:

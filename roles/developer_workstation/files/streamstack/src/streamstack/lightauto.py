@@ -45,7 +45,7 @@ from typing import Any, Protocol
 
 from streamstack import config, lighting, lightplan, system
 from streamstack.camerause import CameraWatcher, Usage, watched_devices
-from streamstack.console.errors import ActionError
+from streamstack.console.errors import ActionError, Superseded
 from streamstack.director import daylight, settings
 
 log = logging.getLogger(__name__)
@@ -76,7 +76,13 @@ class Lights(Protocol):
     def lights_view(self) -> list[dict[str, Any]]: ...
 
     def write(
-        self, light_id: str, *, power: bool | None = None, percent: float | None = None, kelvin: float | None = None
+        self,
+        light_id: str,
+        *,
+        power: bool | None = None,
+        percent: float | None = None,
+        kelvin: float | None = None,
+        expect: tuple[bool | None, int | None, int | None] | None = None,
     ) -> None: ...
 
 
@@ -183,16 +189,35 @@ class Automation:
         with self._lock:
             now, wall = self.clock(), self.now()
             data = self.store.load()
+            views = [v for v in self.lights.lights_view() if v.get("connected")]
             if data["resume"] > self._seen_resume:
                 self._seen_resume = data["resume"]
-                self._resume(now, wall, "You asked the schedule to resume")
-            views = [v for v in self.lights.lights_view() if v.get("connected")]
+                self._resume(views, now, wall, "You asked the schedule to resume")
             self._forget_gone(views)
             self._usage = self.watcher.poll(data["follow"], self.devices())
             self._observe(views, data, now, wall)
             self._follow(views, data, now, wall)
             self._schedule(views, data, now, wall)
             self._publish(views, data, now, wall)
+
+    def reset(self, restore: Callable[[], None]) -> None:
+        """Put everything back as at start, in one step the engine cannot see the middle of (the demo rig's test reset).
+
+        Under the engine's lock, so no tick runs while `restore` moves the lights and the settings, the engine forgets
+        what it knew (holds, the camera session, the event log, what it believes each light shows) and takes one tick
+        to learn the lights as they are now. Nothing here is noticed as a change by hand: the engine never compared
+        the old state with the new one."""
+        with self._lock:
+            restore()
+            self._runs.clear()
+            self._events.clear()
+            self._session = None
+            self._active_since = None
+            self._last_active = 0.0
+            self._usage = Usage()
+            self._seen_resume = self.store.load()["resume"]
+            self._director_cache = (float("-inf"), False)
+            self.tick()
 
     def _run_for(self, light_id: str) -> _Run:
         return self._runs.setdefault(light_id, _Run())
@@ -274,10 +299,21 @@ class Automation:
                 until = f"for {hold_minutes} min" if hold_minutes else "until the next camera session"
                 self._event(wall, "manual", f"{name} was changed by hand; the schedule leaves it alone {until}")
 
-    def _resume(self, now: float, wall: datetime, why: str) -> None:
+    def _resume(self, views: list[dict[str, Any]], now: float, wall: datetime, why: str) -> None:
+        """Hand the lights back to the schedule, starting from what they show now.
+
+        A change by hand made within `SETTLE_SECONDS` of the engine's own write is only noticed once that window
+        ends. Resuming adopts the lights' present state as the one the engine knows, so such a change cannot hold
+        the light again a moment after the person asked the schedule to take it."""
         held = [r for r in self._runs.values() if r.held_at is not None]
         for run in self._runs.values():
             run.held_at = run.held_wall = None
+        for view in views:
+            if view.get("identifying") or view["power"] is None:
+                continue
+            run = self._run_for(view["id"])
+            run.power, run.lumen, run.kelvin = view["power"], view["lumen"], view["kelvin"]
+            run.wrote = float("-inf")
         if held:
             self._event(wall, "resume", f"{why}; the schedule has the lights again")
 
@@ -356,6 +392,9 @@ class Automation:
                 self._fade(view, run, now, 1, goal[0], goal[1], goal[1], fade)
             else:
                 self._write(view, run, now, percent=goal[0], kelvin=goal[1], power=True)
+        except Superseded:
+            run.session = 0  # somebody moved the light under us: look at it again on the next tick
+            return
         except ActionError as exc:
             self._event(wall, "error", f"Could not switch {name} on: {exc}")
             return
@@ -411,6 +450,8 @@ class Automation:
             self._write(view, run, now, power=False)
             if percent is not None:
                 self._write(view, run, now, percent=percent)  # accepted while off without waking the light
+        except Superseded:
+            log.info("lights: %s was changed while it was being switched off; left as it is", view["name"])
         except ActionError as exc:
             self._event(wall, "error", f"Could not switch {view['name']} off: {exc}")
 
@@ -453,6 +494,8 @@ class Automation:
                     self._fade(view, run, now, start, percent, view["kelvin"], kelvin, fade)
                 else:
                     self._write(view, run, now, percent=percent, kelvin=kelvin)
+            except Superseded:
+                continue  # a person moved it mid-write: the next tick sees that and holds the light
             except ActionError as exc:
                 self._event(wall, "error", f"Could not set {view['name']}: {exc}")
 
@@ -486,8 +529,18 @@ class Automation:
         percent: float | None = None,
         kelvin: float | None = None,
     ) -> None:
-        """One write through the controller; remembers it as the engine's own so it is not mistaken for a person."""
-        self.lights.write(view["id"], power=power, percent=percent, kelvin=kelvin)
+        """One write through the controller; remembers it as the engine's own so it is not mistaken for a person.
+
+        The write is a compare-and-set against what the engine last knew the light to show: a person's change that
+        landed since (while a fade was walking, or between this tick's snapshot and now) is never written over.
+        The write is dropped (`Superseded`) and the next tick sees the change and holds the light."""
+        try:
+            self.lights.write(
+                view["id"], power=power, percent=percent, kelvin=kelvin, expect=(run.power, run.lumen, run.kelvin)
+            )
+        except Superseded:
+            run.wrote = float("-inf")  # nothing of ours is in flight: the next tick compares at once and holds it
+            raise
         model = lighting.MODELS[int(view["pid"], 16)]
         run.wrote = now
         if power is not None:

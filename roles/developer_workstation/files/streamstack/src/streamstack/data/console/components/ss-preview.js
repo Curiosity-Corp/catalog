@@ -7,12 +7,12 @@
 //   </ss-preview>
 //
 // Attributes:
-//   source   program (default) | camera | <an OBS source name>
+//   source   program (default) | camera | <a camera name>
 //   fps      1…15 (default 10)
 //   width    requested picture width 160…1280; default follows the element size (320/480/640/960/1280 buckets)
 //   grid     rule-of-thirds overlay (toggle with the G key via the `grid` attribute)
 //   tally    program → red frame while this picture is what the audience sees
-//   reason   do not connect; show this text instead of a picture ("OBS is not running")
+//   reason   do not connect; show this text instead of a picture ("No camera")
 //   paused   stop the stream (the last frame stays)
 //   label    accessible name (default "Live picture")
 // Slots: badges (top-left), corner (top-right), footer (bottom, over a gradient), default (centred overlay, e.g. a privacy cover),

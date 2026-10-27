@@ -1,0 +1,9 @@
+# the same with the video group (group added for this one process) and a 1080p30 YUYV feed on the node
+[warn] Canon EOS 50D (/dev/video42) has no picture yet; browsers will not list it
+[  ok] StreamStack Camera (/dev/video43) is live: 1920x1080 YUYV @ 30 fps
+[  ok] StreamStack Camera offers 1920x1080 YUYV @ 30 fps: listed by Chrome, Firefox and Zoom
+[  ok] StreamStack Mic (processed voice) is available
+[  ok] StreamStack Mic is a plain input source that apps list: 1 ch 48000 Hz; pick it in the call app
+[  ok] seen by apps: camera: ffmpeg
+  Camera:     StreamStack Camera   (graded OBS output; or Canon EOS 50D raw)
+  Microphone: StreamStack Mic

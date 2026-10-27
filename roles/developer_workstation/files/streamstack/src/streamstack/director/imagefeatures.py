@@ -30,6 +30,13 @@ SKIN_GRID = (16, 9)
 SHEET_CELL = (640, 360)
 SHEET_GAP = 6
 MAX_FRAMES = 8
+# Measured on the Canon feed in a dark room (docs/auto-mode.md, "Picture calibration"): a handful of mid-tone pixels (a
+# status LED, a monitor glint, sensor noise) must not decide the white balance. The colour cast is only read when
+# at least this share of the frame sits in the mid-tones.
+MIN_MIDTONE_SHARE = 0.05
+# Flicker and "blurred frame" comparisons are relative; below these floors the frames are noise, not a picture.
+MIN_FLICKER_LUMA = 10.0
+MIN_BLUR_REFERENCE = 15.0
 
 
 class ImageAnalysisError(RuntimeError):
@@ -188,7 +195,7 @@ def frame_features(rgb: bytes, width: int, height: int, source: Path | None = No
         "crushed_shadows": round(low / count, 4),
     }
     features["contrast_spread"] = round(features["luma_p95"] - features["luma_p5"], 1)
-    features.update(colour_features(sum_r, sum_g, sum_b, mid_n, sat_total))
+    features.update(colour_features(sum_r, sum_g, sum_b, mid_n, sat_total, count))
     features["skin"] = skin_features(skin_n, skin_y, skin_r, skin_g, skin_b, count)
     features["sharpness"], features["noise"] = sharpness_and_noise(luma, width, height)
     centre = centre_sum / centre_n if centre_n else None
@@ -200,9 +207,13 @@ def frame_features(rgb: bytes, width: int, height: int, source: Path | None = No
     return features
 
 
-def colour_features(sum_r: int, sum_g: int, sum_b: int, n: int, sat_total: float) -> dict:
-    """Grey-world white balance over the mid-tones: warm/cool index, green/magenta tint and colourfulness."""
-    if not n:
+def colour_features(sum_r: int, sum_g: int, sum_b: int, n: int, sat_total: float, count: int = 0) -> dict:
+    """Grey-world white balance over the mid-tones: warm/cool index, green/magenta tint and colourfulness.
+
+    `count` is the number of pixels in the frame. When it is given, fewer than `MIN_MIDTONE_SHARE` of them in the
+    mid-tones means the frame is too dark (or too blown) to read a cast from, and every value is None.
+    """
+    if not n or (count and n < MIN_MIDTONE_SHARE * count):
         return {"cast": None, "warm_index": None, "tint_index": None, "saturation": None}
     r, g, b = sum_r / n, sum_g / n, sum_b / n
     warm = (r - b) / max(1.0, (r + g + b) / 3)
@@ -351,7 +362,7 @@ def burst_summary(frames: list[dict], thumbs: list[list[float]]) -> dict:
     """What changed between the frames: exposure breathing (flicker), motion and the sharpest frame."""
     means = [f["luma_mean"] for f in frames]
     average = statistics.fmean(means)
-    swing = (max(means) - min(means)) / average if average > 1 and len(means) > 1 else 0.0
+    swing = (max(means) - min(means)) / average if average >= MIN_FLICKER_LUMA and len(means) > 1 else 0.0
     diffs = [
         statistics.fmean(abs(a - b) for a, b in zip(thumbs[i], thumbs[i + 1], strict=True))
         for i in range(len(thumbs) - 1)
@@ -366,7 +377,9 @@ def burst_summary(frames: list[dict], thumbs: list[list[float]]) -> dict:
         "motion_word": "still" if motion < 3 else "some movement" if motion < 9 else "lots of movement",
         "sharpest": sharp.index(max(sharp)) + 1,
         "sharpness_median": round(statistics.median(sharp), 1),
-        "blurred_frames": [i + 1 for i, v in enumerate(sharp) if v < 0.5 * max(sharp)] if max(sharp) > 0 else [],
+        "blurred_frames": [i + 1 for i, v in enumerate(sharp) if v < 0.5 * max(sharp)]
+        if max(sharp) >= MIN_BLUR_REFERENCE
+        else [],
     }
 
 

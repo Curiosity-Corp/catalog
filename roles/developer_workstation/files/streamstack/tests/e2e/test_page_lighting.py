@@ -92,6 +92,19 @@ def test_all_lights_master_moves_every_light(li: App, rig: Rig) -> None:
     assert poll(rig, lambda s: light(s, ONE)["kelvin"] >= 6000 and light(s, TWO)["kelvin"] >= 6000)
 
 
+def test_the_controls_do_not_move_when_a_manual_change_is_held(li: App, rig: Rig) -> None:
+    """The first hand on a light makes the engine hold it, and the page must not jump when "Resume" appears."""
+    master = card(li, "All lights")
+    rail = master.get_by_role("slider", name="Temperature").locator(".track .rail")
+    before = rail.bounding_box()
+    li.drag_fader(master.get_by_role("slider", name="Brightness"), 0.2)
+    assert poll(rig, lambda s: light(s, ONE)["brightness"] <= 30)
+    expect(li.page.get_by_role("button", name=re.compile("Resume the schedule"))).to_be_visible(timeout=LOADED)
+    after = rail.bounding_box()
+    assert before is not None and after is not None
+    assert abs(after["y"] - before["y"]) < 1, f"the Temperature fader moved from {before['y']} to {after['y']}"
+
+
 def test_all_lights_power_pad(li: App, rig: Rig) -> None:
     pad = power_pad(card(li, "All lights"))
     tap(li.page, pad)

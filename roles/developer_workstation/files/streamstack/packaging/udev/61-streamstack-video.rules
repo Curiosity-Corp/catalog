@@ -1,0 +1,5 @@
+# The StreamStack virtual camera must be openable by the people who take calls on this machine, with or without a
+# seat (remote and headless sessions have no logind seat, so the usual uaccess ACL never reaches them).
+# Members of the video group get read and write; the group is the host's choice (ansible catalog, streamstack role).
+SUBSYSTEM=="video4linux", ATTR{name}=="StreamStack Camera", GROUP="video", MODE="0660", TAG+="uaccess", SYMLINK+="streamstack/camera"
+SUBSYSTEM=="video4linux", ATTR{name}=="Canon EOS 50D", GROUP="video", MODE="0660", TAG+="uaccess", SYMLINK+="streamstack/canon"

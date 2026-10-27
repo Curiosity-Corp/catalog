@@ -1,0 +1,51 @@
+# GPUs: which roles each is fit for and which encoders it offers, in preference order. The VA-API profile and
+# entrypoint are what `vainfo` must report on the node for the encoder to count as available (low power entrypoints
+# on both Intel parts). Matching is by PCI id; the render node number is resolved at probe time.
+schema = 1
+
+[[device]]
+id = "arc-a380"
+class = "gpu"
+label = "Intel Arc A380"
+summary = "DG2, the only GPU with AV1 hardware encode in the studio hosts"
+[device.match]
+pci = ["8086:56a5"]
+[device.gpu]
+kind = "discrete"
+roles = ["grade", "encode", "decode", "blur"]
+[[device.gpu.encoder]]
+codec = "av1"
+ffmpeg = "av1_vaapi"
+va_profile = "VAProfileAV1Profile0"
+entrypoint = "VAEntrypointEncSliceLP"
+[[device.gpu.encoder]]
+codec = "hevc"
+ffmpeg = "hevc_vaapi"
+va_profile = "VAProfileHEVCMain"
+entrypoint = "VAEntrypointEncSliceLP"
+[[device.gpu.encoder]]
+codec = "h264"
+ffmpeg = "h264_vaapi"
+va_profile = "VAProfileH264High"
+entrypoint = "VAEntrypointEncSliceLP"
+
+[[device]]
+id = "uhd-770"
+class = "gpu"
+label = "Intel UHD Graphics 770"
+summary = "Raptor Lake-S iGPU: decode and thumbnails, H.264 and HEVC encode, no AV1 encode"
+[device.match]
+pci = ["8086:a780"]
+[device.gpu]
+kind = "integrated"
+roles = ["decode"]
+[[device.gpu.encoder]]
+codec = "hevc"
+ffmpeg = "hevc_vaapi"
+va_profile = "VAProfileHEVCMain"
+entrypoint = "VAEntrypointEncSliceLP"
+[[device.gpu.encoder]]
+codec = "h264"
+ffmpeg = "h264_vaapi"
+va_profile = "VAProfileH264High"
+entrypoint = "VAEntrypointEncSliceLP"

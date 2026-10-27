@@ -13,6 +13,7 @@
 //   busy      shows a spinner and ignores presses
 //   block     full width
 //   disabled
+//   aria-label  the button's accessible name, when the label alone is ambiguous (several "Test" buttons on a page)
 // Slots: default = label.
 // Events: native `click` (for hold buttons: only after the hold completed).
 // Parts: `button`.
@@ -46,7 +47,7 @@ const styles = css`
 export class SSButton extends SSElement {
   static styles = styles;
   static delegatesFocus = true;
-  static observedAttributes = ['variant', 'size', 'icon', 'hold', 'pressed', 'busy', 'disabled', 'block'];
+  static observedAttributes = ['variant', 'size', 'icon', 'hold', 'pressed', 'busy', 'disabled', 'block', 'aria-label'];
 
   build(root) {
     root.innerHTML = '<button part="button" type="button"><span class="hold"></span><span class="ic"></span><span class="label"><slot></slot></span></button>';
@@ -74,6 +75,9 @@ export class SSButton extends SSElement {
     if (this.hasAttribute('pressed')) this.btn.setAttribute('aria-pressed', String(this.bool('pressed')));
     else this.btn.removeAttribute('aria-pressed');
     this.btn.setAttribute('aria-busy', String(busy));
+    // the name for assistive tech when the label alone is not enough ("Test" -> "Test Studio Monitor")
+    const name = this.getAttribute('aria-label');
+    if (name) this.btn.setAttribute('aria-label', name); else this.btn.removeAttribute('aria-label');
     if (this.hold) this.btn.setAttribute('aria-description', 'Press and hold to confirm');
   }
 

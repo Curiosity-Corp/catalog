@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=StreamStack voice chain
-Comment=Easy Effects in the background so calls can use the processed microphone
-Exec=easyeffects --service-mode -w
-OnlyShowIn=Openbox;LXDE;XFCE;MATE;GNOME;KDE;
-X-GNOME-Autostart-enabled=true
-NoDisplay=true

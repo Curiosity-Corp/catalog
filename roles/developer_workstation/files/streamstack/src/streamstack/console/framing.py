@@ -1,10 +1,10 @@
 """Auto-framing in the Console: the `framing.*` actions, the `framing` state, and the two threads behind them.
 
     detect thread   screenshot of each on-air camera at a low rate -> face detector -> Framer.observe
-    apply thread    Framer.step at 20 Hz -> crop of the camera's scene items in OBS (only when it changed)
+    apply thread    Framer.step at 20 Hz -> crop of the camera picture in the engine (only when it changed)
 
 The picture path is never touched: no device is opened, no filter is added, nothing waits on a detection. If the
-detector or OBS stops answering the crop eases back to the full frame and the program feed goes on unchanged.
+detector or the engine stops answering the crop eases back to the full frame and the program feed goes on unchanged.
 
 For other code (the AI director) the actuator surface is `set_mode`, `hold`, `reset` and `status`; the Console
 actions call exactly those.
@@ -12,22 +12,17 @@ actions call exactly those.
 
 from __future__ import annotations
 
-import base64
-import binascii
-import json
 import logging
-import os
-import tempfile
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Protocol
 
-from streamstack import config
+from streamstack import config, store
 from streamstack.console.errors import ActionError
 from streamstack.framing import detector, health, model
-from streamstack.framing.crop import Crop, Item, ObsCropper, RestoreLog, face_to_frame, window_to_crop
+from streamstack.framing.crop import Crop, Item, face_to_frame, window_to_crop
 from streamstack.framing.engine import MODES, PROFILES, Framer, resolution_zoom_cap
 
 log = logging.getLogger(__name__)
@@ -35,13 +30,23 @@ Notify = Callable[[str, str], None]
 
 APPLY_TICK = 0.05  # 20 Hz writes while the window moves
 IDLE_WAIT = 0.5
-REDISCOVER = 3.0  # how often scene items are re-read (a scene switch re-reads at once)
-SHOT_WIDTH = 320
-SHOT_QUALITY = 70
+REDISCOVER = 3.0  # how often the croppable pictures are re-read (a camera switch re-reads at once)
 MAX_ERRORS = 5  # consecutive detector failures before framing gives up
 CLOSE_AFTER_OFF = 60.0  # the detector (and its GPU context) is released this long after framing goes off
 SLOW_MS = 40.0  # a median detection slower than this earns a warning
 CHANGE_EPS = 1  # pixels; smaller crop changes are not worth a request
+
+
+class Cropper(Protocol):
+    """What the apply loop needs from whatever holds the picture: the native engine."""
+
+    skipped: dict[str, str]
+
+    def discover(self, scenes: list[str], cameras: set[str]) -> list[Item]: ...
+    def apply(self, item: Item, crop: Crop) -> None: ...
+    def restore(self, item: Item) -> None: ...
+
+
 MODE_LABELS = {"off": "Off", **{name: p.label for name, p in PROFILES.items()}}
 
 
@@ -67,7 +72,7 @@ def clean_fps(cfg: dict[str, str]) -> float:
 
 
 class FramingController:
-    """The real thing: OBS through the video controller's shared obs-websocket link."""
+    """The real thing: the native engine behind the video controller."""
 
     def __init__(
         self,
@@ -77,7 +82,6 @@ class FramingController:
         *,
         opener: Callable[..., detector.Detector] | None = None,
         state_file: Path | None = None,
-        restore_file: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.cfg = cfg
@@ -86,7 +90,6 @@ class FramingController:
         self._opener = opener or detector.open_detector
         self._clock = clock
         self._state_file = state_file or config.state_dir() / "framing.json"
-        self._restore = RestoreLog(restore_file or config.state_dir() / "framing-restore.json")
         self._device = cfg.get("STREAMSTACK_FRAMING_DEVICE", "auto") or "auto"
         self._period = 1.0 / clean_fps(cfg)
         self.lock = threading.RLock()
@@ -103,8 +106,7 @@ class FramingController:
         self._scene_key: tuple | None = None
         self._program: str | None = None
         self._ready: tuple[float, tuple[bool, str, str]] | None = None
-        self._cropper: ObsCropper | None = None
-        self._recovered = False
+        self._cropper: Cropper | None = None
         self._detector: detector.Detector | None = None
         self._detector_off_since: float | None = None
         self._status = "off"  # off | starting | running | unavailable
@@ -150,23 +152,13 @@ class FramingController:
         return "off"
 
     def _read_saved_mode(self) -> str | None:
-        try:
-            data = json.loads(self._state_file.read_text())
-        except FileNotFoundError:
-            return None
-        except (OSError, ValueError) as exc:
-            log.warning("framing state %s is unreadable: %s", self._state_file, exc)
-            return None
-        mode = data.get("mode") if isinstance(data, dict) else None
+        data = store.read_json(self._state_file, {}, validate=store.object_with(mode=str))
+        mode = data.get("mode")
         return mode if isinstance(mode, str) else None
 
     def _save_mode(self) -> None:
         try:
-            self._state_file.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=self._state_file.parent, prefix=".framing-", suffix=".tmp")
-            with os.fdopen(fd, "w") as handle:
-                json.dump({"mode": self._mode}, handle)
-            os.replace(tmp, self._state_file)
+            store.write_json(self._state_file, {"mode": self._mode})
         except OSError as exc:
             log.warning("framing mode not saved to %s: %s", self._state_file, exc)
 
@@ -341,7 +333,7 @@ class FramingController:
             ]
         return [health.check("ok", title, detail)]
 
-    # -- OBS access -----------------------------------------------------------------------------------------------
+    # -- the picture ----------------------------------------------------------------------------------------------
 
     def _view(self) -> tuple[bool, str | None, list[str], set[str]]:
         view = getattr(self.video, "scene_view", None)
@@ -349,35 +341,23 @@ class FramingController:
             return False, None, [], set()
         return view()
 
-    def _call(self, request: str, **data: object) -> dict:
-        return self.video.obs_call("framing", request, **data)  # type: ignore[attr-defined]
-
     def _shot(self, source: str) -> bytes | None:
-        reply = self.video.obs_call(  # type: ignore[attr-defined]
-            "framing-shots",
-            "GetSourceScreenshot",
-            sourceName=source,
-            imageFormat="jpg",
-            imageWidth=SHOT_WIDTH,
-            imageCompressionQuality=SHOT_QUALITY,
-        )
-        image = reply.get("imageData", "")
-        if "," not in image:
-            return None
-        try:
-            return base64.b64decode(image.split(",", 1)[1], validate=False)
-        except (binascii.Error, ValueError):
-            return None
+        """The engine's own low-rate, uncropped JPEG of `source`."""
+        native = getattr(self.video, "detect_frame", None)
+        return native(source) if callable(native) else None
 
-    def _cropper_for(self) -> ObsCropper:
+    def _cropper_for(self) -> Cropper:
         if self._cropper is None:
-            self._cropper = ObsCropper(self._call, self._restore)
+            make = getattr(self.video, "make_cropper", None)
+            if not callable(make):
+                raise ActionError("The video engine cannot crop the picture.", 409)
+            self._cropper = make()
         return self._cropper
 
-    # -- scene items ----------------------------------------------------------------------------------------------
+    # -- croppable pictures ------------------------------------------------------------------------------------------
 
     def _refresh_items(self, now: float, force: bool = False) -> bool:
-        """Re-read the camera scene items; False while OBS is not connected."""
+        """Re-read the croppable camera pictures; False while the engine is not there."""
         connected, program, scenes, cameras = self._view()
         if not connected:
             with self.lock:
@@ -387,11 +367,6 @@ class FramingController:
         if not force and key == self._scene_key and now - self._discovered < REDISCOVER:
             return True
         cropper = self._cropper_for()
-        if not self._recovered:
-            fixed = cropper.recover(scenes)
-            self._recovered = True
-            if fixed:
-                self._toast("info", f"Put back the camera crop a previous session left on {fixed} scene item(s).")
         items = cropper.discover(scenes, cameras)
         with self.lock:
             self._items = items
@@ -448,15 +423,15 @@ class FramingController:
                 if _far(crop, item.applied):
                     cropper.apply(item, crop)
         except ActionError:
-            self._items, self._scene_key = [], None  # OBS went away: rediscover when it is back
+            self._items, self._scene_key = [], None  # the engine went away: rediscover when it is back
             return True
-        except RuntimeError as exc:  # OBS refused (an item was deleted, a scene renamed)
-            log.info("framing: OBS refused a crop (%s); re-reading the scene items", exc)
+        except RuntimeError as exc:  # the engine refused (it is restarting)
+            log.info("framing: the engine refused a crop (%s); re-reading the picture", exc)
             self._scene_key = None
         return False
 
     def _release_crops(self) -> None:
-        """Put every camera back to its own crop (stop, or giving up). Best effort: OBS may be gone."""
+        """Put every camera back to its own crop (stop, or giving up). Best effort: the engine may be gone."""
         cropper = self._cropper
         if cropper is None:
             return
@@ -532,10 +507,8 @@ class FramingController:
             return False
         try:
             jpeg = self._shot(source)
-        except ActionError:
-            return False  # OBS is not there; the apply loop notices too
-        except RuntimeError as exc:  # OBS refused the screenshot (source hidden or gone)
-            log.debug("framing: no screenshot of %s: %s", source, exc)
+        except (ActionError, RuntimeError) as exc:  # the engine is not there; the apply loop notices too
+            log.debug("framing: no picture of %s: %s", source, exc)
             return False
         if jpeg is None:
             return False

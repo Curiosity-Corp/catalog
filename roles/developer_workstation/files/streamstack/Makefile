@@ -6,6 +6,8 @@ BINDIR = $(DESTDIR)$(PREFIX)/bin
 SHAREDIR = $(DESTDIR)$(PREFIX)/share
 USERUNITDIR ?= $(DESTDIR)$(PREFIX)/lib/systemd/user
 UDEVDIR ?= $(DESTDIR)$(PREFIX)/lib/udev/rules.d
+MODPROBEDIR ?= $(DESTDIR)$(PREFIX)/lib/modprobe.d
+MODULESLOADDIR ?= $(DESTDIR)$(PREFIX)/lib/modules-load.d
 
 .PHONY: all test e2e lint build install uninstall clean
 
@@ -38,6 +40,10 @@ install:
 	install -m 644 packaging/systemd/user/*.service $(USERUNITDIR)/
 	install -m 644 packaging/applications/*.desktop $(SHAREDIR)/applications/
 	install -D -m 644 packaging/udev/60-streamstack-litra.rules $(UDEVDIR)/60-streamstack-litra.rules
+	install -D -m 644 packaging/udev/61-streamstack-video.rules $(UDEVDIR)/61-streamstack-video.rules
+	install -D -m 644 packaging/modprobe.d/streamstack-v4l2loopback.conf $(MODPROBEDIR)/streamstack-v4l2loopback.conf
+	install -D -m 644 packaging/modules-load.d/streamstack-v4l2loopback.conf \
+		$(MODULESLOADDIR)/streamstack-v4l2loopback.conf
 	install -D -m 644 src/streamstack/data/icons/streamstack-live.svg \
 		$(SHAREDIR)/icons/hicolor/scalable/apps/streamstack.svg
 	for state in live raw warn off; do \
@@ -50,8 +56,10 @@ uninstall:
 	rm -f $(BINDIR)/streamstack $(BINDIR)/streamstack-auto $(BINDIR)/streamstack-console \
 		$(BINDIR)/streamstack-tray
 	rm -f $(USERUNITDIR)/streamstack-auto.service $(USERUNITDIR)/streamstack-canon.service \
-		$(USERUNITDIR)/streamstack-lights.service
+		$(USERUNITDIR)/streamstack-lights.service $(USERUNITDIR)/streamstack-deck.service $(USERUNITDIR)/streamstack-audio-chain.service
 	rm -f $(SHAREDIR)/applications/streamstack*.desktop $(UDEVDIR)/60-streamstack-litra.rules
+	rm -f $(UDEVDIR)/61-streamstack-video.rules $(MODPROBEDIR)/streamstack-v4l2loopback.conf \
+		$(MODULESLOADDIR)/streamstack-v4l2loopback.conf
 	rm -f $(SHAREDIR)/icons/hicolor/scalable/apps/streamstack.svg $(SHAREDIR)/icons/hicolor/scalable/status/streamstack-*.svg
 
 clean:

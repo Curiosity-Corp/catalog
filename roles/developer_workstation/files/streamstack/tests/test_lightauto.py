@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,7 @@ import pytest
 
 from streamstack import lightauto, lighting, lightplan
 from streamstack.camerause import Consumer, Usage
-from streamstack.console.errors import ActionError
+from streamstack.console.errors import ActionError, Superseded
 from streamstack.director import daylight
 
 BERLIN = daylight.Location("Berlin", 52.52, 13.405, "settings")
@@ -31,8 +32,16 @@ class FakeLights:
         self.writes: list[tuple[str, dict[str, Any]]] = []
         self.fail: str | None = None
         self.gone: set[str] = set()
+        self.after_view: Callable[[], None] | None = None  # runs once, right after the engine took its snapshot
 
     def lights_view(self) -> list[dict[str, Any]]:
+        view = self._view()
+        if self.after_view is not None:
+            after, self.after_view = self.after_view, None
+            after()  # a person acts between the engine's snapshot and its writes
+        return view
+
+    def _view(self) -> list[dict[str, Any]]:
         return [
             {
                 "id": i,
@@ -46,11 +55,25 @@ class FakeLights:
         ]
 
     def write(
-        self, light_id: str, *, power: bool | None = None, percent: float | None = None, kelvin: float | None = None
+        self,
+        light_id: str,
+        *,
+        power: bool | None = None,
+        percent: float | None = None,
+        kelvin: float | None = None,
+        expect: tuple[bool | None, int | None, int | None] | None = None,
     ) -> None:
         if self.fail:
             raise ActionError(self.fail, 409)
         s = self.state[light_id]
+        if expect is not None:  # the controller's compare-and-set
+            want_power, want_lumen, want_kelvin = expect
+            if (
+                (want_power is not None and s["power"] != want_power)
+                or (want_lumen is not None and abs(s["lumen"] - want_lumen) >= lightauto.LUMEN_EPS)
+                or (want_kelvin is not None and abs(s["kelvin"] - want_kelvin) >= lightauto.KELVIN_EPS)
+            ):
+                raise Superseded()
         self.writes.append((light_id, {"power": power, "percent": percent, "kelvin": kelvin}))
         if power is not None:
             s["power"] = power
@@ -87,6 +110,7 @@ class Bench:
         self.lights, self.camera = lights, Camera()
         self.plan = lightplan.Store(tmp_path / "plan.json")
         self.director = False
+        self.on_sleep: Callable[[float], None] = lambda seconds: None  # runs between the steps of a fade
         self.mono = 1000.0
         self.wall = datetime(2026, 6, 21, hour, 0, tzinfo=TZ)
         self.status_file = tmp_path / "status.json"
@@ -100,7 +124,7 @@ class Bench:
             now=lambda: self.wall,
             location=lambda when: BERLIN,
             status_file=self.status_file,
-            sleep=lambda seconds: None,
+            sleep=lambda seconds: self.on_sleep(seconds),
             **kwargs,
         )
 
@@ -347,6 +371,59 @@ def test_a_big_jump_is_faded_in_steps(bench: Bench, lights: FakeLights) -> None:
     writes = [w for light, w in lights.writes if light == "a" and w["percent"] is not None]
     assert len(writes) > 3
     assert writes == sorted(writes, key=lambda w: w["percent"])  # monotonic ramp up
+
+
+def test_a_hand_on_the_light_stops_a_fade_and_is_not_written_over(bench: Bench, lights: FakeLights) -> None:
+    """A person's change that lands while a fade walks the light wins: the fade stops, the light is held."""
+    lights.hand("a", power=True, percent=5)
+    bench.schedule(fade_seconds=4, hold_minutes=30)
+    steps = 0
+
+    def nudge(_seconds: float) -> None:
+        nonlocal steps
+        steps += 1
+        if steps == 3:
+            lights.hand("a", percent=90)
+
+    bench.on_sleep = nudge
+    bench.step(1)
+    assert lights.percent("a") == 90  # nothing of the fade landed after the hand
+    bench.step(10)
+    assert lights.percent("a") == 90
+    assert bench.engine.status()["lights"]["a"]["held"]
+    assert any("Light 1 was changed by hand" in text for text in bench.events("manual"))
+
+
+def test_a_hand_between_the_snapshot_and_the_schedule_write_is_not_written_over(
+    bench: Bench, lights: FakeLights
+) -> None:
+    """The engine decides from a snapshot taken at the start of the tick; a hand that lands after it must win."""
+    lights.hand("a", power=True, percent=5)
+    bench.schedule(fade_seconds=0, hold_minutes=30, enabled=False)
+    bench.step(3)
+    bench.schedule(enabled=True)
+    lights.after_view = lambda: lights.hand("a", percent=60)
+    bench.step(1)
+    assert lights.percent("a") == 60
+    bench.step(10)
+    assert lights.percent("a") == 60
+    assert bench.engine.status()["lights"]["a"]["held"]
+
+
+def test_resuming_adopts_a_hand_change_that_was_still_inside_the_settle_window(
+    bench: Bench, lights: FakeLights
+) -> None:
+    """A hand within two seconds of the engine's own write is noticed late; Resume must not be undone by it."""
+    lights.hand("a", power=True, percent=5)
+    bench.schedule(fade_seconds=0, hold_minutes=30)
+    bench.step(3)
+    bench.schedule(enabled=True)
+    bench.step(1)  # the engine writes the schedule level
+    lights.hand("a", percent=77)  # a person, inside the engine's settle window
+    bench.plan.resume()
+    bench.step(10)
+    assert not bench.engine.status()["lights"]["a"]["held"]
+    assert not bench.events("manual") or all("changed by hand" not in t for t in bench.events("manual"))
 
 
 def test_a_manual_change_holds_the_schedule_off(bench: Bench, lights: FakeLights) -> None:

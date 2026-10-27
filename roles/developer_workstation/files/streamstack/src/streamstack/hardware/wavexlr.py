@@ -22,7 +22,7 @@ unknown and is written back unchanged. Writes are read-modify-write of the whole
 
 What has no documented register, so is NOT offered: Clipguard and the low-cut filter. (Elgato's Wave Link runs them
 host-side or in firmware without a published control; OpenWave's "low cut" is a software DSP stage.) The voice chain's
-high-pass in Easy Effects is the low-cut available here.
+high-pass stage of the StreamStack voice chain is the low-cut available here.
 
 This host's sysfs also shows why the old "HID" idea does not apply: the Wave XLR has no HID interface and so no
 /dev/hidraw node; its five interfaces are audio control, audio streaming x2, a vendor interface (3) and a DFU
@@ -65,7 +65,7 @@ GAIN_TOLERANCE = 128  # raw units (0.5 dB) the firmware may round a written leve
 GROUP = "Hardware"
 UNSUPPORTED = [
     {"label": "Clipguard", "reason": "No documented register: Elgato runs it inside Wave Link or the firmware."},
-    {"label": "Low cut", "reason": "No documented register. Use the high-pass in the voice chain (Easy Effects)."},
+    {"label": "Low cut", "reason": "No documented register. Use the high-pass in the voice chain."},
 ]
 
 

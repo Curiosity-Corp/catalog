@@ -1,0 +1,57 @@
+/* audio-chain.css — the Chain section of the Audio page: presets, loudness, one card per stage. */
+@scope ([data-page="audio"]) {
+  .ch { flex: 1; min-height: 0; padding: var(--s-4); display: grid; gap: var(--s-4); grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); align-content: start; overflow-y: auto; }
+  .ch-top { grid-column: 1; }
+  .ch-loud { grid-column: 2; }
+  .ch-top, .ch-loud { align-self: stretch; }
+  .ch-stages { grid-column: 1 / -1; display: grid; gap: var(--s-4); grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); }
+
+  .ch-bar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem); gap: var(--s-3); align-items: start; }
+  .ch-presets { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+  .ch-preset { min-height: 2.6rem; padding: 0 var(--s-4); border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--line-strong); color: var(--text-2); font-weight: 650; font-size: var(--fs-sm); cursor: pointer; touch-action: manipulation; }
+  .ch-preset:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+  .ch-preset:disabled { opacity: 0.45; cursor: not-allowed; }
+  .ch-preset[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .ch-ab { margin-top: 0; }
+  .ch-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); margin-top: var(--s-3); }
+  .ch-save { display: flex; align-items: center; gap: var(--s-2); margin-left: auto; }
+  .ch-save input { min-height: 2.2rem; width: 12rem; max-width: 100%; padding: 0 var(--s-3); border-radius: var(--r-2); background: var(--surface-inset); border: 1px solid var(--line-strong); color: var(--text); font: inherit; }
+  .ch-save input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .ch-meters { display: grid; grid-template-columns: 1fr 1fr minmax(11rem, 0.8fr); gap: var(--s-4); align-items: center; margin-top: var(--s-3); }
+  .ch-meters ss-meter { height: 3.2rem; }
+  .gr { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--s-2); }
+  .gr-l { font-size: var(--fs-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); color: var(--text-3); }
+  .gr-bar { position: relative; height: 0.9rem; border-radius: 0.25rem; background: var(--meter-off); border: 1px solid var(--line); overflow: hidden; }
+  .gr-bar i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--amber); }
+  .gr-v { font-family: var(--font-mono); font-size: var(--fs-xs); min-width: 4.4rem; text-align: right; color: var(--text-2); }
+  .ch-note { margin: var(--s-2) 0 0; min-height: 1.2em; }
+  .ch-note[data-state="warn"] { color: var(--amber); }
+  .ch-top[data-warn] { border-color: color-mix(in srgb, var(--amber) 60%, transparent); }
+
+  .ld { display: grid; gap: var(--s-3); }
+  .ld .seg { justify-self: start; }
+  .ld-read { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); margin: 0; }
+  .ld-read dt { font-size: var(--fs-2xs); font-weight: 700; letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--text-3); }
+  .ld-read dd { margin: 0; font-family: var(--font-mono); font-weight: 600; font-size: var(--fs-md); }
+  .ch-loud[data-state="at-limit"] .ld-read div:last-child dd { color: var(--amber); }
+
+  .st { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-3) var(--s-4) var(--s-4); background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-4); box-shadow: var(--shadow-2); min-width: 0; }
+  .st[data-on="false"] { border-style: dashed; }
+  .st[data-on="false"] .st-faders { opacity: 0.55; }
+  .st-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-3); }
+  .st-id { display: flex; flex-direction: column; min-width: 0; }
+  .st-name { font-size: var(--fs-md); }
+  .st-blurb { font-size: var(--fs-xs); color: var(--text-3); }
+  .st-engine { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); margin: 0; }
+  .st-engine[hidden] { display: none; }
+  .st-engine button { min-height: 3rem; }
+  .st-faders { display: grid; gap: var(--s-2); }
+  .st-faders ss-fader { --fader-w: 2rem; --fader-cap-len: 1.4rem; }
+
+  @media (max-width: 62rem) {
+    .ch { grid-template-columns: minmax(0, 1fr); }
+    .ch-top, .ch-loud { grid-column: 1; }
+    .ch-bar { grid-template-columns: minmax(0, 1fr); }
+    .ch-meters { grid-template-columns: minmax(0, 1fr); }
+  }
+}

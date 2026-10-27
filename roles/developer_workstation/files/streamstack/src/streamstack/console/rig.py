@@ -9,13 +9,46 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from streamstack import __version__
+from streamstack import __version__, store
 from streamstack.console.errors import ActionError
 from streamstack.console.interface import empty_state as no_interface
 
 
+def no_deck() -> dict:
+    from streamstack.console.deck import empty_state
+
+    return empty_state()
+
+
+def empty_diagnostics() -> dict:
+    return {
+        "telemetry": {
+            "enabled": False, "path": "/metrics", "url": None, "scrapes": 0, "last_scrape": None, "token_set": False,
+        },
+        "crashes": {"dir": "", "reports": []},
+    }  # fmt: skip
+
+
 def _no_lighting() -> dict:
     from streamstack.console.lighting import empty_state
+
+    return empty_state()
+
+
+def _presets(dispatch: Callable[[str, dict], str | None]) -> Any:
+    from streamstack.console.presets import PresetsController
+
+    return PresetsController(dispatch)
+
+
+def _no_hardware() -> dict:
+    from streamstack.console.hardware import empty_state
+
+    return empty_state()
+
+
+def _no_stream() -> dict:
+    from streamstack.console.stream import empty_state
 
     return empty_state()
 
@@ -43,18 +76,31 @@ class Rig:
         lighting: Any = None,
         interface: Any = None,
         framing: Any = None,
+        presets: Any = None,
+        stream: Any = None,
+        deck: Any = None,
+        diagnostics: Any = None,
+        hardware: Any = None,
     ) -> None:
         self.audio, self.video, self.studio = audio, video, studio
         self.lighting = lighting  # optional: a rig without lights reports an empty lighting object
         self.interface = interface  # optional: a rig without an audio interface profile reports none present
         self.framing = framing  # optional: auto-framing (framing.* actions, "framing" state)
+        self.presets = presets if presets is not None else _presets(self.act)  # presets.* actions and state
+        self.stream = stream  # optional: recording and streaming (stream.* and record.* actions, "stream" state)
+        self.deck = deck  # optional: Stream Deck profile and keys (deck.* actions, "deck" state)
+        self.diagnostics = diagnostics  # optional: telemetry and crash reports (telemetry.*, crash.* actions)
+        self.hardware = hardware  # optional: the hardware probe and Plan (hardware.* actions, "hardware" state)
         self.demo = demo
         self.on_toast: Notify | None = None  # the hub sets this
         self._started = False
         self._lock = threading.Lock()
-        for controller in (audio, video, studio, lighting, interface, framing):
+        self._unsubscribe_store: Callable[[], None] | None = None
+        for controller in (audio, video, studio, lighting, interface, framing, self.presets, stream, deck, hardware):
             if controller is not None:
                 controller.notify = self.notify
+        if deck is not None:
+            deck.rig = self  # pressing a key runs a Console action
 
     # -- construction ---------------------------------------------------------
 
@@ -63,30 +109,48 @@ class Rig:
         """The real rig. The domain modules are imported here so a broken one cannot stop `streamstack --version`."""
         from streamstack import config
         from streamstack.console.audio import AudioController
+        from streamstack.console.deck import DeckController
+        from streamstack.console.diagnostics import Diagnostics
         from streamstack.console.framing import FramingController
+        from streamstack.console.hardware import HardwareController
         from streamstack.console.interface import InterfaceController
         from streamstack.console.lighting import LightingController
+        from streamstack.console.native import NativeVideo
+        from streamstack.console.stream import StreamController
         from streamstack.console.studio import StudioController
-        from streamstack.console.video import VideoController
 
+        config.retire_leftovers()
         cfg = cfg or config.load_settings()
-        video = VideoController(cfg)
+        hardware = HardwareController(cfg)
+        plan = hardware.wait_plan  # the video engine and the stream pick their GPU from the Plan by role
+        video = NativeVideo(cfg, plan=plan)
+        audio = AudioController(cfg)
+        audio.plan_source = hardware.plan  # the voice chain follows the Plan: microphone by USB id, rate, quantum
+        audio.plan_refresh = lambda: hardware.act("hardware.refresh", {})
         return cls(
-            AudioController(cfg),
+            audio,
             video,
             StudioController(cfg),
             lighting=LightingController(),
             interface=InterfaceController(cfg),
             framing=FramingController(cfg, video),
+            stream=StreamController(cfg, plan=plan),
+            deck=DeckController(),
+            diagnostics=Diagnostics(cfg),
+            hardware=hardware,
         )
 
     @classmethod
     def demo(cls) -> Rig:
         """A simulated rig: nothing is probed or touched, every action works."""
         from streamstack.console.audio import DemoAudio
+        from streamstack.console.deck import DemoDeck
+        from streamstack.console.diagnostics import Diagnostics
         from streamstack.console.framing import DemoFraming
+        from streamstack.console.hardware import DemoHardware
         from streamstack.console.interface import DemoInterface
         from streamstack.console.lighting import DemoLighting
+        from streamstack.console.stream import DemoStream
         from streamstack.console.studio import DemoStudio
         from streamstack.console.video import DemoVideo
 
@@ -98,6 +162,10 @@ class Rig:
             lighting=DemoLighting(),
             interface=DemoInterface(),
             framing=DemoFraming(),
+            stream=DemoStream(),
+            deck=DemoDeck(),
+            diagnostics=Diagnostics(),
+            hardware=DemoHardware(),
         )
 
     # -- lifecycle ------------------------------------------------------------
@@ -105,22 +173,34 @@ class Rig:
     def _controllers(self) -> tuple[Any, ...]:
         # started in this order, stopped in reverse: framing needs the video link, so it stops first
         controllers = (self.studio, self.video, self.audio)
+        controllers = controllers if self.hardware is None else (self.hardware, *controllers)
         controllers = (*controllers, *(c for c in (self.lighting, self.interface) if c is not None))
-        return controllers if self.framing is None else (*controllers, self.framing)
+        controllers = controllers if self.framing is None else (*controllers, self.framing)
+        controllers = controllers if self.stream is None else (*controllers, self.stream)
+        return controllers if self.deck is None else (*controllers, self.deck)
 
     def start(self) -> None:
         with self._lock:
             if self._started:
                 return
             self._started = True
+        # a file the store had to set aside raises a toast in every window; the System page keeps the notice
+        self._unsubscribe_store = store.subscribe(self._store_warning)
         for controller in self._controllers():
             controller.start()
+        if self.diagnostics is not None:
+            self.diagnostics.start()
 
     def stop(self) -> None:
         with self._lock:
             if not self._started:
                 return
             self._started = False
+        if self._unsubscribe_store:
+            self._unsubscribe_store()
+            self._unsubscribe_store = None
+        if self.diagnostics is not None:
+            self.diagnostics.stop()
         for controller in reversed(self._controllers()):
             try:
                 controller.stop()
@@ -132,6 +212,15 @@ class Rig:
     def notify(self, level: str, text: str) -> None:
         if self.on_toast:
             self.on_toast(level if level in ("info", "ok", "warn", "error") else "info", str(text))
+
+    def _store_warning(self, warning: store.StoreWarning) -> None:
+        what = {
+            "restored-backup": "was damaged; the last good copy was restored",
+            "defaults": "was damaged; it was set aside and the defaults are used",
+            "ignored-lines": "has lines that were ignored",
+            "unreadable": "cannot be read",
+        }.get(warning.action, "needs a look")
+        self.notify("warn", f"{warning.path} {what}. See the System page.")
 
     # -- state ----------------------------------------------------------------
 
@@ -145,10 +234,11 @@ class Rig:
         extra = self._live_checks(self.audio)
         lights = self._live_checks(self.lighting)
         blurs = self._live_checks(self.video)
-        if not (extra or lights or blurs):
+        devices = self._live_checks(self.hardware)
+        if not (extra or lights or blurs or devices):
             return health
-        ids = {c["id"] for c in extra + lights + blurs}
-        checks = [c for c in health["checks"] if c["id"] not in ids]
+        ids = {c["id"] for c in extra + lights + blurs + devices}
+        checks = devices + [c for c in health["checks"] if c["id"] not in ids]
         at = next((i + 1 for i, c in enumerate(checks) if c["id"] == "microphone"), len(checks))
         checks[at:at] = extra
         # video-group checks go right after the encoder (blur) or the last video check (lights)
@@ -178,7 +268,7 @@ class Rig:
 
     def snapshot(self) -> dict:
         studio = self.studio.state()
-        return {
+        snap = {
             "version": __version__,
             "demo": self.demo,
             "studio": studio["studio"],
@@ -188,9 +278,17 @@ class Rig:
             "health": self._framing_health(self._health(studio["health"])),
             "framing": self.framing.state() if self.framing is not None else None,
             "system": studio["system"],
+            "virtual": studio["virtual"],
             "lighting": self.lighting.state() if self.lighting is not None else _no_lighting(),
             "interface": self.interface.state() if self.interface is not None else no_interface(),
+            "presets": self.presets.state(),
+            "stream": self.stream.state() if self.stream is not None else _no_stream(),
+            "storage": {"warnings": store.warnings()},
+            "diagnostics": self.diagnostics.state() if self.diagnostics is not None else empty_diagnostics(),
+            "hardware": self.hardware.state() if self.hardware is not None else _no_hardware(),
         }
+        snap["deck"] = self.deck.state(snap) if self.deck is not None else no_deck()  # last: its keys show the rest
+        return snap
 
     def meters(self) -> dict:
         frame = dict(self.audio.meters())
@@ -217,13 +315,45 @@ class Rig:
             controller = self.lighting
         elif prefix == "interface" and self.interface is not None:
             controller = self.interface
+        elif prefix == "presets":
+            controller = self.presets
+        elif prefix in ("telemetry", "crash"):
+            if self.diagnostics is None:
+                raise ActionError("Telemetry and crash reports are not part of this rig.", 409)
+            return self.diagnostics.act(action, params)
+        elif prefix == "hardware":
+            if self.hardware is None:
+                raise ActionError("Hardware probing is not part of this rig.", 409)
+            return self.hardware.act(action, params)
+        elif prefix == "storage":
+            return self._storage_act(action, params)
+        elif prefix == "deck":
+            if self.deck is None:
+                raise ActionError("Stream Deck support is not part of this rig.", 409)
+            controller = self.deck
         elif prefix == "framing":
             if self.framing is None:
                 raise ActionError("Auto-framing is not part of this rig.", 409)
             controller = self.framing
+        elif prefix in ("stream", "record"):
+            if self.stream is None:
+                if prefix == "stream":  # the Presets page reads 501 as "pending": its choice is saved for later
+                    raise ActionError("The streaming backend is not part of this rig (stream.set is pending).", 501)
+                raise ActionError("Recording and streaming are not part of this rig.", 409)
+            controller = self.stream
         else:
             raise ActionError(f"Unknown action {action!r}.", 400)
         return controller.act(action, params)
+
+    @staticmethod
+    def _storage_act(action: str, params: dict) -> str | None:
+        if action != "storage.dismiss":
+            raise ActionError(f"Unknown action {action!r}.", 400)
+        ident = params.get("id")
+        if ident is not None and (not isinstance(ident, str) or len(ident) > 16):
+            raise ActionError("id must be a warning id.", 400)
+        store.dismiss(ident)
+        return None
 
     # -- media ----------------------------------------------------------------
 

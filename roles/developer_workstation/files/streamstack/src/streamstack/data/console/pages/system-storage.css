@@ -1,0 +1,9 @@
+/* system-storage.css — files StreamStack had to repair. Scoped like system.css: page stylesheets stay loaded after navigation. */
+@scope ([data-page="system"]) {
+  .stor[hidden] { display: none; }
+  .stor-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+  .stor-item { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-4); border-radius: var(--r-3); background: var(--surface-2); border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line)); }
+  .stor-text { flex: 1; min-width: 0; display: grid; gap: 0.15rem; }
+  .stor-path { font-family: var(--font-mono); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .stor-what { font-size: var(--fs-xs); color: var(--text-2); overflow-wrap: anywhere; }
+}

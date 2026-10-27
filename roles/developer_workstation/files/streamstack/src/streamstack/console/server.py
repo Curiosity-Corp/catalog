@@ -15,10 +15,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from streamstack import config
+from streamstack import config, crash
+from streamstack.console.diagnostics import METRICS_PATH
 from streamstack.console.errors import ActionError
 from streamstack.console.hub import Hub
 from streamstack.console.rig import Rig
+from streamstack.presets import catalog as presets_catalog
 
 MAX_BODY = 64 * 1024
 TOKEN_HEADER = "X-StreamStack-Token"  # noqa: S105 - a header name
@@ -110,6 +112,8 @@ class ConsoleServer(ThreadingHTTPServer):
         self.allow_hosts = allow_hosts if allow_hosts is not None else allowed_hosts_from_env()
         self.stopping = threading.Event()
         self._thread: threading.Thread | None = None
+        if rig.diagnostics is not None:
+            rig.diagnostics.attach(self)
 
     @property
     def port(self) -> int:
@@ -156,6 +160,8 @@ class ConsoleServer(ThreadingHTTPServer):
             return  # a window went away mid-response
         print("streamstack console: request failed", file=sys.stderr)
         traceback.print_exc()
+        if isinstance(exc, Exception):
+            crash.record_exception(exc, "console request handler", "console")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -208,6 +214,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self.server.host_allowed(self.headers.get("Host")):
                 self.close_connection = True
                 return self._error(403, "This host name is not allowed.")
+            if url.path == METRICS_PATH:
+                return self._metrics(query)
             if url.path.startswith("/api/"):
                 supplied = self.headers.get(TOKEN_HEADER) or (query.get("token") or [None])[0]
                 if not self.server.token_ok(supplied):
@@ -228,6 +236,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # never take the server down for one bad request
             print(f"streamstack console: {self.command} {self.path.split('?')[0]} failed", file=sys.stderr)
             traceback.print_exc()
+            crash.record_exception(exc, f"console {self.command} handler", "console")
+            if self.server.rig.diagnostics is not None:
+                self.server.rig.diagnostics.observe_http_error(500)
             self.close_connection = True
             if not self._started:
                 try:
@@ -267,6 +278,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             # Fresh, not the hub's copy: a client that just acted must see its own change.
             return self._send(200, self.server.hub.encode(self.server.rig.snapshot()).encode(), "application/json")
+        if path == "/api/presets/catalog":
+            return self._json(200, presets_catalog.load().as_json())
         if path == "/api/events":
             return self._events()
         if path == "/api/preview.jpg":
@@ -275,8 +288,28 @@ class Handler(BaseHTTPRequestHandler):
             return self._preview_stream(query)
         if path == "/api/director/sheet.jpg":
             return self._director_sheet()
+        if path.startswith("/api/deck/"):
+            return self._deck(path[len("/api/deck/") :], query)
+        if path.startswith("/api/crashes/") and path.endswith(".json"):
+            return self._crash_report(unquote(path[len("/api/crashes/") : -len(".json")]))
         if path.startswith("/api/clips/") and path.endswith(".wav"):
             return self._clip(path[len("/api/clips/") : -len(".wav")])
+        return self._error(404, "Unknown endpoint.")
+
+    def _deck(self, name: str, query: dict[str, list[str]]) -> None:
+        deck = self.server.rig.deck
+        if deck is None:
+            return self._error(404, "This rig has no Stream Deck.")
+        if name == "palette":
+            return self._json(200, {"palette": deck.palette()})
+        if name == "profile.json":
+            return self._json(200, deck.export())
+        if name == "key.png":
+            page = query.get("page", [""])[0]
+            if len(page) > 40:
+                return self._error(400, "page is not a valid id.")
+            png = deck.key_png(page or None, clamp_int(query, "key", 0, 0, 255), clamp_int(query, "size", 96, 16, 256))
+            return self._send(200, png, MIME[".png"])
         return self._error(404, "Unknown endpoint.")
 
     def _action(self) -> None:
@@ -301,9 +334,50 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict) or not isinstance(body.get("action"), str):
             return self._error(400, 'Send an object like {"action": "audio.mute", "on": true}.')
         params = {k: v for k, v in body.items() if k != "action"}
-        message = self.server.rig.act(body["action"], params)
+        began = time.monotonic()
+        try:
+            message = self.server.rig.act(body["action"], params)
+        except ActionError as exc:
+            self._observe(body["action"], began, exc.status)
+            raise
+        except Exception:
+            self._observe(body["action"], began, 500)
+            raise
+        self._observe(body["action"], began, None)
         self.server.hub.kick()
         self._json(200, {"ok": True, "message": message} if message else {"ok": True})
+
+    def _observe(self, action: str, began: float, status: int | None) -> None:
+        diagnostics = self.server.rig.diagnostics
+        if diagnostics is not None:
+            diagnostics.observe_action(action, time.monotonic() - began, status)
+
+    def _supplied_token(self, query: dict[str, list[str]]) -> str | None:
+        header = self.headers.get("Authorization") or ""
+        bearer = header[7:].strip() if header[:7].lower() == "bearer " else None
+        return self.headers.get(TOKEN_HEADER) or bearer or (query.get("token") or [None])[0]
+
+    def _metrics(self, query: dict[str, list[str]]) -> None:
+        """Prometheus text, for a caller with the Console token or the scrape token; absent while telemetry is off."""
+        if self.command not in ("GET", "HEAD"):
+            self.close_connection = True
+            return self._error(405, "Use GET.")
+        supplied = self._supplied_token(query)
+        diagnostics = self.server.rig.diagnostics
+        allowed = self.server.token_ok(supplied) or (diagnostics is not None and diagnostics.token_ok(supplied))
+        if not allowed:
+            self.close_connection = True
+            return self._error(401, "Missing or wrong token.")
+        if diagnostics is None or not diagnostics.enabled:
+            return self._error(404, "Telemetry is off. Turn it on under System, or set STREAMSTACK_TELEMETRY=true.")
+        body = diagnostics.render(json.loads(self.server.hub.state_json())).encode()
+        self._send(200, body, "text/plain; version=0.0.4; charset=utf-8")
+
+    def _crash_report(self, report_id: str) -> None:
+        report = crash.read_report(report_id)
+        if report is None:
+            return self._error(404, "No such crash report.")
+        self._json(200, report)
 
     def _events(self) -> None:
         hub = self.server.hub

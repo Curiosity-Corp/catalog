@@ -2,7 +2,7 @@
 // listens for the event, so any module can toast without importing a component.
 //
 //   toast('Saved')                                   // info, 4 s
-//   toast('OBS is not running', { level: 'error', action: { label: 'Start studio', run: () => act('studio.start') } })
+//   toast('The Console is not running', { level: 'error', action: { label: 'Start studio', run: () => act('studio.start') } })
 //   toast.error(err)  toast.success('…')  toast.warn('…')
 //
 // Options: level info|success|warn|error, timeout ms (0 = sticky), action {label, run}, id (replaces a toast with the same id).

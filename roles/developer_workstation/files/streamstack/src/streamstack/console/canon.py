@@ -234,7 +234,7 @@ class DemoCanon:
             out.update(
                 available=True,
                 session="shared",
-                usb=["04a9:3215 Canon EOS 50D"],
+                usb=["04a9:319b Canon EOS 50D"],
                 decode={
                     "path": "qsv",
                     "label": "GPU (Intel Quick Sync)",

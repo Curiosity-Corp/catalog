@@ -19,7 +19,7 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 
-from streamstack import config, system
+from streamstack import config, store, system
 
 BROWSER_ENV = "STREAMSTACK_CONSOLE_BROWSER"
 BROWSERS = (
@@ -68,10 +68,7 @@ def port_open(port: int) -> bool:
 
 def read_running() -> dict | None:
     """The live server's {"pid", "port", "token"}, or None; a file left by a dead process is ignored."""
-    try:
-        info = json.loads(runtime_file().read_text())
-    except (OSError, ValueError):
-        return None
+    info = store.read_json(runtime_file(), None)
     if not isinstance(info, dict):
         return None
     pid, port, token = info.get("pid"), info.get("port"), info.get("token")
@@ -83,11 +80,9 @@ def read_running() -> dict | None:
 def write_runtime(pid: int, port: int, token: str) -> None:
     path = runtime_file()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_name(path.name + f".{pid}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as handle:
-        handle.write(json.dumps({"pid": pid, "port": port, "token": token}))
-    tmp.replace(path)
+    # holds the Console token: private, atomic (a second launch must never read half of it); a runtime file is
+    # worthless after a reboot, so no fsync and no backup copy of the token is kept
+    store.write_json(path, {"pid": pid, "port": port, "token": token}, mode=0o600, backup=False, durable=False)
 
 
 def remove_runtime(pid: int) -> None:

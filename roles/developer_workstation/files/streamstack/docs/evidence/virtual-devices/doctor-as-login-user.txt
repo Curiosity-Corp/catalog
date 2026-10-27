@@ -1,0 +1,7 @@
+# streamstack doctor on dm313red, 2026-10-24, as the login user (no video group, no seat ACL)
+[FAIL] this user cannot open /dev/video43, so Teams and Zoom cannot list or use it: the node is root:video 0660 and this session has neither the video group nor a seat ACL
+[  ok] StreamStack Mic (processed voice) is available
+[  ok] StreamStack Mic is a plain input source that apps list: 1 ch 48000 Hz; pick it in the call app
+[  ok] seen by apps: no app has StreamStack Camera or StreamStack Mic open
+  Camera:     StreamStack Camera   (graded OBS output; or Canon EOS 50D raw)
+  Microphone: StreamStack Mic

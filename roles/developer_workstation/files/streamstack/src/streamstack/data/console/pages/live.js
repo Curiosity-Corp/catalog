@@ -14,6 +14,7 @@ import { setUi, onUi, ui } from '../core/ui.js';
 import { mountReviveBanner, reviveView } from '../core/revive.js';
 import { mountFraming } from './framing.js';
 import { mountBlur, blurCommands } from './blur.js';
+import { mountOutputPicker } from './audio-outputs.js';
 
 const LOOKS = [
   { key: 'brightness', label: 'Brightness', icon: 'sun' },
@@ -25,14 +26,8 @@ const LOOKS = [
 const CAMERA_FOR_CALLS = {
   graded: { value: 'Graded', state: 'ok' },
   raw: { value: 'Raw', state: 'info' },
-  'obs-idle': { value: 'OBS idle', state: 'warn' },
+  idle: { value: 'Idle', state: 'warn' },
   off: { value: 'Off', state: 'off' },
-};
-
-const OBS_REASON = {
-  offline: { reason: 'OBS is not running', fix: 'Start studio' },
-  'no-websocket': { reason: 'OBS is running, but its WebSocket server is off (Tools → WebSocket Server Settings)', fix: '' },
-  error: { reason: 'OBS reported an error', fix: '' },
 };
 
 const TEMPLATE = `
@@ -41,7 +36,6 @@ const TEMPLATE = `
     <ss-card bare class="area-preview" data-ref="previewCard">
       <div class="pv-cell">
         <ss-preview data-ref="pv" source="program" fps="12" label="Program picture, what the audience sees">
-          <ss-button slot="empty" variant="primary" icon="power" data-ref="pvFix" hidden>Start studio</ss-button>
           <div slot="badges" class="badges" data-ref="badges"></div>
           <span slot="corner" class="tc" data-ref="tc"></span>
           <div slot="footer" class="pv-tools">
@@ -79,6 +73,7 @@ const TEMPLATE = `
           <ss-pad big row solid tone="amber" icon="eye-off" label="Privacy" sub="Cut camera to Be Right Back" hotkey="P" data-ref="privacy"></ss-pad>
         </div>
       </div>
+      <div data-ref="outPick"></div>
     </ss-card>
 
     <ss-card class="area-voice" heading="Voice" icon="wave" data-ref="voiceCard">
@@ -106,6 +101,7 @@ export async function mount(host, ctx) {
   await ctx.ensureCss(new URL('./live.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./framing.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./blur.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./audio-outputs.css', import.meta.url).href);
   await ctx.ensureCss(new URL('../core/revive.css', import.meta.url).href);
   document.title = 'Live · StreamStack';
   host.innerHTML = TEMPLATE;
@@ -115,26 +111,7 @@ export async function mount(host, ctx) {
   const sub = (selector, cb) => off.push(store.subscribe(selector, cb));
   off.push(mountFraming(R.framingHost, ctx, { compact: true }));
 
-  // ---------- availability of everything that needs OBS ----------
-  sub((s) => [s.video.obs, s.video.obs_error, s.studio.busy, s.studio.running], ([obs, err, busy]) => {
-    const r = OBS_REASON[obs];
-    let reason = '';
-    let fix = '';
-    if (r) {
-      reason = busy ? 'Starting the studio…' : (obs === 'error' && err ? err : r.reason);
-      fix = busy ? '' : r.fix;
-    }
-    for (const card of [R.scenesCard, R.lookCard]) {
-      if (reason) card.setAttribute('reason', reason); else card.removeAttribute('reason');
-    }
-    if (reason) R.pv.setAttribute('reason', reason); else R.pv.removeAttribute('reason');
-    R.pvFix.hidden = !fix;
-    R.privacy.toggleAttribute('disabled', !!reason);
-    R.vcam.toggleAttribute('disabled', !!reason);
-    R.rec.toggleAttribute('disabled', !!reason);
-  });
   for (const card of [R.voiceCard]) card.addEventListener('fix', () => startStudio());
-  R.pvFix.addEventListener('click', () => startStudio());
 
   // ---------- program picture, badges, timecode ----------
   sub((s) => [s.video.streaming, s.video.recording, s.video.virtualcam, s.video.privacy], ([streaming, rec, vcam, privacy]) => {
@@ -228,7 +205,7 @@ export async function mount(host, ctx) {
   // ---------- voice ----------
   sub((s) => s.audio.chain, (chain) => {
     renderList(R.presets, chain.presets, (p) => p.name, (p) => {
-      const pad = h('ss-pad', { compact: true });
+      const pad = h('ss-pad', { compact: true, fit: true });
       pad.addEventListener('click', () => selectPreset(pad.dataset.key));
       return pad;
     }, (pad, p) => {
@@ -244,7 +221,7 @@ export async function mount(host, ctx) {
     R.bypass.toggleAttribute('checked', chain.bypass);
     R.bypass.toggleAttribute('disabled', !chain.available);
     R.voiceCard.toggleAttribute('tone-warn', chain.bypass);
-    if (!chain.available) R.voiceCard.setAttribute('reason', 'Easy Effects is not installed');
+    if (!chain.available) R.voiceCard.setAttribute('reason', 'The voice chain plugins are not installed');
     else if (!chain.running) { R.voiceCard.setAttribute('reason', 'The voice chain is not running'); R.voiceCard.setAttribute('fix', 'Start studio'); }
     else { R.voiceCard.removeAttribute('reason'); R.voiceCard.removeAttribute('fix'); }
   });
@@ -276,6 +253,7 @@ export async function mount(host, ctx) {
 
   // ---------- background blur (pages/blur.js; the row stays hidden while the plugin is missing) ----------
   off.push(mountBlur(R.blurRow, ctx, { variant: 'compact' }));
+  off.push(mountOutputPicker(R.outPick, ctx));
   off.push(registerCommands(() => blurCommands(ctx)));
 
   // ---------- auto director ----------
@@ -313,13 +291,13 @@ export async function mount(host, ctx) {
   });
 
   // ---------- status rail ----------
-  sub((s) => [s.studio.camera_for_calls, s.studio.voice_chain, s.audio.chain.bypass, s.video.obs, s.system.cpu_percent, s.health.summary, s.health.checks, s.version, s.studio.camera_label], ([cam, voice, bypass, obs, cpu, health, checks, version, camLabel]) => {
+  sub((s) => [s.studio.camera_for_calls, s.studio.voice_chain, s.audio.chain.bypass, s.system.cpu_percent, s.health.summary, s.health.checks, s.version, s.studio.camera_label, s.video.engine], ([cam, voice, bypass, cpu, health, checks, version, camLabel, engine]) => {
     const c = CAMERA_FOR_CALLS[cam] || CAMERA_FOR_CALLS.off;
     const issues = checks.filter((k) => k.state !== 'ok').length;
     const items = [
       { id: 'cam', label: 'Camera for calls', value: c.value, state: c.state, icon: 'camera', href: '#/camera' },
       { id: 'voice', label: 'Voice chain', value: !voice ? 'Off' : bypass ? 'Bypassed' : 'On', state: !voice ? 'fail' : bypass ? 'warn' : 'ok', icon: 'wave', href: '#/audio' },
-      { id: 'obs', label: 'OBS', value: obs === 'connected' ? 'Connected' : obs === 'offline' ? 'Not running' : obs === 'no-websocket' ? 'No WebSocket' : 'Error', state: obs === 'connected' ? 'ok' : obs === 'offline' ? 'fail' : 'warn', icon: 'scenes', href: '#/system' },
+      { id: 'engine', label: 'Video engine', value: { running: 'Running', off: 'Off', waiting: 'Waiting for camera' }[engine?.state] || 'Starting', state: engine?.state === 'running' ? 'ok' : engine?.state === 'off' ? 'fail' : 'warn', icon: 'scenes', href: '#/camera' },
       { id: 'cpu', label: 'CPU', value: cpu === null ? '–' : `${Math.round(cpu)}%`, state: cpu === null ? 'off' : cpu >= 90 ? 'fail' : cpu >= 75 ? 'warn' : 'ok', icon: 'system', href: '#/system' },
       { id: 'health', label: 'Health', value: health === 'ok' ? 'All good' : `${issues || 1} ${health === 'fail' ? 'to fix' : 'to check'}`, state: health, icon: health === 'ok' ? 'check' : 'alert', href: '#/system' },
     ];

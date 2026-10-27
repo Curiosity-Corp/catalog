@@ -1,6 +1,6 @@
 """Face detection backends: OpenVINO (Intel GPU first, then CPU), OpenCV DNN on the CPU, otherwise unavailable.
 
-Both backends run the same YuNet model on a JPEG (what obs-websocket's GetSourceScreenshot returns) and give back
+Both backends run the same YuNet model on a JPEG (the engine's uncropped low-rate frame) and give back
 `Face` boxes normalised to the picture. numpy, OpenCV and OpenVINO are optional (`pip install 'streamstack[framing]'`)
 and imported only when a backend is opened, so the rest of StreamStack never needs them.
 

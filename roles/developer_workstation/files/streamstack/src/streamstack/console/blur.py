@@ -1,48 +1,31 @@
-"""Background blur for the Console: the `Background Blur` filter on each camera source, over obs-websocket.
+"""Background blur for the Console: the `video.blur` state and action contract, and the simulated rig's blur.
 
-`BlurControl` is owned by `VideoController`, which hands it OBS connections: `refresh()` runs on the state
-thread (events connection) and `act()` runs on an action thread (control connection). `DemoBlur` is the same
-contract on the simulated rig. The state it adds to the snapshot is `video.blur` (docs/console.md):
+The real rig has no mask yet (it arrives with the OpenVINO segmentation in the native video engine), so
+`NativeVideo` reports `blur.native` with `available: False` and answers `video.blur` with a 409. `DemoBlur` is the
+full contract on the simulated rig, so the Camera and Live pages and their tests keep exercising every state.
+The state it adds to the snapshot is `video.blur` (docs/console.md):
 
-    available    the plugin's filter kind is registered in the running OBS (None: OBS is not connected)
-    plugin       what the files say: installed, version, models, devices (see streamstack.blur.Plugin.public)
-    sources      per camera source: {present, enabled, strength, rate}
-    on           any camera source has the blur enabled
-    cost         the per-frame cost verdict against the gate (streamstack.blur.CostGuard.verdict)
-
-obs-websocket requests used (obs-websocket 5 protocol): GetSourceFilterKindList, GetSourceFilter,
-CreateSourceFilter, SetSourceFilterSettings, SetSourceFilterEnabled, GetStats.
+    available    the mask backend is present (None: not known)
+    plugin       the mask backend: installed, version, models, devices (see streamstack.blur.Plugin.public)
+    sources      per camera: {present, enabled, strength, rate}
+    on           any camera has the blur enabled
+    cost         the per-frame cost verdict against the gate (docs/hardware-ai-evaluation.md)
 """
 
 from __future__ import annotations
 
 import copy
 import threading
-import time
 from collections.abc import Callable
-from typing import Any, Protocol
 
 from streamstack import blur
-from streamstack.blur import FILTER_KIND, FILTER_NAME, CostGuard, Plugin
+from streamstack.blur import Plugin
 from streamstack.console.errors import ActionError
 
 Notify = Callable[[str, str], None]
 
-KIND_REFRESH_SECONDS = 15.0
-STATS_MIN_GAP = 0.9
-PLUGIN_TTL = 30.0
 OVER_TITLE = "Background blur costs more than its budget"
 OVER_HINT = "Camera page: set the blur smoothness to Light, or switch the blur off"
-NO_CAMERA = "No camera source in OBS has the Lighting & Color filter yet."
-
-
-class Conn(Protocol):
-    def call(self, request: str, **data: Any) -> dict: ...
-
-
-def _filter_kinds(conn: Conn) -> list[str]:
-    """The filter kinds the running OBS offers (GetSourceFilterKindList answers `sourceFilterKinds`)."""
-    return list(conn.call("GetSourceFilterKindList").get("sourceFilterKinds") or [])
 
 
 def empty_state() -> dict:
@@ -94,270 +77,8 @@ def message_for(on: bool | None, strength: int | None, rate: int | None) -> str:
     return f"Blur mask rate {rate}"
 
 
-def missing_message(plugin: Plugin, kind_present: bool | None) -> str:
-    if not plugin.installed:
-        return f"Background blur needs the {blur.PLUGIN_NAME} OBS plugin: {blur.INSTALL_HINT}."
-    if not plugin.models_ok:
-        return f"The {blur.PLUGIN_NAME} models are missing: reinstall the package, then restart OBS."
-    return f"{blur.PLUGIN_NAME} is installed but OBS has not loaded it: restart OBS."
-
-
-class BlurControl:
-    """Reads and drives the blur filter on the real OBS."""
-
-    def __init__(
-        self,
-        notify: Notify | None = None,
-        *,
-        detect: Callable[[], Plugin] = blur.detect,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._notify = notify
-        self._detect = detect
-        self._clock = clock
-        self._lock = threading.RLock()
-        self._state = empty_state()
-        self._guard = CostGuard()
-        self._plugin: Plugin | None = None
-        self._plugin_at = -PLUGIN_TTL
-        self._kind: bool | None = None
-        self._kind_at = -KIND_REFRESH_SECONDS
-        self._stats_at = -STATS_MIN_GAP
-        self._last_cost = "off"
-
-    # -- shared -------------------------------------------------------------
-
-    def notify(self, level: str, text: str) -> None:
-        if self._notify:
-            self._notify(level, text)
-
-    def state(self) -> dict:
-        plugin = self.plugin().public()  # known before OBS connects, so the install hint shows while OBS is down
-        with self._lock:
-            snapshot = _copy(self._state)
-        snapshot["plugin"] = plugin
-        return snapshot
-
-    def reset(self) -> None:
-        """OBS went away: forget what it said (the plugin's files are still what they were)."""
-        with self._lock:
-            keep = self._state["plugin"]
-            self._state = empty_state()
-            self._state["plugin"] = keep
-            self._guard.reset()
-            self._kind = None
-            self._kind_at = -KIND_REFRESH_SECONDS
-            self._last_cost = "off"
-
-    def plugin(self) -> Plugin:
-        """The installed plugin, re-read at most every PLUGIN_TTL seconds (file scans are cheap but not free)."""
-        now = self._clock()
-        with self._lock:
-            if self._plugin is not None and now - self._plugin_at < PLUGIN_TTL:
-                return self._plugin
-        try:
-            found = self._detect()
-        except OSError:
-            found = self._plugin or Plugin(installed=False)  # a flaky read must not flip the control around
-        with self._lock:
-            self._plugin, self._plugin_at = found, now
-        return found
-
-    # -- state thread ---------------------------------------------------------
-
-    def refresh(self, conn: Conn, sources: list[str], structural: bool = False) -> None:
-        """Re-read the filter on every camera source and sample OBS's stats. Request failures are skipped."""
-        plugin = self.plugin()
-        now = self._clock()
-        if structural or self._kind is None or now - self._kind_at > KIND_REFRESH_SECONDS:
-            try:
-                kinds = _filter_kinds(conn)
-                self._kind = FILTER_KIND in kinds
-                self._kind_at = now
-            except RuntimeError:
-                pass  # OBS refused this request; keep the last answer
-        entries: dict[str, dict] = {}
-        if self._kind:
-            for name in sources:
-                entries[name] = self._read_filter(conn, name)
-        else:
-            entries = {name: _entry(False) for name in sources}
-        any_on = any(e["enabled"] for e in entries.values())
-        if self._kind and now - self._stats_at >= STATS_MIN_GAP:
-            self._stats_at = now
-            self._sample(conn, any_on)
-        with self._lock:
-            first = next((e for e in entries.values() if e["present"]), None)
-            self._state.update(
-                available=bool(self._kind),
-                plugin=plugin.public(),
-                sources=entries,
-                on=any_on,
-                strength=first["strength"] if first else self._state["strength"],
-                rate=first["rate"] if first else self._state["rate"],
-                cost=self._cost(),
-            )
-        self._announce_cost()
-
-    @staticmethod
-    def _read_filter(conn: Conn, name: str) -> dict:
-        try:
-            data = conn.call("GetSourceFilter", sourceName=name, filterName=FILTER_NAME)
-        except RuntimeError:
-            return _entry(False)  # the source has no Background Blur filter yet
-        strength, rate = blur.read_settings(data.get("filterSettings") or {})
-        return _entry(True, bool(data.get("filterEnabled")), strength, rate)
-
-    def _sample(self, conn: Conn, blur_on: bool) -> None:
-        try:
-            sample = blur.parse_stats(conn.call("GetStats"))
-        except RuntimeError:
-            return
-        if sample is not None:
-            with self._lock:
-                self._guard.observe(sample, blur_on)
-
-    def _cost(self) -> dict:
-        with self._lock:
-            return self._guard.verdict()
-
-    def _announce_cost(self) -> None:
-        with self._lock:
-            cost = self._state["cost"]
-            now, before = cost["state"], self._last_cost
-            self._last_cost = now
-        if now == "over" and before != "over":
-            reasons = "; ".join(cost.get("reasons") or [])
-            self.notify("warn", f"Background blur is over its budget: {reasons}. Lower the mask rate or switch it off.")
-
-    # -- actions --------------------------------------------------------------
-
-    def act(self, conn: Conn, params: dict, sources: list[str], selected: str | None = None) -> str:
-        """video.blur: on / strength / rate for one camera (`source`) or for all of them."""
-        on, strength, rate, source = parse_action(params)
-        if not sources:
-            raise ActionError(NO_CAMERA, 409)
-        if source is not None and source not in sources:
-            raise ActionError(f"Unknown camera source: {source}", 400)
-        targets = [source] if source else list(sources)
-        self._need_plugin(conn, on)
-        patch = blur.settings_patch(strength, rate)
-        for name in targets:
-            self._apply(conn, name, on, patch)
-        with self._lock:
-            for name in targets:
-                entry = self._state["sources"].setdefault(name, _entry(True))
-                entry.update(present=True)
-                if on is not None:
-                    entry["enabled"] = on
-                if strength is not None:
-                    entry["strength"] = strength
-                if rate is not None:
-                    entry["rate"] = rate
-            self._state["on"] = any(e["enabled"] for e in self._state["sources"].values())
-            if strength is not None or rate is not None:
-                self._state.update(strength=strength or self._state["strength"], rate=rate or self._state["rate"])
-        return message_for(on, strength, rate)
-
-    def _need_plugin(self, conn: Conn, on: bool | None) -> None:
-        """Turning the blur off must always work; anything else needs the filter kind in the running OBS."""
-        if on is False:
-            return
-        try:
-            kinds = _filter_kinds(conn)
-        except RuntimeError as exc:
-            raise ActionError(f"OBS would not list its filters: {exc}", 409) from exc
-        present = FILTER_KIND in kinds
-        with self._lock:
-            self._kind, self._kind_at = present, self._clock()
-        if not present:
-            raise ActionError(missing_message(self.plugin(), present), 409)
-
-    def _apply(self, conn: Conn, name: str, on: bool | None, patch: dict[str, int]) -> None:
-        """Make sure the source has the filter, then write the settings and the enabled flag."""
-        try:
-            data = conn.call("GetSourceFilter", sourceName=name, filterName=FILTER_NAME)
-            created = False
-        except RuntimeError:
-            data = None
-            created = True
-        try:
-            if created:
-                if on is False:
-                    return  # nothing to switch off
-                values = {**blur.low_latency_settings(), **patch}
-                conn.call(
-                    "CreateSourceFilter",
-                    sourceName=name,
-                    filterName=FILTER_NAME,
-                    filterKind=FILTER_KIND,
-                    filterSettings=values,
-                )
-                if on is True:
-                    return  # OBS creates a filter enabled
-                conn.call("SetSourceFilterEnabled", sourceName=name, filterName=FILTER_NAME, filterEnabled=False)
-                return
-            values = dict(patch)
-            current = (data or {}).get("filterSettings") or {}
-            if on and not _positive(current.get("blur_background")) and "blur_background" not in values:
-                values["blur_background"] = blur.DEFAULT_STRENGTH  # 0 would remove the background, not blur it
-            if values:
-                conn.call(
-                    "SetSourceFilterSettings",
-                    sourceName=name,
-                    filterName=FILTER_NAME,
-                    filterSettings=values,
-                    overlay=True,
-                )
-            if on is not None:
-                conn.call("SetSourceFilterEnabled", sourceName=name, filterName=FILTER_NAME, filterEnabled=on)
-        except RuntimeError as exc:
-            raise ActionError(f"OBS would not change the blur on {name}: {exc}", 409) from exc
-
-    # -- health ---------------------------------------------------------------
-
-    def health_checks(self) -> list[dict[str, str]]:
-        """Live findings that replace the static "background-blur" check; empty while there is nothing to add."""
-        with self._lock:
-            state = _copy(self._state)
-        plugin = self.plugin()
-        base = {"id": "background-blur", "group": "video"}
-        if state["available"] is None:
-            return []  # OBS is not connected: the static check from the files stands
-        if not state["available"]:
-            if not plugin.installed:
-                return []  # the static check already says the plugin is missing
-            return [
-                {
-                    **base,
-                    "state": "warn",
-                    "title": f"{blur.PLUGIN_NAME} is installed but OBS has not loaded it",
-                    "detail": f"{FILTER_KIND} is not among OBS's filter kinds",
-                    "hint": "restart OBS (plugins load at start)",
-                }
-            ]
-        cost = state["cost"]
-        if cost["state"] == "over":
-            return [
-                {
-                    **base,
-                    "state": "warn",
-                    "title": OVER_TITLE,
-                    "detail": "; ".join(cost.get("reasons") or []),
-                    "hint": OVER_HINT,
-                }
-            ]
-        if state["on"] or not plugin.installed:
-            device = ", ".join(plugin.device_labels)
-            title = f"Background blur is on ({device})" if state["on"] else "Background blur is available in OBS"
-            return [
-                {**base, "state": "ok", "title": title, "detail": cost["detail"] if state["on"] else "", "hint": ""}
-            ]
-        return []
-
-
-def _positive(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 1
+def missing_message(plugin: Plugin) -> str:
+    return f"Background blur is not available yet: {blur.INSTALL_HINT}."
 
 
 def _entry(present: bool, enabled: bool = False, strength: int = blur.DEFAULT_STRENGTH, rate: int = blur.DEFAULT_RATE):
@@ -391,7 +112,7 @@ class DemoBlur:
     def _plugin(self) -> dict:
         if not self.installed:
             return {**Plugin(installed=False).public(), "hint": blur.INSTALL_HINT}
-        return Plugin(installed=True, version="1.4.1", models_ok=True, loaded=True, devices=("cpu",)).public()
+        return Plugin(installed=True, version="1.0", models_ok=True, loaded=True, devices=("cpu",)).public()
 
     def _cost(self) -> dict:
         on = [e for e in self.entries.values() if e["enabled"]]
@@ -436,7 +157,7 @@ class DemoBlur:
             if source is not None and source not in self.entries:
                 raise ActionError(f"Unknown camera source: {source}", 400)
             if on is not False and not self.installed:
-                raise ActionError(missing_message(Plugin(installed=False), False), 409)
+                raise ActionError(missing_message(Plugin(installed=False)), 409)
             for name in [source] if source else list(self.entries):
                 entry = self.entries[name]
                 if on is not None:
@@ -488,13 +209,4 @@ class DemoBlur:
                     "hint": "",
                 }
             ]
-        return [
-            blur.health_check(
-                plugin=Plugin(
-                    installed=True,
-                    version="1.4.1",
-                    library="/usr/local/lib/obs-plugins/obs-backgroundremoval.so",
-                    models_ok=True,
-                )
-            )
-        ]
+        return [blur.health_check(plugin=Plugin(installed=True, version="1.0", models_ok=True))]

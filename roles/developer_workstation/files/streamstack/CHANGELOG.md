@@ -5,6 +5,261 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-10-27
+
+### Added
+- The voice chain and `streamstack doctor` follow the hardware Plan (#118, #122). The raw microphone and the monitor
+  output are the nodes of the interface the Plan found by USB id, in the Console, `streamstack chain`, `mic-check` and
+  `mic-revive` (the name rules remain only as the fallback when the probe cannot run). The graph's rate, the interface's
+  sample format and the PipeWire quantum come from the interface profile; on the Wave XLR the graph runs at 48 kHz
+  because DeepFilterNet cannot run at 96 kHz (measured: no audio comes out) and the system clock is 48 kHz only, and
+  `chain status` and `doctor` say why. A card at profile `off` is switched on when its profile names the card profile,
+  an unplug and replug re-resolves the microphone, and an unknown interface falls back to the default PipeWire source.
+  An interface that is attached but has no source, or no interface at all, makes the chain decline cleanly instead of
+  starting on the wrong device. `streamstack doctor` gains a Hardware group (rig header `rig: <id> (selected by
+  <reason>)`, each expected device present or absent as required or optional, GPU roles on the right render node, the
+  audio interface at its rate and format, capture card modes, loopback labels, and "denied" rows with the fix), plus
+  `--hardware` and `--json`; the System page shows it as a Hardware group. The owner chose a Focusrite Scarlett 2i2
+  (gen 4 `1235:8219` or gen 3 `1235:8210`) as deskmeet1's DAC (2026-10-24), so the studio-deck rig names it and lists
+  this machine's identity hash. While it is not enumerating on USB the doctor shows `Focusrite Scarlett 2i2 ... is not
+  enumerating on USB` as a warning with the fix (an owner action: re-seat it in a direct rear USB port with a short
+  known-good cable), and the voice chain declines to start.
+- Video jobs pick their GPU and cameras from the hardware Plan (#119, #120). The native engine graph, its QSV taps,
+  the stream encoders (AV1, HEVC, H.264 over VA-API and QSV), the blur and the Canon decode each take the render node
+  of their role (grade, encode, blur, decode) by PCI id, never by node number: on deskmeet1 the Arc (`renderD129`)
+  encodes and grades while the UHD 770 (`renderD128`) takes the Canon decode, on dm313red everything stays on the Arc.
+  Explicit settings still win (new `STREAMSTACK_STREAM_RENDER_NODE`), no matching profile keeps the generic choice
+  (Intel discrete before integrated), and hot-plug renumbering re-resolves. The Cam Link 4K matches both `0fd9:0067`
+  and `0fd9:0066` from the capture profile, the Canon is found by its profile id, and each rig profile declares its
+  v4l2loopback devices (`video_nr`, `card_label`, `exclusive_caps`); `streamstack loopback status|apply` checks and
+  writes them from the profile. `streamstack hardware` and the System page show a "Video in use" card with the node
+  per job and the camera and virtual camera state.
+- Virtual camera and microphone, decided and diagnosed (ADR 0004). StreamStack Camera stays a v4l2loopback node (the only
+  camera path Teams, Zoom and stock Chromium list) and StreamStack Mic stays a PipeWire source; the ADR records what each
+  client enumerates and what was proven in Chromium, Edge, Firefox and the Zoom web client on the workstation. The module
+  configuration now ships declaratively (`packaging/modprobe.d`, `modules-load.d`, and a udev rule for the `video` group,
+  installed by `make install`). `streamstack doctor` and the Console check the camera's name, `exclusive_caps`, access,
+  offered format and the mic's description, and the System page has a "Seen by apps" card showing which apps hold the
+  camera (open V4L2 files) and the microphone (PipeWire links). `doctor` no longer calls an unreadable camera "no picture
+  yet": it says this user cannot open it and what to change. A live Chromium test feeds the node and checks listing,
+  1280x720 capture and a WebRTC loop; it skips with its reason where the module is not loaded (CI).
+- Hardware profiles and capability probing (ADR 0003, #116, #117, #123). `streamstack.hardware.probe.snapshot()` reads
+  what is plugged in (USB, DRM render nodes with PCI id, driver and VA-API entrypoints, ALSA cards and their streams,
+  PipeWire cards and profiles, V4L2 capture nodes and formats, v4l2loopback) as a frozen `Snapshot`, each source a
+  runner plus a pure parser with its own `ok`, `denied` or `absent` status. `udevadm monitor` drives hot-plug (one
+  probe after a quiet second, a change only when the snapshot differs, polling when udevadm is missing). Device and
+  rig profiles are validated TOML in `src/streamstack/data/hardware/` (unknown keys rejected, ids unique, schema
+  version); the rigs `studio-wave-xlr` and `studio-deck` and a generic Linux fallback are chosen by
+  `STREAMSTACK_RIG`, else by which devices are present, with a hashed machine id only as a tie-breaker (the hostname
+  is never read). The pure `resolve(snapshot, catalogue, overrides)` returns a `Plan` (GPU roles, encoder, audio
+  interface and rate, capture card, loopback pair) with accessors such as `plan.gpu("encode").node_path`. The Console
+  state has a `hardware` section and the System page a Hardware card (resolved rig and why, each device present or
+  absent, GPU roles, notices, "Probe again"); the demo rig replays recordings of both hosts and can switch between
+  them. `streamstack hardware [--json|--identity]` prints the same from a shell. The audio-interface catalogue in
+  `hardware/profiles.py` now reads from the same data with unchanged Console behaviour.
+- Tests for it run in CI from recorded fixtures of dm313red and deskmeet1 (every parser, both hosts, failure
+  injection per source) and a fake sysfs for hot-plug, a missing or denied GPU and the generic fallback.
+- WHIP publishing (#108, ADR 0002): a Stream destination of kind `whip` now works on any host with the optional extra
+  `streamstack[whip]`. StreamStack's own client POSTs the offer, runs ICE and DTLS-SRTP (aiortc's transports) and sends
+  the hardware encoder's H.264, HEVC or AV1 and Opus as RTP, without re-encoding and without an ffmpeg muxer; stop sends
+  `DELETE`. Live changes keep the session, a failed connection retries with backoff, a 401, 404 or 405 stops with the
+  reason, and the Stream page shows RTT and loss. The bearer token is write-only like a stream key and never on a
+  command line. Measured on the Arc A380 at 1080p30: about 1 ms and 1.4 to 2.8 % of one core on top of the encode
+  (docs/stream.md lists what was not measured). The probe's "WHIP unavailable: no muxer" is replaced by a real check.
+  Covered by unit tests, an end-to-end suite against a real WHIP server, an interop test against a pinned MediaMTX, and
+  Playwright tests. New `tools/bench_whip.py`.
+- The demo rig has a `lighting.demo.reset` action (refused on real hardware) that puts the lights, the automation settings, the pretend camera and the engine back in one step under the engine's lock, so a test reset is never mistaken for a change by hand. The e2e reset uses it instead of moving the lights through the normal actions and asking the schedule to resume.
+
+- Background blur on the Intel Arc through OpenVINO (#60): the person mask is computed by PP-HumanSeg (Apache-2.0,
+  6 MB, about 2 ms alone and 9 ms in the live loop on an A380) and composited inside the engine's one ffmpeg graph, so
+  strength and on/off are live commands with no restart. The model is downloaded on first use into the state
+  directory against a pinned SHA-256; OpenVINO is the optional extra `streamstack[blur]`. The Blur controls show
+  "Running on Arc via OpenVINO" with measured masks per second and milliseconds, and "Unavailable: <reason>" when
+  OpenVINO, the model or the GPU is missing. New settings `STREAMSTACK_ENGINE_BLUR` and
+  `STREAMSTACK_ENGINE_BLUR_DEVICE`, benchmark `tools/bench_blur.py`, measurements in `docs/native-video-engine.md`.
+- Stream page (#73, Alt+0): Go live and Record with clear state, the destination list (SRT, RTMP, Enhanced RTMP, WHIP
+  shown unavailable with its reason) with per-destination health and reconnect state, an encoder picker that follows
+  `stream.probe`, live faders for bitrate, keyframe interval, quality and audio bitrate through the hot-swap path, a
+  staged "Apply and reconnect once" for resolution, frame rate and codec, and meters for encoder fps, bitrate, dropped
+  frames, latency, CPU and GPU. Stream keys are write-only: typed once, stored privately (`<state_dir>/keys`, mode 0600),
+  never returned, shown or logged, and kept when a destination is edited. The stream state gains `cpu_percent` and
+  `gpu_percent`. ON AIR and REC show in the top bar.
+- Presets (#69): 37 looks (film stocks, cinema, creator) with 12 generated 3D LUTs and rendered thumbnails, 10
+  platform presets with sourced 2026 recommendations, 5 bandwidth tiers with per-codec ladders, and 8 one-click
+  profiles that set look, platform, tier, lights, voice and framing. Users save, export and import their own profiles
+  as validated JSON. New Presets page (Alt+8). Platform and tier apply through the pending `stream.set` contract
+  (`docs/presets.md`).
+- Recording and streaming from StreamStack itself (#62, #63, #64, #65): the `streamstack.stream` package records the
+  program to Matroska or MP4 and streams it over SRT (caller and listener) and Enhanced RTMP (AV1 or HEVC, with a classic
+  H.264 fallback), with Opus audio. Encoders are chosen by a capability probe across VA-API, QSV, NVENC and software
+  (AV1, then HEVC, then H.264). Bitrate, rate control, keyframe interval, quality, encoder and audio bitrate change live
+  without a reconnect (a second encoder takes over at a planned keyframe); resolution tier, fps and codec reconnect once.
+  New Console actions `stream.start`, `stream.stop`, `stream.set`, `stream.probe`, `record.start`, `record.stop` and a
+  `stream` state section. WHIP is in the code but reports "unavailable" on hosts whose ffmpeg has no WHIP muxer (Ubuntu's
+  8.0.1). Design in `docs/adr/0001-encoder-generations-and-stream-transports.md`, schema and measurements on the Arc A380
+  in `docs/stream.md`, measurement tool `tools/bench_stream.py`.
+- Crash-safe files. One module, `streamstack.store`, now writes every file StreamStack keeps (settings, lighting
+- Crash-safe files. One module, `streamstack.store`, now writes every file StreamStack keeps (settings, saved streaming profiles, lighting
+  presets, saved looks, the light schedule and its status, the director's settings, status and learning, the Auto
+  baseline, remembered framing mode and crop restore log, the applied capture mode, the live voice preset, the OBS
+  websocket config, the OBS encoder profile, the Console runtime file and the lights unit): write to a temporary file
+  in the same directory, fsync, rename over the target, fsync the directory, and keep the previous good copy as
+  `<name>.bak`. A full disk, a killed process or two writers at once leave the old file or the new one, never half of
+  either. On read, a file that is empty, truncated, not UTF-8 or the wrong shape is renamed to
+  `<name>.corrupt-<time>` (the newest five are kept), the `.bak` copy is restored when it is good, and otherwise the
+  defaults are used. The Console raises a toast and lists each repaired file under "Repaired files" on the System
+  page, where it can be dismissed (`state.storage`, action `storage.dismiss`). Unit tests simulate partial writes,
+  `ENOSPC`, `EIO`, leftover temporary files, truncated and binary files, and concurrent writers and readers across
+  threads and processes.
+- Opt-in Prometheus telemetry (issue #49), local first. Off until switched on under System, Telemetry and crash
+  reports (or `STREAMSTACK_TELEMETRY=true`). Then `GET /metrics` on the Console serves service health (Console,
+  studio, OBS, voice chain, Canon bridge, lights service, mic watch), pre-flight checks, audio levels and clip counts,
+  light power, brightness and temperature, CPU and memory of StreamStack's own processes, event-loop lag, action
+  latency histograms and error counters, version and uptime, as Prometheus text. It needs a token: the Console's own,
+  or a separate stable scrape token that opens `/metrics` only and is never shown on the page. No video, audio,
+  names or paths are exposed, and nothing is sent anywhere. `docs/telemetry.md` lists every metric; OTLP export is a
+  documented follow-up.
+- Crash reports. Uncaught exceptions (any thread), fatal signals and Console errors that were survived are written as
+  JSON (version, stack, a small allow-listed state summary) to `~/.local/state/streamstack/crashes/`, with tokens,
+  stream keys and the home directory removed. The System page lists them with a link to each and a Clear button.
+
+### Removed
+
+- OBS Studio is removed from StreamStack completely (#61). The native video engine is the only video path.
+  Gone: the OBS websocket client and everything that drove it, the OBS profile and scene seeding, the OBS
+  startup in `streamstack studio` and the tray, the OBS rows in the System page and Console status chips, the
+  `streamstack encoder` command (it only configured OBS), `streamstack camlink --apply`, `streamstack studio
+  --no-obs`, the camera-follow sources "OBS virtual camera / streaming / recording" (the apps source stays), the
+  `auto` extra (`websocket-client`) and the `STREAMSTACK_VIDEO_ENGINE` setting. Look, crop and privacy changes
+  now all use the engine's live control path. The auto director (its own process) reaches the engine through the
+  Console's local API (`streamstack.consolelink`); its look actuator is now `program-look` ("Program picture
+  look"), and `obs-look` lines in old `auto.jsonl` journals are display-only. Background blur answers 409 on a
+  real rig until the OpenVINO mask lands in the engine (the demo rig still simulates it); the OBS cost guard
+  that measured it is gone. Stations with old config start cleanly: a stale `STREAMSTACK_VIDEO_ENGINE` line is
+  ignored and stripped from the user env file (a `.bak` is kept), and the old `camlink.json` and
+  `framing-restore.json` records are deleted. The station catalog must stop installing and autostarting OBS
+  (tracked separately in that repository).
+
+### Changed
+
+- StreamStack now needs Python 3.11 or newer (3.10 reaches end of life this month and the profile loader uses the
+  standard `tomllib`). The oldest-Python CI job is `test-py311`; the linter targets py311 and uses `datetime.UTC`.
+
+- Version numbering restarts at 0.0.8. The earlier releases tagged 0.1.0 to 0.3.1 were small, day-one
+  increments and should not have been minor versions. The next release is 0.0.8; from then, 0.0.x patch releases ship the work,
+  and minor or major versions are set by the owner only. The old tags stay in Git for history.
+  A station on 0.3.1 must install 0.0.8 with `--force-reinstall`, since pip treats it as older.
+
+### Added
+
+- StreamStack's own voice chain replaces Easy Effects (#38 and the Easy Effects removal): a PipeWire filter-chain that
+  StreamStack generates and runs in its own process and that exposes **StreamStack Mic** (48 kHz, mono). Stages, each
+  adjustable live: high-pass, noise gate, DeepFilterNet 3 neural denoise (RNNoise as the fallback), de-esser, four EQ
+  bands, compressor, makeup gain and a look-ahead limiter, with an A/B bypass that is delay matched. The Console
+  Audio page has a Chain card with a fader per stage, input, output and gain-reduction meters, preset recall and
+  saving. The preset names (Minimal, DeepFilterNet, Warm, Bright, Deep, StreamStack Voice) map onto stage values; presets
+  made in Easy Effects are imported once, read only. See `docs/audio-chain.md` for the design, the 48 kHz contract the
+  stream service can rely on, and what was measured on an isolated PipeWire (DeepFilterNet takes the noise floor
+  down 20 dB and keeps speech within 1 dB).
+- Loudness leveller (#38): a speech-gated slow gain ride of the chain output towards -16 LUFS (-14, -16 and -23
+  selectable) inside a +-12 dB window, frozen in silence, while muted and without a signal, never touching the
+  interface gain or 48 V, kept per rig profile, with a raw-microphone guard so a limiter cannot hide a hot voice.
+  In the isolated synthetic test, speech with 20 dB level steps settled to -16 +-1 LU within 10 s and the true peak
+  stayed under -1 dBTP. Near the target it moves at most 0.5 dB/s; far from it up to 4 dB/s (documented deviation).
+- `tools/bench_audio_chain.py`: the isolated-PipeWire bench (denoise, loudness, glitch) behind those numbers.
+- Release pipeline (#67): a `vX.Y.Z` tag runs the launch-sequence `python-package` pipeline: the tag, `__version__`
+  and CHANGELOG must agree (and be a 0.0.x patch release), wheel and sdist are built in CI with a CycloneDX SBOM,
+  a Notation (Azure Key Vault) signature covers the checksum manifest, the files go to the project package
+  registries and the GitLab Release carries the CHANGELOG section. `scripts/release.py prepare` readies a release
+  and refuses a minor or major bump without `--owner-approved-minor`. `streamstack verify-install` checks an
+  install (version, packaged files, commands) and prints how to verify the signature;
+  `scripts/install-release.sh` installs a verified release with pipx. See `docs/release.md`.
+
+### Removed
+
+- Easy Effects is no longer used, started or required by StreamStack (code, docs, tray, notes). Catalog follow-up:
+  stop installing and autostarting it; install `zam-plugins` and the DeepFilterNet and RNNoise LADSPA plugins.
+
+### Fixed
+- Python 3.11 CI test run (pipeline 88138, `test-py311`): three telemetry tests timed out at a hard-coded 10 s on their first request while the CI pod was CPU-starved (the same tests take milliseconds on a free core). Tests that talk to a real Console over a socket now share one generous timeout (`tests/http_support.py`, 90 s, `STREAMSTACK_TEST_HTTP_TIMEOUT`), and a guard test refuses a new short hard-coded one.
+- The demo rig no longer flushes the disk (fsync and a backup copy) when it saves a lighting preset or a camera look, the same as its settings. On a busy disk the flush could take seconds, so "Save current" sometimes did not show its preset for 30 seconds.
+- Camera page: switching the edited source no longer flashes the previous source's look into the sliders when a background refresh was mid-read.
+- The demo rig no longer flushes the disk (fsync and a backup copy) each time a lighting setting changes, and its reset saves once. On a busy disk each flush could take seconds, which stalled Reset the schedule, Resume and the schedule table for tens of seconds.
+- Lighting: the F and S keys and their palette commands flip what the switch shows, not the last state the server reported, so a key pressed just after a click undoes the click instead of repeating it.
+- Lighting page: the "Resume the schedule" button no longer pushes the whole page down by a row the moment a light is first changed by hand (that moved the faders under the pointer mid-gesture, so a second drag grabbed the label instead of the track). The row keeps its height.
+
+- Lighting: a light you move is never overwritten by the schedule or camera follow. The engine decided from a
+  snapshot taken at the start of its tick and then walked a fade in many small writes, so a nudge on a fader that
+  landed in between was overwritten with the schedule's level a few milliseconds later and the light then looked
+  held at the wrong value. Every write the engine makes is now a compare-and-set under the light's device lock
+  (`LightingController.write(..., expect=...)`): when the light no longer shows what the engine last knew, the write
+  is dropped and the next tick holds the light. The settings file cache also keys on the inode, so two saves of the
+  same size within one clock tick are not mistaken for one.
+- Lighting: Resume the schedule is no longer undone by a change you made a moment earlier. A change by hand within two
+  seconds of the engine's own write is noticed only when that window ends, and it then held the light again right
+  after Resume. Resume now adopts what the lights show as the state the engine starts from.
+- Console: a fader drag always ends on its last value. Streamed controls (lighting, gain, looks, blur) posted every
+  step as its own request and the server answers on separate threads, so two steps in flight could land out of order
+  and leave an older value on the device (the All lights temperature fader stopped short of its end). One request per
+  control is now in flight at a time and the newest values follow when it answers; `flushStream` also sends the right
+  action for controls that stream under their own key (the blur strength).
+- The loudness cost unit test no longer fails on a loaded CI runner: instead of a CPU-time share against a fixed
+  12 % bound it counts the analyser's work (interpolations per sample, K-weighted frames) and compares its CPU time
+  with a pure-Python baseline loop timed in the same process (bound 15x, measured about 4.5x; a tenfold regression
+  fails).
+
+- Three flaky unit tests on loaded shared runners (`test-py310`): the loudness cost check now takes the best of five
+  CPU-time runs, the install-release test runs hermetically (own HOME and TMPDIR, no stdin) with a hang-guard deadline
+  instead of 60 s, and the output-test wait allows the pure-Python test sound the time it needs to be written.
+- The Camera page's save-look form now refreshes its "Replaces your look" hint when the saved looks change while the form is open.
+
+- Director picture heuristics no longer misjudge a dark room (#32, colour half): measured on the real
+  rig, a black frame was read as "cool, green tint" (warm index -1.26, saturation 0.96) from one to three bright
+  pixels, called soft, and could flag flicker or blurred frames from noise. The cast now needs 5% of the frame in the
+  mid-tones, frames with a 99th-percentile luma below 40 get a "too dark to judge" note instead of colour, contrast
+  and focus findings, and the flicker and blurred-frame checks have brightness and sharpness floors. Evidence in
+  `docs/auto-mode.md`. The audio half of #32 stays open.
+- Console: the Live voice presets show their whole names. With six presets in one row, "Minimal" and
+  "DeepFilterNet" were cut to "Minima" and "DeepFil"; preset labels now wrap at word and camelCase joins and
+  shrink with the pad (`<ss-pad fit>`).
+
+### Added
+
+- Lighting e2e determinism gate: the demo rig's lighting runs on a pinned clock and place
+  (`STREAMSTACK_DEMO_CLOCK`, New York) so the daylight schedule does not depend on the hour or the host zone, and the
+  `e2e-lighting` CI job soaks both lighting suites three times at 03:30, 12:00 and 18:30
+  (`scripts/e2e_lighting_soak.py`). Unit tests drive a hand landing mid-fade and between the snapshot and the write.
+- Audio page: Input and Output sections (#36). Output lists every PipeWire output (friendly
+  name, kind and bus, state, volume, mute, default marker, set as default; the Easy Effects
+  sink is shown as a route) and follows hot-plug through `pw-dump --monitor`, with a warning when
+  the default output disappears. Each output has a Test button that plays a short generated
+  stereo left/right identification and a chime on that output only, without changing the
+  default, and remembers whether you heard it; Test all runs them in turn. The Live page's
+  microphone card gets a compact output selector with a Test button. The core stays
+  dependency-free (`pw-dump`, `wpctl`, `pw-play`, stdlib `wave`), and the demo rig simulates four outputs.
+- Native video engine (#57): StreamStack now makes the program camera (`/dev/video43`) itself, with OBS
+  not running. One supervised libav (ffmpeg) child reads the camera, uploads the frame to the Arc over
+  VA-API/Vulkan, grades it on the GPU (libplacebo: brightness, contrast, saturation, gamma, auto-framing
+  crop), applies warmth and sharpen, and writes the loopback. Slider and crop changes are written to the
+  running child (about 0.06 ms to apply, no restart, no dropped call camera). A second graph feeds the
+  framing detector. `STREAMSTACK_VIDEO_ENGINE=obs` keeps the old path. New settings:
+  `STREAMSTACK_VIDEO_ENGINE`, `STREAMSTACK_ENGINE_SIZE`, `STREAMSTACK_ENGINE_BACKEND`,
+  `STREAMSTACK_ENGINE_RENDER_NODE`, `STREAMSTACK_ENGINE_LUT`.
+- `streamstack engine probe` (render node, GPU backend, which hardware encoders work) and
+  `streamstack engine bench` (glass-to-output latency and CPU against a stamped feed).
+- The Camera page shows an ENGINE chip (GPU path, frame rate, drops); the live and mini status chips say
+  "Video engine" instead of "OBS" in native mode.
+- A codec-agnostic encode tap table (AV1, HEVC, H.264 on Quick Sync or NVENC, AV2 slot empty) for the
+  recording and streaming work. Design, feasibility matrix and measured numbers: `docs/native-video-engine.md`.
+- Native Elgato Stream Deck support (#37): `streamstack deck run` (a systemd user service, `streamstack deck enable`)
+  shows live Console state on every key and runs the same actions as the Console, on any model the `streamdeck`
+  library supports (extra `deck`: `pip install 'streamstack[deck]'`). The default profile fills a 4x4 deck with
+  folders for lights, voice presets and scenes and follows the rig; any layout is re-flowed to the connected deck.
+  The new **Deck** page (Alt+9) shows the keys live, with drag-and-drop from a data-driven options list (scenes,
+  mute, privacy, voice and light presets, brightness, camera follow, schedule, record, stream, virtual camera,
+  Director, blur, or any Console action), a key inspector, pages, brightness and sleep, a model picker and export
+  and import. The demo rig has a simulated deck. See `docs/deck.md`.
+
 ## [0.3.1] - 2026-10-22
 
 ### Fixed

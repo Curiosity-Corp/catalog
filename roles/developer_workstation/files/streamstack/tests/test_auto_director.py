@@ -7,11 +7,10 @@ import wave
 from pathlib import Path
 
 import pytest
-from test_auto import FakeOBS, journal
+from test_auto import FakeLink, journal
 
 from streamstack import auto, config, system
 from streamstack.director import audiofeatures, imagefeatures, personas, prompt, settings, status
-from streamstack.obs import COLOR_FILTER
 
 STATS = {"YAVG": 118.0, "YHIGH": 230.0, "YMIN": 16, "YMAX": 235}
 FRAME = {
@@ -65,14 +64,15 @@ def fast(monkeypatch) -> None:
     monkeypatch.setattr(auto.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(auto, "notify", lambda *a, **k: None)
     monkeypatch.setattr(auto, "picture_stats", lambda frame, box=None: dict(STATS))
-    monkeypatch.setattr(system, "ee_presets", lambda: ["Voice", "Broadcast"])
-    monkeypatch.setattr(system, "easyeffects_preset", lambda: "Voice")
+    monkeypatch.setattr(auto.voicechain, "preset_names", lambda: ["Voice", "Broadcast"])
+    monkeypatch.setattr(auto.voicechain, "current_preset", lambda: "Voice")
+    monkeypatch.setattr(auto.voicechain, "load_preset", lambda name: True)
     monkeypatch.setattr(system, "run", lambda argv, timeout=10: None)
 
 
 def make(
     monkeypatch, replies, backend: str = "claude-cli", mic: str = "", **cfg
-) -> tuple[auto.Auto, FakeOBS, list[dict]]:
+) -> tuple[auto.Auto, FakeLink, list[dict]]:
     sent: list[dict] = []
 
     def fake_claude(settings_, image, context):
@@ -104,17 +104,17 @@ def make(
         "STREAMSTACK_AUTO_BURST": "4",
         **cfg,
     }
-    obs = FakeOBS({"brightness": 0.0, "contrast": 0.0, "gamma": 0.0, "saturation": 0.0})
+    link = FakeLink({"brightness": 0.0, "contrast": 0.0, "gamma": 0.0, "saturation": 0.0})
     a = auto.Auto(settings_)
-    a.obs = obs
+    a.link = link
     if mic:
         a.mic, a.mic_start_db = mic, 0.0
-    return a, obs, sent
+    return a, link, sent
 
 
 def test_claude_is_shown_one_contact_sheet_and_a_prompt_about_the_persona_and_the_hour(monkeypatch) -> None:
     settings.set_persona("executive")
-    a, _obs, sent = make(monkeypatch, iter([REPLY]))
+    a, _link, sent = make(monkeypatch, iter([REPLY]))
     a.ai_tick(force=True)
     (call,) = sent
     assert call["bytes"].startswith(b"SHEET")  # the composed sheet, not a single frame
@@ -142,7 +142,7 @@ def test_the_persona_changes_what_claude_is_asked(monkeypatch) -> None:
     prompts = {}
     for persona in ("executive", "late-night-calm"):
         settings.set_persona(persona)
-        a, _obs, sent = make(monkeypatch, iter([REPLY]))
+        a, _link, sent = make(monkeypatch, iter([REPLY]))
         a.ai_tick(force=True)
         prompts[persona] = sent[0]["context"]["prompt"]
     assert "Executive" in prompts["executive"] and "Executive" not in prompts["late-night-calm"]
@@ -150,7 +150,7 @@ def test_the_persona_changes_what_claude_is_asked(monkeypatch) -> None:
 
 
 def test_audio_never_leaves_the_machine_only_its_features_do(monkeypatch, tmp_path) -> None:
-    a, _obs, sent = make(monkeypatch, iter([REPLY]), mic="mic")
+    a, _link, sent = make(monkeypatch, iter([REPLY]), mic="mic")
     clips: list[Path] = []
 
     def record(source, seconds, path, **kw):
@@ -173,14 +173,14 @@ def test_audio_never_leaves_the_machine_only_its_features_do(monkeypatch, tmp_pa
 
 
 def test_a_pass_without_a_microphone_still_works_and_says_so(monkeypatch) -> None:
-    a, _obs, sent = make(monkeypatch, iter([REPLY]))
+    a, _link, sent = make(monkeypatch, iter([REPLY]))
     a.ai_tick(force=True)
     assert "no microphone is being watched" in sent[0]["context"]["prompt"]
     assert status.read()["audio"] == {"features": None, "reason": "no microphone is being watched"}
 
 
 def test_the_pass_is_written_for_the_console_and_each_change_has_a_reason(monkeypatch) -> None:
-    a, obs, _sent = make(monkeypatch, iter([REPLY]), mic="mic")
+    a, link, _sent = make(monkeypatch, iter([REPLY]), mic="mic")
     monkeypatch.setattr(system, "record", lambda *a, **k: False)
     a.ai_tick(force=True)
     report = status.read()
@@ -188,25 +188,29 @@ def test_the_pass_is_written_for_the_console_and_each_change_has_a_reason(monkey
     assert report["observation"]["frames"] == 4 and report["observation"]["picture"]["luma_mean"] == 118.0
     assert report["claude"]["assessment"]["lighting"] == "mixed" and report["claude"]["confidence"] == 0.9
     (change,) = [c for c in report["changes"] if c["key"] == "warmth"]
-    assert change["reason"] == "Skin looked cool." and change["source"] == "claude" and change["actuator"] == "obs-look"
-    assert {row["id"] for row in report["actuators"]} >= {"obs-look", "mic-gain", "voice-preset", "face-finder"}
+    assert (
+        change["reason"] == "Skin looked cool."
+        and change["source"] == "claude"
+        and change["actuator"] == "program-look"
+    )
+    assert {row["id"] for row in report["actuators"]} >= {"program-look", "mic-gain", "voice-preset", "face-finder"}
     entries = [e for e in journal() if e["event"] == "change"]
     assert entries and entries[0]["reason"] == "Skin looked cool."
     sheet = settings.sheet_path()
     assert sheet.read_bytes().startswith(b"SHEET") and sheet.stat().st_mode & 0o077 == 0
     assert settings.status_path().stat().st_mode & 0o077 == 0
-    assert obs.filters[COLOR_FILTER][1]["color_multiply"] != 0xFFFFFF
+    assert link.values["warmth"] > 0
 
 
 def test_a_look_the_person_changed_by_hand_is_left_alone(monkeypatch) -> None:
-    a, obs, _sent = make(monkeypatch, iter([REPLY, REPLY]))
+    a, link, _sent = make(monkeypatch, iter([REPLY, REPLY]))
     a.ai_tick(force=True)
-    warmth = auto.multiply_to_warmth(obs.filters[COLOR_FILTER][1]["color_multiply"])
-    obs.filters[COLOR_FILTER][1]["color_multiply"] = auto.warmth_to_multiply(-0.3)  # turned cooler by hand
-    writes = len(obs.writes)
+    warmth = link.values["warmth"]
+    link.values["warmth"] = -0.3  # turned cooler by hand
+    writes = len(link.writes)
     a.ai_tick(force=True)
-    assert auto.multiply_to_warmth(obs.filters[COLOR_FILTER][1]["color_multiply"]) == pytest.approx(-0.3, abs=0.05)
-    assert len(obs.writes) == writes and warmth > 0
+    assert link.values["warmth"] == pytest.approx(-0.3, abs=0.05)
+    assert len(link.writes) == writes and warmth > 0
     assert any(e["event"] == "override" and "warmth" in e["keys"] for e in journal())
     assert "warmth" in status.read()["held"]
 
@@ -214,15 +218,15 @@ def test_a_look_the_person_changed_by_hand_is_left_alone(monkeypatch) -> None:
 def test_what_was_kept_is_learned_for_this_hour(monkeypatch) -> None:
     from streamstack.director import learning
 
-    a, obs, _ = make(monkeypatch, iter([REPLY]))
-    obs.filters[COLOR_FILTER][1]["contrast"] = 0.12
+    a, link, _ = make(monkeypatch, iter([REPLY]))
+    link.values["contrast"] = 0.12
     a.ai_tick(force=True)
     learned = learning.get(a.pilot.place, a.pilot.persona["id"], a.pilot.slot)
     assert learned["look"]["contrast"] == 0.12 and learned["n"] == 1
 
 
 def test_the_local_backend_observes_and_reports_but_never_calls_claude(monkeypatch) -> None:
-    a, _obs, sent = make(monkeypatch, iter([]), backend="local")
+    a, _link, sent = make(monkeypatch, iter([]), backend="local")
     assert a.ai_tick(force=True) is None
     assert sent == []
     report = status.read()
@@ -230,24 +234,24 @@ def test_the_local_backend_observes_and_reports_but_never_calls_claude(monkeypat
 
 
 def test_a_failed_later_still_shortens_the_burst_instead_of_failing_the_pass(monkeypatch) -> None:
-    a, obs, sent = make(monkeypatch, iter([REPLY]))
-    original = obs.screenshot
+    a, link, sent = make(monkeypatch, iter([REPLY]))
+    original = link.screenshot
     calls = {"n": 0}
 
     def flaky(source, path, width=768):
         calls["n"] += 1
         if calls["n"] == 3:
-            raise RuntimeError("OBS dropped the connection")
+            raise RuntimeError("the Console dropped the connection")
         return original(source, path, width)
 
-    monkeypatch.setattr(obs, "screenshot", flaky)
+    monkeypatch.setattr(link, "screenshot", flaky)
     a.ai_tick(force=True)
     assert len(sent) == 1 and status.read()["observation"]["frames"] == 2
-    assert any("OBS dropped" in p for p in status.read()["observation"]["problems"])
+    assert any("the Console dropped" in p for p in status.read()["observation"]["problems"])
 
 
 def test_without_ffmpeg_the_single_middle_still_goes_to_claude(monkeypatch) -> None:
-    a, _obs, sent = make(monkeypatch, iter([REPLY]))
+    a, _link, sent = make(monkeypatch, iter([REPLY]))
 
     def broken(paths, out, timeout=30.0):
         raise imagefeatures.ImageAnalysisError("ffmpeg is not installed")
@@ -260,33 +264,33 @@ def test_without_ffmpeg_the_single_middle_still_goes_to_claude(monkeypatch) -> N
 
 def test_between_passes_the_look_eases_towards_the_persona_in_small_steps(monkeypatch) -> None:
     settings.set_persona("executive")
-    a, obs, _ = make(monkeypatch, iter([]))
+    a, link, _ = make(monkeypatch, iter([]))
     a.video_tick()
     changes = [e for e in journal() if e["event"] == "change"]
     assert changes and all(c["source"] in ("persona", "baseline") and "Executive" in c["reason"] for c in changes)
     assert all(abs(c["after"] - c["before"]) <= auto.limits.START_STEP[c["key"]] + 1e-6 for c in changes)
-    before = len(obs.writes)
+    before = len(link.writes)
     for _ in range(30):
         a.video_tick()
-    assert len(obs.writes) > before
-    final = auto.current_look(obs, "Camera")
+    assert len(link.writes) > before
+    final = auto.current_look(link, "Camera")
     assert final["warmth"] == pytest.approx(
         personas.load_library().get("executive")["picture"]["look"]["warmth"], abs=0.05
     )
-    settled = len(obs.writes)
+    settled = len(link.writes)
     a.video_tick()
-    assert len(obs.writes) == settled  # nothing left to ease
+    assert len(link.writes) == settled  # nothing left to ease
 
 
 def test_easing_can_be_switched_off(monkeypatch) -> None:
-    a, obs, _ = make(monkeypatch, iter([]), STREAMSTACK_AUTO_PERSONA_LOOK="false")
+    a, link, _ = make(monkeypatch, iter([]), STREAMSTACK_AUTO_PERSONA_LOOK="false")
     a.video_tick()
-    assert obs.writes == []
+    assert link.writes == []
 
 
 def test_exposure_follows_the_persona_band_and_explains_itself(monkeypatch) -> None:
     settings.set_persona("late-night-calm")
-    a, obs, _ = make(monkeypatch, iter([]), STREAMSTACK_AUTO_PERSONA_LOOK="false")
+    a, link, _ = make(monkeypatch, iter([]), STREAMSTACK_AUTO_PERSONA_LOOK="false")
     low, _high = a.pilot.frame_band()
     monkeypatch.setattr(
         auto, "picture_stats", lambda frame, box=None: {"YAVG": low - 30, "YHIGH": 200.0, "YMIN": 16, "YMAX": 235}
@@ -295,11 +299,11 @@ def test_exposure_follows_the_persona_band_and_explains_itself(monkeypatch) -> N
     event = next(e for e in journal() if e["event"] == "exposure")
     assert "late-night" in event["reason"].lower() or "Late" in event["reason"]
     assert str(int(low)) in event["reason"]
-    assert obs.filters[COLOR_FILTER][1]["gamma"] > 0
+    assert link.values["gamma"] > 0
 
 
 def test_a_new_persona_applies_within_one_tick(monkeypatch) -> None:
-    a, _obs, _ = make(monkeypatch, iter([]))
+    a, _link, _ = make(monkeypatch, iter([]))
     settings.set_persona("bright-podcast")
     a.pilot.refresh()
     assert a.pilot.persona["id"] == "bright-podcast"

@@ -1,7 +1,7 @@
 """Personas: a chosen target look and sound for the AI director.
 
 A persona is a small JSON document (schema 1) describing what the picture and the voice should feel like: mood
-words for Claude to judge against, a target look for the OBS grade, exposure and colour bands, a voice preset and
+words for Claude to judge against, a target look for the picture grade, exposure and colour bands, a voice preset and
 tone targets. Five ship with StreamStack in `data/personas/`; anyone can edit one or add their own from the Auto
 page. An edit is saved to `~/.config/streamstack/personas/<id>.json`, which wins over the shipped file of the same
 id; deleting that file brings the shipped persona back. A broken file is reported and skipped, never fatal.

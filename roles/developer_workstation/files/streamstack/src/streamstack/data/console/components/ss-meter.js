@@ -332,7 +332,7 @@ export class SSMeter extends SSElement {
     const w = vert ? barPx : sl;
     const h = vert ? sl : barPx;
     ctx.beginPath();
-    ctx.roundRect(x, y, w, h, rad);
+    ctx.roundRect(x, y, w, h, Math.max(0, rad));  // a meter on a hidden tab measures zero: a negative radius throws
     ctx.fill();
   }
 }

@@ -34,7 +34,7 @@ def test_every_shipped_persona_stays_inside_the_hard_limits_and_names_a_real_voi
     face, frame = persona["picture"]["face_luma"], persona["picture"]["frame_luma"]
     assert limits.FACE_TARGET[0] <= face[0] < face[1] <= limits.FACE_TARGET[1] + 20
     assert 0 < frame[0] < frame[1] < 255
-    presets = {p.stem for p in (config.data_dir() / "easyeffects/input").glob("*.json")}
+    presets = {p.stem for p in (config.data_dir() / "audio/presets").glob("*.json")}
     assert persona["voice"]["preset"] in presets | {""}
     assert persona["id"] == persona_id and len(persona["mood"]) >= 3 and len(persona["swatch"]) == 2
 

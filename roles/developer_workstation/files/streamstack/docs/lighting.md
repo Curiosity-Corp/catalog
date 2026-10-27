@@ -130,21 +130,16 @@ host something that must watch the camera all day.
 Detection is read-only. It never opens a `/dev/video*` node, so it cannot steal the camera or change a format.
 
 1. **Apps.** Each second the service lists `/proc/<pid>/fd` and looks for a process that holds the program camera
-   (`STREAMSTACK_PROGRAM_DEVICE`, the OBS virtual camera), the raw camera (`STREAMSTACK_CAMERA_DEVICE`, unless
+   (`STREAMSTACK_PROGRAM_DEVICE`, the native engine's virtual camera: a call app opening it is the call starting), the raw camera (`STREAMSTACK_CAMERA_DEVICE`, unless
    `STREAMSTACK_CAMERA_EXTERNAL` says another tool feeds it) or an extra device you list. Teams, Meet or Zoom in a
-   browser, Zoom, Cheese or any other consumer all show up this way.
-2. **OBS outputs.** Virtual camera, streaming and recording, asked over obs-websocket while an OBS process exists
-   (retried at most every 15 s). Each of the four sources has its own switch.
+   browser, Zoom, Cheese or any other consumer all show up this way. The switch for this source is "Apps".
 
-StreamStack's own handles are not "use": OBS itself, any `streamstack` process, and ffmpeg/GStreamer helpers started
+StreamStack's own handles are not "use": any `streamstack` process (the Console holds the program node open), and ffmpeg/GStreamer helpers started
 by one of those (the Canon bridge, preview grabs). An ffmpeg you start from a terminal does count. There is an
 ignore list (process or app name) for anything else, such as a screen-share tool.
 
 A call starts a session after `start_delay_seconds` (default 3, so a flicker does nothing). When the camera is
 released, the session ends after `grace_seconds` (default 120).
-
-Note `streamstack studio` starts OBS with the virtual camera running, so with "OBS virtual camera is running" ticked
-the lights come on whenever the studio is up. Untick it to follow only apps.
 
 ### The rules
 
@@ -213,7 +208,7 @@ GET reports plus one short write test that restored the light's exact state:
   the engine fade out, switch off and restore the level.
 
 Assumed, not yet exercised on hardware: the Glow and the Beam LX (same protocol, different feature byte, covered by
-unit tests); obs-websocket on a real OBS (covered by a fake client); that a browser tab using the camera is seen as
+unit tests); that a browser tab using the camera is seen as
 the browser (Chrome, Firefox) and not as "Meet" or "Teams", because the kernel only knows the process; and the
 systemd unit on a machine other than the development one.
 

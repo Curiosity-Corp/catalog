@@ -17,11 +17,12 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from playwright.sync_api import Locator, Page, expect
 
-ROUTES = ("live", "camera", "audio", "auto", "system", "lighting", "interface", "mini")
+ROUTES = ("live", "camera", "audio", "auto", "system", "lighting", "interface", "presets", "stream", "deck", "mini")
 # What proves each route has mounted (placeholders count until their real page lands).
 ROUTE_READY = {
     "live": ".cockpit",
@@ -31,6 +32,9 @@ ROUTE_READY = {
     "system": ".sys",
     "lighting": ".li",
     "interface": ".ifc",
+    "presets": ".pr",
+    "stream": ".st",
+    "deck": ".dk",
     "mini": ".mini",
 }
 TOKEN_HEADER = "X-StreamStack-Token"
@@ -49,6 +53,7 @@ class Rig:
     base: str  # http://127.0.0.1:<port>/
     token: str
     log: list[str] = field(default_factory=list)
+    home: Path | None = None  # the demo server's isolated HOME, for tests that damage or read its files
 
     @property
     def url(self) -> str:
@@ -167,6 +172,39 @@ class FlakyProxy:
                     self._open.discard(sock)
 
 
+def _lighting_context(rig: Rig) -> str:
+    """What the lights and the automation engine looked like when a poll gave up (a failure is read from the log)."""
+    try:
+        lighting = rig.state()["lighting"]
+    except (KeyError, OSError, ValueError) as exc:
+        return f"; lighting state unavailable: {exc}"
+    lights = [
+        {k: light.get(k) for k in ("id", "power", "brightness", "kelvin")} for light in lighting.get("lights", [])
+    ]
+    status = lighting.get("automation", {}).get("status", {})
+    events = [f"{e.get('time')} {e.get('kind')}: {e.get('text')}" for e in status.get("events", [])[:8]]
+    return f"; lights {lights}; engine lights {status.get('lights')}; recent events {events}"
+
+
+def poll_settled(
+    rig: Rig, probe: Callable[[dict[str, Any]], Any], quiet: float = 1.0, timeout: float = 10.0 * SCALE
+) -> Any:
+    """Like ``poll``, but return the value only once it has stopped changing for ``quiet`` seconds.
+
+    A fader drag posts a stream of values; the first one that matches is not the last one the server will take."""
+    deadline = time.monotonic() + timeout
+    value, since = None, time.monotonic()
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        current = probe(rig.state())
+        if not current or current != value:
+            value, since = current, now
+        elif now - since >= quiet:
+            return value
+        time.sleep(0.05)
+    raise AssertionError(f"server state never settled; last probe value {value!r}{_lighting_context(rig)}")
+
+
 def poll(rig: Rig, probe: Callable[[dict[str, Any]], Any], timeout: float = 10.0 * SCALE) -> Any:
     """Wait until ``probe(state)`` is truthy on the server (an action has landed) and return its value."""
     deadline = time.monotonic() + timeout
@@ -176,7 +214,7 @@ def poll(rig: Rig, probe: Callable[[dict[str, Any]], Any], timeout: float = 10.0
         if value:
             return value
         time.sleep(0.05)
-    raise AssertionError(f"server state never matched; last probe value {value!r}")
+    raise AssertionError(f"server state never matched; last probe value {value!r}{_lighting_context(rig)}")
 
 
 class App:

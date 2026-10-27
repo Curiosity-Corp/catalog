@@ -12,9 +12,9 @@ this menu stays for panels and quick one-offs. Two ways to put it on the panel:
                             the Console, the menu is on the right click
 
 The icon shows what Teams and Zoom receive:
-  red dot    the graded StreamStack Camera (OBS virtual camera) is live
+  red dot    the graded StreamStack Camera (the Console's video engine) is live
   green dot  only the raw camera is live (studio stopped: lighter on laptops)
-  amber      something needs attention (no voice chain, OBS without picture)
+  amber      something needs attention (no voice chain, Console without picture)
   grey       no camera picture
 """
 
@@ -41,7 +41,8 @@ try:
 except (ValueError, ImportError):
     AppIndicator = None
 
-from streamstack import config, system  # noqa: E402
+from streamstack import config, crash, system  # noqa: E402
+from streamstack.audiochain import control as voicechain  # noqa: E402
 from streamstack.cli import auto_running  # noqa: E402
 from streamstack.system import detach  # noqa: E402
 
@@ -96,16 +97,14 @@ def probe() -> dict:
     """Runs off the GTK thread: v4l2-ctl and pactl can take a moment."""
     cfg = config.load_settings()
     camera, program = cfg["STREAMSTACK_CAMERA_DEVICE"], cfg["STREAMSTACK_PROGRAM_DEVICE"]
-    ee = system.easyeffects_running()
     return {
         "cfg": cfg,
-        "obs": system.running("obs"),
         "camera_live": bool(Path(camera).exists() and system.loopback_has_producer(camera)),
         "program_live": bool(Path(program).exists() and system.loopback_has_producer(program)),
-        "voice": system.EE_SOURCE in system.audio_sources(),
-        "easyeffects": ee,
-        "preset": system.easyeffects_preset() if ee else "",
-        "presets": system.ee_presets(),
+        "voice": system.VOICE_SOURCE in system.audio_sources(),
+        "preset": voicechain.current_preset() or "",
+        "presets": voicechain.preset_names(),
+        "bypassed": voicechain.bypassed(),
         "devices": devices_with_modes(),
         "auto": auto_running(),
         "note": last_claude_note(),
@@ -195,7 +194,7 @@ class Tray:
             auto, "Recent auto changes", self.show_output, "StreamStack auto mode", "auto", "status", "--lines", "30"
         )
         self._item(
-            auto, "Check auto mode (OBS, Claude, mic)", self.show_output, "StreamStack auto check", "auto", "check"
+            auto, "Check auto mode (Console, Claude, mic)", self.show_output, "StreamStack auto check", "auto", "check"
         )
         self._item(auto, "Undo auto changes (restore the look and mic gain)", self.auto_reset)
         self.note_item = self._item(auto, "Claude: no review yet")
@@ -210,8 +209,7 @@ class Tray:
         self._rebuild_previews([])
 
         apps = self._submenu(menu, "Open")
-        self._item(apps, "OBS Studio (lighting, colour, scenes)", self.open_obs)
-        self._item(apps, "Easy Effects (bass, treble, pitch)", detach, ["easyeffects"])
+        self._item(apps, "Voice chain (faders, loudness)", self.open_console)
         self._item(apps, "Audio routing (qpwgraph)", detach, ["qpwgraph"])
         self._item(apps, "Sound levels (pavucontrol)", detach, ["pavucontrol"])
         self._item(apps, "Camera controls (qv4l2)", detach, ["qv4l2"])
@@ -288,18 +286,17 @@ class Tray:
             return False
         previous = self.state
         self.state = state
+        self.bypassed = bool(state.get("bypassed", self.bypassed))
         cfg = state["cfg"]
-        studio = state["obs"]
-        if studio and state["program_live"]:
+        studio = state["program_live"]
+        if studio:
             camera, icon = f"Calls camera: {cfg['STREAMSTACK_PROGRAM_LABEL']} (graded)", "streamstack-live"
-        elif studio:
-            camera, icon = "Calls camera: OBS running, virtual camera off", "streamstack-warn"
         elif state["camera_live"]:
             camera, icon = f"Calls camera: {cfg['STREAMSTACK_CAMERA_LABEL']} (raw)", "streamstack-raw"
         else:
             camera, icon = "Calls camera: no picture", "streamstack-off"
         if state["voice"]:
-            voice = f"Microphone: Easy Effects Source - {state['preset'] or 'custom'}"
+            voice = f"Microphone: StreamStack Mic - {state['preset'] or 'custom'}"
             if self.bypassed:
                 voice += " (bypassed)"
         else:
@@ -375,21 +372,16 @@ class Tray:
     def toggle_studio(self) -> None:
         self.busy = True
         self.studio_item.set_sensitive(False)
-        if self.state.get("obs"):
+        if self.state.get("program_live"):
             notify("Stopping the studio", "Calls fall back to the raw camera.")
             self.cli("stop", done=lambda code, out: notify("Studio stopped", out.splitlines()[-1] if out else ""))
         else:
-            notify("Starting the studio", "Easy Effects, the camera and OBS with the virtual camera.")
+            notify("Starting the studio", "the voice chain, the Canon bridge and the Console with the graded camera.")
             self.cli(
                 "studio",
                 done=lambda code, out: notify("Studio started" if code == 0 else "Studio needs attention", out),
             )
-
-    def open_obs(self) -> None:
-        if self.state.get("obs"):
-            notify("OBS is already running", "Find it in the window list.")
-        else:
-            self.cli("studio")
+            self.open_console("--no-window")
 
     def pick_preset(self, item: Gtk.RadioMenuItem, name: str) -> None:
         if self.updating or not item.get_active():
@@ -402,7 +394,7 @@ class Tray:
         if self.updating:
             return
         self.bypassed = item.get_active()
-        detach(["easyeffects", "-b", "1" if self.bypassed else "2"])
+        threading.Thread(target=voicechain.set_bypass, args=(self.bypassed,), daemon=True).start()
         notify("Voice effects bypassed" if self.bypassed else "Voice effects on")
         if not self.popup:
             self.refresh()
@@ -469,6 +461,7 @@ class Tray:
 
 
 def main() -> int:
+    crash.install("tray")
     if "--menu" in sys.argv[1:]:
         Tray(popup=True)
         Gtk.main()

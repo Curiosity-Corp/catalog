@@ -1,6 +1,6 @@
 """The framing engine: a stream of face detections in, one smooth crop window out.
 
-Pure Python with an injected clock: no OBS, no camera, no model. Everything is in normalised frame units
+Pure Python with an injected clock: no video engine, no camera, no model. Everything is in normalised frame units
 (0..1 across the picture), so the same engine serves the 1056x704 Canon live view and the 1080p Cam Link.
 
 A window is a centre (cx, cy) and a zoom (1 = the whole frame). It always has the frame's own aspect ratio, so a

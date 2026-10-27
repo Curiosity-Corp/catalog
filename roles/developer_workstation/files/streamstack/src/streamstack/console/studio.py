@@ -2,7 +2,7 @@
 
 Slow probes (pgrep, v4l2-ctl, pactl, systemctl, the doctor checks) run in
 background threads and are cached, so `state()` is instant. Actions that take
-seconds (starting OBS, a Claude pass) run the `streamstack` command in a worker
+seconds (a Claude pass) run the `streamstack` command in a worker
 thread, return at once and report through `state` and a toast.
 """
 
@@ -20,11 +20,11 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from streamstack import camlink, cli, config, system
+from streamstack import camlink, cli, config, system, virtualdevices
 from streamstack.console import director
 from streamstack.console.errors import ActionError
 
-APPS = ("obs", "easyeffects", "qpwgraph", "pavucontrol", "qv4l2")
+APPS = ("qpwgraph", "pavucontrol", "qv4l2")
 JOURNAL_LIMIT = 30
 JOURNAL_TAIL_BYTES = 64 * 1024
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -71,7 +71,7 @@ GAIN_REASON = "Speech was quiet against the room."
 
 def event_kind(event: str, entry: dict | None = None) -> str:
     """The journal's event names folded into the four kinds the Console colours."""
-    if "error" in event or event == "obs-unavailable":
+    if "error" in event:
         return "error"
     if event in ("mic-gain", "audio"):
         return "audio"
@@ -147,7 +147,7 @@ def public_entries(entries: list[dict]) -> list[dict]:
 
 def probe_studio(cfg: dict[str, str]) -> dict:
     """The studio facts that need subprocesses; run off the HTTP threads."""
-    running = system.running("obs")
+    running = cli.studio_running(cfg)
     camera = cfg["STREAMSTACK_CAMERA_DEVICE"]
     bridge = system.user_unit_active(cli.CANON_UNIT) or (
         config.camera_external(cfg) and bool(system.loopback_has_producer(camera))
@@ -157,7 +157,7 @@ def probe_studio(cfg: dict[str, str]) -> dict:
         "running": running,
         "camera_for_calls": cli.call_camera(cfg, running),
         "bridge": bool(bridge),
-        "voice_chain": system.EE_SOURCE in sources,
+        "voice_chain": system.VOICE_SOURCE in sources,
         # Re-read every cycle: the card's modes follow the HDMI source, so a camera switched on or to 60 fps shows up.
         "camlink": camlink.probe(cfg, sources).public(),
     }
@@ -187,8 +187,9 @@ def run_cli(args: list[str], timeout: float = 240) -> tuple[int, str]:
 
 def console_checks(cfg: dict[str, str]) -> list[dict[str, str]]:
     """The doctor checks for the Console. The microphone stall check is left out: the audio controller
-    watches it continuously and the Console merges its live answer into the health list."""
-    return cli.run_checks(cfg, stall_probe=False)
+    watches it continuously and the Console merges its live answer into the health list. The hardware rows come
+    from the hardware controller's own probe, also merged by the Console."""
+    return cli.run_checks(cfg, stall_probe=False, hardware=False)
 
 
 def tail(output: str, lines: int = 2) -> str:
@@ -233,6 +234,7 @@ class StudioController:
         }
         self._auto: dict = {"running": None, "can_undo": False, "last_note": None, "last_time": None, "journal": []}
         self._health: dict = {"updated": None, "summary": None, "checks": []}
+        self._virtual: dict = {"seen": []}
         self._director = director.DirectorPanel(self.cfg)
         self._cpu: float | None = None
         self._cpu_last = cpu_times()
@@ -318,7 +320,9 @@ class StudioController:
         except ImportError:
             can_undo = False
         running = system.user_unit_active(cli.AUTO_UNIT)
+        virtual = virtualdevices.snapshot(self.cfg)
         with self._lock:
+            self._virtual = virtual
             self._studio.update(facts)
             self._auto.update(running=running, can_undo=can_undo)
 
@@ -362,7 +366,8 @@ class StudioController:
             )
             health = dict(self._health)
             system_state = {"cpu_percent": self._cpu, "load": load, "cores": os.cpu_count() or 1}
-        return {"studio": studio, "auto": auto, "health": health, "system": system_state}
+            virtual = dict(self._virtual)
+        return {"studio": studio, "auto": auto, "health": health, "system": system_state, "virtual": virtual}
 
     # -- actions --------------------------------------------------------------
 
@@ -428,10 +433,6 @@ class StudioController:
         return "ok", f"Claude: {note}" if note else "Claude reviewed the picture"
 
     def _open(self, name: str) -> str:
-        if name == "obs":
-            if system.running("obs"):
-                return "OBS is already running; find it in the window list."
-            return self.act("studio.start", {}) or ""
         if not system.have(name):
             raise ActionError(f"{name} is not installed.", 409)
         system.detach([name])
@@ -535,7 +536,7 @@ class DemoStudio:
             change(120, "litra", "video", "kelvin", 5600, 5300, LIGHT_REASON, "Litra Beam 1", "persona"),
             change(150, "canon-exposure", "video", "exposure_comp", 0.0, 0.3, CAMERA_REASON, source="local"),
             change(170, "interface-gain", "audio", "gain_db", 30.0, 32.0, GAIN_REASON, "gain.1", "local"),
-            change(190, "obs-look", "video", "warmth", 0.0, 0.12, warm),
+            change(190, "program-look", "video", "warmth", 0.0, 0.12, warm),
             {
                 "time": at(191),
                 "event": "ai",
@@ -591,15 +592,15 @@ class DemoStudio:
                 "video",
                 "encoder",
                 "ok",
-                "OBS encodes with AV1 on the GPU (VA-API)",
+                "The program camera encodes on the GPU (VA-API)",
                 "av1_ffmpeg_vaapi_tex: /dev/dri/renderD128, Intel iHD driver, low-power mode",
             ),
             item(
                 "video",
                 "background-blur",
                 "ok",
-                "Background blur is available: obs-backgroundremoval 1.4.1",
-                "CPU; /usr/local/lib/obs-plugins/obs-backgroundremoval.so",
+                "Background blur is available",
+                "OpenVINO (Arc GPU)",
             ),
             item(
                 "audio",
@@ -609,8 +610,7 @@ class DemoStudio:
                 "Cam Link 4K Digital Stereo",
             ),
             item("audio", "microphone", "ok", "call microphone", "Wave:3"),
-            item("audio", "voice-chain", "ok", "Easy Effects Source (processed voice) is available"),
-            item("apps", "app-obs", "ok", "OBS Studio", "installed"),
+            item("audio", "voice-chain", "ok", "StreamStack Mic (processed voice) is available"),
             item("apps", "app-qpwgraph", "ok", "PipeWire patchbay", "installed"),
             item("apps", "zoom", "warn", "Zoom desktop client", "not installed (zoom.us web client works too)"),
             item(
@@ -642,7 +642,6 @@ class DemoStudio:
                         "offered": ["1080p59.94 YUYV", "1080p29.97 YUYV"],
                         "active": "1920x1080 YUYV @ 59.94 fps",
                         "audio": "Cam Link 4K Digital Stereo",
-                        "retune": False,
                         "note": "",
                     },
                 },
@@ -658,6 +657,23 @@ class DemoStudio:
                     "director": director.safe_state(self._director),
                 },
                 "health": {"updated": self._checked, "summary": cli.summarize(checks), "checks": checks},
+                "virtual": {
+                    "camera": {
+                        "label": "StreamStack Camera",
+                        "device": "/dev/video43",
+                        "present": True,
+                        "listed": True,
+                        "access": True,
+                        "producer": self._running,
+                    },
+                    "mic": {"label": "StreamStack Mic", "present": True, "default": False},
+                    "seen": [
+                        {"kind": "camera", "app": "Teams", "pid": 4242, "via": "v4l2"},
+                        {"kind": "mic", "app": "Teams", "pid": 4242, "via": "pipewire"},
+                    ]
+                    if self._running
+                    else [],
+                },
                 "system": {
                     "cpu_percent": round(max(2.0, 24 + 9 * math.sin(elapsed / 4.0) + 4 * math.sin(elapsed * 1.7)), 1),
                     "load": [0.8, 0.7, 0.6],
@@ -729,7 +745,7 @@ class DemoStudio:
             "video",
             reason=reason,
             change={
-                "actuator": "obs-look",
+                "actuator": "program-look",
                 "target": "Canon EOS 50D",
                 "key": "warmth",
                 "before": 0.0,

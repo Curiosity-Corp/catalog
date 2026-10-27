@@ -15,6 +15,9 @@ RAIL = {
     "system": "System",
     "lighting": "Lighting",
     "interface": "Interface",
+    "presets": "Presets",
+    "stream": "Stream",
+    "deck": "Deck",
     "mini": "Mini",
 }
 
@@ -36,12 +39,15 @@ def test_unknown_route_falls_back_to_live(app: App, page: Page) -> None:
 def test_rail_lists_the_pages_and_marks_the_current_one(app: App, page: Page) -> None:
     app.goto("live")
     rail = page.get_by_role("navigation", name="Pages")
-    for title in ("Live", "Camera", "Audio", "Auto", "System", "Lighting", "Interface", "Mini"):
+    titles = ("Live", "Camera", "Audio", "Auto", "System", "Lighting", "Interface", "Presets", "Stream", "Deck", "Mini")
+    for title in titles:
         expect(rail.get_by_role("link", name=title)).to_be_visible()
     expect(rail.get_by_role("link", name="Live")).to_have_attribute("aria-current", "page")
 
 
-@pytest.mark.parametrize("route", ["camera", "audio", "auto", "system", "lighting", "interface"])
+@pytest.mark.parametrize(
+    "route", ["camera", "audio", "auto", "system", "lighting", "interface", "presets", "stream", "deck"]
+)
 def test_rail_click_navigates(app: App, page: Page, route: str) -> None:
     app.goto("live")
     rail = page.get_by_role("navigation", name="Pages")
@@ -61,6 +67,9 @@ def test_rail_click_navigates(app: App, page: Page, route: str) -> None:
         ("5", "system"),
         ("6", "lighting"),
         ("7", "interface"),
+        ("8", "presets"),
+        ("0", "stream"),
+        ("9", "deck"),
     ],
 )
 def test_alt_digit_goes_to_page(app: App, page: Page, digit: str, route: str) -> None:

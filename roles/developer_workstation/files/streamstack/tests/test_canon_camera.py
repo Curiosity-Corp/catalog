@@ -252,7 +252,14 @@ def test_cli_session_streams_frames(fake_cli: Path) -> None:
     s = cli_session()
     s.open()
     try:
-        frames = [s.next_frame(2.0) for _ in range(3)]
+        # next_frame answers None when nothing arrived in time; a loaded runner can take seconds to start the fake
+        frames: list[bytes] = []
+        end = time.monotonic() + 30.0
+        while len(frames) < 3 and time.monotonic() < end:
+            frame = s.next_frame(2.0)
+            if frame is not None:
+                frames.append(frame)
+        assert len(frames) == 3, f"only {len(frames)} frames arrived"
         assert all(f == FRAME.read_bytes() for f in frames)
     finally:
         s.close()

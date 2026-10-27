@@ -62,6 +62,21 @@ def test_each_problem_gets_its_own_plain_finding() -> None:
     assert "flicker" in ids(flicker, "warn")
 
 
+def test_a_black_frame_is_too_dark_to_judge_colour_or_focus() -> None:
+    """Measured on the Canon feed at night: warm -1.02, saturation 0.81 and 'soft' from a frame that was black."""
+    black = picture(
+        luma_mean=0.0, luma_p5=0.0, luma_p50=0.0, luma_p95=0.0, luma_p99=0.0, crushed_shadows=0.999,
+        contrast_spread=0.0, warm_index=-1.02, tint_index=0.64, saturation=0.81, sharpness=1.0, skin=None,
+        centre_luma=0.0, edge_luma=0.1,
+    )  # fmt: skip
+    night = {"slot": "night", "label": "Night", "elevation": -40.0}
+    found = judge.picture_findings(black, {"flicker": False, "blurred_frames": [3]}, PERSONA, night)
+    assert {"frame-exposure", "crushed", "too-dark-to-judge"} <= ids(found)
+    assert ids(found).isdisjoint({"white-balance", "tint", "saturation", "contrast", "focus", "screen-glow"})
+    dim_but_real = picture(luma_p99=60.0, sharpness=1.0)
+    assert "focus" in ids(judge.picture_findings(dim_but_real, {"flicker": False}, PERSONA, SUN), "warn")
+
+
 def test_white_balance_is_judged_against_the_persona_not_a_fixed_number() -> None:
     cool = judge.picture_findings(picture(warm_index=-0.1), {}, PERSONA, SUN)
     assert "white-balance" in ids(cool, "warn")

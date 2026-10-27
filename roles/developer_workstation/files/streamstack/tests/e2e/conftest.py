@@ -28,9 +28,11 @@ ARTIFACTS = Path(os.environ.get("E2E_ARTIFACTS", REPO / "e2e-artifacts"))
 URL_LINE = re.compile(r"StreamStack Console: (http://127\.0\.0\.1:\d+/)\?token=(\S+?)(?:#\S*)?\s*$")
 STARTUP_SECONDS = 30
 ALL_BROWSERS = ("chromium", "firefox")
-# The two simulated Litra Beams of the demo rig: light id -> (on, brightness %, kelvin).
-LIGHT_BASELINE = {"c901-usb-demo-1": (True, 70, 5000), "c901-usb-demo-2": (True, 55, 4200)}
 DESKTOP = {"width": 1280, "height": 720}
+# The demo rig's lighting engine stands still at this moment, in New York: the daylight schedule depends on the hour
+# and the place, and a run must not depend on when it ran or on the zone of the host or the CI runner.
+# `scripts/e2e_lighting_soak.py` sets E2E_DEMO_CLOCK to run the lighting suites at several hours.
+DEMO_CLOCK = "2026-06-21T12:00:00-04:00"
 
 # Page JS: collect CSP violations before any page script runs.
 INIT_SCRIPT = """
@@ -87,6 +89,7 @@ def rig(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Rig]:
         "PYTHONPATH": os.pathsep.join(filter(None, [str(REPO / "src"), os.environ.get("PYTHONPATH", "")])),
         "PYTHONUNBUFFERED": "1",
         "NO_COLOR": "1",
+        "STREAMSTACK_DEMO_CLOCK": os.environ.get("E2E_DEMO_CLOCK", DEMO_CLOCK),
     }
     env.pop("STREAMSTACK_ENV_FILE", None)
     cmd = [sys.executable, "-m", "streamstack", "console", "--demo", "--no-window", "--port", "0"]
@@ -106,7 +109,7 @@ def rig(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Rig]:
             if line is None:
                 pytest.fail(f"console exited ({proc.poll()}) before it was ready:\n" + "\n".join(log))
             found = URL_LINE.search(line)
-        server = Rig(base=found.group(1), token=found.group(2), log=log)
+        server = Rig(base=found.group(1), token=found.group(2), log=log, home=home)
         server.state()  # ready: the API answers with the token
         yield server
     finally:
@@ -149,9 +152,13 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
                 and not st["studio"]["busy"]
                 and st["audio"]["mic_check"]["state"] not in ("recording-raw", "recording-processed")
                 and st["audio"]["mic"]["revive"]["state"] != "reviving"
+                and st["audio"]["outputs"]["test"]["state"] != "playing"
                 and st
             ),
         )
+        rig.act("deck.reset")  # the default profile on the simulated 4x4 deck, first page
+        if s["hardware"]["host"] != "dm313red":
+            rig.act("hardware.demo_host", host="dm313red")  # the recorded studio the demo starts with
         if not s["studio"]["running"]:
             rig.act("studio.start")
             poll(rig, lambda st: st["studio"]["running"] and not st["studio"]["busy"])
@@ -160,6 +167,7 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
         if s["audio"]["mic"].get("stalled"):
             rig.act("audio.demo_stall", on=False)
         rig.act("audio.clip_clear")
+        rig.act("audio.demo_output_reset")  # outputs plugged, first the default
         rig.act("audio.mute", on=False)
         rig.act("audio.bypass", on=False)
         rig.act("audio.gain", db=0)
@@ -169,11 +177,17 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             rig.act("video.source", name=base["source"])
         if not all(engine["available"] for engine in s["audio"]["denoise"]["engines"]):
             rig.act("audio.demo_deepfilternet", on=True)  # the demo rig may have lost its DeepFilterNet library
-        if s["audio"]["chain"]["preset"] != base["preset"] or s["audio"]["tone"]["custom"]:
+        chain = s["audio"]["chain"]
+        if chain["preset"] != base["preset"] or chain["custom"]:
             rig.act("audio.preset", name=base["preset"])
+        if chain["loudness"]["on"] or chain["loudness"]["target_lufs"] != -16.0:
+            rig.act("audio.loudness", on=False, target_lufs=-16)
         for source in s["video"]["sources"]:
             rig.act("video.look.reset", source=source)
         blur = s["video"]["blur"]
+        if blur.get("native"):
+            rig.act("video.blur.arc", mode="off")  # the plain demo blur is the default; native states are per test
+            blur = rig.state()["video"]["blur"]
         if not blur["plugin"]["installed"]:
             rig.act("video.blur.plugin", installed=True)
         if blur["on"] or any(e["enabled"] or e["strength"] != 8 or e["rate"] != 2 for e in blur["sources"].values()):
@@ -181,6 +195,35 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
         for look in s["video"]["looks"]:
             if not look["builtin"]:
                 rig.act("video.looks.delete", name=look["name"])
+        pr = s["presets"]
+        for profile in pr["profiles"]:
+            if not profile["builtin"]:
+                rig.act("presets.profile.delete", name=profile["name"])
+        if pr["platform"] or pr["tier"] or pr["last_apply"] or pr["profile"]:
+            rig.act("presets.clear")
+        stream = s["stream"]
+        if stream["status"] != "unavailable":
+            if any(d["active"] for d in stream["destinations"]):
+                rig.act("stream.stop")
+            if stream["recording"]["active"]:
+                rig.act("record.stop")
+            rig.act(
+                "stream.set",
+                codec="auto",
+                encoder="auto",
+                tier="source",
+                fps=0,
+                bitrate_kbps=0,
+                rate_control="cbr",
+                keyint_s=2.0,
+                quality=0,
+                audio_bitrate_kbps=128,
+                destinations=[
+                    {"id": "twitch", "kind": "rtmp", "name": "Twitch", "url": "rtmp://live.demo/app"},
+                    {"id": "backup", "kind": "srt", "name": "Backup SRT", "url": "srt://demo.test:9000"},
+                ],
+            )
+            poll(rig, lambda st: not any(e["swapping"] for e in st["stream"]["encoders"]))
         if s["framing"]["mode"] != "off":
             rig.act("framing.mode", mode="off")
         if s["video"]["recording"]["active"]:
@@ -189,22 +232,9 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             rig.act("video.stream", on=False)
         if s["video"]["virtualcam"] != base["virtualcam"]:
             rig.act("video.virtualcam", on=base["virtualcam"])
-        auto = s["lighting"]["automation"]
-        if auto["status"]["session"] or auto["status"]["camera"]["in_use"]:
-            rig.act("lighting.auto.follow", enabled=False)  # a running camera session ends without touching the lights
-            rig.act("lighting.demo.camera", on=False)
-            poll(rig, lambda st: st["lighting"]["automation"]["status"]["session"] is None)
-        rig.act("lighting.demo.director", on=False)
-        rig.act("lighting.auto.defaults", what="all")
-        rig.act("lighting.auto.schedule", enabled=False)  # the demo lights stay where the specs put them
-        for light in s["lighting"]["lights"]:
-            start = LIGHT_BASELINE.get(light["id"])
-            if start is None:
-                continue
-            on, percent, kelvin = start
-            rig.act("lighting.brightness", id=light["id"], percent=percent)
-            rig.act("lighting.temperature", id=light["id"], kelvin=kelvin)
-            rig.act("lighting.power", id=light["id"], on=on)
+        # The lights, their automation and the pretend camera go back in ONE server-side step the engine cannot see the
+        # middle of: moved through the normal actions they would be a change by hand, and the engine would hold them.
+        rig.act("lighting.demo.reset")
         for preset in s["lighting"]["presets"]:
             if not preset["builtin"]:
                 rig.act("lighting.presets.delete", name=preset["name"])

@@ -1,0 +1,23 @@
+/* system-diagnostics.css — telemetry switch and crash reports. Scoped like system.css: page stylesheets stay loaded after navigation. */
+@scope ([data-page="system"]) {
+  .diag { display: grid; gap: var(--s-3); }
+  .diag-card { display: grid; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line); }
+  .diag-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+  .diag-text { flex: 1; min-width: 0; display: grid; gap: 0.15rem; }
+  .diag-sub { font-size: var(--fs-xs); color: var(--text-2); overflow-wrap: anywhere; }
+  .diag-url { font-family: var(--font-mono); font-size: var(--fs-sm); overflow-wrap: anywhere; flex: 1; min-width: 0; }
+  .diag-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+  .diag-on[hidden], .diag [hidden] { display: none; }
+  .diag-on { display: grid; gap: var(--s-2); }
+  .diag-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+  .diag-crash { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-3); border-radius: var(--r-2, var(--r-3)); background: var(--surface-inset); border: 1px solid color-mix(in srgb, var(--red, var(--amber)) 45%, var(--line)); }
+  .diag-what { font-family: var(--font-mono); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .diag-switch { position: relative; width: 3rem; min-height: 1.75rem; height: 1.75rem; border-radius: var(--r-pill); border: 1px solid var(--line-strong); background: var(--surface-inset); cursor: pointer; touch-action: manipulation; padding: 0; }
+  .diag-knob { position: absolute; top: 2px; left: 2px; width: calc(1.75rem - 6px); height: calc(1.75rem - 6px); border-radius: 50%; background: var(--text-2); transition: transform 0.15s; }
+  .diag-switch[aria-checked="true"] { background: color-mix(in srgb, var(--green) 35%, var(--surface-inset)); border-color: var(--green); }
+  .diag-switch[aria-checked="true"] .diag-knob { transform: translateX(1.25rem); background: var(--green); }
+  @media (prefers-reduced-motion: reduce) { .diag-knob { transition: none; } }
+  .copy { display: inline-flex; align-items: center; min-height: 2rem; padding: 0 var(--s-3); border-radius: var(--r-pill); background: var(--surface-inset); border: 1px solid var(--line-strong); color: var(--text-2); font-size: var(--fs-xs); font-weight: 650; cursor: pointer; text-decoration: none; touch-action: manipulation; }
+  .copy:hover { color: var(--text); border-color: var(--accent); }
+  .copy[data-done="true"] { color: var(--green); border-color: var(--green); }
+}
