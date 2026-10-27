@@ -49,7 +49,7 @@ RUN set -eu; \
       rustc --version; cargo --version; } > /opt/dfn-ladspa/BUILD-INFO.txt; \
     cd /opt/dfn-ladspa && sha256sum libdeep_filter_ladspa.so libdeep_filter_ladspa.cdx.json LICENSES.json > SHA256SUMS
 
-FROM harbor.focuscell.org/dockerhub-proxy/curlimages/curl:8.12.1
+FROM harbor.focuscell.org/dockerhub-proxy/curlimages/curl:8.23.0
 LABEL org.opencontainers.image.title="streamstack-dfn-ladspa" \
       org.opencontainers.image.description="DeepFilterNet LADSPA plugin 0.5.6, build revision 1" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0" \
