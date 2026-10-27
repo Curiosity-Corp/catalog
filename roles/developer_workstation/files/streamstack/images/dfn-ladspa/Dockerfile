@@ -16,7 +16,7 @@
 # crates, e.g. time 0.3.28, that no longer compile on Rust 1.80 and later. The lockfile is the reproducible input
 # (`--locked`); the toolchain of its day is the one it was written for.
 
-FROM harbor.focuscell.org/dockerhub-proxy/library/rust:1.75.0-bookworm AS build
+FROM harbor.focuscell.org/dockerhub-proxy/library/rust:1.99.1-bookworm AS build
 
 # The pin (kept literal: `ADD --checksum` must see the digest).
 ADD --checksum=sha256:0f9a219d06c404bc4200f228e7e224f108cbbca04d7227a6de7d2ce974c2f579 \
