@@ -293,6 +293,19 @@ values in the engine's units.
                 "reports": [{"id": "20261023T101500-tray-4242-exception", "time": 1729678500.0, "component": "tray",
                              "kind": "exception",   // exception | handled | unraisable | native
                              "type": "RuntimeError", "message": "…", "version": "0.0.8"}]}
+  },
+  "call": {                          // call awareness (docs/call-awareness.md)
+    "available": true, "state": "in_call",   // idle | joining | in_call
+    "active": true, "service": "Teams", "app": "msedge", "apps": ["msedge"], "camera": true,
+    "mic": "muted",                  // open | muted | none: inferred from the app's capture stream, never from audio
+    "reason": "…", "since": "2026-10-27T10:15:00",   // when the call began (null when idle)
+    "sources": {"audio": true, "video": true},       // which evidence could be read
+    "external": null,                // {"muted": bool, "source": "extension"} while an adapter reports the app's own mute
+    "settings": {"adapters": false},
+    "muted_warning": {"enabled": true, "sensitivity": "medium", "cooldown_s": 20.0, "sound": false,
+                      "count": 0, "last_at": null, "talking": false,
+                      "range": [5.0, 300.0], "sensitivities": ["high", "medium", "low"]},
+    "demo": false
   }
 }
 ```
@@ -375,6 +388,10 @@ take seconds (studio start, mic check, auto once) return at once with
 | `audio.demo_output_plug` | `name`, `plugged` | demo only: unplug or plug one of the four simulated outputs |
 | `audio.demo_output_reset` | | demo only: stop any test, plug everything back, forget volumes and results |
 | `storage.dismiss` | `id?` | forget one repaired-file notice (all of them without `id`) |
+| `call.set` | `enabled?`, `sensitivity?` (`high`\|`medium`\|`low`), `cooldown_s?` (5 to 300), `sound?`, `adapters?` (all bool except the first two numbers/words) | the "you are muted" warning settings, saved in `console-call.json` |
+| `call.report_mute` | `muted: bool`, `source` (1 to 40 chars) | an adapter reports the meeting app's own mute button; refused (409) until `adapters` is on |
+| `call.demo` | `app` (or null), `camera?`, `capture?`, `corked?`, `talk?`, `title?` | demo rig only: script a call app and the room (tests and the e2e suite) |
+| `call.demo_reset` | none | demo rig only: no call, default settings |
 | `telemetry.set` | `on: bool` | switch the opt-in `/metrics` endpoint on or off (saved in the user env file) |
 | `telemetry.scrape_config` | | message: a Prometheus `scrape_configs` block with the scrape token; 409 while telemetry is off |
 | `telemetry.rotate_token` | | create a new scrape token; the old one stops working |

@@ -20,6 +20,7 @@ from typing import Any
 
 from .. import system
 from . import graph
+from . import links as chain_links
 
 log = logging.getLogger(__name__)
 
@@ -49,9 +50,15 @@ def props_json(controls: dict[str, float]) -> str:
 class Nodes:
     """What `pw-dump` says about the chain: the ids of its two nodes and the facts apps depend on."""
 
-    def __init__(self, source: dict[str, Any] | None, capture: dict[str, Any] | None) -> None:
+    def __init__(
+        self,
+        source: dict[str, Any] | None,
+        capture: dict[str, Any] | None,
+        links: chain_links.CaptureLinks | None = None,
+    ) -> None:
         self.source = source
         self.capture = capture
+        self.links = links or chain_links.CaptureLinks(capture is not None)
 
     @property
     def present(self) -> bool:
@@ -97,7 +104,7 @@ def find_nodes(runner: Runner = default_runner) -> Nodes | None:
             source = obj
         elif name == graph.CAPTURE_NAME:
             capture = obj
-    return Nodes(source, capture)
+    return Nodes(source, capture, chain_links.parse(objects))
 
 
 def set_controls(node_id: int, controls: dict[str, float], runner: Runner = default_runner) -> bool:

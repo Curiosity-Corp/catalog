@@ -67,6 +67,7 @@ const P = {
   list: '<path d="M8.5 6.5H20M8.5 12H20M8.5 17.5H20"/><circle cx="4.5" cy="6.5" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="17.5" r="1" fill="currentColor"/>',
   server: '<rect x="3.5" y="4" width="17" height="6.5" rx="2"/><rect x="3.5" y="13.5" width="17" height="6.5" rx="2"/><path d="M7.5 7.3h.01M7.5 16.8h.01"/>',
   monitor: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20h6M12 16.5V20"/>',
+  phone: '<path d="M5 4.5h3.5l1.5 4-2 1.3a11 11 0 0 0 5.2 5.2l1.3-2 4 1.5V18a2 2 0 0 1-2 2A14.5 14.5 0 0 1 3 6.5a2 2 0 0 1 2-2z"/>',
   bluetooth: '<path d="M7 7.5l10 9-5 4.5v-18l5 4.5-10 9"/>',
   usb: '<path d="M12 18.5V4.5M12 4.5l-2.2 2.6M12 4.5l2.2 2.6M12 14l-4-2.2V9.5M12 11.5l4-2V8.5"/><circle cx="12" cy="19.5" r="1.7"/><circle cx="16" cy="7" r="1.2"/><rect x="6.9" y="7.3" width="2.2" height="2.2" rx="0.4"/>',
   'volume-off': '<path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>',

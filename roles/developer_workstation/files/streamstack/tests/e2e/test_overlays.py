@@ -84,6 +84,7 @@ def test_palette_lists_the_voice_presets_and_looks(live: App, rig: Rig) -> None:
     live.press("Control+k")
     box = live.palette.get_by_role("combobox")
     box.fill("look:")
+    # state-read: the look catalogue, which no action changes
     looks = rig.state()["video"]["looks"]
     assert looks
     expect(live.palette.get_by_role("option").first).to_contain_text("Look")

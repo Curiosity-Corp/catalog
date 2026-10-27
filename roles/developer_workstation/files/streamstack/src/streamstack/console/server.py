@@ -114,6 +114,8 @@ class ConsoleServer(ThreadingHTTPServer):
         self._thread: threading.Thread | None = None
         if rig.diagnostics is not None:
             rig.diagnostics.attach(self)
+        if rig.call is not None:
+            self.hub.meter_listeners.append(rig.call.on_meters)  # the talking-while-muted warning hears every frame
 
     @property
     def port(self) -> int:

@@ -48,7 +48,9 @@ class FakeUdev:
 
 
 class Harness:
-    def __init__(self, machine: FakeMachine, *, udev: bool = True, debounce: float = 0.05, backoff=(0.01,)) -> None:
+    def __init__(
+        self, machine: FakeMachine, *, udev: bool = True, debounce: float = 0.05, backoff=(0.01,), clock=time.monotonic
+    ) -> None:
         self.machine = machine
         self.changes: queue.Queue[Change] = queue.Queue()
         self.probes = 0
@@ -74,6 +76,7 @@ class Harness:
             spawn=spawn,
             which=(lambda name: "/usr/bin/udevadm") if udev else (lambda name: None),
             backoff=backoff,
+            clock=clock,
         )
 
     def wait_process(self, count: int = 1) -> FakeUdev:
@@ -161,16 +164,36 @@ def test_plugging_in_emits_a_change(machine: FakeMachine) -> None:
         h.monitor.stop()
 
 
-def test_a_burst_of_events_is_one_probe(harness: Harness, machine: FakeMachine) -> None:
-    process = harness.wait_process()
-    baseline = harness.probes
-    unplug_wave(machine)
-    for i in range(20):
-        process.push(f"UDEV  [1.{i}] change /devices/x/usb1/1-2/1-2:1.{i % 3} (usb)")
-        time.sleep(0.002)
-    harness.next_change()
-    assert harness.quiet(0.3)
-    assert harness.probes - baseline == 1
+def test_a_burst_of_events_is_one_probe(machine: FakeMachine, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The debounce is a quiet-period timer, so the burst is driven on a fake clock: on a CPU-starved runner the
+    reader thread can stall longer than the real debounce between two lines, which is a real gap and a second probe
+    (pipeline 96222). Time stands still while the 20 events arrive, then moves past the debounce once."""
+    now = [100.0]
+    h = Harness(machine, clock=lambda: now[0])
+    pokes = threading.Semaphore(0)
+    poke = h.monitor.poke
+
+    def counted() -> None:
+        poke()
+        pokes.release()
+
+    monkeypatch.setattr(h.monitor, "poke", counted)  # the reader thread calls self.poke() once per event line
+    h.monitor.start()
+    try:
+        process = h.wait_process()
+        baseline = h.probes
+        unplug_wave(machine)
+        for i in range(20):
+            process.push(f"UDEV  [1.{i}] change /devices/x/usb1/1-2/1-2:1.{i % 3} (usb)")
+        for _ in range(20):
+            assert pokes.acquire(timeout=WAIT), "the reader did not take every event"
+        assert h.probes == baseline, "a probe ran before the debounce interval passed"
+        now[0] += 1.0
+        h.next_change()
+        assert h.quiet(0.3)
+        assert h.probes - baseline == 1
+    finally:
+        h.monitor.stop()
 
 
 def test_events_that_change_nothing_emit_nothing(harness: Harness) -> None:

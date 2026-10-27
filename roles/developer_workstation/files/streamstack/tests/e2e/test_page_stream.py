@@ -316,6 +316,7 @@ def test_codec_buttons_follow_the_probe_and_stage(st: App, rig: Rig) -> None:
     for name in ("Auto", "AV1", "HEVC", "H.264"):
         expect(codec.get_by_role("radio", name=name)).to_be_enabled()
     codec.get_by_role("radio", name="HEVC").click()
+    # state-read: a staged change posts nothing until Save
     assert rig.state()["stream"]["settings"]["codec"] == "auto"
     expect(page.get_by_role("button", name="Discard")).to_be_visible()
     tap(page, page.get_by_role("button", name="Save"))

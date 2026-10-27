@@ -1,0 +1,20 @@
+/* system-call.css — call awareness card. Scoped like system.css: page stylesheets stay loaded after navigation. */
+@scope ([data-page="system"]) {
+  .call { display: grid; gap: var(--s-3); }
+  .call[hidden] { display: none; }
+  .call-card { display: grid; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line); }
+  .call[data-state="in_call"] .call-card { border-color: color-mix(in srgb, var(--green) 55%, var(--line)); }
+  .call[data-state="joining"] .call-card { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
+  .call-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+  .call-row[hidden] { display: none; }
+  .call-text { flex: 1; min-width: 0; display: grid; gap: 0.15rem; }
+  .call-sub { font-size: var(--fs-xs); color: var(--text-2); }
+  .call-opts { justify-content: flex-start; }
+  .call-field { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--fs-sm); color: var(--text-2); }
+  .call-field select { min-height: 2rem; border-radius: var(--r-2, var(--r-3)); background: var(--surface-inset); color: var(--text); border: 1px solid var(--line-strong); padding: 0 var(--s-2); }
+  .call-switch { position: relative; width: 3rem; min-height: 1.75rem; height: 1.75rem; border-radius: var(--r-pill); border: 1px solid var(--line-strong); background: var(--surface-inset); cursor: pointer; touch-action: manipulation; padding: 0; }
+  .call-knob { position: absolute; top: 2px; left: 2px; width: calc(1.75rem - 6px); height: calc(1.75rem - 6px); border-radius: 50%; background: var(--text-2); transition: transform 0.15s; }
+  .call-switch[aria-checked="true"] { background: color-mix(in srgb, var(--green) 35%, var(--surface-inset)); border-color: var(--green); }
+  .call-switch[aria-checked="true"] .call-knob { transform: translateX(1.25rem); background: var(--green); }
+  @media (prefers-reduced-motion: reduce) { .call-knob { transition: none; } }
+}

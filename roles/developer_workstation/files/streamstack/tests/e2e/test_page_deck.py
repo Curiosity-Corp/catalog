@@ -78,6 +78,7 @@ def test_play_mode_folders_and_back(dk: App, rig: Rig) -> None:
 def test_clicking_an_option_puts_it_on_the_selected_key(dk: App, rig: Rig) -> None:
     page = dk.page
     tap(page, page.locator(".dk-tab").nth(4))  # the last page has room
+    # state-read: the page layout; switching tab posts nothing
     last = rig.state()["deck"]["profile"]["pages"][4]
     free = next(i for i, k in enumerate(last["keys"]) if k["empty"])
     tap(page, cap(page, free))
@@ -90,6 +91,7 @@ def test_clicking_an_option_puts_it_on_the_selected_key(dk: App, rig: Rig) -> No
 def test_dragging_an_option_onto_a_key_assigns_it(dk: App, rig: Rig) -> None:
     page = dk.page
     tap(page, page.locator(".dk-tab").nth(4))
+    # state-read: the page layout; switching tab posts nothing
     last = rig.state()["deck"]["profile"]["pages"][4]
     free = next(i for i, k in enumerate(last["keys"]) if k["empty"])
     option(page, "Privacy").first.drag_to(cap(page, free))
@@ -151,7 +153,7 @@ def test_brightness_and_sleep_are_kept(dk: App, rig: Rig) -> None:
     fader = page.get_by_role("slider", name="Brightness")
     dk.drag_fader(fader, 0.3)
     assert poll(rig, lambda s: s["deck"]["profile"]["settings"]["brightness"] <= 40)
-    assert rig.state()["deck"]["profile"]["pristine"] is True  # settings alone do not fork the default
+    rig.wait_for_state("deck.profile.pristine", True)  # settings alone do not fork the default
 
 
 def test_export_downloads_the_profile_and_import_restores_it(dk: App, rig: Rig, tmp_path: Path) -> None:

@@ -5,6 +5,39 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-10-27
+
+### Added
+- Voice denoise bake-off (#131): `tools/bench_denoise.py` scores DeepFilterNet3, RNNoise and DPDFNet on pinned public corpora and our own room noise (PESQ, STOI, SI-SDR, DNSMOS, CPU, delay). DeepFilterNet3 stays the default; DPDFNet-2 is a peer at less than half the CPU but needs a bridge process. RNNoise adds about 130 ms in the real chain, more than the latency report assumes. Decision record: docs/adr/0005-voice-denoise-default.md.
+- Call awareness (#45): StreamStack now knows when a Teams, Zoom, Meet or other meeting call is in progress (idle, joining, in call) from which apps hold the camera open and capture the microphone, never from the audio itself. The top bar shows an IN CALL chip, and a toast warns once when you talk into a call that is muted in the app. The System page has a Call awareness card for the sensitivity, the wait between warnings and an optional beep. The detection is a small public API (`streamstack.callstate`: `current_call()`, `CallMonitor`) that other features, such as the echo chirp, use to stay silent during a call. See docs/call-awareness.md.
+- e2e: `rig.wait_for_state(path, expected, tol=)` waits for the server to reach a value the page shows, and a guard test
+  (`tests/test_e2e_state_reads.py`) refuses a direct server-state read straight after a click, key press or drag, or
+  anywhere after a fader drag, unless the line above says `# state-read: <why>`. It is the class behind the e2e flakes
+  of pipelines 96021 and 96223 (a UI post that had not landed when the test sampled the server).
+
+### Fixed
+- e2e: Firefox `Page.goto` 60 s timeouts on the CI runner (#124). Both recorded cases (pipelines 87280 and 87570) ran
+  while the runner pod waited on "12 Insufficient cpu", and the Console's first load is a 54-module graph that Firefox
+  must fetch and evaluate before the `load` event. The e2e `goto` now navigates at `commit` and waits for the page's
+  own ready marks, and a failure prints the requests still in flight, so a recurrence names the stuck resource.
+- The DeepFilterNet3 image build failed on main (pipeline 96222: `could not load config key profile.release`): the one-codegen-unit setting for the custom `release-lto` profile is now passed with `cargo --config`, and a test refuses `CARGO_PROFILE_*` variables in the Dockerfile. BuildKit builds dispatch only from protected refs, so this job cannot run on an MR pipeline; the Dockerfile is checked statically there.
+- The DeepFilterNet3 rebuild jobs are allowed to fail (shown as warnings): a Harbor base-image proxy outage (502) turned main red even though the published, pinned plugin is unaffected.
+- StreamStack Mic can no longer read the wrong microphone (#139). On 2026-10-27 the Console-started chain linked its capture to the Cam Link 4K's HDMI audio instead of the Wave XLR, so StreamStack Mic carried exact zeros while `streamstack doctor` was green. Cause: the capture named the microphone with `target.object`, but WirePlumber honours that only if the node exists when the stream links; the XLR source was not there yet at login, so WirePlumber fell back to the default source. The capture now also sets `node.dont-fallback` and `node.linger`, so it waits for the Plan's microphone and links the moment it appears, and the Console rebuilds the host when the capture is linked to anything else (or stays unlinked while the microphone is present).
+- `streamstack doctor` and the Console health list read the real links (`pw-dump`): the new `voice-chain-source` check fails unless StreamStack Mic reads the Plan's microphone, and `voice-chain-silence` fails when StreamStack Mic itself delivers digital silence while the raw microphone does not.
+- The DeepFilterNet3 jobs no longer turn main red on every pipeline: they run only when `images/dfn-ladspa/**` changes (or on a manual `DFN_LADSPA_REBUILD=1` pipeline), and an already published `streamstack-ladspa` version passes when it is the build the client pins. The build also sets `SOURCE_DATE_EPOCH`, one LTO codegen unit and a rustup path remap.
+- `test_arrow_keys_move_the_tier` failed once on main (pipeline 96021, tier stayed `balanced`): the test clicked Balanced
+  and pressed ArrowRight straight away, so two `presets.tier` posts raced on the threaded server and the click could
+  land last. The test now waits for the first to land and show before sending the second. No product change.
+- `test_mic_fader_drag_changes_gain` failed once on main (pipeline 96223, `8.0 == 5.5`): it compared the fader with the server
+  after sampling a mid-drag value, before the drag's last throttled post had landed. It now waits for the server to reach
+  the value the fader shows. No product change (the fader already sends one post at a time and flushes on release).
+- `test_demo_studio_state_is_a_pure_function_of_its_clock` failed once on main (pipeline 96238): the demo state includes the
+  lighting schedule's time of day, so two snapshots straddling a minute boundary differed. The test pins the demo clock.
+- `test_a_burst_of_events_is_one_probe` failed once on main (pipeline 96222, two probes for one burst): the burst was timed
+  against the real 50 ms debounce, and a CPU-starved reader thread can stall longer than that between two events, which
+  the quiet-period debounce rightly treats as two bursts. The test drives the monitor's injected clock instead. The
+  debounce itself is correct and unchanged.
+
 ## [0.0.12] - 2026-10-27
 
 ### Fixed
@@ -17,6 +50,11 @@ All notable changes are recorded here. The project follows
   fed the fake audio encoder's header as soon as the service registered the child, before the service had attached the
   child to its generation and started it. A real process cannot produce output before `start()`, so the harness now
   waits for `start()` too. Product code is unchanged (it sets the generation before starting the child).
+- `/metrics` no longer waits on a token write. Every request to the endpoint, even one with a wrong token, took the
+  telemetry lock to read the scrape token, and a token rotation or the telemetry switch held that same lock across
+  fsynced file writes, so on a CPU- or disk-starved node a scrape could stall for seconds behind them (main pipeline
+  95914, one e2e scrape that hung 15 s). The token is now read from memory without a lock, writers have their own
+  lock, and a regression test holds a rotation mid-write and checks a scrape is still answered at once.
 
 ## [0.0.11] - 2026-10-27
 

@@ -259,3 +259,13 @@ not run locally (CI only).
 * The leveller's events are not yet drawn in the Auto timeline.
 * Catalog follow-up (not edited here): stop installing and autostarting Easy Effects; install `zam-plugins` and the
   DeepFilterNet and RNNoise LADSPA plugins.
+
+## The capture is pinned to the Plan's microphone (#139)
+
+The generated config sets `target.object` (the Plan's microphone node name), `node.dont-fallback = true` and
+`node.linger = true` on the capture side. Without them WirePlumber links the stream to the *default* source when the
+named node does not exist yet, which is how StreamStack Mic once read the Cam Link's silent HDMI audio. With them the
+capture waits unlinked until the microphone appears, then links. The Console additionally reads `pw-dump` every second:
+a capture linked to any other source, or unlinked for 10 s while the microphone is present, rebuilds the host (at most
+every 30 s). `streamstack doctor` fails `voice-chain-source` for the same condition and `voice-chain-silence` when
+StreamStack Mic delivers only zeros.

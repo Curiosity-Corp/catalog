@@ -20,6 +20,7 @@ TOP_LEVEL = {
     "storage",
     "deck",
     "diagnostics",
+    "call",
 }  # fmt: skip
 
 

@@ -5,7 +5,7 @@
 # /opt/dfn-ladspa out of it and publishes it to the project's Generic Package Registry (see docs/audio-chain.md).
 #
 #   source      the upstream tag archive, refused unless it matches the pinned sha256 (ADD --checksum)
-#   build       cargo build --locked --profile release-lto -p deep-filter-ladspa (upstream's own release recipe)
+#   build       cargo build --locked --profile release-lto -p deep-filter-ladspa (upstream's own recipe, one codegen unit)
 #   checks      the licence policy and the CycloneDX SBOM (supply_chain.py), then a load-and-run smoke test (smoke.py)
 #   result      /opt/dfn-ladspa: the .so, SHA256SUMS, the SBOM, LICENSES.json, the upstream licences, BUILD-INFO.txt
 #
@@ -25,11 +25,12 @@ ADD --checksum=sha256:0f9a219d06c404bc4200f228e7e224f108cbbca04d7227a6de7d2ce974
 ENV CARGO_HOME=/cargo \
     CARGO_INCREMENTAL=0 \
     CARGO_NET_GIT_FETCH_WITH_CLI=true \
-    RUSTFLAGS="--remap-path-prefix=/src=/build --remap-path-prefix=/cargo=/cargo"
+    SOURCE_DATE_EPOCH=1692000000 \
+    RUSTFLAGS="--remap-path-prefix=/src=/build --remap-path-prefix=/cargo=/cargo --remap-path-prefix=/usr/local/rustup=/rustup"
 
 RUN mkdir /src && tar -xzf /dfn-0.5.6.tar.gz -C /src --strip-components=1
 WORKDIR /src
-RUN cargo build --locked --profile release-lto -p deep-filter-ladspa
+RUN cargo build --locked --profile release-lto --config profile.release-lto.codegen-units=1 -p deep-filter-ladspa
 
 COPY supply_chain.py smoke.py /tools/
 RUN set -eu; \

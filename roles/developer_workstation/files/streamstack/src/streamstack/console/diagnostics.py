@@ -50,7 +50,9 @@ class Diagnostics:
 
     def __init__(self, cfg: dict[str, str] | None = None) -> None:
         cfg = cfg if cfg is not None else config.load_settings()
-        self._lock = threading.RLock()  # the switch and the token
+        self._lock = threading.RLock()  # the switch (and the sampler's start and stop); never taken by a request
+        self._token_lock = threading.Lock()  # serialises token writers; held across the disk write, never by a reader
+        self._cache_lock = threading.Lock()  # guards only the cached token reference; never held across I/O
         self._data_lock = threading.Lock()  # what the sampler and the meter tap measure; never held across a join
         self._enabled = config.truthy(cfg.get(ENABLE_KEY, "false"))
         self._token: str | None = None
@@ -177,13 +179,20 @@ class Diagnostics:
     # -- the token ----------------------------------------------------------------------------------------------
 
     def _read_token(self) -> str | None:
-        if self._token is None:
-            value = config.read_env_file(config.secrets_file()).get(TOKEN_KEY, "")
-            self._token = value if len(value) >= 16 else None
-        return self._token
+        """The scrape token, from memory once known. Reads never wait on a writer: a scrape must not queue behind
+        the fsync of a token rotation (on a starved disk that is seconds), so the file is read outside any lock and
+        only the cache fill is guarded, and only against overwriting a newer token."""
+        token = self._token
+        if token is not None:
+            return token
+        value = config.read_env_file(config.secrets_file()).get(TOKEN_KEY, "")
+        with self._cache_lock:
+            if self._token is None and len(value) >= 16:
+                self._token = value
+            return self._token
 
     def _ensure_token(self, rotate: bool = False) -> str:
-        with self._lock:
+        with self._token_lock:
             token = None if rotate else self._read_token()
             if token is None:
                 token = secrets.token_urlsafe(24)
@@ -191,13 +200,13 @@ class Diagnostics:
                     store.update_env_file(config.secrets_file(), {TOKEN_KEY: token}, mode=0o600)
                 except (OSError, ValueError) as exc:
                     raise ActionError(f"Could not save the scrape token: {exc}", 409) from exc
-                self._token = token
+                with self._cache_lock:
+                    self._token = token
             return token
 
     def token_ok(self, supplied: str | None) -> bool:
-        """Whether `supplied` is the scrape token (the Console's own token is checked by the server)."""
-        with self._lock:
-            token = self._read_token()
+        """Whether `supplied` is the scrape token (the Console's own token is checked by the server). Lock-free."""
+        token = self._read_token()
         return bool(supplied) and token is not None and secrets.compare_digest(supplied.encode(), token.encode())
 
     # -- state and actions --------------------------------------------------------------------------------------

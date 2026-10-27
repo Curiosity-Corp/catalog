@@ -195,3 +195,12 @@ def test_a_copyleft_crate_fails_the_build_but_still_writes_the_evidence(
     assert run_main(tmp_path, meta) == 1
     assert "tract-core 0.19.16" in capsys.readouterr().err
     assert (tmp_path / "out" / "LICENSES.json").exists()
+
+
+def test_cargo_profile_settings_go_through_config_not_environment_variables() -> None:
+    """`CARGO_PROFILE_RELEASE_LTO_*` is read as profile `release`, key `lto_*`, and breaks the build (pipeline 96222);
+    a custom profile such as `release-lto` can only be set with `--config` or a config file."""
+    assert "CARGO_PROFILE_" not in DOCKERFILE
+    build = next(line for line in DOCKERFILE.splitlines() if line.startswith("RUN cargo build"))
+    assert "--locked" in build and "--profile release-lto" in build
+    assert "--config profile.release-lto.codegen-units=1" in build
