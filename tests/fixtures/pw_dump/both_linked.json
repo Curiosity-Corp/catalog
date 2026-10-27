@@ -1,0 +1,78 @@
+[
+ {
+  "id": 93,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "alsa_output.usb-Elgato_Systems_Elgato_Wave_XLR_DS23M2A00049-00.analog-stereo",
+    "media.class": "Audio/Sink"
+   }
+  }
+ },
+ {
+  "id": 114,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "alsa_input.usb-Elgato_Cam_Link_4K_00066EBB11000-03.analog-stereo",
+    "media.class": "Audio/Source"
+   }
+  }
+ },
+ {
+  "id": 147,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "streamstack_mic",
+    "media.class": "Audio/Source"
+   }
+  }
+ },
+ {
+  "id": 104,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "streamstack_mic.capture",
+    "media.class": "Stream/Input/Audio",
+    "target.object": "alsa_input.usb-Elgato_Systems_Elgato_Wave_XLR_DS23M2A00049-00.mono-fallback",
+    "node.dont-fallback": true,
+    "node.linger": true
+   }
+  }
+ },
+ {
+  "id": 142,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "alsa_input.usb-Elgato_Systems_Elgato_Wave_XLR_DS23M2A00049-00.mono-fallback",
+    "media.class": "Audio/Source"
+   }
+  }
+ },
+ {
+  "id": 175,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "state": "active",
+   "output-node-id": 142,
+   "input-node-id": 104
+  }
+ },
+ {
+  "id": 176,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "state": "active",
+   "output-node-id": 114,
+   "input-node-id": 104
+  }
+ }
+]

@@ -42,6 +42,7 @@ def test_brightness_fader_drag_reaches_the_light(li: App, rig: Rig) -> None:
     fader = card(li, "Litra Beam 1").get_by_role("slider", name="Brightness")
     li.drag_fader(fader, 0.9)
     assert poll(rig, lambda s: light(s, ONE)["brightness"] >= 80)
+    # state-read: only that the other light was not touched; the poll above proved the post landed
     assert light(rig.state(), TWO)["brightness"] == 55  # the other light is untouched
 
 
@@ -49,6 +50,7 @@ def test_temperature_fader_drag_reaches_the_light(li: App, rig: Rig) -> None:
     fader = card(li, "Litra Beam 2").get_by_role("slider", name="Temperature")
     li.drag_fader(fader, 0.05)
     assert poll(rig, lambda s: light(s, TWO)["kelvin"] <= 3000)
+    # state-read: only that the other light was not touched; the poll above proved the post landed
     assert light(rig.state(), ONE)["kelvin"] == 5000
 
 

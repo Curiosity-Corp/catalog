@@ -117,6 +117,24 @@ function updateRail(entry = currentRoute()) {
   });
 }
 
+function beep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ac = new Ctx();
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.frequency.value = 880;
+    gain.gain.value = 0.08;
+    osc.connect(gain).connect(ac.destination);
+    osc.start();
+    osc.stop(ac.currentTime + 0.18);
+    osc.onended = () => { ac.close().catch((err) => console.warn('beep: audio context close failed', err)); };
+  } catch (err) {
+    console.warn('beep: could not play', err);
+  }
+}
+
 function bindShell() {
   // global state mirrored onto <body> so CSS can react (red edge when muted, etc.)
   store.subscribe((s) => s.audio.mic.muted, (m) => { document.body.toggleAttribute('data-muted', m); });
@@ -126,8 +144,11 @@ function bindShell() {
   // top bar: what matters on every page
   const center = $('#top-center');
   const onAir = (s) => ['starting', 'live', 'degraded'].includes(s.stream.status);
-  store.subscribe((s) => [s.audio.mic.muted, s.video.privacy, s.video.virtualcam || s.video.streaming.active || onAir(s), s.video.recording.active || s.stream.recording.active], ([muted, privacy, air, rec]) => {
+  store.subscribe((s) => [s.audio.mic.muted, s.video.privacy, s.video.virtualcam || s.video.streaming.active || onAir(s), s.video.recording.active || s.stream.recording.active, s.call.state, s.call.service], ([muted, privacy, air, rec, callState, service]) => {
     const chips = [];
+    if (callState === 'in_call' || callState === 'joining') {
+      chips.push({ id: 'call', state: callState === 'in_call' ? 'ok' : 'warn', label: callState === 'in_call' ? `IN CALL${service ? ` ${service.toUpperCase()}` : ''}` : 'JOINING', icon: 'phone' });
+    }
     if (muted) chips.push({ id: 'muted', state: 'live', label: 'MUTED', icon: 'mic-off' });
     if (privacy) chips.push({ id: 'privacy', state: 'warn', label: 'PRIVACY', icon: 'eye-off' });
     if (air) chips.push({ id: 'air', state: 'live', label: 'ON AIR', icon: 'broadcast', pulse: true });
@@ -136,6 +157,14 @@ function bindShell() {
       el.setAttribute('state', c.state); el.setAttribute('label', c.label); el.setAttribute('icon', c.icon); el.toggleAttribute('pulse', !!c.pulse);
     });
   });
+
+  // the optional beep that goes with the "you are muted" toast
+  let warned = store.state.call.muted_warning.count;
+  store.subscribe((s) => s.call.muted_warning.count, (n) => {
+    const rose = n > warned;
+    warned = n;
+    if (rose && store.state.call.muted_warning.sound) beep();
+  }, { immediate: false });
 
   // health dot on the System item
   store.subscribe((s) => s.health.summary, (sum) => {

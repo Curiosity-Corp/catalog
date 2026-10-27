@@ -155,6 +155,7 @@ def test_grade_fader_drag_changes_the_look(cam: App, rig: Rig, label: str) -> No
     assert rig.state()["video"]["look"][key] == 0
     cam.drag_fader(cam.slider(label), 0.9)
     value = poll(rig, lambda s: s["video"]["look"][key] > 0.05 and s["video"]["look"][key])
+    # state-read: the fader limits, which no action changes
     lo, hi = rig.state()["video"]["limits"][key]
     assert lo <= value <= hi
     expect(cam.slider(label)).to_have_attribute("aria-valuenow", re.compile(r"^0\.\d+"))

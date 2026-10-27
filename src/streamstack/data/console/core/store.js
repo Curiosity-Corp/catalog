@@ -24,6 +24,12 @@ export const HOLD_MS = 600;
 export function emptyState() {
   return {
     version: '', demo: false,
+    call: {
+      available: false, state: 'idle', active: false, service: null, app: null, apps: [], camera: false, mic: 'none', reason: '',
+      since: null, sources: { audio: true, video: true }, external: null, settings: { adapters: false },
+      muted_warning: { enabled: true, sensitivity: 'medium', cooldown_s: 20, sound: false, count: 0, last_at: null, talking: false, range: [5, 300], sensitivities: ['high', 'medium', 'low'] },
+      demo: false,
+    },
     studio: { running: false, busy: false, camera_for_calls: 'off', program_label: null, camera_label: null, bridge: false, voice_chain: false, camlink: null },
     video: {
       scenes: [], program_scene: null, privacy: false, privacy_scene: 'Be Right Back',

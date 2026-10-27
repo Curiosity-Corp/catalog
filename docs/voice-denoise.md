@@ -48,8 +48,17 @@ clicks mixed in; level of the 20 ms frames in dB full scale, floor = the quietes
 | Whole default chain | -69.3 | -65.1 | makeup gain applied | not meaningful (EQ and compressor change the waveform) |
 
 DeepFilterNet takes the floor down by 20 dB and the gaps by 22 dB while the speech level is within 1 dB of the
-clean signal and the waveform moves closer to the clean speech (correlation 0.962 to 0.976). RNNoise was not measured:
-its plugin is not installed on this machine.
+clean signal and the waveform moves closer to the clean speech (correlation 0.962 to 0.976). RNNoise is measured in the bake-off below.
+
+## Bake-off (issue #131, ADR 0005)
+
+DeepFilterNet3, RNNoise and DPDFNet (ONNX, Apache-2.0) were scored on one 323 s corpus (VoiceBank+DEMAND, DEMAND
+noise mixes and a recording of our own mic's room noise) with PESQ, STOI, SI-SDR and DNSMOS, plus CPU and delay on
+this host. DeepFilterNet3 remains the default (PESQ 2.92, OVRL 3.26; RNNoise 2.42 and 3.16; DPDFNet-2 2.89 and 3.23).
+DPDFNet-2 is a peer at 15 % of a core against 37 %, but cannot run inside PipeWire's filter-graph and would need a
+bridge process, so it is not wired in. RNNoise adds about 130 ms in the real chain at quantum 256, far above the
+12.5 ms the latency report assumes. The table, method and caveats are in `docs/adr/0005-voice-denoise-default.md`;
+rerun with `tools/bench_denoise.py all` (developer tool, pinned downloads).
 
 ## Getting the plugin
 

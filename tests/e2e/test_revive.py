@@ -26,5 +26,6 @@ def test_shift_r_does_nothing_while_the_mic_is_healthy(app: App, rig: Rig) -> No
     app.goto("live")
     before = rig.state()["audio"]["mic"]["revive"]["state"]  # may still be "ok" from the previous test
     app.press("Shift+R")
+    # state-read: nothing is expected to happen; there is no post to wait for
     assert rig.state()["audio"]["mic"]["revive"]["state"] == before
     assert rig.state()["audio"]["mic"]["revive"]["state"] != "reviving"

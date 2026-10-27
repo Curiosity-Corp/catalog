@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 
 WRITE_INTERVAL = 0.05
 SUPERVISE_INTERVAL = 1.0
+RELINK_MIN_S = 30.0  # between two rebuilds of the host because its capture reads the wrong (or no) microphone
+UNLINKED_GRACE_S = 10.0  # how long the microphone may be present while the capture is still unlinked, before a rebuild
 DEFAULT_RETRY_S = 5.0  # between tries to make StreamStack Mic the default source (pw-metadata not ready, failed)
 FADE_STEPS = 6
 HP_KEYS = (f"{stages.HP1}:Freq", f"{stages.HP2}:Freq")
@@ -455,6 +457,8 @@ class ChainRuntime:
         self._manage_default = manage_default
         self._default_done = False  # StreamStack Mic has been made (or deliberately not made) the default source
         self._default_retry_at = 0.0
+        self._relink_at = 0.0  # no rebuild for a wrong capture link before this time
+        self._unlinked_since: float | None = None
         self.default_result: str | None = None  # what the last claim or release said (see audiochain/defaults.py)
         self._runner = runner
         self._autostart = autostart
@@ -628,12 +632,49 @@ class ChainRuntime:
                 self.error = "The voice chain is not running."
             else:
                 self.error = "The voice chain is starting."
+        if self.running and nodes is not None and self._relink_wrong_capture(nodes):
+            return
         if self.running and not self._sent:
             self._seen_rev = -1  # a fresh graph: send everything once
         if self.running:
             self._claim_default()
         else:
             self._default_done = False  # the next time it runs, claim again (a restart keeps the earlier claim)
+
+    def _relink_wrong_capture(self, nodes: runtime.Nodes) -> bool:
+        """The capture must read the Plan's microphone and nothing else (issue #139). When it is linked to another
+        source, or stays unlinked although the microphone is there, rebuild the host (at most every RELINK_MIN_S): a
+        fresh host links to the pinned target. True when the host was stopped; the next round starts it again."""
+        mic = self.microphone
+        links = nodes.links
+        if not self._autostart or not mic or mic == graph.NODE_NAME or not links.present or mic not in links.available:
+            self._unlinked_since = None  # the microphone is not there (the capture waits for it) or nothing to judge
+            return False
+        now = self._clock()
+        wrong = links.wrong(mic)
+        if links.linked_to(mic) and not wrong:
+            self._unlinked_since = None
+            return False
+        if not wrong:
+            if self._unlinked_since is None:
+                self._unlinked_since = now
+            if now - self._unlinked_since < UNLINKED_GRACE_S:
+                return False
+        if now < self._relink_at:
+            return False
+        log.warning(
+            "voice chain capture is %s instead of %s; rebuilding its host",
+            "linked to " + ", ".join(wrong) if wrong else "not linked",
+            mic,
+        )
+        self._relink_at = now + RELINK_MIN_S
+        self._unlinked_since = None
+        runtime.stop_host(self.conf)
+        with self._lock:
+            self._nodes, self._node_id, self.running = None, None, False
+            self.error = "The voice chain is relinking to its microphone."
+        self._default_done = False
+        return True
 
     def _claim_default(self) -> None:
         """Once the chain is up, make StreamStack Mic the default source: apps on "Default" get the processed voice."""

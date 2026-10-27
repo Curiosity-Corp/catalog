@@ -47,6 +47,12 @@ def _no_hardware() -> dict:
     return empty_state()
 
 
+def _no_call() -> dict:
+    from streamstack.console.call import empty_state
+
+    return empty_state()
+
+
 def _no_stream() -> dict:
     from streamstack.console.stream import empty_state
 
@@ -81,6 +87,7 @@ class Rig:
         deck: Any = None,
         diagnostics: Any = None,
         hardware: Any = None,
+        call: Any = None,
     ) -> None:
         self.audio, self.video, self.studio = audio, video, studio
         self.lighting = lighting  # optional: a rig without lights reports an empty lighting object
@@ -91,16 +98,20 @@ class Rig:
         self.deck = deck  # optional: Stream Deck profile and keys (deck.* actions, "deck" state)
         self.diagnostics = diagnostics  # optional: telemetry and crash reports (telemetry.*, crash.* actions)
         self.hardware = hardware  # optional: the hardware probe and Plan (hardware.* actions, "hardware" state)
+        self.call = call  # optional: call awareness (call.* actions, "call" state, `call.snapshot()` for features)
         self.demo = demo
         self.on_toast: Notify | None = None  # the hub sets this
         self._started = False
         self._lock = threading.Lock()
         self._unsubscribe_store: Callable[[], None] | None = None
-        for controller in (audio, video, studio, lighting, interface, framing, self.presets, stream, deck, hardware):
+        controllers = (audio, video, studio, lighting, interface, framing, self.presets, stream, deck, hardware, call)
+        for controller in controllers:
             if controller is not None:
                 controller.notify = self.notify
         if deck is not None:
             deck.rig = self  # pressing a key runs a Console action
+        if call is not None and callable(getattr(audio, "mic_muted", None)):
+            call.own_muted = audio.mic_muted  # the Console's own mute: the microphone is silent, nothing to detect
 
     # -- construction ---------------------------------------------------------
 
@@ -109,6 +120,7 @@ class Rig:
         """The real rig. The domain modules are imported here so a broken one cannot stop `streamstack --version`."""
         from streamstack import config
         from streamstack.console.audio import AudioController
+        from streamstack.console.call import CallController, live_settings_path
         from streamstack.console.deck import DeckController
         from streamstack.console.diagnostics import Diagnostics
         from streamstack.console.framing import FramingController
@@ -138,12 +150,14 @@ class Rig:
             deck=DeckController(),
             diagnostics=Diagnostics(cfg),
             hardware=hardware,
+            call=CallController(cfg, settings_path=live_settings_path()),
         )
 
     @classmethod
     def demo(cls) -> Rig:
         """A simulated rig: nothing is probed or touched, every action works."""
         from streamstack.console.audio import DemoAudio
+        from streamstack.console.call import DemoCall
         from streamstack.console.deck import DemoDeck
         from streamstack.console.diagnostics import Diagnostics
         from streamstack.console.framing import DemoFraming
@@ -166,6 +180,7 @@ class Rig:
             deck=DemoDeck(),
             diagnostics=Diagnostics(),
             hardware=DemoHardware(),
+            call=DemoCall(),
         )
 
     # -- lifecycle ------------------------------------------------------------
@@ -177,6 +192,7 @@ class Rig:
         controllers = (*controllers, *(c for c in (self.lighting, self.interface) if c is not None))
         controllers = controllers if self.framing is None else (*controllers, self.framing)
         controllers = controllers if self.stream is None else (*controllers, self.stream)
+        controllers = controllers if self.call is None else (*controllers, self.call)
         return controllers if self.deck is None else (*controllers, self.deck)
 
     def start(self) -> None:
@@ -286,6 +302,7 @@ class Rig:
             "storage": {"warnings": store.warnings()},
             "diagnostics": self.diagnostics.state() if self.diagnostics is not None else empty_diagnostics(),
             "hardware": self.hardware.state() if self.hardware is not None else _no_hardware(),
+            "call": self.call.state() if self.call is not None else _no_call(),
         }
         snap["deck"] = self.deck.state(snap) if self.deck is not None else no_deck()  # last: its keys show the rest
         return snap
@@ -325,6 +342,10 @@ class Rig:
             if self.hardware is None:
                 raise ActionError("Hardware probing is not part of this rig.", 409)
             return self.hardware.act(action, params)
+        elif prefix == "call":
+            if self.call is None:
+                raise ActionError("Call awareness is not part of this rig.", 409)
+            return self.call.act(action, params)
         elif prefix == "storage":
             return self._storage_act(action, params)
         elif prefix == "deck":
