@@ -28,13 +28,14 @@ changes the graph's shape: then StreamStack restarts its host process (a short g
 ## How it runs
 
 * `streamstack chain start|stop|status|print-config|run` and the Console manage one detached `pipewire -c <file>` client
-  process. The user's PipeWire daemon, its configuration and the default source and sink are never touched; there
-  is no module to unload by hand and nothing to clean up if StreamStack dies (the host is found again by its
-  configuration path).
+  process. The user's PipeWire daemon and its configuration are never touched, and no module has to be unloaded by
+  hand (the host is found again by its configuration path). The one thing it changes is the default microphone,
+  described under "StreamStack Mic as the default microphone" below.
 * The file is `~/.local/state/streamstack/audio-chain/filter-chain.conf`. It ends with `# structure <signature>`;
   the host restarts only when that signature differs from the one it runs with.
 * Live changes go to the node `streamstack_mic.capture` as `Props` params (`pw-cli set-param`), only the values that
   changed since the last push. The A/B switch is a six step crossfade over about 100 ms.
+* `streamstack chain install-plugin`, `claim-default` and `release-default` are the other actions (below).
 * Required plugins: `zam-plugins` (gate, de-esser, compressor, limiter). Optional: the DeepFilterNet and RNNoise LADSPA
   plugins. `streamstack doctor` and the Console say which one is missing. With neither neural plugin the denoise
   stage reports itself off.
@@ -187,7 +188,60 @@ On the first Console start after upgrading, `audiochain/migrate.py` reads the pr
 preset: the three EQ bands it mapped and the denoise engine carry over. The voice preset the Console had chosen stays
 chosen. A marker file makes it run once. Easy Effects itself is no longer started, configured or required.
 
+## DeepFilterNet3 plugin (issue #91)
+
+`libdeep_filter_ladspa.so` is built in CI from the pinned upstream release (DeepFilterNet v0.5.6, tag tarball sha256
+pinned in `images/dfn-ladspa/Dockerfile`, Rust 1.75.0 because the upstream lockfile predates newer compilers):
+
+* `dfn-ladspa-image` builds it with BuildKit on K8s (`images/dfn-ladspa`), runs a licence gate over the linked crates
+  (permissive licences only), writes a CycloneDX SBOM that includes the embedded model, loads the plugin and runs 100
+  blocks through it, and pushes the image to Harbor (`apps/streamstack-dfn-ladspa`).
+* `dfn-ladspa-package` extracts the file and publishes it, with `SHA256SUMS`, the SBOM and the licences, to the
+  project's generic package registry as `streamstack-ladspa/<upstream>-<revision>` (currently `0.5.6-1`). A published
+  version is never overwritten: the same bytes are a no-op, different bytes fail the job.
+* `dfn-ladspa-verify` installs it the way a user does and runs the smoke test again.
+* `streamstack chain install-plugin` downloads it, verifies the checksum, that it is an ELF file and that it exports
+  `ladspa_descriptor` with the `deep_filter_mono` label, and installs it atomically to
+  `~/.local/share/streamstack/ladspa/`. The chain looks in `LADSPA_PATH`, then that directory, then the system
+  directories. `streamstack doctor` warns while it is missing and prints the same command as the fix.
+  `plugin.PINNED_SHA256` pins the checksum of the first CI build (0.5.6-1, `327bca072d05...`) in the client as well; a new revision of the package needs a new pin.
+
+## StreamStack Mic as the default microphone
+
+While the chain runs, `default.configured.audio.source` (PipeWire metadata, persisted by WirePlumber) is set to
+`streamstack_mic`, so an application that opens "Default" gets the processed voice. The previous value is saved in
+`~/.local/state/streamstack/audio-chain/default-source.json` and restored on stop.
+
+* Claimed once per run. If the person picks another default while the chain runs, it is left alone and the release
+  does not overwrite it.
+* Never claimed when no microphone is configured (the chain would read itself).
+* `streamstack chain start`/`stop`, the Console and the systemd unit (`ExecStartPost=-streamstack chain claim-default`,
+  `ExecStopPost=-streamstack chain release-default`, which also runs after a crash) do it. `manage_default=False`
+  switches it off for a caller that must not touch the default.
+* If the host dies without a release, WirePlumber moves "Default" to the best remaining source by itself. The
+  doctor/micwatch warnings about this are owned by the mic watch work, not here.
+
+## Verified on an isolated instance (default microphone)
+
+`uvx --with numpy --with scipy python tools/bench_audio_chain.py default` (own daemon and WirePlumber, fake raw
+microphone, nothing on the live desk). Result: claim -> apps on "Default" are linked to `streamstack_mic`; a second
+claim changes nothing; after `kill -9` of the host WirePlumber moves "Default" off the dead node (to `iso_in` on that rig,
+whose only microphone is a virtual source ranked below the private sink's monitor); a restarted host is picked up
+again; release restores the raw microphone; a default chosen by hand while running is not overwritten.
+The plugin installer, checksum failure paths and the CI pin consistency are unit tested; the Dockerfile and CI jobs were
+not run locally (CI only).
+
 ## Not verified live
+
+### To check on the Wave XLR (rollout)
+
+1. `streamstack chain install-plugin` (package `streamstack-ladspa/0.5.6-1` is published; CI pipeline 95914 built, published and verified it), then `streamstack doctor`.
+2. `streamstack chain start`; `pactl get-default-source` must print `streamstack_mic`; Teams on "Default" must get the
+   processed voice.
+3. `streamstack chain stop`; the default must be the Wave XLR again. Also `kill -9` the host and check that "Default"
+   lands on the Wave XLR (WirePlumber ranks a real USB source above monitors; only proven on the private rig).
+4. Unplug and replug the Wave XLR while the chain runs; check xruns on the real USB clock; compare DeepFilterNet and
+   RNNoise by ear.
 
 * **deskmeet1.** The owner chose a Focusrite Scarlett 2i2 as its DAC (2026-10-24), but it is not enumerating on USB
   (every card at profile `off`, Dummy Output): the doctor warns with the fix (an owner action: re-seat it in a direct

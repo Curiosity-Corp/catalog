@@ -214,10 +214,13 @@ class ReviveRig:
         monkeypatch.setattr(cli, "audio_sources", lambda: {"alsa_input.wave": "Wave:3"})
         monkeypatch.setattr(system, "default_device", lambda kind: "")
         monkeypatch.setattr(cli, "_watch_microphone", lambda mic: probe)
+        monkeypatch.setattr(cli, "probe_now", lambda cfg: None)  # never the real machine's hardware
         monkeypatch.setattr(micwatch, "revive_mic", self.revive)
+        self.kwargs: dict[str, object] = {}
 
     def revive(self, mic: str, **kwargs: object) -> micwatch.ReviveResult:
         self.revived.append(mic)
+        self.kwargs = kwargs
         return self.result
 
 
@@ -269,6 +272,49 @@ def test_mic_revive_without_a_microphone_or_pactl(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(cli, "have", lambda tool: False)
     assert cli.main(["mic-revive"]) == 1
     assert "pactl is missing" in capsys.readouterr().err
+
+
+def test_mic_revive_of_digital_silence_passes_the_kind_and_a_resync(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    silence = micwatch.StallProbe(True, "digital-silence", micwatch.SILENCE_DETAIL, micwatch.KIND_SILENCE)
+    rig = ReviveRig(monkeypatch, silence)
+    monkeypatch.setattr(cli, "_alsa_card_for", lambda found, mic: 3)
+    assert cli.main(["mic-revive"]) == 0
+    assert rig.kwargs["kind"] == micwatch.KIND_SILENCE and callable(rig.kwargs["resync"])
+    assert "every sample is exactly zero" in capsys.readouterr().out
+
+
+def test_mic_revive_of_a_plain_stall_has_no_resync_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(True, "stalled", "x", micwatch.KIND_STALL))
+    monkeypatch.setattr(cli, "_alsa_card_for", lambda found, mic: None)
+    cli.main(["mic-revive"])
+    assert rig.kwargs["kind"] == micwatch.KIND_STALL and rig.kwargs["resync"] is None
+
+
+def test_mic_revive_reprobe_is_only_the_last_resort(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(True, "stalled", "x"))
+    rig.result = micwatch.ReviveResult(False, micwatch.REPLUG_HINT, ["manual help needed"])
+    monkeypatch.setattr(cli, "_alsa_card_for", lambda found, mic: None)
+    reprobed: list[bool] = []
+    monkeypatch.setattr(
+        cli, "_reprobe", lambda found: reprobed.append(True) or micwatch.ReviveResult(True, "input is back", [])
+    )
+    assert cli.main(["mic-revive"]) == 1 and reprobed == []  # never without the explicit flag
+    assert cli.main(["mic-revive", "--reprobe"]) == 0 and reprobed == [True]
+
+
+def test_default_source_command_sets_the_voice_chain(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    ReviveRig(monkeypatch, micwatch.StallProbe(False))
+    monkeypatch.setattr(
+        cli, "audio_sources", lambda: {"alsa_input.wave": "Wave:3", "streamstack_mic": "StreamStack Mic"}
+    )
+    monkeypatch.setattr(system, "default_device", lambda kind: "alsa_input.cam_link")
+    set_to: list[str] = []
+    monkeypatch.setattr(cli.hw_voice, "set_default_source", lambda source, runner=None: set_to.append(source) or True)
+    assert cli.main(["default-source"]) == 0
+    assert set_to == ["streamstack_mic"] and "StreamStack Mic" in capsys.readouterr().out
+    monkeypatch.setattr(system, "default_device", lambda kind: "streamstack_mic")
+    set_to.clear()
+    assert cli.main(["default-source"]) == 0 and set_to == []
 
 
 def test_mic_check_playback_has_a_deadline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

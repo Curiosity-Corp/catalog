@@ -11,13 +11,13 @@ from collections.abc import Callable
 from .. import config, system
 from ..hardware.found import probe_now
 from ..hardware.redact import redact
-from . import chain, control, graph, runtime
+from . import chain, control, defaults, graph, plugin, runtime
 
 START_WAIT_S = 12.0
 
 
-def _runtime(cfg: dict[str, str]) -> chain.ChainRuntime:
-    rt = chain.ChainRuntime(control.model(), config.state_dir())
+def _runtime(cfg: dict[str, str], *, autostart: bool = True, manage_default: bool = True) -> chain.ChainRuntime:
+    rt = chain.ChainRuntime(control.model(), config.state_dir(), autostart=autostart, manage_default=manage_default)
     found = probe_now(cfg)
     if found is not None:
         rt.set_plan(found.plan)
@@ -40,7 +40,16 @@ def start(cfg: dict[str, str], *, wait: float = START_WAIT_S, say: Callable[[str
     control.apply_live(rt.model)
     rt.model.flush()
     say(f"Voice chain running: {graph.DESCRIPTION} ({graph.NODE_NAME}, {graph.RATE} Hz mono)")
+    say(_default_line(rt.default_result))
     return 0
+
+
+def _default_line(result: str | None) -> str:
+    if result in ("claimed", "held"):
+        return f'{graph.DESCRIPTION} is the default microphone: apps on "Default" get the processed voice.'
+    if result == "user-changed":
+        return f"The default microphone was chosen by hand, so it stays: pick {graph.DESCRIPTION} in the app."
+    return f"{graph.DESCRIPTION} could not be made the default microphone ({result or 'no microphone to read'})."
 
 
 def run_foreground(cfg: dict[str, str]) -> int:
@@ -65,9 +74,11 @@ def run_foreground(cfg: dict[str, str]) -> int:
 def stop(cfg: dict[str, str]) -> int:
     conf = runtime.conf_path(config.state_dir())
     if not runtime.host_pids(conf):
+        release_default(cfg)  # a claim left by a host that died is still given back
         print("The voice chain is not running.")
         return 0
     if runtime.stop_host(conf):
+        release_default(cfg)
         print("Voice chain stopped; apps fall back to the raw microphone.")
         return 0
     print("streamstack: the voice chain did not stop", file=sys.stderr)
@@ -75,7 +86,7 @@ def stop(cfg: dict[str, str]) -> int:
 
 
 def status(cfg: dict[str, str]) -> int:
-    rt = _runtime(cfg)
+    rt = _runtime(cfg, manage_default=False)
     rt.supervise()
     st = rt.status()
     m = rt.model
@@ -88,6 +99,13 @@ def status(cfg: dict[str, str]) -> int:
     print(f"  preset: {m.preset}{' (changed)' if m.custom() else ''}; bypass: {'on' if m.bypass else 'off'}")
     print(f"  denoise: {m.active_engine()}; microphone: {redact(rt.microphone) or 'none found'}")
     print(f"  graph: {st['graph_rate']} Hz ({st['graph_rate_reason']})")
+    readable, configured = defaults.read_configured()
+    if not readable:
+        print("  default microphone: unknown (pw-metadata cannot be read)")
+    elif configured == graph.NODE_NAME:
+        print(f'  default microphone: {graph.DESCRIPTION} (apps on "Default" get the processed voice)')
+    else:
+        print(f"  default microphone: {redact(configured) if configured else 'automatic'} (not {graph.DESCRIPTION})")
     print(f"  loudness leveller: {'on' if m.loudness_on else 'off'} (target {m.target:g} LUFS)")
     return 0 if st["running"] else 1
 
@@ -106,4 +124,45 @@ def print_config(cfg: dict[str, str]) -> int:
             quantum=rt.quantum(),
         )
     )
+    return 0
+
+
+def claim_default(cfg: dict[str, str], *, wait: float = START_WAIT_S) -> int:
+    """Make StreamStack Mic the default microphone (for a service manager: run after the host started)."""
+    end = time.monotonic() + wait
+    while not runtime.host_pids(runtime.conf_path(config.state_dir())) and time.monotonic() < end:
+        time.sleep(0.4)
+    rt = _runtime(cfg, autostart=False)  # the host is the service's own; never restart it from here
+    while True:
+        rt.supervise()
+        if rt.running or time.monotonic() >= end:
+            break
+        time.sleep(0.4)
+    if not rt.running:
+        print(f"streamstack: not the default microphone: {rt.error}", file=sys.stderr)
+        return 1
+    print(_default_line(rt.default_result))
+    return 0 if rt.default_result in ("claimed", "held", "user-changed") else 1
+
+
+def release_default(cfg: dict[str, str]) -> int:
+    """Give the default microphone back (the raw one comes back when the chain stops)."""
+    result = defaults.release(config.state_dir())
+    if result == "released":
+        print("The default microphone is back to what it was before the voice chain.")
+    elif result in ("unavailable", "failed"):
+        print(f"streamstack: the default microphone was not restored ({result}); run this again", file=sys.stderr)
+        return 1
+    return 0
+
+
+def install_plugin(cfg: dict[str, str]) -> int:
+    """Fetch the DeepFilterNet LADSPA plugin that CI built and checked, verify it and put it where the chain looks."""
+    try:
+        path = plugin.install_deepfilternet()
+    except plugin.PluginError as exc:
+        print(f"streamstack: {exc}", file=sys.stderr)
+        return 1
+    print(f"DeepFilterNet installed: {path}")
+    print("The voice chain picks it up on its next check (the host restarts once).")
     return 0

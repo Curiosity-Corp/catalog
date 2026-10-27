@@ -648,12 +648,47 @@ device), or `hw_ptr` advances but `appl_ptr` does not (PipeWire is not reading).
 named in the check detail), never a trigger. Non-ALSA sources (Bluetooth, virtual) are not judged:
 `stalled` stays `false` and there is no `mic-stall` check.
 
-Revive escalation (`streamstack mic-revive`, the Console button, Shift+R, palette "Revive mic"), each step
-re-verified with the same PCM signal:
+Digital silence. The pointers can advance perfectly while every sample is exactly 0 (2026-10-27, Wave XLR
+at 75 dB gain: the device's internal UAC feature-unit mute/volume was out of sync with ALSA's cached values, and
+`arecord -D hw:XLR` read zeros too). A live preamp always has a noise floor (about -43 dBFS there), so a whole window
+(4 s) of exact zeros is never a quiet room. The Console's meter reader tracks the unbroken run of exact-zero frames;
+`doctor` and `mic-revive` capture a few seconds with `parec` alongside the PCM sampling. It is reported as its own
+fault (`mic-digital-silence` check, `mic.stall_kind: "silence"`, a different banner title) with its own fix, never as a
+stall. A muted source is not judged, and a stall always wins over silence. The Console state carries `stall_kind`
+(`""`, `"stall"` or `"silence"`).
 
+Revive escalation (`streamstack mic-revive`, the Console button, Shift+R, palette "Revive mic"), each step
+re-verified with the same PCM signal (for digital silence also that a short capture is no longer all zeros):
+
+0. digital silence only: re-write the capture switch (off, then its old value) and the capture volume (one step
+   away, then its old value) of the interface the hardware Plan resolved (else the microphone's own card), through
+   `amixer` (package **alsa-utils**; `doctor` checks that it is installed). Every control ends where it started, so a
+   muted microphone stays muted, and each control's cached value is logged with the step (the kernel caches these
+   values and never reads them back from the device);
 1. suspend the source, resume it;
 2. cycle the card profile off and back to the previous one, restore the default source;
 3. otherwise report: replug the USB cable, or `systemctl --user restart wireplumber` (never run for you).
+   `streamstack mic-revive --reprobe` is the explicit opt-in that runs it as the last step: restarting WirePlumber
+   briefly drops every audio stream of the user, so it is never part of the watchdog or the Console button.
+
+Lost duplex profile. After a reboot or a replug the Wave XLR's card can come up with output profiles only
+(`output:analog-stereo`), so PipeWire has no microphone for it; a second local user's WirePlumber probing the card at
+the same moment is the suspected cause. `doctor` fails with `hw-audio-duplex` when the Plan's interface is attached,
+its card is not `off`, and its profile has no `input:` part (`hardware/duplex.py`). With no microphone there is nothing
+to revive, so `streamstack mic-revive` explains this and `--reprobe` restarts WirePlumber and waits for the input
+profile to return.
+
+Default source. `doctor` warns (`default-source`) when PipeWire's default source is not StreamStack Mic (voice chain
+running) or the resolved microphone (chain stopped), for example the Cam Link's HDMI audio after a replug.
+`streamstack default-source` sets it (`pactl set-default-source`); the watchdog and `doctor` never change it. Making the
+voice chain's source the default while it runs is the voice chain's job (`audiochain`), not the watchdog's.
+
+Capture-hold (Wave XLR). The XLR shares one full-speed USB link between capture and playback; a reported Linux
+ordering bug returns bit-exact zeros for the life of a capture stream opened after a playback stream. StreamStack ships
+`packaging/wireplumber/wireplumber.conf.d/52-streamstack-wave-xlr-capture-hold.conf` (installed to
+`/etc/wireplumber/wireplumber.conf.d` by `make install`), which sets `node.always-process` on the XLR capture node, and
+`doctor` reads the effective property from `pw-dump` (`wave-xlr-capture-hold`). `tools/xlr_capture_order.py` reproduces
+the ordering (playback first, then capture, N cycles, counts all-zero captures); see docs/hardware/dm313red.md.
 
 `audio.revive` and `streamstack mic-revive` refuse (409 / exit 0) while the PCM shows audio flowing or
 cannot be judged; `--force` (CLI) or `{"force": true}` (action) cycles it anyway. The Shift+R key and the

@@ -7,6 +7,7 @@ command line. Nothing here writes unless `Mixer.put` is called.
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -167,6 +168,46 @@ class Mixer:
         if not values or not all(isinstance(v, int) and not isinstance(v, bool) for v in values):
             raise MixerError("A mixer write needs integer values.")
         self._call(["-q", "cset", f"numid={numid}", ",".join(str(v) for v in values)])
+
+
+def resync_capture(mixer: MixerLike, sleep: Callable[[float], object] = time.sleep, gap: float = 0.2) -> list[str]:
+    """Re-write every writable capture switch and capture volume of the card so the device's own feature unit receives
+    them again, and say which controls were touched and the value each had (empty: the card has none). The value is
+    the kernel's cached one, which is what drifts from the device (2026-10-27 research: cached 74 dB against 48 dB in
+    the device's own block), so it is worth recording on every resync.
+
+    A USB interface keeps its capture mute and volume in a UAC feature unit; when that and ALSA's cached values drift
+    apart the stream runs but every sample is zero. The kernel only sends a control when it changes, so each control
+    is first written away from its value and then back: a switch off then its old value, a volume one step off then its
+    old value. Every control ends where it started, so a microphone the user muted stays muted. A control that fails
+    on the way back is written once more; if that fails too the error is raised.
+    """
+    controls = mixer.controls()
+    touched: list[str] = []
+    for control in controls.values():
+        if control.iface != "MIXER" or not control.writable or not control.values:
+            continue
+        original = [v for v in control.values if isinstance(v, int)]
+        if len(original) != len(control.values):
+            continue
+        if control.name.endswith("Capture Switch") and control.type == "BOOLEAN":
+            away = [0 if v else 1 for v in original]
+        elif control.name.endswith("Capture Volume") and control.type == "INTEGER":
+            low = control.minimum if control.minimum is not None else min(original)
+            high = control.maximum if control.maximum is not None else max(original)
+            away = [v - 1 if v > low else min(v + 1, high) for v in original]
+        else:
+            continue
+        if away == original:
+            continue  # a one-step control with nowhere to move: nothing can be re-sent
+        mixer.put(control.numid, away)
+        sleep(gap)
+        try:
+            mixer.put(control.numid, original)
+        except MixerError:
+            mixer.put(control.numid, original)  # one more try: leaving the control moved would be worse
+        touched.append(f"{control.name} (was {','.join(str(v) for v in original)})")
+    return touched
 
 
 HW_RATE = re.compile(r"^rate: (\d+)", re.M)

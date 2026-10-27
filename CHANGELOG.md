@@ -5,6 +5,27 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-10-27
+
+### Fixed
+- The e2e job failed once on a 15 s socket timeout under CPU starvation (the same class as the Console unit tests); the
+  e2e HTTP calls use the shared generous timeout too, and the guard test now covers `urlopen` and the e2e directory.
+
+### Added
+- The mic watchdog and `streamstack doctor` find digital silence, a lost duplex profile and a wrong default source
+  (#125, #126). A microphone whose capture pointers advance but whose samples are exactly zero for 4 s is reported as
+  its own fault, `mic-digital-silence` (Console banner "digital silence", `mic.stall_kind`), never as a stall and never
+  confused with a quiet room (a live preamp always has a noise floor). `streamstack mic-revive` and the Console's Revive
+  mic action (Shift R) first re-write the interface's capture switch and volume through `amixer` (new dependency
+  **alsa-utils**, checked by `doctor`), then measure the samples again, and only then escalate to suspend/resume and the
+  card profile cycle; the watchdog still never acts on its own. `doctor` fails `hw-audio-duplex` when the Plan's
+  interface is attached but its sound card has no input profile, and `mic-revive --reprobe` (explicit, it briefly drops
+  every audio stream) restarts WirePlumber and waits for the input to return. `doctor` warns `default-source` when
+  PipeWire's default source is not StreamStack Mic (chain running) or the resolved microphone, and the new
+  `streamstack default-source` fixes it. For the Wave XLR, StreamStack ships a WirePlumber drop-in
+  (`node.always-process` on the capture node, guarding the reported playback-before-capture zeros bug), `doctor` checks
+  the effective property, and `tools/xlr_capture_order.py` reproduces the ordering.
+
 ## [0.0.10] - 2026-10-27
 
 ### Fixed
@@ -20,6 +41,9 @@ Not released: its tag pipeline stopped at secret scanning (see the entry under t
 ## [0.0.8] - 2026-10-27
 
 ### Added
+- DeepFilterNet3 is a CI-built, checksummed, SBOM-listed artifact (generic package `streamstack-ladspa`), installed with
+  `streamstack chain install-plugin`, and StreamStack Mic becomes the default microphone while the chain runs (raw
+  microphone restored on stop) (#91).
 - The voice chain and `streamstack doctor` follow the hardware Plan (#118, #122). The raw microphone and the monitor
   output are the nodes of the interface the Plan found by USB id, in the Console, `streamstack chain`, `mic-check` and
   `mic-revive` (the name rules remain only as the fallback when the probe cannot run). The graph's rate, the interface's

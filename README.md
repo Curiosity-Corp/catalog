@@ -23,7 +23,7 @@ system tools. Install those from your distribution (Ubuntu/Debian names):
 
 ```bash
 sudo apt install zam-plugins qpwgraph pavucontrol \
-  v4l2loopback-dkms v4l2loopback-utils v4l-utils qv4l2 gphoto2 ffmpeg pulseaudio-utils \
+  v4l2loopback-dkms v4l2loopback-utils v4l-utils qv4l2 gphoto2 ffmpeg pulseaudio-utils alsa-utils \
   python3-gi gir1.2-ayatanaappindicator3-0.1 libnotify-bin
 ```
 
@@ -84,7 +84,9 @@ Everything works from the keyboard. `M` mutes, `P` turns on privacy, `B`
 bypasses the voice effects, `L` turns every light on or off, `1`…`9` switch scenes, `Alt`+a number changes
 page, `Ctrl K` opens the command palette and `?` lists every shortcut. If the
 mic watchdog sees a stalled microphone (its ALSA capture counters stop
-moving), a banner with **Revive mic** appears and `Shift R` restarts it. It
+moving) or delivers digital silence (they move, but every sample is exactly zero),
+a banner with **Revive mic** appears and `Shift R` restarts it (for digital silence it
+first re-writes the interface's capture switch and volume, which needs `alsa-utils`). It
 never does this on its own.
 
 The Console listens on `127.0.0.1` only, with a fresh token each launch. It
@@ -135,7 +137,8 @@ streamstack preview canon   # raw Canon feed (also: camlink, program); --grid fo
 streamstack cameras         # every live camera and every mode it offers
 streamstack preview /dev/video0 --mode '1920x1080@30 MJPG'
 streamstack stop            # stop the Canon bridge: calls use the raw camera
-streamstack mic-revive      # restart a stalled microphone (refuses a healthy one)
+streamstack mic-revive      # restart a stalled or digitally silent microphone (refuses a healthy one; --reprobe restarts WirePlumber last)
+streamstack default-source  # make call apps' default microphone the voice chain (or the microphone)
 streamstack mic-check --raw # hear the raw mic, then the processed voice
 streamstack voice           # list voice presets; `streamstack voice "StreamStack Voice Warm"`
 streamstack auto on|off     # the Claude auto-cinematographer and auto-audio

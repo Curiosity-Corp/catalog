@@ -24,12 +24,13 @@ from typing import Any
 
 from ..hardware import voice
 from ..hardware.plan import Plan
-from . import graph, leveller, presets, runtime, stages
+from . import defaults, graph, leveller, presets, runtime, stages
 
 log = logging.getLogger(__name__)
 
 WRITE_INTERVAL = 0.05
 SUPERVISE_INTERVAL = 1.0
+DEFAULT_RETRY_S = 5.0  # between tries to make StreamStack Mic the default source (pw-metadata not ready, failed)
 FADE_STEPS = 6
 HP_KEYS = (f"{stages.HP1}:Freq", f"{stages.HP2}:Freq")
 FADE_STEP_S = 0.02
@@ -445,10 +446,16 @@ class ChainRuntime:
         *,
         runner: runtime.Runner = runtime.default_runner,
         autostart: bool = True,
+        manage_default: bool = True,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.model = model
+        self.state_dir = state_dir
         self.conf = runtime.conf_path(state_dir)
+        self._manage_default = manage_default
+        self._default_done = False  # StreamStack Mic has been made (or deliberately not made) the default source
+        self._default_retry_at = 0.0
+        self.default_result: str | None = None  # what the last claim or release said (see audiochain/defaults.py)
         self._runner = runner
         self._autostart = autostart
         self._clock = clock
@@ -490,6 +497,7 @@ class ChainRuntime:
         self.model.flush()
         if not keep_host:
             runtime.stop_host(self.conf)
+            self.release_default()
 
     def poke(self) -> None:
         self._wake.set()
@@ -582,6 +590,7 @@ class ChainRuntime:
         if self.missing:
             self.error = "Install " + ", ".join(self.missing) + " (LADSPA plugins) for the voice chain."
             self.running = False
+            self.release_default()
             return
         pids = runtime.host_pids(self.conf)
         wanted = self.desired_signature()
@@ -590,6 +599,7 @@ class ChainRuntime:
         if declined is not None and not pids:
             with self._lock:  # nothing to read: say why instead of publishing a silent microphone
                 self._nodes, self._node_id, self.running, self.error = None, None, False, declined
+            self.release_default()
             return
         if stale and self._autostart:
             log.info("voice chain structure changed; restarting its host")
@@ -603,6 +613,7 @@ class ChainRuntime:
             if runtime.start_host(self.conf, self.conf.with_suffix(".log")) is None:
                 self.error = "Cannot start the voice chain (is pipewire installed?)."
                 self.running = False
+                self.release_default()
                 return
         elif pids and self._running_signature() is None:
             self.write_conf()
@@ -619,6 +630,37 @@ class ChainRuntime:
                 self.error = "The voice chain is starting."
         if self.running and not self._sent:
             self._seen_rev = -1  # a fresh graph: send everything once
+        if self.running:
+            self._claim_default()
+        else:
+            self._default_done = False  # the next time it runs, claim again (a restart keeps the earlier claim)
+
+    def _claim_default(self) -> None:
+        """Once the chain is up, make StreamStack Mic the default source: apps on "Default" get the processed voice."""
+        if not self._manage_default or self._default_done:
+            return
+        now = self._clock()
+        if now < self._default_retry_at:
+            return
+        mic = self.microphone
+        if mic is None or mic == graph.NODE_NAME:
+            # No explicit microphone: the chain reads the default source, which must not become itself.
+            self.release_default()
+            self._default_done = True
+            return
+        self.default_result = defaults.claim(self.state_dir, self._runner)
+        if self.default_result in ("claimed", "held", "user-changed"):
+            self._default_done = True
+        else:
+            self._default_retry_at = now + DEFAULT_RETRY_S
+            log.warning("StreamStack Mic could not be made the default source: %s", self.default_result)
+
+    def release_default(self) -> str:
+        """Give the default source back to the raw microphone (the chain stopped, or has nothing to read)."""
+        if not self._manage_default:
+            return "none"
+        self.default_result = defaults.release(self.state_dir, self._runner)
+        return self.default_result
 
     def push(self) -> None:
         """Send the controls that changed since the last push; the A/B mix is crossfaded."""

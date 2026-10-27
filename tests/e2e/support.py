@@ -42,6 +42,9 @@ TOKEN_HEADER = "X-StreamStack-Token"
 # so every timeout scales with E2E_TIMEOUT_SCALE (the CI job sets it).
 SCALE = float(os.environ.get("E2E_TIMEOUT_SCALE", "1"))
 LOADED = int(15_000 * SCALE)
+# Socket timeout for plain HTTP calls to the Console (same variable as tests/http_support.py): a throttled
+# runner can stall a call for well over 15 s (the e2e job failed once on a 15 s urlopen).
+HTTP_TIMEOUT = float(os.environ.get("STREAMSTACK_TEST_HTTP_TIMEOUT", "90"))
 ACTION_TIMEOUT = int(10_000 * SCALE)
 EXPECT_TIMEOUT = int(5_000 * SCALE)
 
@@ -67,7 +70,7 @@ class Rig:
         req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
             # a starved CI runner stalls the server thread too, so the read deadline scales like every wait
-            with urllib.request.urlopen(req, timeout=10 * SCALE) as res:
+            with urllib.request.urlopen(req, timeout=max(HTTP_TIMEOUT, 10 * SCALE)) as res:
                 return res.status, json.loads(res.read() or b"null")
         except urllib.error.HTTPError as err:
             raw = err.read()

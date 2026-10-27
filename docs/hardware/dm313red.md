@@ -14,6 +14,22 @@ Studio host with the Elgato Wave XLR. Captured 2026-10-24 12:09 local; raw captu
   - Capture: S24_3LE, 1 channel (mono), 48000 and 96000 Hz. PipeWire runs the card at the profile
     `output:analog-stereo+input:mono-fallback`, graph rate 48000 Hz s24le.
   - Vendor USB control (gain, mute, 48V, headphone volume) is handled by `hardware/wavexlr.py`.
+  - Capture hold (issue #126). The card's capture and playback endpoints share one full-speed link, and a reported
+    Linux bug returns bit-exact zeros for the life of a capture stream that was opened after a playback stream (capture
+    first is fine). StreamStack ships its own WirePlumber drop-in,
+    `packaging/wireplumber/wireplumber.conf.d/52-streamstack-wave-xlr-capture-hold.conf` (`node.always-process = true`
+    on the XLR capture node, matched by node name), installed to `/etc/wireplumber/wireplumber.conf.d` by `make
+    install`; `streamstack doctor` reads the effective property from `pw-dump` and warns with the fix when it is
+    absent. Cost: the capture endpoint streams continuously (about 144 kB/s of USB) and the device is never idle; the
+    call privacy mute stays in the voice chain. Ownership: the workstation role owns
+    `50-curiosity-streamstack-alsa.conf` (it sets `node.pause-on-idle = false` on these nodes); the StreamStack file
+    agrees with it and never edits it. Whether the bug reproduces in our `output:analog-stereo+input:mono-fallback`
+    profile is unproven: run `python3 tools/xlr_capture_order.py --cycles 20` (playback first) and `--capture-first`
+    (the control) with the voice chain and calls stopped, before and after installing the drop-in. Manual repro:
+    start `pacat` on the XLR sink, then `parec` on its source, and look for a capture of only zeros.
+  - Digital silence and the cached gain. The kernel caches `Mic Capture Switch`/`Mic Capture Volume`/`PCM Playback
+    Volume` and never reads them back (an owner's archive of another MK.1 showed 74 dB cached against 48 dB in the
+    device block). `streamstack mic-revive` re-writes them (see docs/console.md, Mic watchdog).
 - Elgato Cam Link 4K audio: capture only, S16_LE, 2 channels, 48000 Hz. Never a call microphone.
 - Onboard Raptor Lake HDA and the Arc's HDMI audio: card profile `off`.
 - Defaults: sink is a Bluetooth headset, source is the Wave XLR mono capture. `streamstack_mic` filter node loaded.

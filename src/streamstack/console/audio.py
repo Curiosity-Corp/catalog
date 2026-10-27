@@ -230,6 +230,7 @@ class LevelReader:
         self._clock = clock
         self._origin = self.started if idle_since is None else idle_since
         self._last_bytes: float | None = None
+        self._zero_since: float | None = None  # when the current unbroken run of exact-zero frames began
         self._spawn = spawn or subprocess.Popen
         self._lock = threading.Lock()
         self._buffer = b""
@@ -285,6 +286,11 @@ class LevelReader:
         self._buffer += data
         while len(self._buffer) >= FRAME_BYTES:
             frame, self._buffer = self._buffer[:FRAME_BYTES], self._buffer[FRAME_BYTES:]
+            if frame.count(0) == len(frame):  # +0.0 in float32 is four zero bytes: no decoding needed
+                if self._zero_since is None:
+                    self._zero_since = self._clock()
+            else:
+                self._zero_since = None
             samples = array.array("f")
             samples.frombytes(frame)
             if sys.byteorder == "big":
@@ -319,6 +325,13 @@ class LevelReader:
     def idle_for(self) -> float:
         """Seconds without a single byte from the source."""
         return max(0.0, self._clock() - self.idle_since())
+
+    def zero_for(self) -> float | None:
+        """Seconds of unbroken exact zeros up to the latest frame (digital silence); None while the source delivers
+        nothing at all (that is a stall, not digital silence) or the latest frame had signal."""
+        if self._zero_since is None or self._clock() - self._stamp > STALE_S:
+            return None
+        return max(0.0, self._clock() - self._zero_since)
 
     def take(self) -> dict[str, Any]:
         """Levels since the last call: the loudest peaks (no frame is missed between polls), the latest RMS and LUFS."""
@@ -554,6 +567,8 @@ class AudioController:
         stall_probe: Callable[[str, str, bool], micwatch.StallProbe] | None = None,
         verify: Callable[[str], bool | None] | None = None,
         sleep: Callable[[float], object] | None = None,
+        signal: Callable[[str, float], micwatch.SignalSample | None] | None = None,
+        resync: Callable[[int], Callable[[], str]] | None = None,
     ) -> None:
         self._cfg = cfg
         self.notify = notify
@@ -566,6 +581,8 @@ class AudioController:
         self._monitor = micwatch.StallMonitor(clock)
         self._stall_probe = stall_probe or self._monitor.probe
         self._verify = verify or self._monitor.verify
+        self._signal = signal or (lambda mic, seconds: micwatch.capture_signal(mic, seconds, self._sleep))
+        self._resync = resync or (lambda card: micwatch.feature_unit_resync(card, sleep=self._sleep))
         self._threads: list[threading.Thread] = []
         self._readers: dict[str, LevelReader | None] = {"mic": None, "voice": None}
         # the clip latches outlive the readers: a restarted parec must not forget that the mic clipped
@@ -596,6 +613,7 @@ class AudioController:
 
         self._detector = micwatch.StallDetector(clock)
         self._graph: micwatch.StallProbe | None = None
+        self._kind = micwatch.KIND_STALL  # what the current fault is: a stall, or digital silence
         self._revive = {"state": "idle", "message": None, "at": -math.inf}
         self._revive_thread: threading.Thread | None = None
 
@@ -757,21 +775,27 @@ class AudioController:
                 return  # the revive decides, and a half-resumed node must not count
             reader = self._readers["mic"]
             silent = reader is not None and reader.idle_for() >= READER_SILENT_S
+            zero_for = reader.zero_for() if reader is not None else None
         probe: micwatch.StallProbe | None = None
         if mic and listing:
             try:
                 probe = self._stall_probe(mic, listing, silent)
+                # pointers that move are not proof of audio: a whole window of exact zeros is digital silence
+                probe = micwatch.silence_verdict(probe, zero_for)
             except Exception:  # a probe bug must not take the supervisor down
                 log.exception("stall probe failed")
         with self._lock:
             self._graph = probe
+            if probe is not None and probe.stalled is True:
+                self._kind = probe.kind or micwatch.KIND_STALL
             condition = bool(mic) and muted is not True and probe is not None and probe.stalled is True
             event = self._detector.update(condition)
             if event == "started" or (event == "cleared" and self._revive["state"] == "failed"):
                 self._revive.update(state="idle", message=None)  # a new stall, or the old failure resolved itself
             cleared_quietly = event == "cleared" and self._revive["state"] != "ok"
         if event == "started":
-            _emit(self.notify, "warn", f"{micwatch.STALL_TITLE}. Press Revive mic.")
+            title = micwatch.SILENCE_TITLE if self._kind == micwatch.KIND_SILENCE else micwatch.STALL_TITLE
+            _emit(self.notify, "warn", f"{title}. Press Revive mic.")
         elif cleared_quietly:
             _emit(self.notify, "ok", "Microphone is delivering audio again")
 
@@ -805,7 +829,8 @@ class AudioController:
             stalled = self._detector.stalled
             graph = self._graph
             known = graph is not None and graph.stalled is not None
-        item = micwatch.check_item(stalled if (stalled or known) else None, graph.detail if graph else "")
+            kind = self._kind
+        item = micwatch.check_item(stalled if (stalled or known) else None, graph.detail if graph else "", kind)
         return [item] if item else []
 
     def _due_restart(self, reader: LevelReader) -> bool:
@@ -851,6 +876,7 @@ class AudioController:
                     "muted": self._muted,
                     "stalled": self._detector.stalled,
                     "stalled_since": self._detector.since,
+                    "stall_kind": self._kind if self._detector.stalled else "",
                     "revive": self._revive_view(),
                 },
                 "gain_range": list(GAIN_RANGE),
@@ -1008,13 +1034,36 @@ class AudioController:
                 raise ActionError("The microphone is already being revived.", 409)
             if not (self._detector.stalled or self._revive["state"] == "failed" or params.get("force") is True):
                 raise ActionError("The microphone is delivering audio; there is nothing to revive.", 409)
-            self._set_revive("reviving", "Suspending and resuming the microphone...")
-        thread = threading.Thread(target=self._run_revive, args=(mic,), name="mic-revive", daemon=True)
+            kind = self._kind if self._detector.stalled else micwatch.KIND_STALL
+            first = (
+                "Re-writing the device's capture controls..."
+                if kind == micwatch.KIND_SILENCE
+                else "Suspending and resuming the microphone..."
+            )
+            self._set_revive("reviving", first)
+        thread = threading.Thread(target=self._run_revive, args=(mic, kind), name="mic-revive", daemon=True)
         self._revive_thread = thread
         thread.start()
         return "Reviving the microphone..."
 
-    def _run_revive(self, mic: str) -> None:
+    def _resync_for(self, mic: str) -> Callable[[], str] | None:
+        """The capture-control resync of the mic's ALSA card: the hardware Plan's interface, else the card the
+        source itself reports. None when no card can be named."""
+        plan = self.plan_source() if self.plan_source is not None else None
+        interface = plan.audio_interface() if plan is not None else None
+        card = interface.alsa_card if interface is not None else None
+        if card is None:
+            listing = system.run(["pactl", "-f", "json", "list", "sources"], timeout=micwatch.PACTL_TIMEOUT)
+            info = micwatch.parse_source(listing.stdout, mic) if listing and listing.returncode == 0 else None
+            card = info.pcm.card if info is not None and info.pcm is not None else None
+        return self._resync(card) if card is not None else None
+
+    def _still_silent(self, mic: str) -> bool | None:
+        """After a revive step: True when a short capture is still all zeros, False when audio arrives."""
+        sample = self._signal(mic, micwatch.VERIFY_SIGNAL_S)
+        return None if sample is None else sample.digital_silence(micwatch.VERIFY_MIN_S)
+
+    def _run_revive(self, mic: str, kind: str = micwatch.KIND_STALL) -> None:
         """The worker: escalate until the node is scheduled again, report through state and a toast."""
         try:
             result = micwatch.revive_mic(
@@ -1023,6 +1072,9 @@ class AudioController:
                 sleep=self._sleep,
                 stalled=lambda: self._recheck(mic),
                 say=lambda text: self._set_revive("reviving", text),
+                kind=kind,
+                resync=self._resync_for(mic) if kind == micwatch.KIND_SILENCE else None,
+                silent=lambda: self._still_silent(mic),
             )
         except Exception as exc:  # the state must leave "reviving" whatever went wrong
             log.exception("reviving the microphone failed")
@@ -1264,6 +1316,7 @@ class DemoAudio:
                     "muted": self._muted,
                     "stalled": self._stalled,
                     "stalled_since": self._stalled_since,
+                    "stall_kind": micwatch.KIND_STALL if self._stalled else "",
                     "revive": {"state": self._revive["state"], "message": self._revive["message"]},
                 },
                 "gain_range": list(GAIN_RANGE),

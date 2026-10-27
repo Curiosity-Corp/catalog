@@ -16,6 +16,9 @@ the real generated filter-chain in it, plays a synthetic noisy-speech file into 
               noisy speech through the default chain built at 48000 and at 96000 Hz and at several quanta, reporting
               the host process's CPU, the xrun count (pw-top ERR) of the chain's nodes, the delay through the chain and
               how much of the clean speech survives (a stage that does not support the rate shows up as lost speech).
+* `default`   StreamStack Mic as the default source (audiochain/defaults.py, docs/audio-chain.md): claim and release
+              against a fake raw microphone, which node an app that asks for "Default" is linked to, what
+              WirePlumber does when the host is killed without a release, and when it comes back. Needs no numpy.
 * `glitch`    sets controls rapidly while a steady tone plays through the chain and counts samples that deviate from
               the expected waveform (a dropout or click shows as a deviation).
 
@@ -36,6 +39,7 @@ import contextlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import signal
 import subprocess
@@ -50,7 +54,7 @@ from scipy import signal as dsp
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
 
-from streamstack.audiochain import chain, graph, runtime, stages
+from streamstack.audiochain import chain, defaults, graph, runtime, stages
 from streamstack.console import loudness
 
 SR = 48000
@@ -165,15 +169,15 @@ class Rig:
         time.sleep(2.0)
         return self
 
-    def host(self, conf_text: str) -> None:
+    def host(self, conf_text: str) -> subprocess.Popen[bytes]:
         path = self.dir / "chain.conf"
         path.write_text(conf_text)
-        self.spawn(["pipewire", "-c", str(path)], "chain.log")
+        proc = self.spawn(["pipewire", "-c", str(path)], "chain.log")
         end = time.monotonic() + 12
         while time.monotonic() < end:
             nodes = runtime.find_nodes(self.runner)
             if nodes is not None and nodes.present:
-                return
+                return proc
             time.sleep(0.3)
         raise BenchError("the chain never appeared: " + (self.dir / "chain.log").read_text()[-1500:])
 
@@ -754,6 +758,111 @@ def bench_loudness(work: pathlib.Path) -> tuple[dict[str, Any], list[str]]:
 CLICK_FREE = ("same", "gain")
 
 
+# ---------------------------------------------------------------------------
+# StreamStack Mic as the default source
+# ---------------------------------------------------------------------------
+
+
+def effective_default(rig: Rig) -> str | None:
+    """The source WirePlumber currently hands out as "Default" (`default.audio.source`, not the configured one)."""
+    result = rig.runner(["pw-metadata", "-n", "default"], 5)
+    found = None
+    for line in (result.stdout if result else "").splitlines():
+        if " id:0 " in line and "key:'default.audio.source'" in line:
+            match = re.search(r'"name"\s*:\s*"([^"]+)"', line)
+            found = match.group(1) if match else None
+    return found
+
+
+def wait_default(rig: Rig, want: str | None, seconds: float = 6.0) -> str | None:
+    end = time.monotonic() + seconds
+    got = effective_default(rig)
+    while got != want and time.monotonic() < end:
+        time.sleep(0.3)
+        got = effective_default(rig)
+    return got
+
+
+def bench_default(work: pathlib.Path) -> tuple[dict[str, Any], list[str]]:
+    problems: list[str] = []
+    out: dict[str, Any] = {}
+    state = work / "state"
+    with Rig() as rig:
+        for name in ("iso_raw_mic", "iso_other_mic"):
+            made = rig.run(
+                [
+                    "pw-cli",
+                    "create-node",
+                    "adapter",
+                    f"{{ factory.name=support.null-audio-sink node.name={name} media.class=Audio/Source/Virtual "
+                    "object.linger=true audio.position=[ MONO ] monitor.channel-volumes=true }",
+                ]
+            )
+            if made.returncode:
+                raise BenchError(f"cannot create the fake microphone {name}: {made.stderr.strip()}")
+        rig.wait_ports("iso_raw_mic:capture_MONO")
+        if not defaults._set("iso_raw_mic", rig.runner):
+            raise BenchError("cannot set the starting default source")
+        out["start"] = wait_default(rig, "iso_raw_mic")
+        if out["start"] != "iso_raw_mic":
+            raise BenchError(f"the private session manager does not follow the configured default: {out['start']}")
+        conf = graph.build_config(stages.defaults(), engine="off", microphone="iso_raw_mic")
+        host = rig.host(conf)
+        # claim
+        out["claim"] = defaults.claim(state, rig.runner)
+        out["default_while_running"] = wait_default(rig, graph.NODE_NAME)
+        if out["claim"] != "claimed" or out["default_while_running"] != graph.NODE_NAME:
+            problems.append(f"claim: {out['claim']}, apps get {out['default_while_running']}")
+        # an app that opens "Default" (no target) is linked to StreamStack Mic
+        app = rig.spawn(
+            ["pw-cat", "-r", "-P", "node.name=default-app", "--rate", "48000", "--channels", "1", "/dev/null"],
+            "app.log",
+        )
+        rig.wait_ports("default-app:input_")
+        time.sleep(1.5)
+        links = rig.run(["pw-link", "-l"]).stdout
+        out["app_linked_to_chain"] = (
+            f"{graph.NODE_NAME}:capture_MONO" in links
+            and "default-app:input_" in links.split(f"{graph.NODE_NAME}:capture_MONO", 1)[-1].split("\n\n")[0]
+        )
+        out["app_links"] = [
+            line.strip() for line in links.splitlines() if "default-app" in line or "streamstack_mic" in line
+        ]
+        if not out["app_linked_to_chain"]:
+            problems.append("an app on Default was not linked to StreamStack Mic")
+        app.terminate()
+        # a second claim changes nothing
+        out["second_claim"] = defaults.claim(state, rig.runner)
+        # the host dies without a release: apps get the raw microphone by themselves
+        host.kill()
+        host.wait(timeout=5)
+        out["default_after_host_killed"] = wait_default(rig, "iso_raw_mic")
+        # The rig's only "microphone" is a virtual source, which WirePlumber ranks below the private sink's monitor, so
+        # `iso_in` is an acceptable answer here; real hardware ranks above monitors (live check in docs/audio-chain.md).
+        # What must hold is that apps are not left on the dead chain node.
+        if out["default_after_host_killed"] in (None, graph.NODE_NAME):
+            problems.append(f"after a crash apps are left on {out['default_after_host_killed']}")
+        # the host comes back: the claim is still in force and WirePlumber returns to it
+        rig.host(conf)
+        out["default_after_host_restarted"] = wait_default(rig, graph.NODE_NAME)
+        out["claim_after_restart"] = defaults.claim(state, rig.runner)
+        if out["default_after_host_restarted"] != graph.NODE_NAME:
+            problems.append(f"after the host restarted apps get {out['default_after_host_restarted']}")
+        # release gives back exactly what was there before
+        out["release"] = defaults.release(state, rig.runner)
+        out["default_after_release"] = wait_default(rig, "iso_raw_mic")
+        if out["release"] != "released" or out["default_after_release"] != "iso_raw_mic":
+            problems.append(f"release: {out['release']}, apps get {out['default_after_release']}")
+        # a default the person picked while the chain ran is left alone
+        defaults.claim(state, rig.runner)
+        defaults._set("iso_other_mic", rig.runner)
+        out["release_after_user_choice"] = defaults.release(state, rig.runner)
+        out["default_after_user_choice"] = wait_default(rig, "iso_other_mic")
+        if out["default_after_user_choice"] != "iso_other_mic":
+            problems.append("the default chosen by hand was overwritten")
+    return out, problems
+
+
 def bench_glitch(work: pathlib.Path) -> tuple[dict[str, Any], list[str]]:
     """A steady 1 kHz tone through the flat chain while controls are set about 30 times a second, one kind of control
     at a time; every deviation from the tone, once fitted, is a dropout or click.
@@ -834,7 +943,9 @@ def bench_glitch(work: pathlib.Path) -> tuple[dict[str, Any], list[str]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("what", choices=["denoise", "loudness", "glitch", "rate", "all"], nargs="?", default="all")
+    parser.add_argument(
+        "what", choices=["denoise", "loudness", "glitch", "rate", "default", "all"], nargs="?", default="all"
+    )
     parser.add_argument("--json", action="store_true", help="print only the JSON result")
     args = parser.parse_args(argv)
     missing = graph.missing_required()
@@ -853,6 +964,7 @@ def main(argv: list[str] | None = None) -> int:
         "loudness": bench_loudness,
         "glitch": bench_glitch,
         "rate": bench_rate,
+        "default": bench_default,
     }
     try:
         for name, job in jobs.items():

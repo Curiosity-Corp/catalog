@@ -509,9 +509,9 @@ def collect(snapshot: dict[str, Any]) -> list[metrics.Family]:
     automation = lighting.get("automation") or {}
     if automation.get("available"):
         up.add(bool((automation.get("status") or {}).get("running")), {"service": "lights_service"})
-    stall = next((c for c in checks if c.get("id") == "mic-stall"), None)
-    if stall is not None:
-        up.add(stall.get("state") != "fail", {"service": "mic_watch"})
+    watch = [c for c in checks if c.get("id") in ("mic-stall", "mic-digital-silence")]
+    if watch:
+        up.add(all(c.get("state") != "fail" for c in watch), {"service": "mic_watch"})
     up.add(bool((snapshot.get("auto") or {}).get("running")), {"service": "auto_director"})
     stream = snapshot.get("stream") if isinstance(snapshot.get("stream"), dict) else None
     if stream is not None:
