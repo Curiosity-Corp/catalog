@@ -5,6 +5,18 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-10-27
+
+### Fixed
+- The v0.0.8 tag pipeline stopped at secret scanning: gitleaks flagged five fake tokens in the test fixtures. The
+  waiver written for v0.0.9 used the `[[allowlists]]` syntax, which the runner's older gitleaks silently ignores, so
+  the v0.0.9 tag pipeline stopped at the same place. Nothing was published for either; tags are immutable, so
+  the next release carries the content of both.
+
+## [0.0.9] - 2026-10-27
+
+Not released: its tag pipeline stopped at secret scanning (see the entry under the next release).
+
 ## [0.0.8] - 2026-10-27
 
 ### Added
