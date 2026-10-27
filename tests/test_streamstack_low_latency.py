@@ -5,11 +5,14 @@ role's templates and run the one shell script against a fake sysfs; nothing
 touches the machine running the tests.
 """
 
+import ast
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 import jinja2
+import pytest
 import yaml
 
 
@@ -22,10 +25,12 @@ MAIN = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
 
 def _environment() -> jinja2.Environment:
     from ansible.plugins.filter.core import FilterModule
+    from ansible.plugins.filter.mathstuff import FilterModule as MathFilterModule
     from ansible.plugins.test.core import TestModule
 
     env = jinja2.Environment()
     env.filters.update(FilterModule().filters())
+    env.filters.update(MathFilterModule().filters())
     env.tests.update(TestModule().tests())
     return env
 
@@ -78,17 +83,57 @@ def test_pipewire_clock_is_48k_quantum_256_with_128_allowed() -> None:
     assert "pulse.min.req     = 128/48000" in pulse
 
 
+_SPA_ESCAPES = set('"\\/bfnrtu')
+
+
+def _assert_valid_spa_json(text: str) -> None:
+    """Fail on what WirePlumber's SPA-JSON parser rejects in these drop-ins.
+
+    WirePlumber drops a whole file ("section 'monitor.alsa.rules' has no value")
+    when a string holds an escape JSON does not define, such as a regex `\\.`.
+    The real parser (`spa-json-dump`, shipped with PipeWire) runs too when the
+    machine has it; the string/bracket check below always runs.
+    """
+    body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    depth = 0
+    in_string = False
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if in_string:
+            if char == "\\":
+                assert body[index + 1] in _SPA_ESCAPES, f"invalid escape \\{body[index + 1]} in SPA-JSON string"
+                index += 1
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+            assert depth >= 0, "unbalanced closing bracket"
+        index += 1
+    assert not in_string and depth == 0, "unterminated string or bracket"
+    dump = shutil.which("spa-json-dump")
+    if dump:
+        result = subprocess.run([dump], input=text, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr or result.stdout
+
+
 def test_alsa_rules_match_by_node_name_and_never_suspend() -> None:
     conf = _render(_task("Pin the audio interface ALSA period and keep it awake")["ansible.builtin.copy"]["content"])
+    _assert_valid_spa_json(conf)
     nodes = re.findall(r'node\.name = "~([^"]+)"', conf)
     assert len(nodes) == 2
-    # WirePlumber reads the SPA-JSON string, so the backslash is doubled there.
-    assert all(r"\\." in n for n in nodes)
-    scarlett = re.compile(nodes[0].replace("\\\\", "\\")[0:])
+    # No backslash at all: a `\.` escape is a parse error in WirePlumber's SPA-JSON.
+    assert not any("\\" in n for n in nodes)
+    scarlett = re.compile(nodes[0])
     assert scarlett.match("alsa_input.usb-Focusrite_Scarlett_2i2_USB_Y8ABCDE-00.HiFi__Mic1__source")
     assert not scarlett.match("alsa_output.pci-0000_03_00.1.hdmi-stereo")
-    wave = re.compile(nodes[1].replace("\\\\", "\\"))
+    wave = re.compile(nodes[1])
     assert wave.match("alsa_output.usb-Elgato_Systems_Elgato_Wave_XLR_DS23M2A00049-00.analog-stereo")
+    assert not wave.match("alsa_output_usb-Elgato_Systems_Elgato_Wave_XLR")
     for key, value in (
         ("session.suspend-timeout-seconds", "0"),
         ("node.pause-on-idle", "false"),
@@ -97,6 +142,62 @@ def test_alsa_rules_match_by_node_name_and_never_suspend() -> None:
     ):
         assert len(re.findall(rf"{re.escape(key)} = {value}\b", conf)) == 2, key
     assert conf.count("{") == conf.count("}")
+
+
+def test_spa_json_check_rejects_the_incident_file() -> None:
+    broken = 'monitor.alsa.rules = [ { matches = [ { node.name = "~alsa_(input|output)\\.usb-X_.*" } ] } ]'
+    with pytest.raises(AssertionError):
+        _assert_valid_spa_json(broken)
+
+
+def test_wireplumber_patterns_are_escape_free_and_validated() -> None:
+    patterns = DEFAULTS["streamstack_audio_node_patterns"] + DEFAULTS["streamstack_audio_card_patterns"]
+    assert patterns and not any("\\" in p or '"' in p for p in patterns)
+    assert any("streamstack_audio_card_patterns" in str(c) for c in _task("Validate the StreamStack low-latency settings")["ansible.builtin.assert"]["that"])
+
+
+def _users(*present: str, absent: tuple[str, ...] = ()) -> list[dict]:
+    results = [
+        {"item": {"name": n}, "ansible_facts": {"getent_passwd": {n: ["x", str(1000 + i), str(1000 + i), "", f"/home/{n}", "/bin/bash"]}}}
+        for i, n in enumerate(present)
+    ]
+    results += [{"item": {"name": n}, "ansible_facts": {"getent_passwd": {n: None}}} for n in absent]
+    return results
+
+
+def _excluded(users: list[dict], **extra) -> list[str]:
+    ctx = {"_streamstack_rt_users": {"results": users}}
+    ctx.update({k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")})
+    ctx.update(extra)
+    env = _environment()
+    for name in ("Decide which users must not manage the studio audio cards", "Choose the accounts that get the studio audio exclusion"):
+        for key, template in _task(name)["ansible.builtin.set_fact"].items():
+            ctx[key] = ast.literal_eval(env.from_string(template).render(**ctx).strip())
+    return sorted(ctx["_streamstack_audio_excluded"])
+
+
+def test_only_the_streamstack_owner_keeps_the_studio_audio_cards() -> None:
+    assert DEFAULTS["streamstack_audio_owner_users"] == ["mrh"]
+    assert _excluded(_users("mrh", "seantech")) == ["seantech"]
+    # A user that does not exist on the host is never touched.
+    assert _excluded(_users("mrh", absent=("seantech",))) == []
+    # An owner name that is not on the host must not silence everyone.
+    assert _excluded(_users("alice", "bob")) == []
+    assert _excluded(_users("mrh", "seantech"), streamstack_audio_exclusive=False) == []
+    assert _excluded(_users("mrh", "seantech", "guest"), streamstack_audio_owner_users=["mrh", "seantech"]) == ["guest"]
+
+
+def test_exclusion_drop_in_disables_only_the_studio_cards_and_parses() -> None:
+    task = _task("Keep the studio audio cards out of the other users' WirePlumber")["ansible.builtin.copy"]
+    conf = _render(task["content"])
+    _assert_valid_spa_json(conf)
+    assert task["dest"].endswith("/.config/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-exclusive-audio.conf")
+    cards = [re.compile(c) for c in re.findall(r'device\.name = "~([^"]+)"', conf)]
+    assert len(cards) == 2 and conf.count("device.disabled = true") == 2
+    assert any(c.match("alsa_card.usb-Elgato_Systems_Elgato_Wave_XLR_DS23M2A00049-00") for c in cards)
+    assert any(c.match("alsa_card.usb-Elgato_Cam_Link_4K_00066EBB11000-03") for c in cards)
+    assert any(c.match("alsa_card.usb-Focusrite_Scarlett_2i2_USB_Y8ABCDE-00") for c in cards)
+    assert not any(c.match("alsa_card.pci-0000_00_1f.3") for c in cards)
 
 
 def test_overrides_flow_into_the_rendered_files() -> None:
@@ -230,3 +331,14 @@ def test_loopback_options_are_unchanged_by_the_tuning() -> None:
     assert "devices=2 video_nr=" in task["ansible.builtin.copy"]["content"]
     assert "exclusive_caps=1,1" in task["ansible.builtin.copy"]["content"]
     assert "v4l2loopback" not in (ROLE / "tasks/streamstack-low-latency.yml").read_text()
+
+
+def test_canon_bridge_unit_gets_an_unbounded_backoff_restart_policy() -> None:
+    assert DEFAULTS["streamstack_canonctl_webcam_unit"] == "canonctl-ptp-webcam.service"
+    task = _task("Write the Canon bridge restart policy drop-in")["ansible.builtin.copy"]
+    conf = _render(task["content"])
+    assert task["dest"].endswith("/.config/systemd/user/{{ streamstack_canonctl_webcam_unit }}.d/10-curiosity-resilience.conf")
+    assert "StartLimitIntervalSec=0" in conf
+    # on-failure, never always: an intentional stop or unplugged camera is not forced back up.
+    assert "Restart=on-failure" in conf and "Restart=always" not in conf
+    assert "RestartSteps=" in conf and "RestartMaxDelaySec=60" in conf
