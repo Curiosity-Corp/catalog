@@ -1,4 +1,4 @@
-"""DeskMeet 8K display: patched i915 (RGB 4:4:4 over a PCON), Broadcast RGB and 2x scaling."""
+"""DeskMeet 8K display: patched i915 (RGB 4:4:4 over a PCON), Broadcast RGB and 2.25x scaling."""
 
 import grp
 import hashlib
@@ -66,7 +66,7 @@ def _derived(variable: str, profiles: dict, hardware_profile: str) -> str:
 def test_only_the_deskmeet_b760_profile_opts_in() -> None:
     deskmeet = PROFILES["deskmeet-b760"]
     assert deskmeet["i915_pcon_frl_444"] is True
-    assert deskmeet["display_scale"] == 2
+    assert deskmeet["display_scale"] == 2.25
     assert deskmeet["broadcast_rgb"] == "Full"
     for name, profile in PROFILES.items():
         if name == "deskmeet-b760":
@@ -118,7 +118,7 @@ def test_the_frl_rate_cap_clamps_pcon_frl_training() -> None:
 
 def test_derived_variables_follow_the_profile_and_default_off() -> None:
     assert _derived("i915_pcon_frl_444_enabled", PROFILES, "deskmeet-b760") == "True"
-    assert _derived("minimal_desktop_display_scale", PROFILES, "deskmeet-b760") == "2"
+    assert _derived("minimal_desktop_display_scale", PROFILES, "deskmeet-b760") == "2.25"
     assert _derived("minimal_desktop_display_broadcast_rgb", PROFILES, "deskmeet-b760") == "Full"
     for name in set(PROFILES) - {"deskmeet-b760"} | {"no-such-profile"}:
         assert _derived("i915_pcon_frl_444_enabled", PROFILES, name) == "False", name
@@ -358,7 +358,7 @@ def test_display_setup_tasks_manage_the_broadcast_config() -> None:
     assert "display-broadcast-rgb" in find["patterns"]
 
 
-# --- 2x desktop scaling -------------------------------------------------------
+# --- desktop scaling (1 to 4 in steps of 0.25) --------------------------------
 
 
 def test_autostart_merges_xresources_before_anything_draws() -> None:
@@ -391,7 +391,10 @@ def test_scaled_desktop_matches_the_hand_made_files_and_is_idempotent(tmp_path: 
         pytest.skip("the current uid has no passwd or group entry")
     if group != user:
         pytest.skip("the current account's primary group is not named after it")
-    homes = {"top": tmp_path / "top", "bottom": tmp_path / "bottom", "plain": tmp_path / "plain"}
+    homes = {
+        name: tmp_path / name
+        for name in ("top", "bottom", "plain", "top225", "bottom225", "top125")
+    }
     for home in homes.values():
         home.mkdir()
     playbook = tmp_path / "play.yml"
@@ -416,6 +419,12 @@ def test_scaled_desktop_matches_the_hand_made_files_and_is_idempotent(tmp_path: 
                     - {{file: minimal-desktop-tint2.yml, scale: 2, user: {{name: {user}, home: {homes['bottom']}}}}}
                     - {{file: minimal-desktop-display-scale.yml, scale: 1, user: {{name: {user}, home: {homes['plain']}}}}}
                     - {{file: minimal-desktop-tint2.yml, scale: 1, user: {{name: {user}, home: {homes['plain']}}}}}
+                    - {{file: minimal-desktop-display-scale.yml, scale: 2.25, user: {{name: {user}, home: {homes['top225']}, tint2_layout: top}}}}
+                    - {{file: minimal-desktop-tint2.yml, scale: 2.25, user: {{name: {user}, home: {homes['top225']}, tint2_layout: top}}}}
+                    - {{file: minimal-desktop-display-scale.yml, scale: "2.25", user: {{name: {user}, home: {homes['bottom225']}}}}}
+                    - {{file: minimal-desktop-tint2.yml, scale: "2.25", user: {{name: {user}, home: {homes['bottom225']}}}}}
+                    - {{file: minimal-desktop-display-scale.yml, scale: 1.25, user: {{name: {user}, home: {homes['top125']}, tint2_layout: top}}}}
+                    - {{file: minimal-desktop-tint2.yml, scale: 1.25, user: {{name: {user}, home: {homes['top125']}, tint2_layout: top}}}}
             """
         )
     )
@@ -445,7 +454,19 @@ def test_scaled_desktop_matches_the_hand_made_files_and_is_idempotent(tmp_path: 
         "Xft.rgba: none",
         "Xft.lcdfilter: lcddefault",
     ]
-    assert "Managed by Ansible" in xresources[0]
+    assert xresources[0] == "! Managed by Ansible: 2x UI scale (hardware profile display_scale)."
+
+    # 2.25x (deskmeet-b760): 96 * 2.25 and 24 * 2.25, whole numbers at every
+    # 0.25 step. A quoted "2.25" (an extra var or host var) renders the same.
+    for home in (homes["top225"], homes["bottom225"]):
+        scaled = (home / ".Xresources").read_text().splitlines()
+        assert scaled[0] == "! Managed by Ansible: 2.25x UI scale (hardware profile display_scale)."
+        assert scaled[1:3] == ["Xft.dpi: 216", "Xcursor.size: 54"]
+        assert scaled[3:] == xresources[3:]
+    assert (homes["top125"] / ".Xresources").read_text().splitlines()[1:3] == [
+        "Xft.dpi: 120",
+        "Xcursor.size: 30",
+    ]
 
     def options(path: Path) -> dict[str, str]:
         found: dict[str, str] = {}
@@ -460,9 +481,23 @@ def test_scaled_desktop_matches_the_hand_made_files_and_is_idempotent(tmp_path: 
     assert top["panel_size"] == "100% 72" and top["launcher_icon_size"] == "50"
     bottom = options(homes["bottom"] / ".config/tint2/tint2rc")
     assert bottom["panel_size"] == "100% 64" and "launcher_icon_size" not in bottom
+    # Fractional scales round to whole pixels: 36 * 2.25 = 81, 25 * 2.25 = 56.25,
+    # 32 * 2.25 = 72, 36 * 1.25 = 45, 25 * 1.25 = 31.25.
+    top225 = options(homes["top225"] / ".config/tint2/tint2rc")
+    assert top225["panel_size"] == "100% 81" and top225["launcher_icon_size"] == "56"
+    bottom225 = options(homes["bottom225"] / ".config/tint2/tint2rc")
+    assert bottom225["panel_size"] == "100% 72" and "launcher_icon_size" not in bottom225
+    top125 = options(homes["top125"] / ".config/tint2/tint2rc")
+    assert top125["panel_size"] == "100% 45" and top125["launcher_icon_size"] == "31"
 
     # Everything else in the layout is untouched, and scale 1 changes nothing.
-    for home, layout in ((homes["top"], "top"), (homes["bottom"], "bottom")):
+    for home, layout in (
+        (homes["top"], "top"),
+        (homes["bottom"], "bottom"),
+        (homes["top225"], "top"),
+        (homes["bottom225"], "bottom"),
+        (homes["top125"], "top"),
+    ):
         original = (layouts / f"{layout}.tint2rc").read_text().splitlines()
         scaled = (home / ".config/tint2/tint2rc").read_text().splitlines()
         assert len(scaled) == len(original)
@@ -470,6 +505,58 @@ def test_scaled_desktop_matches_the_hand_made_files_and_is_idempotent(tmp_path: 
         assert all(a.startswith(("panel_size", "launcher_icon_size")) for a, _ in changed)
     assert (homes["plain"] / ".config/tint2/tint2rc").read_bytes() == (layouts / "bottom.tint2rc").read_bytes()
     assert not (homes["plain"] / ".Xresources").exists()
+
+
+def _scale_template(expression: str, scale: object) -> str:
+    """Render a display-scale template with Ansible's own filters and tests."""
+    from ansible.plugins.filter.core import FilterModule
+    from ansible.plugins.test.core import TestModule
+
+    env = jinja2.Environment()
+    env.filters.update(FilterModule().filters())
+    env.tests.update(TestModule().tests())
+    return env.from_string(expression).render(minimal_desktop_display_scale=scale).strip()
+
+
+def _scale_is_valid(scale: object) -> bool:
+    checks = _named(_tasks("minimal-desktop-display-scale.yml"), "Validate the display scale")
+    return all(
+        _scale_template("{{ " + check + " }}", scale) == "True"
+        for check in checks["ansible.builtin.assert"]["that"]
+    )
+
+
+@pytest.mark.parametrize(
+    "scale",
+    [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.75, 4, "1", "2", "2.25", "2.50"],
+)
+def test_display_scale_accepts_quarter_steps_from_1_to_4(scale: object) -> None:
+    assert _scale_is_valid(scale)
+
+
+@pytest.mark.parametrize(
+    "scale",
+    [0, 0.75, 2.1, 2.3, 4.25, 5, -2, "2x", "abc", "", True, None, "1e0"],
+)
+def test_display_scale_rejects_other_values(scale: object) -> None:
+    assert not _scale_is_valid(scale)
+
+
+def test_whole_number_scales_render_what_they_always_did() -> None:
+    # Before fractional scales: Xft.dpi = 96 * n, Xcursor.size = 24 * n and an
+    # "<n>x" header. Every whole number must still render exactly that.
+    copy = _named(_tasks("minimal-desktop-display-scale.yml"), "Render X resources")
+    content = copy["ansible.builtin.copy"]["content"]
+    for scale in (2, 3, 4, "2", "3"):
+        lines = _scale_template(content, scale).splitlines()
+        n = int(scale)
+        assert lines[0] == f"! Managed by Ansible: {n}x UI scale (hardware profile display_scale).", scale
+        assert lines[1:3] == [f"Xft.dpi: {96 * n}", f"Xcursor.size: {24 * n}"], scale
+    # Every 0.25 step gives whole-number DPI and cursor sizes.
+    for step in range(4, 17):
+        lines = _scale_template(content, step / 4).splitlines()
+        assert lines[1] == f"Xft.dpi: {24 * step}", step
+        assert lines[2] == f"Xcursor.size: {6 * step}", step
 
 
 # --- console video (kernel video= argument) and readable fbcon font ------------
