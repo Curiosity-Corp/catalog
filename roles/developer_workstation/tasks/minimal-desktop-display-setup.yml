@@ -13,9 +13,13 @@
       - minimal_desktop_display_outputs is sequence
       - minimal_desktop_display_outputs is not string
       - minimal_desktop_display_outputs | map('string') | select('match', '^[A-Za-z0-9_.:-]+$') | list | length == minimal_desktop_display_outputs | length
+      - minimal_desktop_display_outputs_preferred is sequence
+      - minimal_desktop_display_outputs_preferred is not string
+      - minimal_desktop_display_outputs_preferred | map('string') | select('match', '^[A-Za-z0-9_.:-]+$') | list | length == minimal_desktop_display_outputs_preferred | length
     fail_msg: >-
-      minimal_desktop_display_outputs must list xrandr output names such as
-      DP-1 or HDMI-A-1, in order of preference.
+      minimal_desktop_display_outputs and minimal_desktop_display_outputs_preferred
+      (hardware profile key display_outputs) must list xrandr output names such
+      as DP-1 or HDMI-A-1, in order of preference.
 
 - name: Validate the display range setting
   ansible.builtin.assert:
@@ -43,6 +47,8 @@
     mode: "0755"
   when: minimal_desktop_display_setup_enabled | bool
 
+# The hardware profile's outputs come first; the host's list follows without
+# repeating them, so a host whose profile names none gets exactly its own list.
 - name: Record the preferred display outputs
   ansible.builtin.copy:
     dest: /etc/curiosity/display-outputs
@@ -52,7 +58,7 @@
     content: |
       # Managed by Ansible. One xrandr output name per line, in order of
       # preference. Empty means any connected output.
-      {% for output in minimal_desktop_display_outputs %}
+      {% for output in minimal_desktop_display_outputs_preferred | list + (minimal_desktop_display_outputs | reject('in', minimal_desktop_display_outputs_preferred) | list) %}
       {{ output }}
       {% endfor %}
   when: minimal_desktop_display_setup_enabled | bool

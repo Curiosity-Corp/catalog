@@ -995,6 +995,8 @@ pro_mimic_motd_news_enabled: false
 # for a high-DPI display; see minimal_desktop_display_scale) and broadcast_rgb
 # (Full, Limited 16:235 or Automatic, default unset: the output's xrandr
 # `Broadcast RGB` property; see minimal_desktop_display_broadcast_rgb),
+# display_outputs (list of xrandr output names, default empty: tried before the
+# host's own list; see minimal_desktop_display_outputs_preferred),
 # logitech_g604 (boolean, default false: install the Logitech G604 button
 # profile; see logitech_g604_enabled) and double_click_ms (integer, default
 # 500: Openbox and GTK double-click interval; see minimal_desktop_double_click_ms)
@@ -1138,6 +1140,13 @@ minimal_desktop_display_scale: "{{ (hardware_profiles.get(hardware_profile, {}))
 # driver's automatic choice, which is limited range for HDMI/CEA modes. Derived
 # from the hardware profile's `broadcast_rgb`.
 minimal_desktop_display_broadcast_rgb: "{{ (hardware_profiles.get(hardware_profile, {})).get('broadcast_rgb', '') }}"
+
+# xrandr output names the hardware itself prefers, from the hardware profile's
+# `display_outputs` (default empty). They are written to
+# /etc/curiosity/display-outputs ahead of minimal_desktop_display_outputs (host
+# or local vars), which keep their own order after them, so a profile can make
+# one connector win on that hardware without touching other hosts' lists.
+minimal_desktop_display_outputs_preferred: "{{ (hardware_profiles.get(hardware_profile, {})).get('display_outputs', []) }}"
 
 # StreamStack call/stream studio (tasks/streamstack.yml, docs/streamstack.md).
 # Derived from the selected hardware profile's optional `streamstack` flag; set
@@ -1565,17 +1574,29 @@ hardware_profiles:
     double_click_ms: 200
     # Lock after 60 idle minutes instead of the 10 minute default.
     idle_lock_minutes: 60
-    # Samsung 8K TV on the Arc A380 over a DP -> HDMI 2.1 PCON cable: stock i915
-    # sends 8K30 RGB at 6 bpc with dithering (HBR3, no DSC); the patched module
-    # sends RGB 4:4:4 at 8 bpc (DSC 14 bpp over HBR2, decompressed by the PCON).
-    # Built but defaulted off by the curiosity-i915-pcon-frl-444 modprobe
-    # option below (the TV drops that signal).
+    # Samsung 8K TV, two DP -> HDMI 2.1 cables from the Arc A380 (2026-10-27):
+    # - Primary: A380 DP-4 (kernel card2-DP-4) at 7680x4320@60 with DSC
+    #   (10 bpp compressed, RGB 4:4:4, 12 bpc uncompressed, no dithering) and
+    #   Broadcast RGB Full; stable, no kernel errors.
+    # - Fallback: A380 DP-3 over the StarTech (VL605 PCON) cable, 8K30 only;
+    #   left connected but switched off while DP-4 is connected.
+    # The i915_pcon_frl_444 patch and the modprobe option below were made for
+    # the VL605 path on DP-3: there, stock i915 sends 8K30 RGB at 6 bpc with
+    # dithering (HBR3, no DSC); the patched module sends RGB 4:4:4 at 8 bpc
+    # (DSC 14 bpp over HBR2, decompressed by the PCON). Built but defaulted off
+    # by the curiosity-i915-pcon-frl-444 modprobe option (the TV drops that
+    # signal).
     i915_pcon_frl_444: true
-    # Every VT comes up at the TV's own CTA 8K30 mode (VIC 194-196, from the EDID,
-    # 1188 MHz) so VT switches never modeset; X already runs that mode. Kernel
-    # connector DP-3 is the A380 output. Never use reduced blanking or custom
-    # timings here: the TV answers "mode not supported".
-    console_video: "DP-3:7680x4320@30"
+    # curiosity-display-setup tries DP-4 before the host's own list
+    # (/etc/ansible/local-vars.yml: DP-1, DP-2, DP-3, DP-4), so the 8K60 output
+    # wins whenever it is connected and DP-3 (8K30) is the fallback.
+    display_outputs:
+      - DP-4
+    # Every VT comes up at the TV's own CTA 8K60 mode (VIC 199, from the EDID,
+    # 2376 MHz) on DP-4 so VT switches never modeset; X runs that mode. Never
+    # use reduced blanking or custom timings here: the TV answers "mode not
+    # supported". The DP-3 fallback cable only offers 8K30 (VIC 194-196).
+    console_video: "DP-4:7680x4320@60"
     # Readable fbcon at 8K: 16x32 Terminus (Uni3, 512 glyphs) on VT1-9 (so the
     # higher VTs match), also persisted for early boot through console-setup.
     console_tuning:
@@ -1618,6 +1639,9 @@ hardware_profiles:
           SUBSYSTEM=="usb", ATTR{idVendor}=="04a9", ATTR{idProduct}=="319b", MODE="0660", GROUP="plugdev", TAG+="uaccess", ENV{UDISKS_IGNORE}="1"
     # /etc/modprobe.d/<name>.conf files
     modprobe_options:
+      # These parameters were tuned for the DP-3 fallback (StarTech/VL605 PCON,
+      # 8K30). The primary DP-4 8K60 DSC path was verified stable with them
+      # exactly as below, so they stay unchanged (2026-10-27).
       # The patched i915 stays built, but its 4:4:4 path is off by default:
       # with it on (8K30 RGB 8 bpc, DSC 14 bpp over HBR2) the TV dropped the
       # signal about once a minute while the PCON still reported the link up

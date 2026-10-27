@@ -201,6 +201,12 @@ failing the pull. It never reloads i915: reboot to use a new module, or run
 session). `i915-pcon-frl-444-build --check <kver>` reports whether a build is
 needed, and `--destdir DIR` builds and verifies without touching `/lib/modules`.
 
+Since 2026-10-27 `deskmeet-b760` drives its TV primarily from the A380's DP-4
+over a different DP-to-HDMI 2.1 cable at 7680x4320@60 with DSC (10 bpp
+compressed, RGB 4:4:4, 12 bpc uncompressed, no dithering, Broadcast RGB Full).
+The PCON settings below were tuned for the StarTech/VL605 cable on DP-3, which
+stays connected as the 8K30 fallback; they are unchanged.
+
 The module parameter `i915.pcon_frl_444` turns the 4:4:4 path on or off without
 a rebuild. `deskmeet-b760` sets it to `0` through the profile's
 `curiosity-i915-pcon-frl-444` modprobe option: on its Samsung 8K TV, 8K30 RGB
@@ -463,6 +469,13 @@ environment, so the keyring prompt opens on the session's own display.
 minimal_desktop_display_setup_enabled: true
 minimal_desktop_display_outputs: [DP-1, HDMI-A-1]
 ```
+
+A hardware profile can also set `display_outputs` (derived variable
+`minimal_desktop_display_outputs_preferred`, empty by default): those names are
+written first and the host's `minimal_desktop_display_outputs` follow without
+repeats, so the profile's connector wins on that hardware and other hosts' files
+do not change. `deskmeet-b760` sets `display_outputs: [DP-4]`, so its 8K60 DSC
+output beats the 8K30 DP-3 fallback when both cables are connected.
 
 `/usr/local/bin/curiosity-display-setup` reads the output names (one per line in
 `/etc/curiosity/display-outputs`), picks the first connected one (or the first
