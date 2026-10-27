@@ -128,8 +128,16 @@ class Env:
         return self.named(prefix)[-1]
 
     def audio_up(self, wait: bool = False) -> None:
-        """Give the audio encoder's header (the service waits for it before starting video)."""
-        self.last("audio").emit(b"")
+        """Give the audio encoder's header (the service waits for it before starting video).
+
+        The fake child is registered when the service spawns it, but the service only wires it to its generation
+        and starts it a moment later; real output cannot arrive before `start()`, so neither may the fake's.
+        """
+        child = self.last("audio")
+        deadline = time.monotonic() + 3
+        while not child.started and time.monotonic() < deadline:
+            time.sleep(0.001)
+        child.emit(b"")
 
     def feed(
         self, child: FakeChild, start_ms: int, end_ms: int, key_at: set[int] | None = None, step: int = 33
