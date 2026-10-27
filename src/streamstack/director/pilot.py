@@ -1,6 +1,6 @@
 """The director's judgement: which persona, which hour, what look to ease towards, and what is left to the person.
 
-`Pilot` holds no hardware. `auto.Auto` owns OBS, the microphone and Claude and asks the pilot four things:
+`Pilot` holds no hardware. `auto.Auto` owns the Console link, the microphone and Claude and asks the pilot four things:
 
 * `refresh()` once per tick: reload the persona and the location (so editing either in the Console takes effect
   within one tick) and work out the sun now;

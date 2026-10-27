@@ -12,9 +12,9 @@ security-relevant parts are:
   CLI runs with `--restricted --tools Read` in a directory holding only that
   still.
 - **Secrets**: an Anthropic API key is read from the environment or a mode-600
-  `~/.config/streamstack/auto.env`; a file readable by others is refused. The
-  obs-websocket password is random per user and stored mode 600.
-- **Local control**: OBS's websocket listens on 127.0.0.1 with a password.
+  `~/.config/streamstack/auto.env`; a file readable by others is refused.
+- **Local control**: the Console listens on 127.0.0.1 only, and every request carries a per-run token kept in a
+  mode-600 runtime file; the auto director reaches the video engine through that same authenticated API.
 
 Please do not include real camera stills, logs with device serial numbers or
 API keys in reports.

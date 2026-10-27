@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -15,7 +15,7 @@ from streamstack.console.rig import Rig
 from streamstack.console.studio import DemoStudio
 from streamstack.director import commands, personas, settings, status
 
-NOW = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
 
 
 class Panel(director.DirectorPanel):
@@ -210,7 +210,7 @@ def test_a_change_event_reaches_the_page_with_its_reason() -> None:
     entry = {
         "time": "2026-10-22T09:00:00",
         "event": "change",
-        "actuator": "obs-look",
+        "actuator": "program-look",
         "target": "Cam",
         "key": "warmth",
         "before": 0.0,

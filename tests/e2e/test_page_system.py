@@ -9,8 +9,8 @@ from playwright.sync_api import Page, expect
 
 from support import LOADED, App, Rig, hold, poll, quiet
 
-TOOLS = ("OBS Studio", "Easy Effects", "qpwgraph", "pavucontrol", "qv4l2")
-TOOL_NAMES = ("obs", "easyeffects", "qpwgraph", "pavucontrol", "qv4l2")
+TOOLS = ("qpwgraph", "pavucontrol", "qv4l2")
+TOOL_NAMES = ("qpwgraph", "pavucontrol", "qv4l2")
 
 
 @pytest.fixture
@@ -43,10 +43,14 @@ def test_recheck_button_and_k_key_ask_for_a_new_check(sysp: App, page: Page) -> 
     assert key.value.status == 200
 
 
-def test_video_checks_show_the_active_obs_encoder(sysp: App, page: Page, rig: Rig) -> None:
+def test_video_checks_show_the_program_camera_encoder(sysp: App, page: Page, rig: Rig) -> None:
     encoder = next(c for c in rig.state()["health"]["checks"] if c["id"] == "encoder")
     assert encoder["group"] == "video"
-    card = page.get_by_role("region", name="Video", exact=True).locator(".ck").filter(has_text="OBS encodes with")
+    card = (
+        page.get_by_role("region", name="Video", exact=True)
+        .locator(".ck")
+        .filter(has_text="The program camera encodes")
+    )
     expect(card).to_have_count(1, timeout=LOADED)
     expect(card).to_contain_text(encoder["title"])
     expect(card).to_contain_text("av1_ffmpeg_vaapi_tex")
@@ -118,7 +122,7 @@ def test_call_setup_switches_between_teams_and_zoom(sysp: App, page: Page) -> No
     assert page.locator(".steps").inner_text() != teams
 
 
-@pytest.mark.parametrize("target", ["StreamStack Camera", "Easy Effects Source"])
+@pytest.mark.parametrize("target", ["StreamStack Camera", "StreamStack Mic"])
 def test_call_setup_copy_buttons_copy_the_device_name(sysp: App, page: Page, target: str) -> None:
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     button = page.get_by_role("button", name=f"Copy {target}")
@@ -127,3 +131,13 @@ def test_call_setup_copy_buttons_copy_the_device_name(sysp: App, page: Page, tar
     assert page.evaluate("() => navigator.clipboard.readText()") == target
     expect(button).to_contain_text("Copy", timeout=LOADED)
     expect(button).not_to_contain_text("Copied", timeout=LOADED)
+
+
+def test_seen_by_apps_shows_who_has_the_virtual_camera_and_mic(sysp: App, page: Page, rig: Rig) -> None:
+    virtual = rig.state()["virtual"]
+    assert virtual["camera"]["label"] == "StreamStack Camera" and virtual["mic"]["label"] == "StreamStack Mic"
+    cam = page.get_by_role("group", name=re.compile(r"^StreamStack Camera: "))
+    mic = page.get_by_role("group", name=re.compile(r"^StreamStack Mic: "))
+    expect(cam).to_have_attribute("aria-label", "StreamStack Camera: Teams", timeout=LOADED)
+    expect(mic).to_have_attribute("aria-label", "StreamStack Mic: Teams")
+    expect(page.get_by_role("heading", name=re.compile("^Seen by apps"))).to_contain_text("2 open")

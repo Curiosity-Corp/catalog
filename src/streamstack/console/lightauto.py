@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +25,9 @@ log = logging.getLogger(__name__)
 CURVE_STEP = 15  # minutes between points of the 24 hour graph
 SLOT_NOTES = {slot: daylight.SLOT_NOTES[slot] for slot in daylight.SLOTS}
 KnownLight = Callable[[object], str]
+
+DEMO_CLOCK_ENV = "STREAMSTACK_DEMO_CLOCK"
+DEMO_ZONE = "America/New_York"  # the place a pinned demo clock stands in (40.71, -74.01), whatever the host's zone
 
 NO_SERVICE_HINTS = {
     "missing": (
@@ -48,8 +52,6 @@ def _empty_status(message: str) -> dict[str, Any]:
             "in_use": False,
             "reason": "",
             "apps": [],
-            "obs": [],
-            "obs_known": False,
             "grace_left": None,
             "since": None,
         },
@@ -80,6 +82,24 @@ def empty_automation() -> dict[str, Any]:
     }
 
 
+def demo_clock(environ: Mapping[str, str] | None = None) -> datetime | None:
+    """The moment the demo rig's lighting stands still at: `STREAMSTACK_DEMO_CLOCK` as an ISO 8601 time with a UTC
+    offset (`2026-06-21T12:00:00-04:00`); None when it is not set, and the demo follows the real clock.
+
+    The daylight schedule depends on the hour and the place. The e2e suite pins both so a run does not depend on
+    the time it ran at, nor on the zone of the host or the CI runner, and runs the lighting files at several hours."""
+    value = (environ if environ is not None else os.environ).get(DEMO_CLOCK_ENV, "").strip()
+    if not value:
+        return None
+    try:
+        when = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{DEMO_CLOCK_ENV} must be an ISO 8601 time such as 2026-06-21T12:00:00-04:00: {exc}") from exc
+    if when.tzinfo is None:
+        raise ValueError(f"{DEMO_CLOCK_ENV} needs a UTC offset, for example 2026-06-21T12:00:00-04:00")
+    return when
+
+
 class ScriptedCamera:
     """The demo rig's camera watcher: a test or the owner pretends an app opens and closes the camera."""
 
@@ -103,8 +123,12 @@ class AutomationPanel:
         engine: lightauto.Automation | None = None,
         scripted: ScriptedCamera | None = None,
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+        location: Callable[[datetime], daylight.Location] | None = None,
     ) -> None:
         self.store, self.engine, self.scripted, self._now = store, engine, scripted, now
+        self._location = location or (
+            lambda wall: daylight.resolve_location(settings.load(), config.load_settings(), wall)
+        )
         self._cache: tuple[str, dict[str, Any]] | None = None
 
     # -- state ------------------------------------------------------------------
@@ -152,7 +176,7 @@ class AutomationPanel:
         data = self.store.load()
         wall = self._now()
         try:
-            loc = daylight.resolve_location(settings.load(), config.load_settings(), wall)
+            loc = self._location(wall)
             shown = self._curve(data, wall, loc)
             level = lightplan.level_at(data, wall, loc)
             elevation, _, hour_angle = daylight.solar_position(wall, loc.latitude, loc.longitude)
@@ -202,7 +226,7 @@ class AutomationPanel:
     def _seed(self) -> list[dict[str, float]]:
         wall = self._now()
         data = self.store.load()
-        loc = daylight.resolve_location(settings.load(), config.load_settings(), wall)
+        loc = self._location(wall)
         return lightplan.hours_from_sun(data, wall, loc)
 
     def _act(self, action: str, params: dict[str, Any], known_light: KnownLight) -> str | None:
@@ -278,6 +302,14 @@ def attach_demo(controller: Any) -> None:
         # The demo lights start where the rig's other fixtures expect them; the schedule is switched on by the specs
         # (and by a person trying it out) rather than moving the demo lights on the first tick.
         controller.plan.update("schedule", {"enabled": False})
+    pinned = demo_clock()
+    clock: dict[str, Any] = {}
+    if pinned is not None:
+        zone = DEMO_ZONE
+        clock = {
+            "now": lambda: pinned,
+            "location": lambda when: daylight.resolve_location(None, None, when, zone=zone),
+        }
     engine = lightauto.Automation(
         controller,
         controller.plan,
@@ -288,6 +320,7 @@ def attach_demo(controller: Any) -> None:
         sleep=lambda seconds: None,
         where="console",
         director_check_seconds=0,
+        **clock,
     )
-    controller.panel = AutomationPanel(controller.plan, engine, scripted)
+    controller.panel = AutomationPanel(controller.plan, engine, scripted, **clock)
     controller.engine = engine

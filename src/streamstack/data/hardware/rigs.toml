@@ -1,0 +1,133 @@
+# Rigs: what a studio is expected to contain and which device takes which role. Selected by STREAMSTACK_RIG, else by
+# the best overlap with what the probe found, else (on a tie) by the machine identity listed here, else by the order
+# in this file. No host is named anywhere: a device that moves between hosts changes the overlap, not the code.
+#
+# machine_ids holds salted hashes (`streamstack hardware --identity` prints this machine's). Only a tie is ever
+# decided by them.
+schema = 1
+
+[[rig]]
+id = "studio-deck"
+label = "Studio with Stream Deck"
+summary = "Camera, Cam Link, a Stream Deck and a Scarlett 2i2; the Arc does the video work, the iGPU decodes"
+# the desk machine with the UHD 770 and the Arc (`streamstack hardware --identity`)
+machine_ids = ["f1dffc80615d72b2f381b9985a4edb3a"]
+[[rig.expects]]
+id = "stream-deck-v2"
+required = true
+[[rig.expects]]
+id = "arc-a380"
+required = true
+[[rig.expects]]
+id = "cam-link-4k"
+required = true
+[[rig.expects]]
+id = "canon-eos-50d"
+required = false
+[[rig.expects]]
+id = "litra-beam"
+required = false
+[[rig.expects]]
+id = "uhd-770"
+required = false
+[[rig.expects]]
+id = "onboard-hda"
+required = false
+[[rig.expects]]
+id = "scarlett-2i2-gen4"
+required = false
+[[rig.expects]]
+id = "scarlett-2i2-gen3"
+required = false
+[[rig.expects]]
+id = "wave-xlr"
+required = false
+[rig.preferences]
+# The rig's DAC is a Scarlett 2i2 (owner decision 2026-10-24); its generation is read from the USB id.
+audio_interface = ["scarlett-2i2-gen4", "scarlett-2i2-gen3", "wave-xlr"]
+[rig.preferences.gpu]
+grade = ["arc-a380"]
+encode = ["arc-a380"]
+blur = ["arc-a380"]
+decode = ["uhd-770", "arc-a380"]
+[rig.loopback]
+max_buffers = 2  # the engine's latency budget (docs/native-video-engine.md)
+[[rig.loopback.device]]
+role = "camera"
+video_nr = 42
+card_label = "Canon EOS 50D"
+exclusive_caps = true
+[[rig.loopback.device]]
+role = "program"
+video_nr = 43
+card_label = "StreamStack Camera"
+exclusive_caps = true
+
+[[rig]]
+id = "studio-wave-xlr"
+label = "Studio with Elgato Wave XLR"
+summary = "Camera, Cam Link and a Wave XLR on the desk; the Arc does all the video work"
+machine_ids = ["6f7db785c44f85aae758224212c53e6a"]  # the desk machine with the Wave XLR (`streamstack hardware --identity`)
+[[rig.expects]]
+id = "wave-xlr"
+required = true
+[[rig.expects]]
+id = "arc-a380"
+required = true
+[[rig.expects]]
+id = "cam-link-4k"
+required = true
+[[rig.expects]]
+id = "canon-eos-50d"
+required = false
+[[rig.expects]]
+id = "litra-beam"
+required = false
+[[rig.expects]]
+id = "uhd-770"
+required = false
+[[rig.expects]]
+id = "onboard-hda"
+required = false
+[[rig.expects]]
+id = "stream-deck-v2"
+required = false
+[rig.preferences]
+audio_interface = ["wave-xlr", "scarlett-2i2-gen4", "scarlett-2i2-gen3"]
+[rig.preferences.gpu]
+grade = ["arc-a380"]
+encode = ["arc-a380"]
+blur = ["arc-a380"]
+decode = ["arc-a380", "uhd-770"]
+[rig.loopback]
+max_buffers = 2  # the engine's latency budget (docs/native-video-engine.md)
+[[rig.loopback.device]]
+role = "camera"
+video_nr = 42
+card_label = "Canon EOS 50D"
+exclusive_caps = true
+[[rig.loopback.device]]
+role = "program"
+video_nr = 43
+card_label = "StreamStack Camera"
+exclusive_caps = true
+
+# Any Linux machine: any VA-API encoder (the best codec wins), else the CPU; the default PipeWire source and sink;
+# any UVC capture node; 48000 Hz.
+[[rig]]
+id = "generic-linux"
+label = "Generic Linux"
+summary = "No studio profile matched: defaults from what the probe found"
+fallback = true
+[rig.loopback]
+max_buffers = 2  # the engine's latency budget (docs/native-video-engine.md)
+[[rig.loopback.device]]
+role = "camera"
+video_nr = 42
+card_label = "Canon EOS 50D"
+exclusive_caps = true
+[[rig.loopback.device]]
+role = "program"
+video_nr = 43
+card_label = "StreamStack Camera"
+exclusive_caps = true

@@ -7,25 +7,24 @@ no udev monitor, no extra dependency. All device I/O is serialised by one lock; 
 
 from __future__ import annotations
 
-import json
 import logging
 import math
-import os
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from streamstack import cli, config, lighting, lightplan
+from streamstack import cli, config, lightauto, lighting, lightplan, store
 from streamstack.console import lightauto as panel_module
-from streamstack.console.errors import ActionError
+from streamstack.console.errors import ActionError, Superseded
 from streamstack.lighting import Found, LightingError, Litra, Transport
 
 log = logging.getLogger(__name__)
 
 Notify = Callable[[str, str], None]
 Scan = Callable[[], list[Found]]
+Expect = tuple[bool | None, int | None, int | None]  # power, lumen, kelvin a caller believes a light shows
 Opener = Callable[[Found], Transport]
 
 RESCAN_SECONDS = 3.0
@@ -79,18 +78,17 @@ PRESET_PERCENT_TOLERANCE = 3.0  # percent of brightness a light may differ from 
 class PresetLibrary:
     """Built-in lighting presets plus the user's, saved in ~/.config/streamstack/lighting.json (mode 600)."""
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(self, path: Path | None = None, *, ephemeral: bool = False) -> None:
+        """`ephemeral`: still atomic, but no fsync and no backup (the demo rig's presets need no disk flush)."""
         self.path = path
+        self.ephemeral = ephemeral
         self.lock = threading.Lock()
 
     def file(self) -> Path:
         return self.path or config.user_env_file().parent / "lighting.json"
 
     def user(self) -> dict[str, dict[str, Any]]:
-        try:
-            data = json.loads(self.file().read_text())
-        except (OSError, ValueError):
-            return {}
+        data = store.read_json(self.file(), {}, validate=store.is_object)
         saved: dict[str, dict[str, Any]] = {}
         for name, values in data.items() if isinstance(data, dict) else ():
             try:
@@ -117,16 +115,8 @@ class PresetLibrary:
                 return item
         raise ActionError(f"No lighting preset called {name}.", 400)
 
-    def _write(self, presets: dict[str, dict[str, Any]]) -> None:
-        path = self.file()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as handle:
-            json.dump(presets, handle, indent=2, sort_keys=True)
-            handle.flush()
-            os.fsync(handle.fileno())
-        tmp.replace(path)
+    def _write(self, presets: dict[str, dict]) -> None:
+        store.write_json(self.file(), presets, mode=0o600, backup=not self.ephemeral, durable=not self.ephemeral)
 
     def save(self, name: str, brightness: int, kelvin: int) -> None:
         if name.casefold() in {n.casefold() for n in BUILTIN_PRESETS}:
@@ -440,10 +430,21 @@ class LightingController:
             ]
 
     def write(
-        self, light_id: str, *, power: bool | None = None, percent: float | None = None, kelvin: float | None = None
+        self,
+        light_id: str,
+        *,
+        power: bool | None = None,
+        percent: float | None = None,
+        kelvin: float | None = None,
+        expect: Expect | None = None,
     ) -> None:
-        """Set one light for the automation engine. Raises ActionError when the light cannot be written."""
-        self._write_all({"id": light_id}, power=power, percent=percent, kelvin=kelvin)
+        """Set one light for the automation engine. Raises ActionError when the light cannot be written.
+
+        With `expect` (what the engine believes the light shows) the write is a compare-and-set: under the device
+        lock, so no person's write can land between the check and the write, it raises `Superseded` and writes
+        nothing when the light no longer shows that. This is what keeps a fade or a schedule step from landing on
+        top of a change somebody made a moment ago."""
+        self._write_all({"id": light_id}, power=power, percent=percent, kelvin=kelvin, expect=expect)
 
     def health_checks(self) -> list[dict[str, str]]:
         state = self.state()
@@ -509,11 +510,16 @@ class LightingController:
         if action == "lighting.rescan":
             self._wake.set()
             return "Looking for lights..."
+        if action == "lighting.demo.reset":
+            return self._demo_reset()
         if action.startswith(("lighting.auto.", "lighting.light.", "lighting.service.", "lighting.demo.")):
             if self.panel is None:
                 raise ActionError("Lighting automation is not part of this rig.", 409)
             return self.panel.act(action, params, self._known_light)
         raise ActionError(f"Unknown action {action!r}.", 400)
+
+    def _demo_reset(self) -> str | None:
+        raise ActionError("Only the demo rig can reset its lights for a test.", 409)
 
     def _known_light(self, light_id: object) -> str:
         with self._lock:
@@ -546,11 +552,14 @@ class LightingController:
         power: bool | None = None,
         percent: float | None = None,
         kelvin: float | None = None,
+        expect: Expect | None = None,
     ) -> str | None:
         slots = self._targets(params)
         failures: list[str] = []
         with self._io:
             for slot in slots:
+                if expect is not None:
+                    self._require_unchanged(slot, expect)
                 try:
                     self._write(slot, power, percent, kelvin)
                 except LightingError as exc:
@@ -559,6 +568,18 @@ class LightingController:
         if failures and len(failures) == len(slots):
             raise ActionError(failures[0], 409)
         return "; ".join(failures) or None
+
+    def _require_unchanged(self, slot: _Slot, expect: Expect) -> None:
+        """Raise Superseded unless the light still shows what the caller expects. Caller holds the I/O lock."""
+        power, lumen, kelvin = expect
+        with self._lock:
+            shown = (slot.power, slot.lumen, slot.kelvin)
+        if (
+            (power is not None and shown[0] is not None and shown[0] != power)
+            or (lumen is not None and shown[1] is not None and abs(shown[1] - lumen) >= lightauto.LUMEN_EPS)
+            or (kelvin is not None and shown[2] is not None and abs(shown[2] - kelvin) >= lightauto.KELVIN_EPS)
+        ):
+            raise Superseded()
 
     def _write(self, slot: _Slot, power: bool | None, percent: float | None, kelvin: float | None) -> None:
         """Send values to one light and remember them. Caller holds the I/O lock."""
@@ -680,11 +701,44 @@ class DemoLighting(LightingController):
         super().__init__(
             scan=lambda: list(found),
             opener=lambda light: devices[light.id],
-            library=library,
-            plan=plan,
+            library=library or PresetLibrary(ephemeral=True),
+            plan=plan or lightplan.Store(ephemeral=True),  # a demo's settings are not worth an fsync per change
             blink_seconds=blink_seconds,
         )
         panel_module.attach_demo(self)
+
+    def _demo_reset(self) -> str | None:
+        """Back to the rig's start: the lights, the automation settings, the pretend camera and director, the engine.
+
+        One step under the engine's lock (see `Automation.reset`), so the engine never sees the lights move and
+        cannot hold them as a change by hand. A person's write afterwards is held as usual."""
+        panel, engine = self.panel, self.engine
+        if panel is None or engine is None or panel.scripted is None:
+            raise ActionError("Lighting automation is not part of this rig.", 409)
+
+        def restore() -> None:
+            panel.scripted.app = None
+            panel.scripted.director = False
+            data = lightplan.defaults()  # one save: the engine is held off while this runs
+            data["resume"] = self.plan.load()["resume"]
+            data["schedule"]["enabled"] = False
+            self.plan.save(data)
+            start = {f"{m.pid:04x}-{phys}": (on, percent, kelvin) for m, phys, on, percent, kelvin in DEMO_LIGHTS}
+            with self._io:
+                for slot in self._slots.values():
+                    if slot.device is None or slot.found.id not in start:
+                        continue
+                    on, percent, kelvin = start[slot.found.id]
+                    try:
+                        self._write(slot, on, percent, kelvin)
+                    except LightingError as exc:
+                        raise ActionError(f"The demo light could not be reset: {exc.message}", 500) from exc
+                    with self._lock:
+                        slot.last_write = float("-inf")
+                        slot.identifying = False
+
+        engine.reset(restore)
+        return None
 
     def start(self) -> None:
         self.poll_once()  # the simulated lights are there from the first snapshot

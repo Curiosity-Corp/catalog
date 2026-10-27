@@ -45,6 +45,26 @@ def test_white_balance_reads_warm_cool_and_tint() -> None:
     assert green["tint_index"] > 0.06 and "green" in green["cast"]
 
 
+def dark_room_with_glints() -> bytes:
+    """Near-black frame with three bright, saturated pixels, like the Canon feed in a dark room (status LED, glint)."""
+    out = bytearray(frame((1, 1, 1), face=None))
+    for x, rgb in ((10, (2, 54, 44)), (11, (114, 124, 117)), (12, (42, 27, 24))):
+        out[3 * (50 * W + x) : 3 * (50 * W + x) + 3] = bytes(rgb)
+    return bytes(out)
+
+
+def test_a_dark_room_gets_no_colour_cast_from_a_few_hot_pixels() -> None:
+    """Measured: 1 to 3 pixels of 57,600 gave 'cool, green tint', warm index -1.26 and saturation 0.96."""
+    features = image.frame_features(dark_room_with_glints(), W, H)
+    assert features["cast"] is None and features["warm_index"] is None and features["saturation"] is None
+    lit = image.frame_features(frame((150, 110, 80), face=None), W, H)
+    assert lit["cast"].startswith("warm")
+    share = image.MIN_MIDTONE_SHARE
+    assert image.colour_features(0, 0, 0, 0, 0.0, 100)["cast"] is None
+    assert image.colour_features(100 * 90, 100 * 80, 100 * 70, 100, 10.0, 100)["cast"] == "warm"  # no minimum share
+    assert image.colour_features(int(share * 1000) * 90, 0, 0, int(share * 1000) - 1, 1.0, 1000)["cast"] is None
+
+
 def test_skin_and_the_subject_box_are_found() -> None:
     features = image.frame_features(frame(), W, H)
     assert features["skin"] and 100 < features["skin"]["luma"] < 190
@@ -82,6 +102,17 @@ def test_burst_summary_sees_flicker_motion_and_blur() -> None:
     still = [image.frame_features(frame(), W, H)] * 3
     calm = image.burst_summary(still, [image.downsample(frame(), W, H)] * 3)
     assert calm["flicker"] is False and calm["motion_word"] == "still" and calm["blurred_frames"] == []
+
+
+def test_a_black_burst_has_neither_flicker_nor_blurred_frames() -> None:
+    """Dither between 0.0 and 3.0 mean luma is sensor noise; nothing in it can be 'soft' or 'pulsing'."""
+    frames = [image.frame_features(frame((v, v, v), face=None), W, H) for v in (1, 3, 1, 3)]
+    for f, sharp in zip(frames, (0.9, 0.2, 0.8, 0.1), strict=True):
+        f["sharpness"] = sharp
+    summary = image.burst_summary(frames, [image.downsample(frame((1, 1, 1), face=None), W, H)] * 4)
+    assert summary["flicker"] is False and summary["luma_swing"] == 0.0 and summary["blurred_frames"] == []
+    real = [{"luma_mean": 90.0, "sharpness": v} for v in (120.0, 40.0, 118.0)]
+    assert image.burst_summary(real, [[0.0] * 4] * 3)["blurred_frames"] == [2]
 
 
 def test_unreadable_stills_are_reported_not_fatal(tmp_path) -> None:

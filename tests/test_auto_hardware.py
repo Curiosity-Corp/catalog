@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from test_auto import FakeOBS, journal  # noqa: F401
+from test_auto import FakeLink, journal  # noqa: F401
 from test_auto_director import FRAME, REPLY, fast, make  # noqa: F401
 from test_director_devices import FakeCanon, FakeInterface, FakeLights, canon_status
 
@@ -36,7 +36,7 @@ def at(monkeypatch, hour: int) -> None:
 
 
 def rig(monkeypatch, lights=None, camera=None, interface=None, **cfg):
-    """An Auto whose registry holds fake hardware actuators; returns (auto, obs, fakes, clock)."""
+    """An Auto whose registry holds fake hardware actuators; returns (auto, link, fakes, clock)."""
     clock = Clock()
     fakes = {"lights": lights, "canon": camera, "interface": interface}
 
@@ -51,9 +51,9 @@ def rig(monkeypatch, lights=None, camera=None, interface=None, **cfg):
         return out
 
     monkeypatch.setattr(adapters, "hardware_actuators", hardware)
-    a, obs, _sent = make(monkeypatch, iter([REPLY] * 4), **{**NYC, **cfg})
+    a, link, _sent = make(monkeypatch, iter([REPLY] * 4), **{**NYC, **cfg})
     a.governor = actuators.Governor(clock=clock)
-    return a, obs, fakes, clock
+    return a, link, fakes, clock
 
 
 def lit(fake: FakeLights, lumen: int, kelvin: int, label: str = "Litra Beam 1", on: bool = True) -> None:
@@ -67,7 +67,7 @@ def lit(fake: FakeLights, lumen: int, kelvin: int, label: str = "Litra Beam 1", 
 def test_the_dark_slots_raise_and_warm_the_light_from_the_persona_baseline(monkeypatch, hour) -> None:
     settings.set_persona("executive")
     at(monkeypatch, hour)
-    a, _obs, _f, _c = rig(monkeypatch, lights=FakeLights(BEAM))
+    a, _link, _f, _c = rig(monkeypatch, lights=FakeLights(BEAM))
     a.pilot.refresh()
     fraction, kelvin, source, why = a.pilot.light_goal()
     baseline = a.pilot.persona["light"]
@@ -85,7 +85,7 @@ def test_the_four_logins_get_four_different_lights(monkeypatch) -> None:
     goals = {}
     for hour in (0, 6, 10, 14):
         at(monkeypatch, hour)
-        a, _obs, _f, _c = rig(monkeypatch, lights=FakeLights(BEAM))
+        a, _link, _f, _c = rig(monkeypatch, lights=FakeLights(BEAM))
         a.pilot.refresh()
         goals[hour] = a.pilot.light_goal()[:2]
     assert goals[0][0] > goals[10][0] > goals[14][0] and goals[0][1] < goals[10][1] < goals[14][1]
@@ -97,7 +97,7 @@ def test_the_lights_ease_to_the_goal_in_small_steps_with_reasons(monkeypatch) ->
     at(monkeypatch, 0)
     fake = FakeLights(BEAM)
     lit(fake, 150, 5600)
-    a, _obs, _f, clock = rig(monkeypatch, lights=fake)
+    a, _link, _f, clock = rig(monkeypatch, lights=fake)
     first = a.pilot.light_goal
     a.pilot.refresh()
     fraction, kelvin = first()[:2]
@@ -125,7 +125,7 @@ def test_a_light_the_person_turned_off_stays_off_and_is_never_written(monkeypatc
     settings.set_persona("executive")
     fake = FakeLights(BEAM)
     lit(fake, 150, 5600, on=False)
-    a, _obs, _f, _c = rig(monkeypatch, lights=fake)
+    a, _link, _f, _c = rig(monkeypatch, lights=fake)
     a.light_tick()
     assert fake.writes == []
 
@@ -135,7 +135,7 @@ def test_a_light_moved_by_hand_is_left_alone_for_a_while(monkeypatch) -> None:
     at(monkeypatch, 0)
     fake = FakeLights(BEAM)
     lit(fake, 150, 5600)
-    a, _obs, _f, clock = rig(monkeypatch, lights=fake)
+    a, _link, _f, clock = rig(monkeypatch, lights=fake)
     a.light_tick()
     assert fake.writes
     lit(fake, 390, 3000)  # the person grabbed the light
@@ -153,7 +153,7 @@ def test_what_the_person_kept_by_hand_replaces_the_baseline_for_that_slot(monkey
     at(monkeypatch, 0)
     fake = FakeLights(BEAM)
     lit(fake, 150, 5600)
-    a, _obs, _f, clock = rig(monkeypatch, lights=fake)
+    a, _link, _f, clock = rig(monkeypatch, lights=fake)
     a.light_tick()
     lit(fake, 300, 3600)  # moved by hand
     clock.now += 60
@@ -172,7 +172,7 @@ def test_the_director_what_it_set_itself_is_not_learned_as_kept(monkeypatch) -> 
     at(monkeypatch, 0)
     fake = FakeLights(BEAM)
     lit(fake, 150, 5600)
-    a, _obs, _f, _c = rig(monkeypatch, lights=fake)
+    a, _link, _f, _c = rig(monkeypatch, lights=fake)
     a.light_tick()
     a.ai_tick(force=True)
     assert learning.get_light(a.pilot.place, a.pilot.persona["id"], a.pilot.slot) is None
@@ -180,7 +180,7 @@ def test_the_director_what_it_set_itself_is_not_learned_as_kept(monkeypatch) -> 
 
 def test_a_persona_without_a_light_plan_leaves_the_lights_alone(monkeypatch) -> None:
     fake = FakeLights(BEAM)
-    a, _obs, _f, _c = rig(monkeypatch, lights=fake)
+    a, _link, _f, _c = rig(monkeypatch, lights=fake)
     a.pilot.persona = {**a.pilot.persona}
     a.pilot.persona.pop("light", None)
     monkeypatch.setattr(a.pilot, "refresh", lambda now=None: None)
@@ -193,7 +193,7 @@ def test_a_failing_light_is_journalled_and_the_loop_carries_on(monkeypatch) -> N
     at(monkeypatch, 0)
     fake = FakeLights(BEAM)
     lit(fake, 150, 5600)
-    a, _obs, _f, _c = rig(monkeypatch, lights=fake)
+    a, _link, _f, _c = rig(monkeypatch, lights=fake)
     original = fake.write
 
     def broken(label, lumen, kelvin):
@@ -215,47 +215,47 @@ def exposure_stats(monkeypatch, luma: float) -> None:
     )
 
 
-def test_a_dark_picture_is_lifted_with_the_cameras_exposure_compensation_before_obs(monkeypatch) -> None:
+def test_a_dark_picture_is_lifted_with_the_cameras_exposure_compensation_before_the_look(monkeypatch) -> None:
     settings.set_persona("late-night-calm")
     camera = FakeCanon(canon_status())
-    a, obs, _f, _clock = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
+    a, link, _f, _clock = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
     low, _ = a.pilot.frame_band()
     exposure_stats(monkeypatch, low - 30)
     a.video_tick()
-    assert camera.sets == [("exposure_comp", "+0.7")] and obs.writes == []
+    assert camera.sets == [("exposure_comp", "+0.7")] and link.writes == []
     event = next(e for e in journal() if e["event"] == "change" and e["actuator"] == "canon-exposure")
     assert event["source"] == "local" and "exposure compensation" in event["reason"] and event["kind"] == "camera"
-    a.video_tick()  # inside the 30 s minimum interval: the camera is settling, OBS waits too
-    assert len(camera.sets) == 1 and obs.writes == []
+    a.video_tick()  # inside the 30 s minimum interval: the camera is settling, the look waits too
+    assert len(camera.sets) == 1 and link.writes == []
 
 
-def test_obs_takes_over_when_the_camera_is_at_its_limit_or_absent(monkeypatch) -> None:
+def test_the_program_look_takes_over_when_the_camera_is_at_its_limit_or_absent(monkeypatch) -> None:
     settings.set_persona("late-night-calm")
     camera = FakeCanon(canon_status(controls={"exposure_comp": {"value": "+1", "choices": ["0", "+0.7", "+1"]}}))
-    a, obs, _f, _c = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
+    a, link, _f, _c = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
     exposure_stats(monkeypatch, a.pilot.frame_band()[0] - 30)
     a.video_tick()
-    assert camera.sets == [] and obs.filters[auto.COLOR_FILTER][1]["gamma"] > 0
-    b, obs2, _f, _c = rig(monkeypatch, STREAMSTACK_AUTO_PERSONA_LOOK="false")
+    assert camera.sets == [] and link.values["gamma"] > 0
+    b, link2, _f, _c = rig(monkeypatch, STREAMSTACK_AUTO_PERSONA_LOOK="false")
     b.video_tick()
-    assert obs2.filters[auto.COLOR_FILTER][1]["gamma"] > 0
+    assert link2.values["gamma"] > 0
 
 
-def test_obs_takes_over_when_the_camera_change_fails(monkeypatch) -> None:
+def test_the_program_look_takes_over_when_the_camera_change_fails(monkeypatch) -> None:
     settings.set_persona("late-night-calm")
     camera = FakeCanon(canon_status())
     camera.fail = actuators.ActuatorError("camera busy")
-    a, obs, _f, _c = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
+    a, link, _f, _c = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
     exposure_stats(monkeypatch, a.pilot.frame_band()[0] - 30)
     a.video_tick()
-    assert obs.filters[auto.COLOR_FILTER][1]["gamma"] > 0
+    assert link.values["gamma"] > 0
     assert any(e["event"] == "change-failed" for e in journal())
 
 
 def test_a_camera_the_person_changed_is_left_to_them(monkeypatch) -> None:
     settings.set_persona("late-night-calm")
     camera = FakeCanon(canon_status())
-    a, _obs, _f, clock = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
+    a, _link, _f, clock = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
     exposure_stats(monkeypatch, a.pilot.frame_band()[0] - 30)
     a.video_tick()
     camera.current["controls"]["exposure_comp"]["value"] = "-0.7"  # dialled down by hand
@@ -269,30 +269,30 @@ def test_a_camera_the_person_changed_is_left_to_them(monkeypatch) -> None:
 def test_a_cool_picture_raises_the_cameras_kelvin_one_step_per_pass(monkeypatch) -> None:
     settings.set_persona("executive")  # 4800 K wanted: warm index about +0.11
     camera = FakeCanon(canon_status())
-    a, _obs, _f, _clock = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
+    a, _link, _f, _clock = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_PERSONA_LOOK="false")
     a.ai_tick(force=True)  # FRAME reads neutral (warm_index 0.02) against a warm persona: too cool
     assert camera.sets == [("kelvin", 5600)]
     event = next(e for e in journal() if e["event"] == "change" and e["key"] == "kelvin")
     assert "cooler" in event["reason"] and event["actuator"] == "canon-exposure"
 
 
-def test_the_camera_kelvin_replaces_the_obs_warmth_easing(monkeypatch) -> None:
+def test_the_camera_kelvin_replaces_the_look_warmth_easing(monkeypatch) -> None:
     settings.set_persona("executive")
-    with_canon, _obs, _f, _c = rig(monkeypatch, camera=FakeCanon(canon_status()))
+    with_canon, _link, _f, _c = rig(monkeypatch, camera=FakeCanon(canon_status()))
     with_canon.video_tick()
-    assert "warmth" not in {e["key"] for e in journal() if e["event"] == "change" and e["actuator"] == "obs-look"}
+    assert "warmth" not in {e["key"] for e in journal() if e["event"] == "change" and e["actuator"] == "program-look"}
 
 
 def test_the_local_backend_still_corrects_white_balance(monkeypatch) -> None:
     settings.set_persona("executive")
     camera = FakeCanon(canon_status())
-    a, _obs, _f, _c = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_BACKEND="local")
+    a, _link, _f, _c = rig(monkeypatch, camera=camera, STREAMSTACK_AUTO_BACKEND="local")
     a.ai_tick(force=True)
     assert camera.sets and camera.sets[0][0] == "kelvin"
 
 
 def test_no_canon_means_no_camera_actuator_activity(monkeypatch) -> None:
-    a, _obs, _f, _c = rig(monkeypatch)
+    a, _link, _f, _c = rig(monkeypatch)
     a.ai_tick(force=True)
     assert not [e for e in journal() if e.get("actuator") == "canon-exposure"]
 
@@ -312,7 +312,7 @@ def audio(monkeypatch, a: auto.Auto, stats: dict) -> None:
 
 def test_hardware_gain_comes_before_the_software_gain(monkeypatch) -> None:
     fake = FakeInterface()
-    a, _obs, _f, clock = rig(monkeypatch, interface=fake)
+    a, _link, _f, clock = rig(monkeypatch, interface=fake)
     audio(monkeypatch, a, LOUD)
     a.audio_tick()
     assert fake.sets == [("gain.1", 28.0)]
@@ -326,7 +326,7 @@ def test_hardware_gain_comes_before_the_software_gain(monkeypatch) -> None:
 
 def test_the_hardware_gain_stays_inside_the_window_around_where_it_started(monkeypatch) -> None:
     fake = FakeInterface()
-    a, _obs, _f, clock = rig(monkeypatch, interface=fake)
+    a, _link, _f, clock = rig(monkeypatch, interface=fake)
     audio(monkeypatch, a, LOUD)
     for _ in range(10):
         a.audio_tick()
@@ -338,7 +338,7 @@ def test_the_hardware_gain_stays_inside_the_window_around_where_it_started(monke
 
 def test_a_preamp_the_person_turned_is_left_alone_and_the_software_gain_stays_out(monkeypatch) -> None:
     fake = FakeInterface()
-    a, _obs, _f, clock = rig(monkeypatch, interface=fake)
+    a, _link, _f, clock = rig(monkeypatch, interface=fake)
     audio(monkeypatch, a, LOUD)
     a.audio_tick()
     fake.report = devices.InterfaceReport(
@@ -352,7 +352,7 @@ def test_a_preamp_the_person_turned_is_left_alone_and_the_software_gain_stays_ou
 
 def test_without_hardware_gain_the_software_gain_is_used_as_before(monkeypatch) -> None:
     fake = FakeInterface(devices.InterfaceReport(True, "Scarlett 2i2 3rd Gen", (), "analogue gain knobs"))
-    a, _obs, _f, _c = rig(monkeypatch, interface=fake)
+    a, _link, _f, _c = rig(monkeypatch, interface=fake)
     written: list[float] = []
     a.mic = "mic"
     monkeypatch.setattr(auto, "voice_stats", lambda source, seconds=4.0: dict(LOUD))
@@ -366,7 +366,7 @@ def test_without_hardware_gain_the_software_gain_is_used_as_before(monkeypatch) 
 def test_a_failing_preamp_falls_back_to_the_software_gain(monkeypatch) -> None:
     fake = FakeInterface()
     written: list[float] = []
-    a, _obs, _f, _c = rig(monkeypatch, interface=fake)
+    a, _link, _f, _c = rig(monkeypatch, interface=fake)
     a.mic, a.mic_start_db = "mic", 0.0
     monkeypatch.setattr(auto, "voice_stats", lambda source, seconds=4.0: dict(LOUD))
     monkeypatch.setattr(auto, "source_gain_db", lambda source: 0.0)
@@ -385,7 +385,7 @@ def test_a_failing_preamp_falls_back_to_the_software_gain(monkeypatch) -> None:
 
 
 def test_the_report_lists_the_hardware_actuators_with_their_reasons(monkeypatch) -> None:
-    a, _obs, _f, _c = rig(
+    a, _link, _f, _c = rig(
         monkeypatch,
         lights=FakeLights(BEAM),
         camera=FakeCanon(None),
@@ -400,7 +400,7 @@ def test_the_report_lists_the_hardware_actuators_with_their_reasons(monkeypatch)
 
 
 def test_the_detected_face_is_metered_instead_of_the_skin_blob_or_claudes_box(monkeypatch) -> None:
-    a, _obs, _f, _c = rig(monkeypatch)
+    a, _link, _f, _c = rig(monkeypatch)
 
     def with_face(paths):
         frame = dict(
@@ -424,7 +424,7 @@ def test_reset_puts_the_camera_the_lights_and_the_gain_back(monkeypatch, capsys)
     at(monkeypatch, 0)
     fake, camera, interface = FakeLights(BEAM), FakeCanon(canon_status()), FakeInterface()
     lit(fake, 150, 5600)
-    a, _obs, _f, _clock = rig(monkeypatch, lights=fake, camera=camera, interface=interface)
+    a, _link, _f, _clock = rig(monkeypatch, lights=fake, camera=camera, interface=interface)
     a.light_tick()
     a.canon_exposure(
         {"gamma": 0.0, "brightness": 0.0}, {"gamma": 0.04, "brightness": 0.0}, {"YAVG": 50.0}, (90, 130), "frame"
@@ -442,7 +442,7 @@ def test_reset_puts_the_camera_the_lights_and_the_gain_back(monkeypatch, capsys)
 
 
 def test_reset_reports_a_device_that_is_not_there(monkeypatch, capsys) -> None:
-    _a, _obs, _f, _c = rig(monkeypatch, camera=FakeCanon(None))
+    _a, _link, _f, _c = rig(monkeypatch, camera=FakeCanon(None))
     baseline = {"canon": {"Canon EOS R50": {"exposure_comp": 0.0}}}
     assert auto.restore_hardware(baseline, {}) == 1
     assert "not restored" in capsys.readouterr().out

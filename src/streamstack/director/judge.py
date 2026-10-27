@@ -17,6 +17,9 @@ NUMERIC_FRAME_KEYS = (
 WARM_TOLERANCE = 0.09
 NOISE_WARN = 3.0
 SOFT_WARN = 15.0
+# A frame whose 99th-percentile luma is below this is a dark room, not a picture: colour, saturation, contrast and
+# focus cannot be judged from it (measured on the Canon feed at night, docs/auto-mode.md, "Picture calibration").
+DARK_P99 = 40.0
 
 
 def aggregate_frames(frames: list[dict]) -> dict:
@@ -116,7 +119,18 @@ def picture_findings(picture: dict, burst: dict, persona: dict, sun: dict | None
                 f"centre {picture.get('centre_luma', 0):.0f} against edges {picture.get('edge_luma', 0):.0f}",
             )
         )
-    warm = picture.get("warm_index")
+    dark = picture.get("luma_p99", 255.0) < DARK_P99
+    if dark:
+        out.append(
+            finding(
+                "too-dark-to-judge",
+                "picture",
+                "note",
+                "The frame is almost black, so colour, contrast and focus are not judged until there is light.",
+                f"brightest 1% of pixels at luma {picture.get('luma_p99', 0):.0f}, below {DARK_P99:.0f}",
+            )
+        )
+    warm = None if dark else picture.get("warm_index")
     if warm is not None:
         wanted = expected_warm_index(target["warmth_k"])
         gap = warm - wanted
@@ -141,7 +155,7 @@ def picture_findings(picture: dict, burst: dict, persona: dict, sun: dict | None
                     f"warm index {warm:+.2f}",
                 )
             )
-    tint = picture.get("tint_index")
+    tint = None if dark else picture.get("tint_index")
     if tint is not None and abs(tint) > 0.06:
         out.append(
             finding(
@@ -152,7 +166,7 @@ def picture_findings(picture: dict, burst: dict, persona: dict, sun: dict | None
                 f"tint index {tint:+.2f}",
             )
         )
-    saturation = picture.get("saturation")
+    saturation = None if dark else picture.get("saturation")
     if saturation is not None:
         low, high = target["saturation"]
         if not low <= saturation <= high:
@@ -165,7 +179,7 @@ def picture_findings(picture: dict, burst: dict, persona: dict, sun: dict | None
                     f"saturation {saturation:.2f}, target {low:.2f}-{high:.2f}",
                 )
             )
-    spread = picture.get("contrast_spread")
+    spread = None if dark else picture.get("contrast_spread")
     if spread is not None:
         low, high = target["contrast_spread"]
         if not low <= spread <= high:
@@ -178,7 +192,7 @@ def picture_findings(picture: dict, burst: dict, persona: dict, sun: dict | None
                     f"p5-p95 spread {spread:.0f}, target {low:.0f}-{high:.0f}",
                 )
             )
-    if picture.get("sharpness", SOFT_WARN + 1) < SOFT_WARN or burst.get("blurred_frames"):
+    if not dark and (picture.get("sharpness", SOFT_WARN + 1) < SOFT_WARN or burst.get("blurred_frames")):
         out.append(
             finding(
                 "focus",
@@ -230,7 +244,7 @@ def picture_findings(picture: dict, burst: dict, persona: dict, sun: dict | None
                     f"{subject.get('off_centre', 0.0) * 100:.0f}% from centre (estimated)",
                 )
             )
-    if sun and sun.get("slot") == "night" and picture.get("cast") and "cool" in picture["cast"]:
+    if not dark and sun and sun.get("slot") == "night" and picture.get("cast") and "cool" in picture["cast"]:
         out.append(
             finding(
                 "screen-glow",

@@ -8,7 +8,10 @@ import sys
 import threading
 import time
 import traceback
+from collections.abc import Callable
 from typing import TYPE_CHECKING
+
+from streamstack import crash
 
 if TYPE_CHECKING:
     from streamstack.console.rig import Rig
@@ -84,6 +87,8 @@ class Hub:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_client_seen = time.monotonic()
+        # Called with every meter frame, even with no window open (telemetry counts clips that way).
+        self.meter_listeners: list[Callable[[dict], None]] = []
         rig.on_toast = self.toast
 
     # -- lifecycle ------------------------------------------------------------
@@ -184,16 +189,25 @@ class Hub:
             self._wake.wait(max(0.001, min(last_meters + self.meter_period, next_state) - time.monotonic()))
 
     def _push_meters(self) -> None:
-        if not self.client_count():
+        listeners = list(self.meter_listeners)
+        watching = self.client_count() > 0
+        if not (watching or listeners):
             return
         frame = self.rig.meters()
-        self._broadcast(sse("meters", json.dumps(frame, separators=(",", ":"))), droppable=True)
+        for listener in listeners:
+            try:
+                listener(frame)
+            except Exception:  # a listener bug must never stop the meters
+                traceback.print_exc()
+        if watching:
+            self._broadcast(sse("meters", json.dumps(frame, separators=(",", ":"))), droppable=True)
 
     def _guarded(self, step) -> None:
         """A controller bug must never kill the loop; log it and carry on."""
         try:
             step()
-        except Exception:
+        except Exception as exc:
             print("streamstack console: hub step failed", file=sys.stderr)
             traceback.print_exc()
+            crash.record_exception(exc, "console hub step", "console")
             time.sleep(0.5)

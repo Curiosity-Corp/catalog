@@ -160,7 +160,8 @@ def test_meter_frames_carry_true_peak_loudness_and_latch(rig: Rig) -> None:
     assert frames, "no meter frames arrived"
     for frame, _ in frames:
         for source in ("mic", "voice"):
-            assert set(frame[source]) == {"peak_db", "sample_db", "rms_db", "clip", "latched", "lufs_m", "lufs_s"}
+            keys = {"peak_db", "sample_db", "rms_db", "clip", "latched", "lufs_m", "lufs_s"}
+            assert set(frame[source]) == keys | ({"gr_db"} if source == "voice" else set())
             assert frame[source]["sample_db"] <= frame[source]["peak_db"]
     rig.act("audio.demo_clip")
     assert stream_meters(rig, 0.5)[-1][0]["mic"]["latched"] is True

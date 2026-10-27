@@ -62,8 +62,10 @@ def output_size(src: JpegInfo, mode: str, canvas_w: int, canvas_h: int) -> tuple
 
 
 def render_nodes(sys_drm: Path = Path("/sys/class/drm"), dev_dri: Path = Path("/dev/dri")) -> list[tuple[str, str]]:
-    """[(device node, PCI vendor id)] for the render nodes, Intel first (the Arc), then the rest by name."""
+    """[(device node, PCI vendor id)] for the render nodes: Intel first, a discrete card before the integrated GPU
+    (which sits at PCI 00:02.x), then by name. The fallback when no hardware profile names the decode GPU."""
     found: list[tuple[str, str]] = []
+    integrated: dict[str, bool] = {}
     try:
         entries = sorted(sys_drm.glob("renderD*"))
     except OSError:
@@ -74,7 +76,11 @@ def render_nodes(sys_drm: Path = Path("/sys/class/drm"), dev_dri: Path = Path("/
         except OSError:
             vendor = ""
         found.append((str(dev_dri / entry.name), vendor))
-    found.sort(key=lambda item: (item[1] != INTEL_VENDOR, item[0]))
+        try:
+            integrated[found[-1][0]] = (entry / "device").resolve().name.startswith("0000:00:02.")
+        except OSError:
+            integrated[found[-1][0]] = False
+    found.sort(key=lambda item: (item[1] != INTEL_VENDOR, integrated.get(item[0], False), item[0]))
     return found
 
 

@@ -1,0 +1,18 @@
+# Lights and control surfaces.
+schema = 1
+
+[[device]]
+id = "litra-beam"
+class = "light"
+label = "Logitech Litra Beam"
+summary = "USB HID light; found by USB id, there are no network lights"
+[device.match]
+usb = ["046d:c901"]
+
+[[device]]
+id = "stream-deck-v2"
+class = "deck"
+label = "Elgato Stream Deck (original V2)"
+summary = "Control surface for the Console; the deck service applies only where one is present"
+[device.match]
+usb = ["0fd9:006d"]

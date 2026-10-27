@@ -8,9 +8,9 @@ from urllib.parse import urljoin
 import pytest
 from playwright.sync_api import Page, expect
 
-from support import LOADED, App, Rig, poll
+from support import LOADED, App, Rig, poll, poll_settled
 
-TONES = (("Bass", "bass_db"), ("Presence", "presence_db"), ("Treble", "treble_db"), ("Pitch", "pitch_semitones"))
+TONES = (("Bass", "bass_db"), ("Presence", "presence_db"), ("Treble", "treble_db"))
 
 
 @pytest.fixture
@@ -21,7 +21,8 @@ def au(app: App) -> App:
 def test_gain_fader_drag_keys_and_reset(au: App, rig: Rig) -> None:
     gain = au.slider("Gain")
     au.drag_fader(gain, 0.8)
-    value = poll(rig, lambda s: s["audio"]["mic"]["gain_db"] > 1 and s["audio"]["mic"]["gain_db"])
+    # the drag posts a stream of values: step down from where the server ends up, not from the first one past 1 dB
+    value = poll_settled(rig, lambda s: s["audio"]["mic"]["gain_db"] > 1 and s["audio"]["mic"]["gain_db"])
     expect(gain).to_have_attribute("aria-valuenow", re.compile(r"^\d"))
     gain.focus()
     gain.press("ArrowDown")
@@ -54,7 +55,7 @@ def test_tone_knob_keys_reach_the_voice_chain(au: App, rig: Rig, label: str, key
     knob.press("ArrowUp")
     assert poll(rig, lambda s: s["audio"]["tone"][key] == pytest.approx(before + 0.5))
     assert poll(rig, lambda s: s["audio"]["tone"]["custom"])
-    expect(au.page.get_by_text("Custom", exact=True)).to_be_visible()
+    expect(au.page.get_by_role("region", name="Input").get_by_text("Custom", exact=True)).to_be_visible()
 
 
 def test_tone_reset_to_preset(au: App, page: Page, rig: Rig) -> None:
@@ -62,10 +63,10 @@ def test_tone_reset_to_preset(au: App, page: Page, rig: Rig) -> None:
     # set up through the API: a knob key streams its value twice, and a reset racing the repeat is not what this tests
     rig.act("audio.tone", bass_db=base + 5)
     expect(au.slider("Bass")).to_have_attribute("aria-valuenow", str(base + 5).removesuffix(".0"), timeout=LOADED)
-    expect(page.get_by_text("Custom", exact=True)).to_be_visible()
+    expect(page.get_by_role("region", name="Input").get_by_text("Custom", exact=True)).to_be_visible()
     page.get_by_role("button", name="Reset to preset").click()
     assert poll(rig, lambda s: not s["audio"]["tone"]["custom"] and s["audio"]["tone"]["bass_db"] == base)
-    expect(page.get_by_text("Custom", exact=True)).to_be_hidden()
+    expect(page.get_by_role("region", name="Input").get_by_text("Custom", exact=True)).to_be_hidden()
     expect(au.slider("Bass")).to_have_attribute("aria-valuenow", str(base).removesuffix(".0"), timeout=LOADED)
 
 
@@ -107,20 +108,23 @@ def engine_pad(au: App, label: str):
 
 def test_noise_removal_pad_shows_both_engines_with_their_delay(au: App, rig: Rig) -> None:
     rnnoise, deep = engine_pad(au, "RNNoise"), engine_pad(au, "DeepFilterNet")
-    expect(rnnoise).to_contain_text("about 10 ms")
-    expect(deep).to_contain_text("about 40 ms")
-    expect(rnnoise).to_have_attribute("aria-pressed", "true")  # RNNoise is the default: lowest latency
-    expect(deep).to_have_attribute("aria-pressed", "false")
-    assert rig.state()["audio"]["denoise"]["engine"] == "rnnoise"
+    engines = {e["id"]: e["delay_ms"] for e in rig.state()["audio"]["denoise"]["engines"]}
+    expect(rnnoise).to_contain_text(f"about {engines['rnnoise']} ms")
+    expect(deep).to_contain_text(f"about {engines['deepfilternet']} ms")
+    expect(deep).to_have_attribute("aria-pressed", "true")  # DeepFilterNet is the default engine
+    expect(rnnoise).to_have_attribute("aria-pressed", "false")
+    assert rig.state()["audio"]["denoise"]["engine"] == "deepfilternet"
     expect(au.slider("Attenuation limit")).to_be_visible()
 
 
 def test_noise_removal_ab_switches_engine_and_attenuation_limit(au: App, page: Page, rig: Rig) -> None:
+    engine_pad(au, "RNNoise").click()
+    assert poll(rig, lambda s: s["audio"]["denoise"]["engine"] == "rnnoise")
+    expect(engine_pad(au, "RNNoise")).to_have_attribute("aria-pressed", "true")
+    expect(engine_pad(au, "DeepFilterNet")).to_have_attribute("aria-pressed", "false")
+    expect(page.get_by_role("region", name="Input").get_by_text("Custom", exact=True)).to_be_visible()
     engine_pad(au, "DeepFilterNet").click()
     assert poll(rig, lambda s: s["audio"]["denoise"]["engine"] == "deepfilternet")
-    expect(engine_pad(au, "DeepFilterNet")).to_have_attribute("aria-pressed", "true")
-    expect(engine_pad(au, "RNNoise")).to_have_attribute("aria-pressed", "false")
-    expect(page.get_by_text("Custom", exact=True)).to_be_visible()
     # the chosen preset stays; only its noise removal changed
     assert rig.state()["audio"]["chain"]["preset"] == "StreamStack Voice"
     knob = au.slider("Attenuation limit")
@@ -128,22 +132,22 @@ def test_noise_removal_ab_switches_engine_and_attenuation_limit(au: App, page: P
     knob.focus()
     knob.press("ArrowDown")
     assert poll(rig, lambda s: s["audio"]["denoise"]["atten_limit_db"] < 100)
-    engine_pad(au, "RNNoise").click()
-    assert poll(rig, lambda s: s["audio"]["denoise"]["engine"] == "rnnoise" and not s["audio"]["denoise"]["custom"])
-    expect(page.get_by_text("Custom", exact=True)).to_be_hidden()
+    rig.act("audio.chain_reset")
+    assert poll(rig, lambda s: s["audio"]["denoise"]["atten_limit_db"] == 100 and not s["audio"]["denoise"]["custom"])
+    expect(page.get_by_role("region", name="Input").get_by_text("Custom", exact=True)).to_be_hidden()
 
 
 def test_server_side_engine_change_reaches_the_pad(au: App, rig: Rig) -> None:
-    rig.act("audio.denoise", engine="deepfilternet")
-    expect(engine_pad(au, "DeepFilterNet")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
+    rig.act("audio.denoise", engine="rnnoise")
+    expect(engine_pad(au, "RNNoise")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
 
 
 def test_deepfilternet_preset_card_selects_the_engine(au: App, rig: Rig) -> None:
+    rig.act("audio.denoise", engine="rnnoise")
+    expect(engine_pad(au, "RNNoise")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
     preset_card(au, "Voice DeepFilterNet").click()
     assert poll(rig, lambda s: s["audio"]["chain"]["preset"] == "StreamStack Voice DeepFilterNet")
     expect(engine_pad(au, "DeepFilterNet")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
-    preset_card(au, "Voice").click()
-    expect(engine_pad(au, "RNNoise")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
 
 
 def test_missing_deepfilternet_library_disables_it_and_says_why(au: App, rig: Rig) -> None:
@@ -159,9 +163,9 @@ def test_missing_deepfilternet_library_disables_it_and_says_why(au: App, rig: Ri
 def test_noise_removal_commands_are_in_the_palette(au: App, rig: Rig) -> None:
     au.press("Control+k")
     expect(au.palette).to_be_visible()
-    au.palette.get_by_role("combobox").fill("deepfilternet")
-    au.palette.get_by_role("option", name=re.compile("Noise removal: DeepFilterNet")).click()
-    assert poll(rig, lambda s: s["audio"]["denoise"]["engine"] == "deepfilternet")
+    au.palette.get_by_role("combobox").fill("rnnoise")
+    au.palette.get_by_role("option", name=re.compile("Noise removal: RNNoise")).click()
+    assert poll(rig, lambda s: s["audio"]["denoise"]["engine"] == "rnnoise")
 
 
 def preset_card(au: App, label: str):
@@ -180,13 +184,15 @@ def wait_clip_loaded(page: Page, label: str) -> str:
 
 
 def test_mic_check_runs_to_done_and_both_clips_load(au: App, page: Page, rig: Rig) -> None:
-    rig.act("audio.mic_check", seconds=2)  # two takes of 2 s; the UI follows
+    # two takes of 5 s; the UI follows. Each step must outlast the event stream's lag on a busy CI runner,
+    # or the page can skip straight past "Step 2 of 2" before the check below looks for it.
+    rig.act("audio.mic_check", seconds=5)
     record = page.locator("button.rec")
     expect(record).to_have_attribute("aria-pressed", "true")
     expect(page.get_by_text("Step 1 of 2")).to_be_visible()
     assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "recording-processed", timeout=15)
     expect(page.get_by_text("Step 2 of 2")).to_be_visible()
-    assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "done", timeout=20)
+    assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "done", timeout=30)
     expect(page.get_by_text("Done. Switch between A and B")).to_be_visible(timeout=LOADED)
     expect(record).to_contain_text("Again")
     raw_src = wait_clip_loaded(page, "Raw microphone recording")

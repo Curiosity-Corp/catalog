@@ -7,12 +7,9 @@ what it saw to `~/.local/state/streamstack/director-status.json`, which the Cons
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 from pathlib import Path
 
-from streamstack import config
+from streamstack import config, store
 from streamstack.director.daylight import LocationError, check_coordinates
 
 DEFAULT_PERSONA = "daylight-natural"
@@ -38,30 +35,22 @@ def sheet_path() -> Path:
     return config.cache_dir() / "auto" / "contact-sheet.jpg"
 
 
-def write_json(path: Path, payload: dict, mode: int = 0o600) -> None:
-    """Atomic JSON write: a reader never sees half a file."""
+def write_json(path: Path, payload: dict, mode: int = 0o600, *, ephemeral: bool = False) -> None:
+    """Atomic, fsynced JSON write that keeps the last good copy (`store.write_json`).
+
+    `ephemeral` is for status files rewritten every tick: still atomic, but no fsync and no backup.
+    """
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-        try:
-            with os.fdopen(fd, "w") as handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
-            os.chmod(tmp, mode)
-            os.replace(tmp, path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
-    except OSError as exc:
-        raise SettingsError(f"cannot write {path}: {exc.strerror}") from exc
+        store.write_json(path, payload, mode=mode, backup=not ephemeral, durable=not ephemeral)
+    except (OSError, TypeError, ValueError) as exc:
+        reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else str(exc)
+        raise SettingsError(f"cannot write {path}: {reason}") from exc
 
 
 def read_json(path: Path) -> dict:
-    """A JSON object from `path`; {} when absent or damaged (a damaged file must not stop the director)."""
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    """A JSON object from `path`; {} when absent or damaged (a damaged file is set aside and must not stop the
+    director; see `store.read_json`)."""
+    return store.read_json(path, {}, validate=store.is_object)
 
 
 def load() -> dict:

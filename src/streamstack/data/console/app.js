@@ -122,11 +122,11 @@ function bindShell() {
   store.subscribe((s) => s.audio.mic.muted, (m) => { document.body.toggleAttribute('data-muted', m); });
   store.subscribe((s) => s.video.privacy, (p) => { document.body.toggleAttribute('data-privacy', p); });
   store.subscribe((s) => s.demo, (d) => { $('#demo-chip').hidden = !d; });
-  store.subscribe((s) => s.video.obs, (o) => { document.body.dataset.obs = o; });
 
   // top bar: what matters on every page
   const center = $('#top-center');
-  store.subscribe((s) => [s.audio.mic.muted, s.video.privacy, s.video.virtualcam || s.video.streaming.active, s.video.recording.active], ([muted, privacy, air, rec]) => {
+  const onAir = (s) => ['starting', 'live', 'degraded'].includes(s.stream.status);
+  store.subscribe((s) => [s.audio.mic.muted, s.video.privacy, s.video.virtualcam || s.video.streaming.active || onAir(s), s.video.recording.active || s.stream.recording.active], ([muted, privacy, air, rec]) => {
     const chips = [];
     if (muted) chips.push({ id: 'muted', state: 'live', label: 'MUTED', icon: 'mic-off' });
     if (privacy) chips.push({ id: 'privacy', state: 'warn', label: 'PRIVACY', icon: 'eye-off' });
@@ -214,14 +214,14 @@ function bindKeys() {
       add('Lighting', lit ? 'Turn the lights off' : 'Turn the lights on', ops.toggleLights, { icon: 'lights', hint: 'L', keywords: 'lights lighting litra lamp on off power' });
       s.lighting.presets.forEach((p) => add('Lighting', `Lights: ${p.name}`, () => ops.selectLightPreset(p.name), { icon: 'lights', keywords: `lighting light preset litra ${p.blurb || ''}` }));
     }
-    add('Studio', 'Start studio', ops.startStudio, { icon: 'play', keywords: 'start studio obs' });
-    add('Studio', 'Stop studio', () => ops.confirmThen('Stop the studio? Calls fall back to the raw camera.', 'Stop studio', ops.stopStudio), { icon: 'power', danger: true, keywords: 'stop studio obs' });
+    add('Studio', 'Start studio', ops.startStudio, { icon: 'play', keywords: 'start studio engine' });
+    add('Studio', 'Stop studio', () => ops.confirmThen('Stop the studio? Calls fall back to the raw camera.', 'Stop studio', ops.stopStudio), { icon: 'power', danger: true, keywords: 'stop studio engine' });
     add('Auto', s.auto.running ? 'Turn auto director off' : 'Turn auto director on', ops.toggleAuto, { icon: 'auto', keywords: 'auto director claude' });
     add('Auto', 'Ask the director now', () => act('auto.once'), { icon: 'auto', keywords: 'auto claude once now' });
     add('Auto', 'Undo every auto change', () => act('auto.reset'), { icon: 'undo' });
     add('Audio', 'Record a mic check', () => act('audio.mic_check', {}), { icon: 'mic', keywords: 'mic check test recording' });
     add('Studio', 'Re-run health checks', () => act('health.refresh'), { icon: 'pulse', keywords: 'health doctor refresh' });
-    for (const [name, label] of [['obs', 'OBS Studio'], ['easyeffects', 'Easy Effects'], ['qpwgraph', 'qpwgraph'], ['pavucontrol', 'pavucontrol'], ['qv4l2', 'qv4l2']]) {
+    for (const [name, label] of [['qpwgraph', 'qpwgraph'], ['pavucontrol', 'pavucontrol'], ['qv4l2', 'qv4l2']]) {
       add('Open', `Open ${label}`, () => act('open.app', { name }), { icon: 'external', keywords: 'open launch app tool' });
     }
     add('View', getTheme() === 'dark' ? 'Light theme' : 'Dark theme', toggleTheme, { icon: getTheme() === 'dark' ? 'sun' : 'moon', keywords: 'theme dark light' });

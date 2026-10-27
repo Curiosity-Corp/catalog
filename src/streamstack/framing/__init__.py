@@ -1,9 +1,9 @@
-"""Auto-framing: a face tracker beside OBS that moves a smooth crop over obs-websocket.
+"""Auto-framing: a face tracker that moves a smooth crop of the native engine's picture.
 
     engine    detections -> smooth window (pure maths, no I/O)
     model     the YuNet face model: pinned URL, checksum, fetch
     detector  OpenVINO (GPU, CPU) and OpenCV backends behind one interface
-    crop      the window as an OBS scene item crop, with crash-safe restore
+    crop      the window as a crop in source pixels
     health    the doctor / System check
 
 The Console wiring (threads, actions, state) lives in `streamstack.console.framing`.

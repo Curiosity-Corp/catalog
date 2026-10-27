@@ -41,12 +41,9 @@ MODE_NOTES = {
     "clock": "A plain 24 hour table: one level per hour of the clock",
 }
 SLOT_ORDER = daylight.SLOTS  # night, dawn, morning, afternoon, evening
-FOLLOW_SOURCES = ("apps", "virtualcam", "stream", "record")
+FOLLOW_SOURCES = ("apps",)
 SOURCE_LABELS = {
     "apps": "An app uses the camera (Teams, Meet, Zoom, any call or recording app)",
-    "virtualcam": "OBS virtual camera is running",
-    "stream": "OBS is streaming",
-    "record": "OBS is recording",
 }
 
 BASE_BRIGHTNESS = 50.0  # percent: the neutral key light the slot priors are applied to
@@ -96,9 +93,6 @@ def defaults() -> dict[str, Any]:
             "start_delay_seconds": 3,
             "turn_off": True,
             "apps": True,
-            "virtualcam": True,
-            "stream": True,
-            "record": True,
             "ignore": [],
             "devices": [],
         },
@@ -166,9 +160,6 @@ _FOLLOW_RULES = {
     "start_delay_seconds": lambda v: round(_clamp("start_delay_seconds", v)),
     "turn_off": lambda v: _flag(v, "turn_off"),
     "apps": lambda v: _flag(v, "apps"),
-    "virtualcam": lambda v: _flag(v, "virtualcam"),
-    "stream": lambda v: _flag(v, "stream"),
-    "record": lambda v: _flag(v, "record"),
     "ignore": lambda v: _name_list(v, "ignore"),
     "devices": lambda v: _device_list(v),
 }
@@ -315,9 +306,11 @@ def normalise(raw: object) -> dict[str, Any]:
 class Store:
     """The settings file with a stat-based cache, shared by the service and the Console (separate processes)."""
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(self, path: Path | None = None, *, ephemeral: bool = False) -> None:
+        """`ephemeral`: still atomic, but no fsync and no backup (a demo's settings need no disk flush)."""
         self.path = path
-        self._cache: tuple[tuple[int, int], dict[str, Any]] | None = None
+        self.ephemeral = ephemeral
+        self._cache: tuple[tuple[int, int, int], dict[str, Any]] | None = None
 
     def file(self) -> Path:
         return self.path or settings.config_dir() / FILE
@@ -329,7 +322,9 @@ class Store:
         except OSError:
             self._cache = None
             return defaults()
-        stamp = (stat.st_mtime_ns, stat.st_size)
+        # The inode is part of the stamp: every save renames a new file into place, and the filesystem clock ticks
+        # in milliseconds, so two saves of the same size inside one tick share mtime and size.
+        stamp = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
         if self._cache and self._cache[0] == stamp:
             return copy.deepcopy(self._cache[1])
         data = normalise(settings.read_json(path))
@@ -338,7 +333,7 @@ class Store:
 
     def save(self, data: dict[str, Any]) -> None:
         """Atomic, mode 600. Raises settings.SettingsError when the file cannot be written."""
-        settings.write_json(self.file(), {**data, "version": VERSION})
+        settings.write_json(self.file(), {**data, "version": VERSION}, ephemeral=self.ephemeral)
         self._cache = None
 
     def update(self, section: str, patch: dict[str, Any]) -> dict[str, Any]:

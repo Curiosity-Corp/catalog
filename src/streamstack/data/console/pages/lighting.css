@@ -58,6 +58,7 @@
   .la-summary { margin: 0; font-size: var(--fs-md, 1rem); color: var(--text); overflow-wrap: anywhere; }
   .la-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
   .la-actions[hidden], .la-actions:empty { display: none; }
+  .la-actions [data-idle] { visibility: hidden; }
   .la-link { font-size: var(--fs-xs); color: var(--accent-strong); }
 
   .la-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: var(--s-4); align-items: start; }

@@ -54,6 +54,21 @@ export const pages = [
     load: () => import('./interface.js'),
   },
   {
+    id: 'presets', title: 'Presets', icon: 'scenes', key: '8',
+    blurb: 'One-click profiles, platform and bandwidth presets, and the looks library.',
+    load: () => import('./presets.js'),
+  },
+  {
+    id: 'stream', title: 'Stream', icon: 'broadcast', key: '0',
+    blurb: 'Go live and record: destinations, encoder, live bitrate and quality, and what the stream is doing.',
+    load: () => import('./stream.js'),
+  },
+  {
+    id: 'deck', title: 'Deck', icon: 'deck', key: '9',
+    blurb: 'An Elgato Stream Deck as a control surface: drag any option or preset onto a key.',
+    load: () => import('./deck.js'),
+  },
+  {
     id: 'mini', title: 'Mini', icon: 'mini', nav: false, chrome: false,
     blurb: 'A compact strip for a small window next to the call.',
     load: () => import('./mini.js'),

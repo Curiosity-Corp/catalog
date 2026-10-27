@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from streamstack import camlink, cli, config, micwatch, system
+from streamstack import camlink, cli, config, micwatch, system, virtualdevices
 from streamstack.console import studio
 from streamstack.console.errors import ActionError
 from streamstack.console.studio import DemoStudio, StudioController
 
-STATE_KEYS = {"studio", "auto", "health", "system"}
+STATE_KEYS = {"studio", "auto", "health", "system", "virtual"}
 
 
 def wait_for(condition: Callable[[], bool], timeout: float = 5.0) -> None:
@@ -55,9 +55,9 @@ def test_journal_is_newest_first_typed_and_tolerant() -> None:
             {"time": "2026-10-22T10:00:00", "event": "mic-gain", "before_db": 0.0, "after_db": 1.5},
             "{ half a line",
             {"time": "2026-10-22T10:01:00", "event": "ai", "confidence": 0.8, "proposal": {"notes": "Lifted gamma."}},
-            {"time": "2026-10-22T10:02:00", "event": "video-error", "error": "OBS went away"},
+            {"time": "2026-10-22T10:02:00", "event": "video-error", "error": "the Console went away"},
             {"time": "2026-10-22T10:03:00", "event": "exposure"},  # missing fields: describe() must not crash us
-            {"time": "2026-10-22T10:04:00", "event": "ai-skipped", "reason": "OBS is not running"},
+            {"time": "2026-10-22T10:04:00", "event": "ai-skipped", "reason": "the Console is not running"},
             [1, 2, 3],
         ]
     )
@@ -65,7 +65,7 @@ def test_journal_is_newest_first_typed_and_tolerant() -> None:
     assert [e["event"] for e in entries] == ["ai-skipped", "exposure", "video-error", "ai", "mic-gain"]
     assert [e["kind"] for e in entries] == ["ai", "video", "error", "ai", "audio"]
     assert entries[4]["text"] == "+0.0 dB -> +1.5 dB"
-    assert entries[2]["text"] == "OBS went away"
+    assert entries[2]["text"] == "the Console went away"
     note, when = studio.last_note(entries)
     assert (note, when) == ("Lifted gamma.", "2026-10-22T10:01:00")
     assert set(studio.public_entries(entries)[0]) == {"time", "event", "text", "kind"}
@@ -99,8 +99,6 @@ def healthy_rig(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "current_format", lambda device: "1920x1080 YUYV @ 30 fps")
     monkeypatch.setattr(cli, "usb_products", lambda vendor: ["Canon EOS 50D"])
     monkeypatch.setattr(cli, "user_unit_active", lambda unit: True)
-    monkeypatch.setattr(cli, "loopback_devices", lambda: list(names))
-    monkeypatch.setattr(cli, "opened_by", lambda process, devices: [])
     monkeypatch.setattr(cli, "find_camlink", lambda: "/dev/video4")
     monkeypatch.setattr(
         cli.camlink,
@@ -112,27 +110,28 @@ def healthy_rig(monkeypatch: pytest.MonkeyPatch) -> None:
             audio="Cam Link 4K Digital Stereo",
         ),
     )
-    monkeypatch.setattr(cli, "audio_sources", lambda: {"alsa_input.wave": "Wave:3", system.EE_SOURCE: "EE"})
-    monkeypatch.setattr(system, "default_device", lambda kind: "")
-    monkeypatch.setattr(cli, "easyeffects_running", lambda: True)
-    monkeypatch.setattr(cli, "have", lambda tool: True)
     monkeypatch.setattr(
-        cli.encoder,
-        "health_check",
-        lambda cfg: cli.check("video", "encoder", "ok", "OBS encodes with AV1 on the GPU (VA-API)"),
+        cli, "audio_sources", lambda: {"alsa_input.wave": "Wave:3", system.VOICE_SOURCE: "StreamStack Mic"}
     )
+    monkeypatch.setattr(system, "default_device", lambda kind: "")
+    monkeypatch.setattr(virtualdevices, "can_open", lambda device: True)
+    monkeypatch.setattr(
+        virtualdevices,
+        "camera_report",
+        lambda device, label, **kw: virtualdevices.CameraReport(
+            device, label, name=label, exclusive_caps=True, access=True
+        ),
+    )
+    monkeypatch.setattr(virtualdevices, "mic_report", lambda *a, **kw: virtualdevices.MicReport())
+    monkeypatch.setattr(virtualdevices, "seen_by_apps", lambda cfg, **kw: [])
+    monkeypatch.setattr(cli.voice_graph, "available_engines", lambda: ["deepfilternet"])
+    monkeypatch.setattr(cli, "have", lambda tool: True)
     monkeypatch.setattr(
         cli.framing_health,
         "health_check",
         lambda cfg: cli.check("video", "framing", "ok", "Auto-framing is not installed (optional)"),
     )
-    monkeypatch.setattr(
-        cli.blur,
-        "health_check",
-        lambda cfg: cli.check(
-            "video", "background-blur", "ok", "Background blur is available: obs-backgroundremoval 1.4.1"
-        ),
-    )
+    monkeypatch.setattr(cli, "hardware_report", lambda found: {"rig": None, "checks": []})  # tests/test_hw_doctor.py
     monkeypatch.setattr(cli, "_watch_microphone", lambda mic: micwatch.StallProbe(False, "healthy", "scheduled"))
 
 
@@ -152,7 +151,6 @@ def test_run_checks_returns_structured_results(healthy_rig: None) -> None:
 def test_run_checks_flags_what_is_missing(healthy_rig: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "video_name", lambda device: "")
     monkeypatch.setattr(cli, "audio_sources", lambda: {})
-    monkeypatch.setattr(cli, "easyeffects_running", lambda: False)
     monkeypatch.setattr(cli.camlink, "probe", lambda cfg=None, sources=None: camlink.Probe())
     checks = {c["id"]: c for c in cli.run_checks()}
     assert checks["camera-node"]["state"] == "fail" and "missing" in checks["camera-node"]["title"]
@@ -173,15 +171,14 @@ def test_doctor_prints_the_checks_as_before(
     assert "\nAudio\n" in out and "\nApps\n" in out
     assert "[  ok] StreamStack Camera (/dev/video43) is live: 1920x1080 YUYV @ 30 fps" in out
     assert "[  ok] call microphone: Wave:3" in out
-    assert "[  ok] OBS Studio: installed" in out
-    assert "Pick these in Teams / Zoom" in out and "Microphone: Easy Effects Source" in out
+    assert "Pick these in Teams / Zoom" in out and "Microphone: StreamStack Mic" in out
 
-    monkeypatch.setattr(cli, "easyeffects_running", lambda: False)
     monkeypatch.setattr(cli, "audio_sources", lambda: {})
+    monkeypatch.setattr(cli.voice_graph, "missing_required", lambda: [])
     assert cli.main(["doctor"]) == 1
     out = capsys.readouterr().out
-    assert "[FAIL] Easy Effects is not running, so there is no processed voice" in out
-    assert "       -> streamstack studio" in out
+    assert "[FAIL] the voice chain is not running, so there is no processed voice" in out
+    assert "       -> streamstack chain start (or open the Console, which starts it)" in out
 
 
 def test_call_camera_matches_the_status_line(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -189,7 +186,7 @@ def test_call_camera_matches_the_status_line(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(cli, "loopback_has_producer", lambda device: device == cfg["STREAMSTACK_PROGRAM_DEVICE"])
     assert cli.call_camera(cfg, True) == "graded"
     monkeypatch.setattr(cli, "loopback_has_producer", lambda device: False)
-    assert cli.call_camera(cfg, True) == "obs-idle"
+    assert cli.call_camera(cfg, True) == "idle"
     assert cli.call_camera(cfg, False) == "off"
 
 
@@ -279,7 +276,7 @@ def test_studio_start_returns_at_once_and_reports_by_toast(harness: Harness) -> 
     ctl = harness.controller()
     started = time.monotonic()
     assert ctl.act("studio.start", {}) == "Starting the studio..."
-    assert time.monotonic() - started < 0.5  # the HTTP thread is not held for the OBS launch
+    assert time.monotonic() - started < 0.5  # the HTTP thread is not held for the studio start
     wait_for(lambda: harness.commands == [["studio"]])
     assert ctl.state()["studio"]["busy"] is True
     with pytest.raises(ActionError) as busy:
@@ -291,11 +288,11 @@ def test_studio_start_returns_at_once_and_reports_by_toast(harness: Harness) -> 
 
 
 def test_failures_toast_the_cli_output(harness: Harness) -> None:
-    harness.code, harness.output = 1, "Starting OBS...\nobs: command not found"
+    harness.code, harness.output = 1, "Starting the studio...\nffmpeg: command not found"
     ctl = harness.controller()
     ctl.act("studio.stop", {})
     wait_for(lambda: harness.toasts)
-    assert harness.toasts == [("error", "Starting OBS... obs: command not found")]
+    assert harness.toasts == [("error", "Starting the studio... ffmpeg: command not found")]
     assert harness.commands == [["stop"]] and not ctl.state()["studio"]["busy"]
 
 
@@ -356,7 +353,7 @@ def test_open_app_validates_and_launches(harness: Harness, monkeypatch: pytest.M
     monkeypatch.setattr(system, "detach", launched.append)
     monkeypatch.setattr(system, "have", lambda tool: tool != "qv4l2")
     ctl = harness.controller()
-    for params in ({}, {"name": 3}, {"name": "firefox"}, {"name": "obs; reboot"}):
+    for params in ({}, {"name": 3}, {"name": "firefox"}, {"name": "firefox; reboot"}):
         with pytest.raises(ActionError) as bad:
             ctl.act("open.app", params)
         assert bad.value.status == 400
@@ -440,7 +437,7 @@ def test_demo_health_refresh_and_open_app() -> None:
     demo._checked = "2000-01-01T00:00:00"
     assert demo.act("health.refresh", {}) == "Checking..."
     assert demo.state()["health"]["updated"] != "2000-01-01T00:00:00"
-    assert "nothing is launched" in (demo.act("open.app", {"name": "obs"}) or "")
+    assert "nothing is launched" in (demo.act("open.app", {"name": "qpwgraph"}) or "")
     with pytest.raises(ActionError) as bad:
         demo.act("open.app", {"name": "rm"})
     assert bad.value.status == 400

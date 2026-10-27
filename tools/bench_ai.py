@@ -928,7 +928,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.cache_dir.mkdir(parents=True, exist_ok=True)
         rows = run_matrix(sources, args)
     host = host_info()
-    when = dt.datetime.now(dt.timezone.utc).astimezone()
+    when = dt.datetime.now(dt.UTC).astimezone()
     for source in dict.fromkeys(r.source for r in rows):
         size = next(r.size for r in rows if r.source == source)
         print(f"\n{source} ({size}{', synthetic' if args.synthetic else ''})\n")

@@ -4,8 +4,8 @@ Off until turned on (`streamstack auto on`, or the panel menu). While on it
 runs two loops on the graded studio camera:
 
   every STREAMSTACK_AUTO_INTERVAL seconds (local, no network)
-    video  measure the picture through obs-websocket and nudge the
-           "Lighting & Color" filter's gamma, then brightness, towards a good
+    video  measure the graded program picture (from the Console) and nudge the
+           look's gamma, then brightness, towards a good
            exposure. Once Claude has located the face it meters the face
            alone (spot metering), towards the luma Claude chose for that skin
            tone, and never clips it.
@@ -57,7 +57,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-from streamstack import config, system
+from streamstack import config, crash, store, system
+from streamstack.audiochain import control as voicechain
+from streamstack.consolelink import ConsoleLink
 from streamstack.director import (
     actuators,
     adapters,
@@ -71,7 +73,6 @@ from streamstack.director import (
     prompt,
     status,
 )
-from streamstack.obs import COLOR_FILTER, LUT_FILTER, OBS, SHARPEN_FILTER, ensure_websocket
 
 API_MODEL = "claude-sonnet-5-5"
 LOG_MAX_BYTES = 2_000_000
@@ -297,48 +298,13 @@ def clamp(name: str, value: float) -> float:
     return max(low, min(high, value))
 
 
-def warmth_to_multiply(warmth: float) -> int:
-    """Warmth -1..1 as an OBS colour multiply (0xBBGGRR): warm lifts red, lowers blue."""
-    red = 1.0 if warmth >= 0 else 1.0 + warmth * 0.12
-    blue = 1.0 if warmth <= 0 else 1.0 - warmth * 0.12
-    green = 1.0 - abs(warmth) * 0.02
-    return (round(blue * 255) << 16) | (round(green * 255) << 8) | round(red * 255)
-
-
-def multiply_to_warmth(value: int | None) -> float:
-    if value is None:
-        return 0.0
-    red, blue = value & 0xFF, (value >> 16) & 0xFF
-    if blue < 255:
-        return round((1 - blue / 255) / 0.12, 3)
-    if red < 255:
-        return round(-(1 - red / 255) / 0.12, 3)
-    return 0.0
-
-
-def current_look(obs: OBS, source: str) -> dict:
-    _, color = obs.filter_settings(source, COLOR_FILTER)
-    look = {
-        "brightness": float(color.get("brightness", 0.0)),
-        "contrast": float(color.get("contrast", 0.0)),
-        "gamma": float(color.get("gamma", 0.0)),
-        "saturation": float(color.get("saturation", 0.0)),
-        "warmth": multiply_to_warmth(color.get("color_multiply")),
-    }
-    try:
-        enabled, lut = obs.filter_settings(source, LUT_FILTER)
-        look.update(lut_enabled=enabled, lut_amount=float(lut.get("clut_amount", 1.0)))
-    except RuntimeError:
-        pass
-    try:
-        look["sharpen_enabled"] = obs.filter_settings(source, SHARPEN_FILTER)[0]
-    except RuntimeError:
-        pass
-    return look
+def current_look(link: ConsoleLink, source: str) -> dict:
+    """The look in place on `source`, read from the Console's native engine."""
+    return link.look(source)
 
 
 def ramp(
-    obs: OBS,
+    link: ConsoleLink,
     source: str,
     start: dict,
     target: dict,
@@ -346,9 +312,10 @@ def ramp(
     steps: int = 12,
     cancel: threading.Event | None = None,
 ) -> None:
-    """Move the colour filter from start to target in small steps, so no frame jumps.
+    """Move the colour from start to target in small steps, so no frame jumps.
 
-    Setting `cancel` (the Console does, when a newer look arrives) stops after the current step.
+    Each step is one `video.look` write: the engine applies it between two frames, with no restart.
+    Setting `cancel` stops after the current step.
     """
     keys = [k for k in COLOR_KEYS if k in target and k in start]
     if not any(target[k] != start[k] for k in keys):
@@ -358,14 +325,7 @@ def ramp(
             return
         mix = step / steps
         mix = mix * mix * (3 - 2 * mix)  # smoothstep
-        values = {}
-        for key in keys:
-            value = start[key] + (target[key] - start[key]) * mix
-            if key == "warmth":
-                values["color_multiply"] = warmth_to_multiply(value)
-            else:
-                values[key] = round(value, 4)
-        obs.set_filter(source, COLOR_FILTER, values)
+        link.set_look(source, {key: round(start[key] + (target[key] - start[key]) * mix, 4) for key in keys})
         if cancel is not None:
             if cancel.wait(seconds / steps):
                 return
@@ -373,15 +333,17 @@ def ramp(
             time.sleep(seconds / steps)
 
 
-def apply_look(obs: OBS, source: str, look: dict, target: dict, seconds: float = 4.0) -> bool:
-    """Ramp the colour, then switch filters and the LUT amount. True when anything changed."""
+def apply_look(link: ConsoleLink, source: str, look: dict, target: dict, seconds: float = 4.0) -> bool:
+    """Ramp the colour, then switch the LUT and Sharpen and set the LUT amount. True when anything changed."""
     changed = any(target.get(k) != look.get(k) for k in target)
-    ramp(obs, source, look, target, seconds=seconds, steps=max(4, int(seconds * 4)))
-    for key, name in (("lut_enabled", LUT_FILTER), ("sharpen_enabled", SHARPEN_FILTER)):
-        if key in target and target[key] != look.get(key):
-            obs.enable_filter(source, name, target[key])
-    if "lut_amount" in target and target["lut_amount"] != look.get("lut_amount"):
-        obs.set_filter(source, LUT_FILTER, {"clut_amount": target["lut_amount"]})
+    ramp(link, source, look, target, seconds=seconds, steps=max(4, int(seconds * 4)))
+    extras = {
+        key: target[key]
+        for key in ("lut_enabled", "sharpen_enabled", "lut_amount")
+        if key in target and target[key] != look.get(key)
+    }
+    if extras:
+        link.set_look(source, extras)
     return changed
 
 
@@ -455,10 +417,7 @@ def baseline_path() -> Path:
 
 
 def load_baseline() -> dict:
-    try:
-        return json.loads(baseline_path().read_text())
-    except (OSError, ValueError):
-        return {}
+    return store.read_json(baseline_path(), {}, validate=store.is_object)
 
 
 def baseline_gain(target: str) -> float | None:
@@ -475,10 +434,7 @@ def remember(kind: str, key: str, value) -> None:
         return
     section[key] = value
     path = baseline_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(baseline, indent=2))
-    tmp.replace(path)
+    store.write_json(path, baseline, sort_keys=False)
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +445,7 @@ PROMPT = """You are the cinematographer and audio engineer for a live video call
 The still {image} is the graded camera picture viewers see right now ({source}).
 
 Measured picture (ffmpeg signalstats, 8-bit, whole frame): {picture}
-Current "Lighting & Color" settings (OBS color correction): {look}
+Current look settings (the native engine's colour grade): {look}
 Allowed ranges: {limits}
 Largest change per pass: {steps}
 Measured raw microphone over 4 s, dBFS: {voice}
@@ -682,7 +638,7 @@ class Auto:
     def __init__(self, cfg: dict, dry_run: bool = False) -> None:
         self.cfg = cfg
         self.dry_run = dry_run
-        self.obs: OBS | None = None
+        self.link: ConsoleLink | None = None
         self.mic = system.microphone(cfg) if config.truthy(cfg["STREAMSTACK_AUTO_AUDIO"]) else ""
         self.mic_start_db = source_gain_db(self.mic) if self.mic else None
         self.last_ai = 0.0
@@ -706,12 +662,12 @@ class Auto:
         """Everything auto mode can drive, behind one interface (see director.actuators)."""
         registry = actuators.Registry()
         registry.register(
-            actuators.ObsLookActuator(
+            actuators.ProgramLookActuator(
                 connect=self.connect,
-                read_look=lambda obs, source: current_look(obs, source),
-                apply_look=lambda obs, source, look, target, seconds: apply_look(obs, source, look, target, seconds),
+                read_look=lambda link, source: current_look(link, source),
+                apply_look=lambda link, source, look, target, seconds: apply_look(link, source, look, target, seconds),
                 remember=lambda kind, key, value: remember(kind, key, value),
-                sources=lambda obs: obs.camera_sources(),
+                sources=lambda link: link.camera_sources(),
             )
         )
         registry.register(
@@ -725,9 +681,9 @@ class Auto:
         )
         registry.register(
             actuators.VoicePresetActuator(
-                presets=lambda: system.ee_presets(),
-                current=lambda: system.easyeffects_preset() or None,
-                load=lambda name: system.run(["easyeffects", "-l", name], timeout=15),
+                presets=lambda: voicechain.preset_names(),
+                current=lambda: voicechain.current_preset(),
+                load=lambda name: voicechain.load_preset(name),
                 remember=lambda kind, key, value: remember(kind, key, value),
             )
         )
@@ -736,22 +692,17 @@ class Auto:
             registry.register(actuator)
         return registry
 
-    def connect(self) -> OBS | None:
-        if self.obs:
-            return self.obs
-        if not system.running("obs"):
-            return None
-        try:
-            self.obs = OBS()
-        except Exception as exc:
-            log("obs-unavailable", error=str(exc))
-            self.obs = None
-        return self.obs
+    def connect(self) -> ConsoleLink | None:
+        """The running Console (which owns the video engine), or None while it is not up."""
+        if self.link:
+            return self.link
+        self.link = ConsoleLink.find()
+        return self.link
 
     def drop(self) -> None:
-        if self.obs:
-            self.obs.close()
-        self.obs = None
+        if self.link:
+            self.link.close()
+        self.link = None
 
     def _skip(self, reason: str) -> None:
         if reason != self.skipping:
@@ -806,14 +757,14 @@ class Auto:
     # -- the local loops -----------------------------------------------------------------
 
     def video_tick(self) -> None:
-        obs = self.connect()
-        if not obs:
+        link = self.connect()
+        if not link:
             return
         try:
             self.pilot.refresh()
-            sources = obs.camera_sources()
+            sources = link.camera_sources()
             for index, source in enumerate(sources):
-                frame = obs.screenshot(source, self.cache / "local.jpg", width=320)
+                frame = link.screenshot(source, self.cache / "local.jpg", width=320)
                 whole = picture_stats(frame)
                 reason = no_picture(whole)
                 if reason:
@@ -832,22 +783,24 @@ class Auto:
                             band = (subject["target"] - FACE_BAND, subject["target"] + FACE_BAND)
                         else:
                             band = self.pilot.face_band()
-                look = current_look(obs, source)
-                self.watch("obs-look", source, look)
+                look = current_look(link, source)
+                self.watch("program-look", source, look)
                 target = exposure_target(stats, look, band)
                 if target and index == 0 and self.canon_exposure(look, target, stats, band, metering):
                     continue
                 if target:
-                    self._expose(obs, source, look, target, stats, band, metering)
+                    self._expose(link, source, look, target, stats, band, metering)
                 elif index == 0 and config.truthy(self.cfg["STREAMSTACK_AUTO_PERSONA_LOOK"]):
                     self._ease(source, look)
         except Exception as exc:
             log("video-error", error=str(exc))
             self.drop()
 
-    def _expose(self, obs: OBS, source: str, look: dict, target: dict, stats: dict, band: tuple, metering: str) -> None:
+    def _expose(
+        self, link: ConsoleLink, source: str, look: dict, target: dict, stats: dict, band: tuple, metering: str
+    ) -> None:
         keys = [k for k in ("brightness", "gamma") if target.get(k) != look.get(k)]
-        if all(self.governor.is_held("obs-look", source, k) for k in keys):
+        if all(self.governor.is_held("program-look", source, k) for k in keys):
             return
         average = stats.get("YAVG", 0.0)
         side = "above" if average > band[1] else "below"
@@ -869,12 +822,14 @@ class Auto:
         if self.dry_run:
             return
         wanted = {k: target[k] for k in keys}
-        values, changes = self.governor.plan(self.registry.get("obs-look"), source, look, wanted, {}, "local", reason)
+        values, changes = self.governor.plan(
+            self.registry.get("program-look"), source, look, wanted, {}, "local", reason
+        )
         if not changes:
             return
         remember("look", source, look)
-        ramp(obs, source, look, values, seconds=1.5, steps=6)
-        self.governor.committed("obs-look", source, values, [c.key for c in changes])
+        ramp(link, source, look, values, seconds=1.5, steps=6)
+        self.governor.committed("program-look", source, values, [c.key for c in changes])
 
     def canon(self) -> tuple[devices.CanonActuator, str, dict] | None:
         """(the Canon actuator, its target, the controls the director may change now), or None without a usable one."""
@@ -889,8 +844,8 @@ class Auto:
         """Let the camera's own exposure compensation do the exposing; True when it took this pass.
 
         The Canon is the first choice because it works on the sensor, before the picture is compressed: raising the
-        exposure in OBS afterwards lifts noise too. OBS finishes the job when the camera is at its limit, locked, or
-        the person set it by hand (see the governor's hold), and always when there is no Canon.
+        exposure in the picture afterwards lifts noise too. The program look finishes the job when the camera is at its
+        limit, locked, or the person set it by hand (see the governor's hold), and always when there is no Canon.
         """
         found = self.canon()
         if found is None or "exposure_comp" not in found[2]:
@@ -974,7 +929,7 @@ class Auto:
             if found is not None and "kelvin" in found[2]:
                 del wanted["warmth"]  # the camera's own Kelvin is doing the white balance
         if wanted:
-            self.drive("obs-look", source, look, wanted, {}, origin, reason, seconds=2.0)
+            self.drive("program-look", source, look, wanted, {}, origin, reason, seconds=2.0)
 
     def audio_tick(self) -> None:
         if not self.mic:
@@ -1066,21 +1021,21 @@ class Auto:
         if not force and not self.ai_due():
             return None
         self.last_ai = time.monotonic()
-        obs = self.connect()
-        if not obs:
-            log("ai-skipped", reason="OBS is not running")
+        link = self.connect()
+        if not link:
+            log("ai-skipped", reason="the Console is not running (streamstack console)")
             return None
         try:
-            sources = obs.camera_sources()
+            sources = link.camera_sources()
             if not sources:
-                log("ai-skipped", reason="no camera with the StreamStack filters in the program scene")
+                log("ai-skipped", reason="the video engine has no camera on air")
                 return None
             source = sources[0]
             self.pilot.refresh()
             with tempfile.TemporaryDirectory(prefix="ai-", dir=self.cache) as tmp:
                 seen = observe.observe(
                     source,
-                    lambda path: obs.screenshot(source, path),
+                    lambda path: link.screenshot(source, path),
                     Path(tmp),
                     observe.burst_size(self.cfg),
                     observe.burst_spacing(self.cfg),
@@ -1092,15 +1047,15 @@ class Auto:
                 if reason:
                     log("ai-skipped", reason=f"{source}: {reason}")
                     return None
-                look = current_look(obs, source)
-                self.watch("obs-look", source, look)
-                held = self.held("obs-look", source, look)
+                look = current_look(link, source)
+                self.watch("program-look", source, look)
+                held = self.held("program-look", source, look)
                 audio, audio_reason = self.listen()
                 findings = self.assess(seen, audio, audio_reason)
                 self.canon_white_balance(judge.aggregate_frames((seen.analysis or {}).get("frames", [])))
                 self.keep(source, look, held)
-                presets = system.ee_presets()
-                preset = system.easyeffects_preset()
+                presets = voicechain.preset_names()
+                preset = voicechain.current_preset() or ""
                 context = self.context(seen, source, stats, look, held, findings, audio, audio_reason, presets, preset)
                 status.publish_sheet(seen.sheet)
                 self.report = self.snapshot(seen, findings, audio, audio_reason, held)
@@ -1111,7 +1066,7 @@ class Auto:
                 started = time.monotonic()
                 proposal = ask_claude(self.cfg, seen.sheet, context)
                 shutil.copy2(seen.sheet, self.cache / "last-ai.jpg")
-            return self.apply_proposal(proposal, obs, source, look, stats, presets, preset, started, seen)
+            return self.apply_proposal(proposal, link, source, look, stats, presets, preset, started, seen)
         except Exception as exc:
             log("ai-error", error=str(exc))
             notify(self.cfg, "Auto-cinematographer paused a pass", str(exc)[:200])
@@ -1221,7 +1176,7 @@ class Auto:
     def apply_proposal(
         self,
         proposal: dict,
-        obs: OBS,
+        link: ConsoleLink,
         source: str,
         look: dict,
         stats: dict,
@@ -1259,7 +1214,7 @@ class Auto:
             self.ai_backoff = min(AI_MAX_BACKOFF, self.ai_backoff * 2)
         else:
             wanted = {k: v for k, v in target.items() if v != look.get(k)}
-            changes += self.drive("obs-look", source, look, wanted, reasons, "claude", "Claude adjusted the look")
+            changes += self.drive("program-look", source, look, wanted, reasons, "claude", "Claude adjusted the look")
             self.pilot.claude_set.update(c.key for c in changes)
             name = (proposal.get("audio") or {}).get("voice_preset")
             if name and name in presets and name != preset and confidence >= 0.7:
@@ -1367,8 +1322,6 @@ def gain_change(stats: dict[str, float]) -> float:
 
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = config.load_settings()
-    if ensure_websocket() == "restart-obs":
-        log("waiting", reason="restart OBS once to enable its local websocket")
     auto = Auto(cfg, dry_run=args.dry_run)
     stop = {"now": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
@@ -1394,13 +1347,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_once(args: argparse.Namespace) -> int:
     cfg = config.load_settings()
-    state = ensure_websocket()
-    if state != "ready":
-        print(
-            "OBS's websocket was just enabled; restart OBS (streamstack stop; streamstack studio) and retry."
-            if state == "edited"
-            else "Restart OBS once so its local websocket comes up, then retry."
-        )
+    if ConsoleLink.find() is None:
+        print("Start the Console (streamstack console) so auto mode can see and grade the program picture, then retry.")
         return 1
     auto = Auto(cfg, dry_run=args.dry_run)
     if config.truthy(cfg["STREAMSTACK_AUTO_AUDIO"]):
@@ -1443,26 +1391,25 @@ def cmd_reset(args: argparse.Namespace) -> int:
         return 1
     problems = 0
     if baseline.get("look"):
-        obs = OBS() if ensure_websocket() == "ready" and system.running("obs") else None
-        if obs is None:
-            print("Start OBS (streamstack studio) to undo the picture changes.")
+        link = ConsoleLink.find()
+        if link is None:
+            print("Start the Console (streamstack console) to undo the picture changes.")
             problems += 1
         else:
             for source, look in baseline["look"].items():
                 try:
-                    apply_look(obs, source, current_look(obs, source), look, seconds=2.0)
+                    apply_look(link, source, current_look(link, source), look, seconds=2.0)
                     print(f"{source}: look restored")
                 except RuntimeError as exc:
                     print(f"{source}: {exc}")
                     problems += 1
-            obs.close()
+            link.close()
     for source, gain in baseline.get("mic", {}).items():
         set_source_gain_db(source, float(gain))
         print(f"{source}: input gain back to {float(gain):+.1f} dB")
     problems += restore_hardware(baseline, config.load_settings())
     preset = baseline.get("preset", {}).get("input")
-    if preset and system.easyeffects_running():
-        system.run(["easyeffects", "-l", preset], timeout=15)
+    if preset and voicechain.load_preset(preset):
         print(f"voice preset back to {preset}")
     if not problems:
         baseline_path().unlink(missing_ok=True)
@@ -1471,23 +1418,12 @@ def cmd_reset(args: argparse.Namespace) -> int:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    """Can auto mode reach OBS and Claude? Prints one line per piece."""
+    """Can auto mode reach the Console and Claude? Prints one line per piece."""
     cfg = config.load_settings()
     problems = 0
-    state = ensure_websocket()
-    print(
-        {
-            "ready": "OBS websocket: enabled",
-            "edited": "OBS websocket: enabled now; restart OBS once",
-            "restart-obs": "OBS websocket: off; quit OBS and run this again to enable it",
-        }[state]
-    )
-    problems += state != "ready"
-    try:
-        import websocket  # noqa: F401
-    except ImportError:
-        print("python3-websocket: missing")
-        problems += 1
+    reachable = ConsoleLink.find() is not None
+    print("Console: reachable" if reachable else "Console: not running (streamstack console)")
+    problems += not reachable
     backend = cfg["STREAMSTACK_AUTO_BACKEND"]
     if backend == "claude-cli":
         claude = claude_cli()
@@ -1536,8 +1472,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("reset", help="undo auto mode's changes to the look, mic gain and voice preset").set_defaults(
         func=cmd_reset
     )
-    sub.add_parser("check", help="check OBS, the Claude backend and the microphone").set_defaults(func=cmd_check)
+    sub.add_parser("check", help="check the Console, the Claude backend and the microphone").set_defaults(
+        func=cmd_check
+    )
     args = parser.parse_args(argv)
+    crash.install("auto")
     return args.func(args)
 
 

@@ -29,8 +29,8 @@ const COST_PILL = {
   over: { state: 'warn', label: 'Over budget' },
 };
 
-const MISSING = 'Background blur needs the obs-backgroundremoval plugin, which is not installed here.';
-const NOT_LOADED = 'The plugin is installed, but this OBS has not loaded it. Restart OBS (Start studio) and try again.';
+const MISSING = 'Background blur needs a segmentation model, which is not installed here.';
+const NOT_LOADED = 'The blur mask is not loaded in the video engine.';
 
 /** What the control should show for one snapshot: one pure function so every state is easy to reason about. */
 export function blurView(state, source) {
@@ -47,17 +47,41 @@ export function blurView(state, source) {
     cost: b.cost || { state: 'off', detail: '' },
     version: b.plugin.version || '',
     device: (b.plugin.device_labels && b.plugin.device_labels[0]) || 'CPU',
+    status: '',
   };
-  if (!view.installed) {
+  if (b.native) {
+    Object.assign(view, nativeView(b.arc || { state: 'checking' }));
+  } else if (!view.installed) {
     const how = b.plugin.hint ? ` To fix: ${b.plugin.hint}.` : '';
-    view.reason = b.plugin.installed ? `The obs-backgroundremoval models are missing.${how}` : `${MISSING}${how}`;
-  } else if (v.obs !== 'connected') {
-    view.reason = v.obs === 'offline' ? 'OBS is not running' : (v.obs_error || 'OBS is not reachable');
-    view.fix = v.obs === 'offline' ? 'Start studio' : '';
+    view.reason = b.plugin.installed ? `The segmentation models are missing.${how}` : `${MISSING}${how}`;
   } else if (b.available === false) {
     view.reason = NOT_LOADED;
   } else if (!v.sources.length) {
     view.reason = 'No camera source to blur';
+  }
+  return view;
+}
+
+/** The native engine's blur (the segmenter on the Arc through OpenVINO): what the `arc` block says, in words. */
+function nativeView(arc) {
+  const usable = !['unavailable', 'failed', 'checking'].includes(arc.state);
+  const view = { installed: usable, device: arc.device || 'Arc', reason: '', status: '' };
+  if (arc.state === 'unavailable' || arc.state === 'failed') {
+    view.reason = `Unavailable: ${arc.reason || 'no reason given'}`;
+  } else if (arc.state === 'checking') {
+    view.reason = 'Checking for the Arc and OpenVINO';
+  } else if (arc.state === 'downloading') {
+    view.status = 'Downloading the person-segmentation model (6 MB, once)';
+  } else if (arc.state === 'loading') {
+    view.status = `Preparing the model on the ${view.device}`;
+  } else if (arc.state === 'running' || arc.state === 'stalled') {
+    const fps = arc.fps == null ? '' : `, ${Math.round(arc.fps * 10) / 10} masks/s`;
+    const ms = arc.infer_ms == null ? '' : `, ${arc.infer_ms} ms`;
+    view.status = arc.state === 'stalled'
+      ? `Running on ${view.device} via OpenVINO, but the mask is late: the picture is shown unblurred`
+      : `Running on ${view.device} via OpenVINO${fps}${ms}`;
+  } else {
+    view.status = `Ready: computed on the ${view.device} via OpenVINO when you switch it on`;
   }
   return view;
 }
@@ -91,7 +115,7 @@ export function mountBlur(root, ctx, { variant = 'full', source = () => undefine
   let info = null;
 
   if (compact) {
-    pad = h('ss-pad', { compact: true, label: 'Blur', icon: 'camera', 'data-ref': 'blurPad', title: 'Blur the background of the camera (needs the obs-backgroundremoval plugin)' });
+    pad = h('ss-pad', { compact: true, label: 'Blur', icon: 'camera', 'data-ref': 'blurPad', title: 'Blur the background of the camera (computed on the Arc through OpenVINO)' });
     pad.addEventListener('click', () => act('video.blur', params({ on: !blurView(store.state, source()).on })));
     root.append(pad, strength);
   } else {
@@ -146,17 +170,20 @@ export function mountBlur(root, ctx, { variant = 'full', source = () => undefine
     if (blocked) {
       text = view.reason;
       tone = view.installed ? '' : 'warn';
+    } else if (view.status) {
+      text = view.status;     // the native engine's one line already carries the measured numbers
+      tone = pill && view.cost.state === 'over' ? 'warn' : '';
     } else if (pill) {
       text = view.cost.detail;
       tone = view.cost.state === 'over' ? 'warn' : '';
     } else if (view.installed) {
-      text = `Runs on the ${view.device}${view.version ? `, obs-backgroundremoval ${view.version}` : ''}. Budget: under ${view.cost.limits?.p95_ms ?? 8} ms per frame.`;
+      text = `Runs on the ${view.device}${view.version ? `, mask ${view.version}` : ''}. Budget: under ${view.cost.limits?.p95_ms ?? 8} ms per frame.`;
     }
     info.textContent = text;
     if (tone) info.dataset.state = tone; else delete info.dataset.state;
   };
 
-  off.push(store.subscribe((s) => [s.video.blur, s.video.obs, s.video.obs_error, s.video.sources, source()], render));
+  off.push(store.subscribe((s) => [s.video.blur, s.video.sources, source()], render));
   return () => { off.forEach((fn) => fn()); };
 }
 

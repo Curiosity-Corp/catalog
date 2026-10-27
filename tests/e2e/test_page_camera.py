@@ -384,7 +384,7 @@ def test_scene_pads_on_the_camera_page(cam: App, rig: Rig) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Background blur (obs-backgroundremoval): toggle, strength, smoothness, cost guard, missing plugin
+# Background blur (the OpenVINO mask): toggle, strength, smoothness, cost guard, missing plugin
 # ---------------------------------------------------------------------------
 
 
@@ -434,9 +434,99 @@ def test_blur_smoothness_changes_the_mask_rate_and_the_smoothest_is_over_budget(
     expect(cam.page.get_by_text("Within budget")).to_be_visible(timeout=LOADED)
 
 
-def test_blur_without_the_plugin_says_how_to_install_it(cam: App, rig: Rig) -> None:
+def test_blur_without_the_mask_says_what_is_missing(cam: App, rig: Rig) -> None:
     rig.act("video.blur.plugin", installed=False)
-    expect(cam.page.get_by_text("obs-backgroundremoval plugin", exact=False).first).to_be_visible(timeout=LOADED)
+    expect(cam.page.get_by_text("segmentation model", exact=False).first).to_be_visible(timeout=LOADED)
     expect(cam.switch("Blur background")).to_be_disabled()
     check = poll(rig, lambda s: next((c for c in s["health"]["checks"] if c["id"] == "background-blur"), None))
     assert check["state"] == "warn" and check["hint"]
+
+
+# ---------------------------------------------------------------------------
+# Background blur on the Arc through OpenVINO (the native engine): the demo rig has no GPU, `video.blur.arc` puts the
+# page in each state the real controller can report
+# ---------------------------------------------------------------------------
+
+
+def blur_info(cam: App) -> Locator:
+    return cam.page.locator("[data-ref=blurInfo]")
+
+
+def test_native_blur_running_shows_the_arc_and_its_measured_numbers(cam: App, rig: Rig) -> None:
+    rig.act("video.blur.arc", mode="running")
+    toggle = cam.switch("Blur background")
+    expect(toggle).to_be_enabled(timeout=LOADED)
+    toggle.click()
+    expect(blur_info(cam)).to_contain_text("Running on Intel Arc A380 via OpenVINO", timeout=LOADED)
+    expect(blur_info(cam)).to_contain_text("15 masks/s")  # the default smoothness (every second frame) at 30 fps
+    expect(blur_info(cam)).to_contain_text("2.4 ms")
+    expect(cam.page.get_by_text("Within budget")).to_be_visible(timeout=LOADED)
+    assert poll(rig, lambda s: s["video"]["blur"]["on"] and s["video"]["blur"]["native"])
+
+
+def test_native_blur_strength_and_smoothness_stay_live(cam: App, rig: Rig) -> None:
+    rig.act("video.blur.arc", mode="running")
+    cam.switch("Blur background").click()
+    fader = cam.slider("Blur strength")
+    expect(fader).to_have_attribute("aria-valuenow", "8")
+    fader.focus()
+    fader.press("ArrowUp")
+    assert poll(rig, lambda s: s["video"]["blur"]["strength"] == 9 or None)
+    cam.region("Mask smoothness").get_by_role("button", name="Smooth").click()
+    assert poll(rig, lambda s: s["video"]["blur"]["rate"] == 1 or None)
+    expect(blur_info(cam)).to_contain_text("30 masks/s", timeout=LOADED)
+
+
+def test_native_blur_without_openvino_says_unavailable_and_why(cam: App, rig: Rig) -> None:
+    rig.act("video.blur.arc", mode="unavailable")
+    expect(blur_info(cam)).to_contain_text("Unavailable: the openvino package is not installed", timeout=LOADED)
+    expect(cam.switch("Blur background")).to_be_disabled()
+    expect(cam.slider("Blur strength")).to_be_disabled()
+    expect(cam.region("Mask smoothness").get_by_role("button", name="Light")).to_be_disabled()
+    status, body = rig.request("POST", "api/action", {"action": "video.blur", "on": True}, token=rig.token)
+    assert status == 409 and "unavailable: the openvino package" in str(body)
+    rig.act("video.blur", on=False)  # switching off is always allowed
+
+
+def test_native_blur_download_failure_is_unavailable_not_a_crash(cam: App, rig: Rig) -> None:
+    rig.act("video.blur.arc", mode="failed")
+    expect(blur_info(cam)).to_contain_text(
+        "Unavailable: the segmentation model could not be downloaded", timeout=LOADED
+    )
+    expect(cam.switch("Blur background")).to_be_disabled()
+
+
+def test_native_blur_downloads_the_model_the_first_time(cam: App, rig: Rig) -> None:
+    rig.act("video.blur.arc", mode="downloading")
+    cam.switch("Blur background").click()
+    expect(blur_info(cam)).to_contain_text("Downloading the person-segmentation model", timeout=LOADED)
+    expect(cam.switch("Blur background")).to_have_attribute("aria-checked", "true")
+
+
+def test_native_blur_stalled_says_the_picture_is_unblurred(cam: App, rig: Rig) -> None:
+    rig.act("video.blur.arc", mode="stalled")
+    cam.switch("Blur background").click()
+    expect(blur_info(cam)).to_contain_text("the mask is late", timeout=LOADED)
+    expect(cam.page.get_by_text("Over budget")).to_be_visible(timeout=LOADED)
+
+
+# ---------------------------------------------------------------------------
+# The native video engine
+# ---------------------------------------------------------------------------
+
+
+def test_engine_chip_shows_the_gpu_path_and_frame_rate(cam: App, rig: Rig) -> None:
+    engine = rig.state()["video"]["engine"]
+    assert engine["native"] is True
+    chip = cam.page.get_by_text("ENGINE", exact=True)
+    expect(chip).to_be_visible(timeout=LOADED)
+    expect(cam.page.get_by_text(re.compile(r"GPU · \d+ fps"))).to_be_visible()
+
+
+def test_a_slider_move_reaches_the_engine_without_a_restart(cam: App, rig: Rig) -> None:
+    before = rig.state()["video"]["engine"]
+    rig.act("video.look", values={"contrast": 0.3})
+    assert poll(rig, lambda s: s["video"]["look"]["contrast"] == 0.3)
+    after = rig.state()["video"]["engine"]
+    assert after["state"] == before["state"] == "running"
+    expect(cam.slider("Contrast")).to_have_attribute("aria-valuenow", "0.3", timeout=LOADED)

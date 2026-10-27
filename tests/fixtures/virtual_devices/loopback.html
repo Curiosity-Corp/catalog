@@ -1,0 +1,101 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StreamStack virtual devices: WebRTC loopback</title>
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 16px; background: #14171c; color: #e8ecf1; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #8b97a6; margin: 14px 0 6px; }
+  ul { margin: 0; padding-left: 18px; }
+  video { width: 480px; max-width: 100%; background: #000; border-radius: 6px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .meter { width: 480px; max-width: 100%; height: 14px; background: #262c35; border-radius: 7px; overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: #3fb950; transition: width .08s; }
+  code { color: #9ecbff; }
+</style>
+<h1>StreamStack virtual devices: local WebRTC loopback</h1>
+<h2>enumerateDevices()</h2>
+<ul id="devices"><li>enumerating...</li></ul>
+<div class="row">
+  <div><h2>Camera (getUserMedia)</h2><video id="local" autoplay muted playsinline></video><div id="camInfo"></div></div>
+  <div><h2>Same stream through a local RTCPeerConnection</h2><video id="remote" autoplay muted playsinline></video><div id="rtcInfo"></div></div>
+</div>
+<h2>Microphone level</h2>
+<div class="meter"><i id="bar"></i></div>
+<div id="micInfo"></div>
+<script>
+const CAMERA = new URLSearchParams(location.search).get('camera') || 'StreamStack Camera';
+const MIC = new URLSearchParams(location.search).get('mic') || 'StreamStack Mic';
+const $ = (id) => document.getElementById(id);
+window.result = { devices: [], camera: null, mic: null, rtc: null, levels: [], error: null };
+
+async function run() {
+  // Labels are only filled in after a permission grant, so ask first, then enumerate.
+  const warm = await navigator.mediaDevices.getUserMedia({ audio: true, video: true }).catch(() => null);
+  warm?.getTracks().forEach((t) => t.stop());
+  const all = await navigator.mediaDevices.enumerateDevices();
+  window.result.devices = all.map((d) => ({ kind: d.kind, label: d.label, id: d.deviceId.slice(0, 8) }));
+  $('devices').replaceChildren(...all.filter((d) => d.kind !== 'audiooutput').map((d) => {
+    const li = document.createElement('li');
+    li.textContent = `${d.kind === 'videoinput' ? 'camera' : 'microphone'}: ${d.label || '(no label)'}`;
+    if (d.label === CAMERA || d.label === MIC) li.style.fontWeight = '700', li.style.color = '#3fb950';
+    return li;
+  }));
+  const cam = all.find((d) => d.kind === 'videoinput' && d.label.startsWith(CAMERA));
+  const mic = all.find((d) => d.kind === 'audioinput' && d.label.startsWith(MIC));
+  const want = { video: cam ? { deviceId: { exact: cam.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } : false,
+                 audio: mic ? { deviceId: { exact: mic.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false };
+  if (!cam && !mic) throw new Error(`neither "${CAMERA}" nor "${MIC}" was listed`);
+  const stream = await navigator.mediaDevices.getUserMedia(want);
+  const v = stream.getVideoTracks()[0];
+  if (v) {
+    $('local').srcObject = stream;
+    await new Promise((r) => $('local').addEventListener('loadeddata', r, { once: true }));
+    const s = v.getSettings();
+    window.result.camera = { label: v.label, width: s.width, height: s.height, fps: s.frameRate, state: v.readyState };
+    $('camInfo').textContent = `${v.label}: ${s.width}x${s.height} @ ${Math.round(s.frameRate)} fps`;
+    // The picture must be real, not black: sample the playing video.
+    await new Promise((r) => $('local').requestVideoFrameCallback(() => r()));
+    const c = document.createElement('canvas'); c.width = 64; c.height = 36;
+    const g = c.getContext('2d'); g.drawImage($('local'), 0, 0, 64, 36);
+    const px = g.getImageData(0, 0, 64, 36).data; let lo = 255, hi = 0;
+    for (let i = 0; i < px.length; i += 4) { const y = px[i] * .3 + px[i + 1] * .59 + px[i + 2] * .11; lo = Math.min(lo, y); hi = Math.max(hi, y); }
+    window.result.camera.contrast = Math.round(hi - lo);
+    // Loop the camera through a real RTCPeerConnection pair, as a call would.
+    const a = new RTCPeerConnection(), b = new RTCPeerConnection();
+    a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+    b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+    b.ontrack = (e) => { if (e.track.kind === 'video') $('remote').srcObject = new MediaStream([e.track]); };
+    // video only: a remote audio track would be played out loud on this machine's speakers
+    a.addTrack(v, stream);
+    await a.setLocalDescription(await a.createOffer());
+    await b.setRemoteDescription(a.localDescription);
+    await b.setLocalDescription(await b.createAnswer());
+    await a.setRemoteDescription(b.localDescription);
+    await new Promise((r) => { const t = setInterval(() => { if (b.connectionState === 'connected') { clearInterval(t); r(); } }, 100); setTimeout(r, 8000); });
+    await new Promise((r) => setTimeout(r, 1500));
+    const stats = [...(await b.getStats()).values()].find((s) => s.type === 'inbound-rtp' && s.kind === 'video');
+    window.result.rtc = { state: b.connectionState, frames: stats?.framesDecoded ?? 0, width: stats?.frameWidth ?? 0, height: stats?.frameHeight ?? 0 };
+    $('rtcInfo').textContent = `${b.connectionState}: ${window.result.rtc.frames} frames decoded, ${window.result.rtc.width}x${window.result.rtc.height}`;
+  }
+  const a = stream.getAudioTracks()[0];
+  if (a) {
+    const ctx = new AudioContext(); const an = ctx.createAnalyser(); an.fftSize = 1024;
+    ctx.createMediaStreamSource(new MediaStream([a])).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    window.result.mic = { label: a.label, rate: a.getSettings().sampleRate, channels: a.getSettings().channelCount };
+    const tick = () => {
+      an.getFloatTimeDomainData(buf);
+      let sum = 0; for (const x of buf) sum += x * x;
+      const db = 20 * Math.log10(Math.sqrt(sum / buf.length) || 1e-6);
+      window.result.levels.push(Math.round(db * 10) / 10);
+      $('bar').style.width = `${Math.max(0, Math.min(100, (db + 80) * 100 / 80))}%`;
+      $('micInfo').textContent = `${a.label}: ${db.toFixed(1)} dBFS`;
+      requestAnimationFrame(tick);
+    };
+    tick();
+  }
+  window.result.done = true;
+}
+run().catch((e) => { window.result.error = String(e); window.result.done = true; document.body.append(`error: ${e}`); });
+</script>

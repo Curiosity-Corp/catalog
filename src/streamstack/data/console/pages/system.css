@@ -37,6 +37,17 @@
   .tile-note { margin: 0; flex: 1; font-size: var(--fs-xs); color: var(--text-3); line-height: 1.4; }
   .tile-act { margin-top: var(--s-2); min-height: 2.5rem; }
 
+  /* ---- seen by apps ---- */
+  .seen { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+  .seen-card { --c: var(--green); display: grid; gap: var(--s-1); padding: var(--s-4); border-radius: var(--r-4); background: var(--surface-1); border: 1px solid var(--line); border-left: 4px solid var(--c); }
+  .seen-card[data-state="idle"] { --c: var(--text-3); }
+  .seen-card[data-state="fail"] { --c: var(--red); }
+  .seen-head { display: flex; align-items: center; gap: var(--s-2); }
+  .seen-head .icon { width: 1.1rem; height: 1.1rem; color: var(--text-2); }
+  .seen-state { font-size: var(--fs-lg, 1.15rem); font-weight: 700; color: var(--c); overflow-wrap: anywhere; }
+  .seen-note { color: var(--text-3); }
+  @media (max-width: 640px) { .seen { grid-template-columns: 1fr; } }
+
   /* ---- checks ---- */
   .check-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); align-items: start; }
   .cgrp { padding: var(--s-3); border-radius: var(--r-4); background: var(--surface-1); border: 1px solid var(--line); display: grid; gap: var(--s-2); }

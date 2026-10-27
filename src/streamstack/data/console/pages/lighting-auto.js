@@ -47,7 +47,7 @@ const TEMPLATE_STATUS = `
   <p class="hint" data-ref="svcNote" hidden></p>
   <div class="la-actions">
     <ss-button size="sm" icon="power" data-ref="svcStart" hidden>Start the lights service</ss-button>
-    <ss-button size="sm" variant="ghost" icon="undo" data-ref="resume" hidden>Resume the schedule <span class="keycap">R</span></ss-button>
+    <ss-button size="sm" variant="ghost" icon="undo" data-ref="resume" data-idle inert>Resume the schedule <span class="keycap">R</span></ss-button>
   </div>
 </section>`;
 
@@ -64,7 +64,7 @@ const TEMPLATE_PANELS = `
       </div>
       <ss-toggle label="Switch the lights off afterwards" sub="Off: they stay on after the call, at the schedule" data-ref="turnOff"></ss-toggle>
       <fieldset class="la-sources" data-ref="sources"><legend>What counts as "the camera is on"</legend></fieldset>
-      <label class="la-field wide"><span>Ignore these apps (comma separated, e.g. Slack, obs-studio)</span><input class="text-input" type="text" maxlength="400" data-ref="ignore" aria-label="Apps to ignore" placeholder="none"></label>
+      <label class="la-field wide"><span>Ignore these apps (comma separated, e.g. Slack, Discord)</span><input class="text-input" type="text" maxlength="400" data-ref="ignore" aria-label="Apps to ignore" placeholder="none"></label>
       <label class="la-field wide"><span>Also watch these video devices (comma separated)</span><input class="text-input" type="text" maxlength="400" data-ref="devices" aria-label="Extra video devices" placeholder="/dev/video0"></label>
       <p class="hint" data-ref="watching"></p>
       <div class="la-demo" data-ref="demoCam" hidden>
@@ -185,7 +185,10 @@ export function mountAutomation(statusHost, panelsHost, ctx) {
     R.svcNote.textContent = svc.message || '';
     R.svcStart.hidden = !(svc.state === 'stopped' || svc.state === 'missing');
     const held = Object.values(st.lights || {}).some((l) => l.held);
-    R.resume.hidden = !held;
+    // Not `hidden`: the button's row keeps its height, so the first manual change does not push the whole page
+    // (and the control being dragged) down by a button.
+    R.resume.toggleAttribute('data-idle', !held);
+    R.resume.toggleAttribute('inert', !held);
   });
 
   // ---------- camera follow ----------
@@ -206,7 +209,6 @@ export function mountAutomation(statusHost, panelsHost, ctx) {
   });
   sub((s) => s.lighting.automation.status.camera, (cam) => {
     const bits = cam.apps.map((c) => `${c.app} (${c.process}, ${c.device})`);
-    if (cam.obs.length) bits.push(`OBS ${cam.obs.join(', ')}`);
     R.watching.textContent = bits.length ? `Using the camera now: ${bits.join('; ')}.` : 'Nothing is using the camera right now.';
   });
   sub((s) => s.lighting.automation.demo, (demo) => { R.demoCam.hidden = !demo; R.demoDirector.hidden = !demo; });
@@ -405,8 +407,10 @@ export function mountAutomation(statusHost, panelsHost, ctx) {
   });
 
   // ---------- keys and commands ----------
-  const toggleFollow = () => followSend({ enabled: !settings().follow.enabled });
-  const toggleSchedule = () => scheduleSend({ enabled: !settings().schedule.enabled });
+  // Flip what the switch shows, not the store: a click is on screen at once, the store only after the server answers,
+  // and a key pressed in between must flip the click, not repeat it.
+  const toggleFollow = () => followSend({ enabled: !R.followOn.checked });
+  const toggleSchedule = () => scheduleSend({ enabled: !R.scheduleOn.checked });
   const resume = () => act('lighting.auto.resume');
   off.push(registerKeys([
     { key: 'f', desc: 'Camera follow on / off', group: 'Lighting', run: toggleFollow },
@@ -414,8 +418,8 @@ export function mountAutomation(statusHost, panelsHost, ctx) {
     { key: 'r', desc: 'Resume the schedule after a manual change', group: 'Lighting', run: resume },
   ]));
   off.push(registerCommands(() => [
-    { id: 'Lighting:follow', group: 'Lighting', title: settings().follow.enabled ? 'Stop lights following the camera' : 'Lights follow the camera', icon: 'camera', hint: 'F', keywords: 'lights camera follow automatic call', run: toggleFollow },
-    { id: 'Lighting:schedule', group: 'Lighting', title: settings().schedule.enabled ? 'Turn the daylight schedule off' : 'Turn the daylight schedule on', icon: 'sun', hint: 'S', keywords: 'lights daylight schedule time of day sunrise', run: toggleSchedule },
+    { id: 'Lighting:follow', group: 'Lighting', title: R.followOn.checked ? 'Stop lights following the camera' : 'Lights follow the camera', icon: 'camera', hint: 'F', keywords: 'lights camera follow automatic call', run: toggleFollow },
+    { id: 'Lighting:schedule', group: 'Lighting', title: R.scheduleOn.checked ? 'Turn the daylight schedule off' : 'Turn the daylight schedule on', icon: 'sun', hint: 'S', keywords: 'lights daylight schedule time of day sunrise', run: toggleSchedule },
     { id: 'Lighting:resume', group: 'Lighting', title: 'Resume the lighting schedule', icon: 'undo', hint: 'R', keywords: 'lights schedule resume manual hold', run: resume },
   ]));
   return () => off.forEach((fn) => (typeof fn === 'function' ? fn() : undefined));

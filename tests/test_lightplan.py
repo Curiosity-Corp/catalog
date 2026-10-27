@@ -6,7 +6,7 @@ import itertools
 import json
 import os
 import stat
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -15,7 +15,7 @@ from streamstack import lighting, lightplan
 from streamstack.director import daylight
 
 BERLIN = daylight.Location("Berlin", 52.52, 13.405, "settings")
-UTC = timezone.utc
+UTC = UTC
 
 
 def at(hour: int, minute: int = 0, month: int = 6) -> datetime:
@@ -251,3 +251,17 @@ def test_a_fade_is_for_big_jumps_only() -> None:
     assert lightplan.fade_needed(model, now, 90, 4800, 4800)
     assert lightplan.fade_needed(model, now, 50, 4000, 4800)
     assert not lightplan.fade_needed(model, None, 90, None, 4800)
+
+
+def test_an_ephemeral_store_saves_without_flushing_the_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """On a busy CI disk every fsync can take seconds, and the demo rig's settings save on each click."""
+    flushed: list[int] = []
+    real = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (flushed.append(fd), real(fd))[1])
+    lightplan.Store(tmp_path / "durable.json").update("schedule", {"enabled": True})
+    assert flushed
+    flushed.clear()
+    quick = lightplan.Store(tmp_path / "quick.json", ephemeral=True)
+    quick.update("schedule", {"enabled": True})
+    assert flushed == []
+    assert quick.load()["schedule"]["enabled"] is True

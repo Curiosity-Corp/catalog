@@ -1,0 +1,11 @@
+{
+  "name": "StreamStack Voice Deep",
+  "blurb": "extra body and a darker top, for a deeper voice",
+  "engine": "deepfilternet",
+  "params": {
+    "bass_db": 5,
+    "mud_db": -3,
+    "presence_db": 1.5,
+    "treble_db": 0.5
+  }
+}

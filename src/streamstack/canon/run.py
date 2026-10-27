@@ -41,7 +41,13 @@ def run_bridge(cfg: dict[str, str]) -> int:
         print(f"streamstack: {exc}", file=sys.stderr)
         return 1
     release_gvfs()
-    bridge = Bridge(Settings.from_config(cfg), factory, on_busy=release_gvfs)
+    from streamstack.console.hardware import overrides_from
+    from streamstack.hardware.roles import LivePlan
+
+    live = LivePlan(
+        lambda: overrides_from(cfg, os.environ)
+    )  # the hardware Plan: which GPU decodes, which node is the camera
+    bridge = Bridge(Settings.from_config(cfg, live.get()), factory, on_busy=release_gvfs, plan=live.get)
     server, path = ipc.serve(bridge.handle)
     print(f"streamstack canon-bridge: camera backend {backend}, control socket {path}", file=sys.stderr, flush=True)
 

@@ -6,13 +6,12 @@
 // looks library (cards with a thumbnail or a rendered swatch, apply, save, hold-to-delete).
 //
 // Keys on this page: Z zebra, S safe areas, C centre cross, H scopes, V parade/waveform. G (thirds) is global.
-// Everything that needs OBS is disabled with a reason and a one-press “Start studio”; the picture falls
-// back to the raw camera while OBS is down, so framing still works.
+// Everything here talks to the Console's native video engine; actions it cannot do yet answer with a reason.
 
 import { h, renderList, signed, clamp } from '../core/util.js';
 import { icon } from '../components/icons.js';
 import { apiUrl } from '../core/api.js';
-import { toggleVirtualcam, selectScene, setRecord, startStudio } from '../core/ops.js';
+import { toggleVirtualcam, selectScene, setRecord } from '../core/ops.js';
 import { setUi, onUi, ui } from '../core/ui.js';
 import { Scopes } from './camera-scopes.js';
 import { drawSwatch, sameLook } from './look-swatch.js';
@@ -31,11 +30,19 @@ const GRADE = [
   { key: 'warmth', label: 'Warmth', wide: true },
 ];
 
-const OBS_REASON = {
-  offline: { reason: 'OBS is not running', fix: 'Start studio' },
-  'no-websocket': { reason: 'OBS is running, but its WebSocket server is off (Tools → WebSocket Server Settings)', fix: '' },
-  error: { reason: 'OBS reported an error', fix: '' },
-};
+/** The native video engine's status chip (null until the Console has reported an engine block). */
+export function engineChip(engine) {
+  if (!engine || !engine.native) return null;
+  const path = engine.backend === 'vulkan' ? 'GPU' : 'CPU';
+  if (engine.state === 'running') {
+    const fps = engine.fps ? `${Math.round(engine.fps)} fps` : '';
+    const drops = engine.dropped ? ` · ${engine.dropped} dropped` : '';
+    const apply = engine.look_apply_ms == null ? '' : ` · look ${engine.look_apply_ms.toFixed(2)} ms`;
+    return { id: 'engine', state: engine.dropped ? 'warn' : 'ok', label: 'ENGINE', value: `${path} · ${fps}${drops}`.replace(/ · $/, ''), icon: 'system', title: `${engine.source || 'Camera'} → ${engine.output || ''}, decode ${engine.decode || ''}${apply}` };
+  }
+  if (engine.state === 'off') return { id: 'engine', state: 'off', label: 'ENGINE', value: 'off', icon: 'system', title: 'The program camera is switched off' };
+  return { id: 'engine', state: 'warn', label: 'ENGINE', value: engine.state === 'waiting' ? 'waiting' : engine.state, icon: 'system', title: engine.error || '' };
+}
 
 // Look thumbnails live for the whole session (module scope): name -> object URL.
 const thumbs = new Map();
@@ -46,7 +53,6 @@ const TEMPLATE = `
     <ss-card bare class="c-preview">
       <div class="pv-cell">
         <ss-preview data-ref="pv" fps="10" label="Camera picture">
-          <ss-button slot="empty" variant="primary" icon="power" data-ref="pvFix" hidden>Start studio</ss-button>
           <div class="ov" aria-hidden="true">
             <canvas class="ov-zebra" data-ref="zebra" width="384" height="216"></canvas>
             <div class="ov-safe" data-ref="safe"></div>
@@ -243,57 +249,37 @@ export async function mount(host, ctx) {
     syncPicture();
   });
   let syncPicture = () => {};
-  sub((s) => [s.video.obs, s.video.selected_source, s.video.sources, s.video.program_scene], () => syncPicture());
+  sub((s) => [s.video.selected_source, s.video.sources, s.video.program_scene], () => syncPicture());
   syncPicture = () => {
     const v = store.state.video;
-    const obsUp = v.obs === 'connected';
     const sourceName = v.selected_source;
     let source;
     let label;
-    if (!obsUp) { source = 'camera'; label = 'Raw camera'; }
-    else if (prefs.view === 'program' || !sourceName) { source = 'program'; label = sourceName || 'Camera'; }
+    if (prefs.view === 'program' || !sourceName) { source = 'program'; label = sourceName || 'Camera'; }
     else { source = sourceName; label = sourceName; }
     if (R.pv.getAttribute('source') !== source) R.pv.setAttribute('source', source);
     R.viewSourceLabel.textContent = label;
-    const showProgram = obsUp && (prefs.view === 'program' || !sourceName);
+    const showProgram = (prefs.view === 'program' || !sourceName);
     for (const b of R.view.querySelectorAll('button')) {
       b.setAttribute('aria-pressed', String(b.dataset.view === 'program' ? showProgram : !showProgram));
-      b.disabled = !obsUp;
     }
     R.pv.setAttribute('label', showProgram ? 'Program picture, what the audience sees' : `Picture from ${label}`);
     R.pv.setAttribute('tally', showProgram && (v.streaming.active || v.virtualcam) ? 'program' : 'off');
   };
 
-  // ---------- OBS availability ----------
-  sub((s) => [s.video.obs, s.video.obs_error, s.studio.busy], ([obs, err, busy]) => {
-    const r = OBS_REASON[obs];
-    let reason = '';
-    let fix = '';
-    if (r) {
-      reason = busy ? 'Starting the studio…' : (obs === 'error' && err ? err : r.reason);
-      fix = busy ? '' : r.fix;
-    }
-    for (const card of [R.gradeCard, R.looksCard, R.bottomCard]) {
-      if (reason) card.setAttribute('reason', reason); else card.removeAttribute('reason');
-      if (card === R.gradeCard || card === R.looksCard) { if (fix) card.setAttribute('fix', fix); else card.removeAttribute('fix'); }
-    }
-    R.pvFix.hidden = !fix;
-    syncPicture();
-  });
-  for (const card of [R.gradeCard, R.looksCard]) card.addEventListener('fix', () => startStudio());
-  R.pvFix.addEventListener('click', () => startStudio());
-
   // ---------- badges + timecode ----------
-  sub((s) => [s.video.streaming, s.video.recording, s.video.virtualcam, s.video.privacy, s.studio.camlink, s.video.selected_source], ([streaming, rec, vcam, privacy, link, selected]) => {
+  sub((s) => [s.video.streaming, s.video.recording, s.video.virtualcam, s.video.privacy, s.studio.camlink, s.video.selected_source, s.video.engine], ([streaming, rec, vcam, privacy, link, selected, engine]) => {
     const chips = [];
     const onAir = streaming.active || vcam;
     chips.push(onAir ? { id: 'air', state: 'live', label: 'ON AIR', icon: 'broadcast', pulse: true } : { id: 'air', state: 'off', label: 'OFF AIR', icon: 'dot' });
     if (rec.active) chips.push({ id: 'rec', state: rec.paused ? 'warn' : 'live', label: rec.paused ? 'REC PAUSED' : 'REC', icon: 'record', pulse: !rec.paused });
     if (privacy) chips.push({ id: 'privacy', state: 'warn', label: 'PRIVACY', icon: 'eye-off' });
+    const eng = engineChip(engine);
+    if (eng) chips.push(eng);
     // The capture card's HDMI mode, while the card's own picture is the one being edited.
     if (link?.present && /cam link/i.test(selected || '')) {
       const lbl = link.signal ? link.mode : 'no signal';
-      chips.push({ id: 'camlink', state: !link.signal ? 'off' : link.retune ? 'info' : 'ok', label: 'HDMI', value: link.retune ? `${lbl} · retune OBS` : lbl, icon: 'camera', title: link.active ? `Active: ${link.active}` : '' });
+      chips.push({ id: 'camlink', state: !link.signal ? 'off' : 'ok', label: 'HDMI', value: lbl, icon: 'camera', title: link.active ? `Active: ${link.active}` : '' });
     }
     renderList(R.badges, chips, (c) => c.id, () => h('ss-status-chip', { size: 'md' }), (el, c) => {
       el.setAttribute('state', c.state); el.setAttribute('label', c.label); el.setAttribute('icon', c.icon); el.toggleAttribute('pulse', !!c.pulse);
@@ -499,6 +485,8 @@ export async function mount(host, ctx) {
   R.saveCancel.addEventListener('click', closeSave);
   R.saveGo.addEventListener('click', doSave);
   R.saveName.addEventListener('input', checkName);
+  // a look saved elsewhere (or deleted) while the form is open changes whether this name replaces one
+  sub((st) => st.video.looks, () => { if (!R.saveForm.hidden) checkName(); });
   R.saveForm.addEventListener('submit', (e) => { e.preventDefault(); doSave(); });
   R.saveName.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); doSave(); }

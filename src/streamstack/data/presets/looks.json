@@ -1,0 +1,51 @@
+{
+  "schema": "streamstack.looks/1",
+  "categories": [
+    {"id": "essentials", "label": "Essentials"},
+    {"id": "film", "label": "Film stocks"},
+    {"id": "cinema", "label": "Cinema"},
+    {"id": "creator", "label": "Creator and genre"}
+  ],
+  "looks": [
+    {"name": "Natural", "category": "essentials", "blurb": "No grade: the camera as it is.", "values": {}},
+    {"name": "Warm Studio", "category": "essentials", "blurb": "A little warmth and contrast for a friendly room.", "values": {"brightness": 0.02, "contrast": 0.08, "gamma": 0.05, "saturation": 0.06, "warmth": 0.25}},
+    {"name": "Cool Daylight", "category": "essentials", "blurb": "Clean, slightly cool window light.", "values": {"brightness": 0.02, "contrast": 0.05, "saturation": 0.02, "warmth": -0.2}},
+    {"name": "Cinematic", "category": "essentials", "blurb": "Muted colour with a teal and orange split.", "values": {"contrast": 0.12, "gamma": -0.04, "saturation": -0.1, "warmth": 0.08, "lut_enabled": true, "lut_amount": 0.4}, "lut": "teal-orange"},
+    {"name": "Punchy", "category": "essentials", "blurb": "Contrast, colour and crisp edges for energetic talk.", "values": {"contrast": 0.2, "saturation": 0.2, "brightness": 0.02, "sharpen_enabled": true, "sharpen_amount": 0.2}},
+    {"name": "Soft Skin", "category": "essentials", "blurb": "Gentle contrast and a lifted mid-tone for flattering skin.", "values": {"brightness": 0.03, "contrast": -0.1, "gamma": 0.12, "saturation": -0.02, "warmth": 0.1}},
+
+    {"name": "Portra Portrait", "category": "film", "blurb": "Soft, warm negative film: creamy skin, gentle highlights.", "values": {"brightness": 0.02, "contrast": -0.04, "gamma": 0.08, "saturation": -0.04, "warmth": 0.12, "lut_enabled": true, "lut_amount": 0.7}, "lut": "portra"},
+    {"name": "Velvia Vivid", "category": "film", "blurb": "Slide film: saturated colour and deep contrast.", "values": {"contrast": 0.14, "gamma": -0.03, "saturation": 0.18, "lut_enabled": true, "lut_amount": 0.65}, "lut": "velvia"},
+    {"name": "Ektar Pop", "category": "film", "blurb": "Fine-grain colour negative: bright, punchy and clean.", "values": {"brightness": 0.01, "contrast": 0.16, "saturation": 0.28, "warmth": 0.05, "sharpen_enabled": true, "sharpen_amount": 0.12}},
+    {"name": "Cinestill Night", "category": "film", "blurb": "Tungsten cinema stock: cyan shadows, glowing warm highlights.", "values": {"contrast": 0.1, "gamma": -0.02, "saturation": 0.04, "warmth": 0.06, "lut_enabled": true, "lut_amount": 0.75}, "lut": "cinestill"},
+    {"name": "Classic Chrome", "category": "film", "blurb": "Muted, documentary slide look with earthy colour.", "values": {"contrast": 0.1, "gamma": -0.02, "saturation": -0.18, "warmth": 0.04, "lut_enabled": true, "lut_amount": 0.7}, "lut": "classic-chrome"},
+    {"name": "Tri-X Mono", "category": "film", "blurb": "Classic black and white reporter film: strong contrast.", "values": {"contrast": 0.26, "gamma": -0.04, "saturation": -1.0, "sharpen_enabled": true, "sharpen_amount": 0.15}},
+    {"name": "Kodachrome Warm", "category": "film", "blurb": "Rich reds and golden tones of 1970s slide film.", "values": {"contrast": 0.12, "saturation": 0.1, "warmth": 0.28, "lut_enabled": true, "lut_amount": 0.45}, "lut": "golden-hour"},
+    {"name": "Faded Film", "category": "film", "blurb": "Lifted blacks and soft colour, like an old print.", "values": {"brightness": 0.04, "contrast": -0.16, "gamma": 0.1, "saturation": -0.22, "warmth": 0.08, "lut_enabled": true, "lut_amount": 0.6}, "lut": "vintage-fade"},
+    {"name": "Vintage 70s", "category": "film", "blurb": "Warm amber cast, green-teal shadows and faded blacks.", "values": {"brightness": 0.02, "contrast": -0.06, "saturation": -0.1, "warmth": 0.3, "lut_enabled": true, "lut_amount": 0.85}, "lut": "vintage-fade"},
+    {"name": "Bleach Bypass", "category": "film", "blurb": "Silvery, desaturated and gritty with heavy contrast.", "values": {"contrast": 0.3, "gamma": -0.06, "saturation": -0.35, "sharpen_enabled": true, "sharpen_amount": 0.18, "lut_enabled": true, "lut_amount": 0.8}, "lut": "bleach-bypass"},
+    {"name": "Cross Process", "category": "film", "blurb": "Slide film in the wrong chemistry: green shadows, yellow highlights.", "values": {"contrast": 0.18, "saturation": 0.12, "lut_enabled": true, "lut_amount": 0.7}, "lut": "cross-process"},
+
+    {"name": "Teal and Orange", "category": "cinema", "blurb": "The blockbuster split: warm skin against cool shadows.", "values": {"contrast": 0.14, "gamma": -0.03, "saturation": 0.04, "warmth": 0.06, "lut_enabled": true, "lut_amount": 0.8}, "lut": "teal-orange"},
+    {"name": "Golden Hour", "category": "cinema", "blurb": "Low-sun glow: warm highlights, soft contrast.", "values": {"brightness": 0.03, "contrast": 0.06, "gamma": 0.04, "saturation": 0.08, "warmth": 0.4, "lut_enabled": true, "lut_amount": 0.7}, "lut": "golden-hour"},
+    {"name": "Noir", "category": "cinema", "blurb": "Deep black and white with hard shadows.", "values": {"brightness": -0.03, "contrast": 0.4, "gamma": -0.12, "saturation": -1.0, "lut_enabled": true, "lut_amount": 0.6}, "lut": "noir"},
+    {"name": "Silver Screen", "category": "cinema", "blurb": "Soft, glowing monochrome of the studio era.", "values": {"brightness": 0.03, "contrast": 0.1, "gamma": 0.05, "saturation": -1.0, "lut_enabled": true, "lut_amount": 0.5}, "lut": "noir"},
+    {"name": "Moonlight", "category": "cinema", "blurb": "Cool blue night grade with calm contrast.", "values": {"brightness": -0.04, "contrast": 0.1, "gamma": -0.04, "saturation": -0.08, "warmth": -0.35, "lut_enabled": true, "lut_amount": 0.5}, "lut": "cold-steel"},
+    {"name": "Sci-Fi Steel", "category": "cinema", "blurb": "Cold, metallic and clinical.", "values": {"contrast": 0.16, "gamma": -0.02, "saturation": -0.14, "warmth": -0.28, "sharpen_enabled": true, "sharpen_amount": 0.16, "lut_enabled": true, "lut_amount": 0.8}, "lut": "cold-steel"},
+    {"name": "Blockbuster Cool", "category": "cinema", "blurb": "Cool thriller grade with crushed, cyan shadows.", "values": {"contrast": 0.2, "gamma": -0.06, "saturation": -0.06, "warmth": -0.12, "lut_enabled": true, "lut_amount": 0.6}, "lut": "cold-steel"},
+
+    {"name": "Clean Corporate", "category": "creator", "blurb": "Neutral, bright and trustworthy for meetings and webinars.", "values": {"brightness": 0.03, "contrast": 0.06, "gamma": 0.04, "saturation": -0.02, "warmth": -0.04}},
+    {"name": "Podcast Studio", "category": "creator", "blurb": "Warm, relaxed colour that keeps skin natural on long takes.", "values": {"brightness": 0.01, "contrast": 0.08, "gamma": 0.03, "saturation": 0.04, "warmth": 0.14}},
+    {"name": "Talking Head Soft", "category": "creator", "blurb": "Smooth contrast and a touch of warmth for one person to camera.", "values": {"brightness": 0.03, "contrast": -0.06, "gamma": 0.1, "saturation": 0.0, "warmth": 0.08}},
+    {"name": "High-Key Beauty", "category": "creator", "blurb": "Bright, airy and low contrast, flattering for close-ups.", "values": {"brightness": 0.1, "contrast": -0.14, "gamma": 0.2, "saturation": -0.04, "warmth": 0.06}},
+    {"name": "Low-Key Moody", "category": "creator", "blurb": "Dark, contrasty and intimate with rich shadows.", "values": {"brightness": -0.06, "contrast": 0.24, "gamma": -0.1, "saturation": -0.06, "warmth": 0.1}},
+    {"name": "Gaming Neon", "category": "creator", "blurb": "Magenta and cyan glow with saturated colour for game streams.", "values": {"contrast": 0.16, "saturation": 0.24, "sharpen_enabled": true, "sharpen_amount": 0.2, "lut_enabled": true, "lut_amount": 0.6}, "lut": "neon-split"},
+    {"name": "Cyberpunk", "category": "creator", "blurb": "Hot pink highlights against electric blue shadows.", "values": {"contrast": 0.22, "gamma": -0.04, "saturation": 0.3, "warmth": -0.1, "lut_enabled": true, "lut_amount": 0.9}, "lut": "neon-split"},
+    {"name": "News Desk", "category": "creator", "blurb": "Crisp, even and slightly cool for authoritative delivery.", "values": {"brightness": 0.03, "contrast": 0.1, "gamma": 0.02, "saturation": 0.0, "warmth": -0.08, "sharpen_enabled": true, "sharpen_amount": 0.14}},
+    {"name": "Documentary", "category": "creator", "blurb": "Honest, slightly muted colour with natural contrast.", "values": {"contrast": 0.08, "gamma": 0.0, "saturation": -0.1, "warmth": 0.02}},
+    {"name": "Sunny Outdoor", "category": "creator", "blurb": "Brightens shade and tames harsh sun.", "values": {"brightness": 0.04, "contrast": -0.04, "gamma": 0.08, "saturation": 0.1, "warmth": 0.04}},
+    {"name": "Tungsten Fix", "category": "creator", "blurb": "Cools a room lit by orange bulbs back toward neutral.", "values": {"brightness": 0.02, "contrast": 0.04, "saturation": 0.04, "warmth": -0.45}},
+    {"name": "Pastel Dream", "category": "creator", "blurb": "Light, soft and sweet with lifted shadows.", "values": {"brightness": 0.08, "contrast": -0.2, "gamma": 0.18, "saturation": -0.12, "warmth": 0.05}},
+    {"name": "Matte Black", "category": "creator", "blurb": "Flat, modern grade with faded blacks and low saturation.", "values": {"brightness": 0.02, "contrast": -0.12, "gamma": 0.04, "saturation": -0.3, "warmth": -0.02}}
+  ]
+}

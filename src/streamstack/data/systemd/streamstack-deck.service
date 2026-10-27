@@ -1,0 +1,21 @@
+# StreamStack deck: an Elgato Stream Deck as a control surface for the Console, with the Console closed.
+# `streamstack deck enable|disable|status`, or the Deck page. Needs the deck extra: pip install 'streamstack[deck]'.
+[Unit]
+Description=StreamStack deck (Elgato Stream Deck keys for the Console)
+After=graphical-session.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=@STREAMSTACK@ deck run
+Restart=on-failure
+RestartSec=5
+Nice=5
+CPUWeight=10
+NoNewPrivileges=true
+# The deck starts a headless Console when none is running; that Console must outlive a restart of this unit.
+KillMode=process
+
+[Install]
+WantedBy=graphical-session.target

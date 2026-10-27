@@ -1,0 +1,36 @@
+/* system-hardware.css — the hardware card. Scoped like system.css: page stylesheets stay loaded after navigation. */
+@scope ([data-page="system"]) {
+  .hw { display: grid; gap: var(--s-3); }
+  .hw-card { display: grid; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line); }
+  .hw-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; }
+  .hw-text { flex: 1; min-width: 0; display: grid; gap: 0.15rem; }
+  .hw-actions, .hw-hosts { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+  .hw-hosts[hidden], .hw-error[hidden] { display: none; }
+  .hw-h { margin: 0; font-size: var(--fs-sm); color: var(--text-2); font-weight: 650; }
+  .hw-sub { font-size: var(--fs-xs); color: var(--text-2); overflow-wrap: anywhere; margin: 0; }
+  .hw-line { margin: 0; overflow-wrap: anywhere; }
+  .hw-error { margin: 0; color: var(--red); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .hw-devices, .hw-gpus, .hw-notices, .hw-jobs, .hw-cams { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+  .hw-device { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: 0.1rem var(--s-3); align-items: center; padding: var(--s-2) var(--s-3); border-radius: var(--r-2, var(--r-3)); background: var(--surface-inset); border: 1px solid var(--line); }
+  .hw-device .hw-sub { grid-column: 2; }
+  .hw-badge { grid-row: span 2; justify-self: start; padding: 0.1rem var(--s-2); border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 650; border: 1px solid var(--line-strong); color: var(--text-2); }
+  .hw-device[data-state="present"] .hw-badge { color: var(--green); border-color: var(--green); background: var(--green-soft); }
+  .hw-device[data-state="denied"] .hw-badge { color: var(--amber); border-color: var(--amber); background: var(--amber-soft); }
+  .hw-device[data-state="absent"][data-required="true"] .hw-badge { color: var(--red); border-color: var(--red); background: var(--red-soft); }
+  .hw-gpu { display: grid; gap: 0.15rem var(--s-3); grid-template-columns: minmax(0, 1fr) auto; padding: var(--s-2) var(--s-3); border-radius: var(--r-2, var(--r-3)); background: var(--surface-inset); border: 1px solid var(--line); }
+  .hw-gpu .hw-sub, .hw-gpu .hw-roles { grid-column: 1 / -1; }
+  .hw-job { display: grid; gap: 0.15rem var(--s-3); grid-template-columns: minmax(0, 1fr) auto auto; padding: var(--s-2) var(--s-3); border-radius: var(--r-2, var(--r-3)); background: var(--surface-inset); border: 1px solid var(--line); }
+  .hw-job .hw-sub { grid-column: 1 / -1; }
+  .hw-cam { display: grid; grid-template-columns: 6rem minmax(0, 1fr) auto; gap: 0.1rem var(--s-3); align-items: center; padding: var(--s-2) var(--s-3); border-radius: var(--r-2, var(--r-3)); background: var(--surface-inset); border: 1px solid var(--line); }
+  .hw-cam .hw-sub { grid-column: 2 / -1; }
+  .hw-cam[data-state="present"] .hw-badge { color: var(--green); border-color: var(--green); background: var(--green-soft); }
+  .hw-cam[data-state="absent"] .hw-badge { color: var(--text-2); }
+  .hw-node { font-family: var(--font-mono); font-size: var(--fs-sm); }
+  .hw-roles { font-weight: 650; }
+  .hw-name { overflow-wrap: anywhere; }
+  .hw-notice { padding: var(--s-2) var(--s-3); border-radius: var(--r-2, var(--r-3)); background: var(--surface-inset); border: 1px solid var(--line); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .hw-notice[data-level="warn"] { border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); }
+  .hw [aria-pressed="true"] { color: var(--text); border-color: var(--accent); }
+  .copy { display: inline-flex; align-items: center; min-height: 2rem; padding: 0 var(--s-3); border-radius: var(--r-pill); background: var(--surface-inset); border: 1px solid var(--line-strong); color: var(--text-2); font-size: var(--fs-xs); font-weight: 650; cursor: pointer; touch-action: manipulation; }
+  .copy:hover { color: var(--text); border-color: var(--accent); }
+}

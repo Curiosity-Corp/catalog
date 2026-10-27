@@ -1,6 +1,6 @@
 // <ss-status-chip> — a compact status indicator; a link when it has `href`.
 //
-//   <ss-status-chip state="ok" label="OBS" value="connected" icon="check"></ss-status-chip>
+//   <ss-status-chip state="ok" label="Engine" value="running" icon="check"></ss-status-chip>
 //   <ss-status-chip state="live" label="ON AIR" pulse></ss-status-chip>
 //   <ss-status-chip state="warn" label="Camera" value="Raw" href="#/camera"></ss-status-chip>
 //

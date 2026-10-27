@@ -375,7 +375,7 @@ def host() -> dict:
 def stamp():
     import datetime as dt
 
-    return dt.datetime(2026, 10, 22, 12, 0, tzinfo=dt.timezone.utc)
+    return dt.datetime(2026, 10, 22, 12, 0, tzinfo=dt.UTC)
 
 
 def test_synthetic_doc_block_is_labelled_a_placeholder() -> None:

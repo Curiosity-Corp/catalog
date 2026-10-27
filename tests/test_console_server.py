@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 import pytest
+from http_support import HTTP_TIMEOUT
 
 from streamstack.console import launcher
 from streamstack.console.errors import ActionError
@@ -71,7 +72,7 @@ class FakeVideo:
         self.served = 0
 
     def state(self) -> dict:
-        return {"obs": "connected", "scenes": []}
+        return {"selected_source": "program", "scenes": []}
 
     def act(self, action: str, params: dict) -> str | None:
         return None
@@ -133,7 +134,7 @@ def request(
     token: bool = True,
     raw_body: bytes | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
-    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=HTTP_TIMEOUT)
     send = dict(headers or {})
     if token:
         send.setdefault("X-StreamStack-Token", server.token)
@@ -295,7 +296,7 @@ def test_state_snapshot_has_every_section(server: ConsoleServer) -> None:
     assert status == 200 and headers["content-type"] == "application/json"
     assert set(state) == {
         "version", "demo", "studio", "video", "audio", "auto", "framing", "health", "system", "lighting",
-        "interface",
+        "interface", "virtual", "presets", "hardware", "stream", "storage", "deck", "diagnostics",
     }  # fmt: skip
     assert state["audio"]["mic"]["gain_db"] == 0.0
     assert state["studio"]["running"] is True
@@ -350,7 +351,7 @@ def test_post_body_rules(server: ConsoleServer) -> None:
 
 
 def test_keep_alive_connection_survives_errors(server: ConsoleServer) -> None:
-    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=HTTP_TIMEOUT)
     headers = {"X-StreamStack-Token": server.token, "Content-Type": "application/json"}
     try:
         for body, expected in ((b'{"action":"audio.absent"}', 409), (b'{"action":"audio.gain","db":1}', 200)):
@@ -366,7 +367,7 @@ def test_keep_alive_connection_survives_errors(server: ConsoleServer) -> None:
 
 
 def open_events(server: ConsoleServer, **kwargs: str) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse]:
-    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=HTTP_TIMEOUT)
     conn.request("GET", f"/api/events?token={server.token}", headers=kwargs)
     return conn, conn.getresponse()
 
@@ -489,7 +490,7 @@ def test_director_sheet_is_served_to_the_page_only(
 
 
 def test_preview_stream_is_multipart_and_stops_with_the_client(server: ConsoleServer, rig: Rig) -> None:
-    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=HTTP_TIMEOUT)
     conn.request("GET", f"/api/preview.mjpg?fps=15&width=320&token={server.token}")
     resp = conn.getresponse()
     assert resp.status == 200

@@ -1,43 +1,66 @@
-"""The framing controller against a fake OBS and a fake detector, driven tick by tick on a fake clock."""
+"""The framing controller against a fake engine and a fake detector, driven tick by tick on a fake clock."""
 
 from __future__ import annotations
 
-import base64
 import itertools
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from test_framing_crop import CAMERAS, FakeObs
 
 from streamstack import config
 from streamstack.console import framing as console_framing
 from streamstack.console.errors import ActionError
 from streamstack.console.framing import DemoFraming, FramingController
 from streamstack.console.rig import Rig
+from streamstack.engine.cropper import EngineCropper
+from streamstack.engine.graph import Rect, Source
 from streamstack.framing import detector, health
 from streamstack.framing.engine import Face
 
+CANON = Source("Canon EOS 50D", "/dev/video42", "YUYV", 1056, 704, 20.0)
+LINK = Source("Cam Link 4K", "/dev/video0", "YUYV", 1920, 1080, 30.0)
+JPEG = b"\xff\xd8jpeg"
+
+
+class FakeEngine:
+    """The slice of VideoEngine the cropper uses: the window, its state and the output height."""
+
+    def __init__(self) -> None:
+        self.window: Rect | None = None
+        self.windows: list[Rect | None] = []
+        self.fail_windows = False
+        self.spec = SimpleNamespace(out_height=1080)
+
+    def state(self) -> dict:
+        return {"crop": None if self.window is None else vars(self.window)}
+
+    def set_window(self, rect: Rect | None) -> None:
+        if self.fail_windows:
+            raise RuntimeError("the engine is restarting")
+        self.window = rect
+        self.windows.append(rect)
+
 
 class FakeVideo:
-    """The slice of VideoController the framing controller uses, on top of the fake OBS."""
+    """The slice of NativeVideo the framing controller uses: what it is reading, its frames and its cropper."""
 
-    def __init__(self, obs: FakeObs, program: str = "Canon") -> None:
-        self.obs = obs
-        self.program = program
+    def __init__(self, engine: FakeEngine, source: Source = CANON) -> None:
+        self.engine = engine
+        self.source = source
         self.connected = True
         self.calls: list[tuple[str, str]] = []
 
     def scene_view(self):
-        return self.connected, self.program, list(self.obs.scenes), set(CAMERAS)
+        return self.connected, "Program", ["Program"], {self.source.label}
 
-    def obs_call(self, kind: str, request: str, **data) -> dict:
-        if not self.connected:
-            raise ActionError("OBS is not connected - start the studio first.", 409)
-        self.calls.append((kind, request))
-        if request == "GetSourceScreenshot":
-            return {"imageData": "data:image/jpg;base64," + base64.b64encode(b"\xff\xd8jpeg").decode()}
-        return self.obs(request, **data)
+    def make_cropper(self) -> EngineCropper:
+        return EngineCropper(lambda: self.engine if self.connected else None, lambda: self.source)
+
+    def detect_frame(self, label: str) -> bytes | None:
+        self.calls.append(("detect_frame", label))
+        return JPEG if label == self.source.label else None
 
 
 class ScriptedDetector:
@@ -75,8 +98,8 @@ def ready(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class Rigging:
     def __init__(self, tmp_path: Path, **cfg: str) -> None:
-        self.obs = FakeObs()
-        self.video = FakeVideo(self.obs)
+        self.engine = FakeEngine()
+        self.video = FakeVideo(self.engine)
         self.det = ScriptedDetector()
         self.clock = Clock()
         self.toasts: list[tuple[str, str]] = []
@@ -93,7 +116,6 @@ class Rigging:
             lambda level, text: self.toasts.append((level, text)),
             opener=opener,
             state_file=tmp_path / "state" / "framing.json",
-            restore_file=tmp_path / "state" / "restore.json",
             clock=self.clock,
         )
 
@@ -107,9 +129,13 @@ class Rigging:
             if i % every == 0:
                 self.ctl._detect_tick(self.clock.now)
 
-    def crop(self, scene: str = "Canon", item: int = 1) -> tuple[int, int, int, int]:
-        t = self.obs.transforms[(scene, item)]
-        return t["cropLeft"], t["cropTop"], t["cropRight"], t["cropBottom"]
+    def crop(self) -> tuple[int, int, int, int]:
+        """The margins (left, top, right, bottom) the engine's window leaves, in source pixels."""
+        w = self.engine.window
+        if w is None:
+            return 0, 0, 0, 0
+        src = self.video.source
+        return w.x, w.y, src.width - w.x - w.w, src.height - w.y - w.h
 
 
 @pytest.fixture
@@ -120,12 +146,12 @@ def rigging(tmp_path: Path, ready: None) -> Rigging:
 def test_starts_off_and_touches_nothing(rigging: Rigging) -> None:
     rigging.run(3)
     assert rigging.ctl.state()["state"] == "off"
-    assert rigging.obs.writes == []
-    assert rigging.video.calls == []  # not even a request while off
+    assert rigging.engine.windows == []
+    assert rigging.video.calls == []  # not even a frame request while off
     assert rigging.opened == []  # the detector is not loaded until it is wanted
 
 
-def test_gentle_tracking_crops_the_on_air_camera_smoothly(rigging: Rigging) -> None:
+def test_gentle_tracking_crops_the_picture_smoothly(rigging: Rigging) -> None:
     assert rigging.ctl.act("framing.mode", {"mode": "gentle"}) == "Auto-framing: Gentle"
     rigging.run(12)
     state = rigging.ctl.state()
@@ -138,44 +164,37 @@ def test_gentle_tracking_crops_the_on_air_camera_smoothly(rigging: Rigging) -> N
     assert (1056 - left - right) / (704 - top - bottom) == pytest.approx(1056 / 704, rel=0.02)  # same aspect: a zoom
     zoom = 1056 / (1056 - left - right)
     assert 1.1 < zoom <= 1.31  # the Canon's resolution cap
-    # the other scenes' items for the same camera follow, and the camera that is not on air stays alone
-    assert rigging.crop("Side by Side", 3) != (0, 0, 0, 0)
-    assert rigging.crop("Side by Side", 4) == (0, 0, 0, 0)
     # writes come only while the picture moves
-    count = len(rigging.obs.writes)
+    count = len(rigging.engine.windows)
     rigging.run(10)
-    assert len(rigging.obs.writes) - count < 15
+    assert len(rigging.engine.windows) - count < 15
 
 
 def test_the_crop_never_steps_more_than_a_few_pixels_at_a_time(rigging: Rigging) -> None:
     rigging.ctl.act("framing.mode", {"mode": "tight"})
     rigging.run(20)
-    lefts = [w[2]["cropLeft"] for w in rigging.obs.writes if w[0] == "Canon"]
+    lefts = [w.x for w in rigging.engine.windows if w is not None]
     assert max(abs(b - a) for a, b in itertools.pairwise(lefts)) <= 8
 
 
-def test_detection_reads_the_screenshot_connection_and_apply_the_control_one(rigging: Rigging) -> None:
+def test_detection_reads_the_engines_frame_and_the_crop_goes_to_the_engine(rigging: Rigging) -> None:
     rigging.ctl.act("framing.mode", {"mode": "follow"})
     rigging.run(3)
-    kinds = {(k, r) for k, r in rigging.video.calls}
-    assert ("framing-shots", "GetSourceScreenshot") in kinds
-    assert ("framing", "SetSceneItemTransform") in kinds
-    assert not any(k == "framing" and r == "GetSourceScreenshot" for k, r in rigging.video.calls)
+    assert ("detect_frame", "Canon EOS 50D") in rigging.video.calls
+    assert any(w is not None for w in rigging.engine.windows)
 
 
-def test_off_eases_back_and_restores_the_exact_original_crop(rigging: Rigging) -> None:
+def test_off_eases_back_to_the_full_frame(rigging: Rigging) -> None:
     rigging.ctl.act("framing.mode", {"mode": "tight"})
     rigging.run(12)
     assert rigging.crop() != (0, 0, 0, 0)
     rigging.ctl.act("framing.mode", {"mode": "off"})
     assert rigging.ctl.state()["state"] == "off"
     rigging.run(20)
-    assert rigging.crop() == (0, 0, 0, 0)
-    assert rigging.crop("Side by Side", 3) == (0, 0, 0, 0)
-    writes = len(rigging.obs.writes)
+    assert rigging.crop() == (0, 0, 0, 0) and rigging.engine.windows[-1] is None
+    writes = len(rigging.engine.windows)
     rigging.run(5)
-    assert len(rigging.obs.writes) == writes  # idle again
-    assert not (rigging.ctl._restore.path).exists()
+    assert len(rigging.engine.windows) == writes  # idle again
 
 
 def test_losing_the_face_zooms_back_out_and_says_so(rigging: Rigging) -> None:
@@ -195,44 +214,32 @@ def test_hold_freezes_the_crop_and_stops_detecting(rigging: Rigging) -> None:
     rigging.ctl.act("framing.mode", {"mode": "follow"})
     rigging.run(10)
     rigging.ctl.act("framing.hold", {"on": True})
-    frozen, shots = rigging.crop(), sum(1 for _, r in rigging.video.calls if r == "GetSourceScreenshot")
+    frozen, shots = rigging.crop(), len(rigging.video.calls)
     rigging.det.faces = [Face(0.70, 0.30, 0.07, 0.12, 0.95)]
     rigging.run(6)
     assert rigging.ctl.state()["state"] == "held" and rigging.ctl.state()["held"] is True
     assert max(abs(a - b) for a, b in zip(rigging.crop(), frozen, strict=True)) <= 3
-    assert sum(1 for _, r in rigging.video.calls if r == "GetSourceScreenshot") == shots
+    assert len(rigging.video.calls) == shots
     rigging.ctl.act("framing.hold", {"on": False})
     rigging.run(10)
     assert rigging.ctl.state()["state"] == "tracking"
 
 
-def test_a_scene_change_moves_detection_to_the_new_camera(rigging: Rigging) -> None:
+def test_a_camera_change_moves_detection_and_the_crop_to_the_new_camera(rigging: Rigging) -> None:
     rigging.ctl.act("framing.mode", {"mode": "tight"})
     rigging.run(10)
-    rigging.video.program = "Side by Side"
+    canon = next(s for s in rigging.ctl.state()["sources"] if s["name"] == "Canon EOS 50D")
+    rigging.engine.window = None  # a camera change restarts the engine child at the full frame
+    rigging.video.source = LINK
     rigging.run(10)
     state = rigging.ctl.state()
-    assert {s["name"] for s in state["sources"] if s["on_air"]} == {"Canon EOS 50D", "Cam Link 4K"}
-    assert rigging.crop("Side by Side", 4) != (0, 0, 0, 0)  # the Cam Link is framed now
-    # 1080p source in a half-width slot is allowed more zoom than the Canon
+    assert ("detect_frame", "Cam Link 4K") in rigging.video.calls
+    assert rigging.crop() != (0, 0, 0, 0)  # the Cam Link is framed now
     cam = next(s for s in state["sources"] if s["name"] == "Cam Link 4K")
-    canon = next(s for s in state["sources"] if s["name"] == "Canon EOS 50D")
-    assert cam["max_zoom"] > canon["max_zoom"] + 0.3
+    assert cam["on_air"] and cam["max_zoom"] > canon["max_zoom"] + 0.3  # 1080p source: more zoom than the Canon
 
 
-def test_off_air_camera_keeps_its_crop_and_resumes_without_zooming_out(rigging: Rigging) -> None:
-    rigging.ctl.act("framing.mode", {"mode": "tight"})
-    rigging.run(12)
-    crop = rigging.crop()
-    rigging.video.program = "Be Right Back"  # nothing on air
-    rigging.run(20)
-    assert rigging.crop() == crop
-    rigging.video.program = "Canon"
-    rigging.run(3)
-    assert max(abs(a - b) for a, b in zip(rigging.crop(), crop, strict=True)) <= 12
-
-
-def test_obs_going_away_pauses_framing_and_it_recovers(rigging: Rigging) -> None:
+def test_the_engine_going_away_pauses_framing_and_it_recovers(rigging: Rigging) -> None:
     rigging.ctl.act("framing.mode", {"mode": "gentle"})
     rigging.run(8)
     rigging.video.connected = False
@@ -242,14 +249,22 @@ def test_obs_going_away_pauses_framing_and_it_recovers(rigging: Rigging) -> None
     assert rigging.ctl.state()["state"] == "tracking"
 
 
-def test_obs_refusing_a_crop_does_not_stop_framing(rigging: Rigging) -> None:
+def test_the_engine_refusing_a_crop_does_not_stop_framing(rigging: Rigging) -> None:
     rigging.ctl.act("framing.mode", {"mode": "gentle"})
     rigging.run(6)
-    rigging.obs.fail_writes = True
+    rigging.engine.fail_windows = True
     rigging.run(2)
-    rigging.obs.fail_writes = False
+    rigging.engine.fail_windows = False
     rigging.run(4)
     assert rigging.ctl.state()["state"] == "tracking"
+
+
+def test_a_video_controller_that_cannot_crop_is_a_409_not_a_crash(tmp_path: Path, ready: None) -> None:
+    rig = Rigging(tmp_path)
+    rig.ctl.video = SimpleNamespace(scene_view=rig.video.scene_view, detect_frame=rig.video.detect_frame)
+    rig.ctl.act("framing.mode", {"mode": "gentle"})
+    rig.run(2)  # the apply loop treats the missing cropper as the engine being away
+    assert rig.engine.windows == []
 
 
 def test_missing_dependencies_refuse_the_mode_and_change_nothing(
@@ -278,7 +293,7 @@ def test_a_detector_that_cannot_load_falls_back_to_off_with_a_toast(tmp_path: Pa
     assert state["state"] == "unavailable" and state["mode"] == "off"
     assert "no GPU runtime" in state["reason"]
     assert rig.toasts and rig.toasts[0][0] == "warn" and "Auto-framing is off" in rig.toasts[0][1]
-    assert rig.obs.writes == []
+    assert rig.engine.windows == []
     assert health_titles(rig) == ["Auto-framing is unavailable"]
     assert json.loads((tmp_path / "state/framing.json").read_text()) == {"mode": "off"}  # does not retry at every start
     rig.ctl.act("framing.mode", {"mode": "off"})
@@ -329,27 +344,11 @@ def test_a_corrupt_state_file_is_ignored(tmp_path: Path, ready: None) -> None:
     assert Rigging(tmp_path).ctl.state()["mode"] == "off"
 
 
-def test_crops_left_by_a_crash_are_put_back_at_the_next_start(tmp_path: Path, ready: None) -> None:
-    first = Rigging(tmp_path)
-    first.ctl.act("framing.mode", {"mode": "tight"})
-    first.run(12)
-    assert first.crop() != (0, 0, 0, 0)  # ... and the process is killed here, the crop stays in OBS
-    second = Rigging(tmp_path)
-    second.obs = first.obs
-    second.video = FakeVideo(first.obs)
-    second.ctl.video = second.video
-    second.ctl.act("framing.mode", {"mode": "off"})
-    second.ctl._apply_tick(second.clock.now)
-    second.ctl._refresh_items(second.clock.now, force=True)
-    assert second.crop() == (0, 0, 0, 0)
-    assert any(level == "info" and "Put back" in text for level, text in second.toasts)
-
-
-def test_stop_restores_every_crop(rigging: Rigging) -> None:
+def test_stop_restores_the_full_frame(rigging: Rigging) -> None:
     rigging.ctl.act("framing.mode", {"mode": "tight"})
     rigging.run(12)
     rigging.ctl.stop()
-    assert rigging.crop() == (0, 0, 0, 0) and rigging.crop("Side by Side", 3) == (0, 0, 0, 0)
+    assert rigging.crop() == (0, 0, 0, 0)
     assert rigging.det.closed
 
 
@@ -413,14 +412,6 @@ def test_state_shape_is_stable(rigging: Rigging) -> None:
     }  # fmt: skip
     assert [m["name"] for m in state["modes"]] == ["off", "gentle", "tight", "follow"]
     json.dumps(state)  # it goes to the browser as JSON
-
-
-def test_items_that_cannot_zoom_are_reported_not_cropped(rigging: Rigging) -> None:
-    rigging.obs.transforms[("Canon", 1)]["boundsType"] = "OBS_BOUNDS_NONE"
-    rigging.ctl.act("framing.mode", {"mode": "gentle"})
-    rigging.run(10)
-    assert rigging.crop() == (0, 0, 0, 0)
-    assert any("no bounds" in s for s in rigging.ctl.state()["skipped"])
 
 
 # -- health ----------------------------------------

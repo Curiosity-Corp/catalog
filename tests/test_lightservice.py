@@ -168,6 +168,7 @@ def test_setup_installs_and_starts_the_service_unless_told_not_to(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     monkeypatch.setenv("STREAMSTACK_SETUP_SERVICE", "on")
+    monkeypatch.setattr(cli, "_setup_deck_service", lambda: [])  # the deck unit has its own tests
     monkeypatch.setattr(lightservice, "install_unit", lambda run=None: "installed")
     started: list[str] = []
     monkeypatch.setattr(lightservice, "enable", lambda run=None: started.append("enable") or "started")
@@ -184,6 +185,7 @@ def test_setup_survives_a_machine_without_systemd(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     monkeypatch.setenv("STREAMSTACK_SETUP_SERVICE", "on")
+    monkeypatch.setattr(cli, "_setup_deck_service", lambda: [])  # the deck unit has its own tests
 
     def refuse(run: object = None) -> str:
         raise lightservice.ServiceError("Cannot write /nowhere")

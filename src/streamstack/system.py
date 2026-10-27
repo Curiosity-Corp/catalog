@@ -4,20 +4,26 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import shutil
 import signal
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Protocol
 
+log = logging.getLogger(__name__)
+
 CAMLINK_LINK = Path("/dev/streamstack/camlink")
-EE_SOURCE = "easyeffects_source"
+VOICE_SOURCE = "streamstack_mic"  # the StreamStack voice chain's virtual source, "StreamStack Mic"
 CANON_USB_VENDOR = "04a9"
 # Elgato Cam Link 4K. Capture cards are found by USB id, never by /dev/videoN (the number moves between boots).
-CAMLINK_USB_IDS = (("0fd9", "0066"),)
+# Elgato Cam Link 4K: 0066 is the first hardware revision, 0067 the later one (both studio hosts have 0067).
+CAMLINK_USB_IDS = (("0fd9", "0066"), ("0fd9", "0067"))
 SYSFS_VIDEO = Path("/sys/class/video4linux")
 
 # v4l2 fourcc -> ffmpeg -input_format
@@ -141,37 +147,6 @@ def video_devices() -> dict[str, str]:
     return found
 
 
-def loopback_devices() -> list[str]:
-    """The v4l2loopback nodes; OBS feeds the first one it finds free."""
-    found = []
-    for device in video_devices():
-        result = run(["v4l2-ctl", "-d", device, "--info"])
-        if result and result.returncode == 0 and re.search(r"Driver name\s*:\s*v4l2 loopback", result.stdout):
-            found.append(device)
-    return found
-
-
-def opened_by(process: str, devices: list[str]) -> list[str]:
-    """Which of `devices` this user's `process` holds open."""
-    pids = run(["pgrep", "-u", str(os.getuid()), "-x", process])
-    if not pids or pids.returncode != 0:
-        return []
-    wanted = {str(Path(d).resolve()) for d in devices}
-    held = set()
-    for pid in pids.stdout.split():
-        try:
-            for fd in Path(f"/proc/{pid}/fd").iterdir():
-                try:
-                    target = os.readlink(fd)
-                except OSError:
-                    continue
-                if target in wanted:
-                    held.add(target)
-        except OSError:
-            continue
-    return sorted(held)
-
-
 def usb_ids(node: Path) -> tuple[str, str] | None:
     """(vendor, product) of the USB device behind a /sys/class/video4linux node; None when it is not USB."""
     try:
@@ -203,11 +178,24 @@ def video_by_usb_id(ids: tuple[tuple[str, str], ...], sysfs: Path = SYSFS_VIDEO)
     return found
 
 
+def capture_card_ids() -> tuple[tuple[str, str], ...]:
+    """The USB ids of capture cards: what the hardware profiles list, plus the ones built in (a damaged or missing
+    catalogue must not stop the card being found)."""
+    try:
+        from streamstack.hardware import camera
+
+        listed = camera.capture_card_ids()
+    except Exception as exc:  # the catalogue is data; whatever is wrong with it, fall back to the built-in ids
+        log.warning("capture card ids not read from the hardware profiles: %s: %s", type(exc).__name__, exc)
+        listed = ()
+    return tuple(dict.fromkeys((*CAMLINK_USB_IDS, *listed)))
+
+
 def find_camlink() -> str:
     """The Cam Link's capture node: the udev link, else its USB id, else its name."""
     if CAMLINK_LINK.exists():
         return str(CAMLINK_LINK)
-    if by_id := video_by_usb_id(CAMLINK_USB_IDS):
+    if by_id := video_by_usb_id(capture_card_ids()):
         return by_id[0]
     for device, name in video_devices().items():
         if "cam link" in name.lower():
@@ -310,6 +298,32 @@ def usb_products(vendor: str) -> list[str]:
     return sorted(set(products))
 
 
+def usb_products_by_id(ids: tuple[tuple[str, str], ...]) -> list[str]:
+    """Product names of the plugged-in USB devices whose (vendor, product) id is one of `ids`."""
+    products = []
+    for dev in Path("/sys/bus/usb/devices").glob("*"):
+        try:
+            found = (dev / "idVendor").read_text().strip().lower(), (dev / "idProduct").read_text().strip().lower()
+            if found in ids:
+                products.append((dev / "product").read_text().strip())
+        except OSError:
+            continue
+    return sorted(set(products))
+
+
+def canon_products() -> list[str]:
+    """The Canon cameras on USB: found by the id the camera profile lists, else any Canon device (a model the
+    profiles do not know yet is still worth a try with gphoto2)."""
+    try:
+        from streamstack.hardware import camera
+
+        ids = camera.canon_ids()
+    except Exception as exc:  # the catalogue is data; whatever is wrong with it, fall back to the vendor id
+        log.warning("Canon USB ids not read from the hardware profiles: %s: %s", type(exc).__name__, exc)
+        ids = ()
+    return usb_products_by_id(ids) or usb_products(CANON_USB_VENDOR)
+
+
 # ---------------------------------------------------------------------------
 # Audio
 # ---------------------------------------------------------------------------
@@ -349,11 +363,11 @@ def capture_card_audio(sources: dict[str, str]) -> tuple[str, str]:
 def pick_microphone(sources: dict[str, str], wanted: str = "", default: str = "") -> str:
     """The raw call microphone: the configured one, else an Elgato Wave, else the default input.
 
-    Monitors, the Easy Effects output and capture-card HDMI audio never qualify.
+    Monitors, StreamStack's own voice source and capture-card HDMI audio never qualify.
     """
 
     def usable(name: str, desc: str) -> bool:
-        return not (name.endswith(".monitor") or name == EE_SOURCE or is_capture_card_audio(name, desc))
+        return not (name.endswith(".monitor") or name == VOICE_SOURCE or is_capture_card_audio(name, desc))
 
     candidates = {n: d for n, d in sources.items() if usable(n, d)}
     needle = (wanted or "wave").lower()
@@ -365,25 +379,16 @@ def pick_microphone(sources: dict[str, str], wanted: str = "", default: str = ""
     return default if default in candidates else ""
 
 
-def microphone(cfg: dict[str, str]) -> str:
+def legacy_microphone(cfg: dict[str, str]) -> str:
+    """The name rule, for when the hardware probe cannot run (`microphone` prefers the Plan)."""
     return pick_microphone(audio_sources(), cfg.get("STREAMSTACK_MICROPHONE", ""), default_device("source"))
 
 
-def easyeffects_running() -> bool:
-    return running("easyeffects")
+def microphone(cfg: dict[str, str]) -> str:
+    """The raw call microphone for this machine: the one the hardware Plan names by its interface's USB id."""
+    from streamstack.hardware import voice  # late: the hardware package imports this module
 
-
-def easyeffects_preset() -> str:
-    """The input preset Easy Effects loaded last ("" when it is not running)."""
-    if not easyeffects_running():
-        return ""
-    result = run(["easyeffects", "-a", "input"], timeout=5)
-    return result.stdout.strip() if result and result.returncode == 0 else ""
-
-
-def ee_presets() -> list[str]:
-    local = Path.home() / ".local/share/easyeffects/input"
-    return sorted(p.stem for p in local.glob("*.json"))
+    return voice.call_microphone(cfg)
 
 
 def record(source: str, seconds: float, path: str, *, grace: tuple[float, float, float] = GRACE) -> bool:
@@ -412,3 +417,46 @@ def record(source: str, seconds: float, path: str, *, grace: tuple[float, float,
         return Path(path).stat().st_size > 1024
     except OSError:
         return False
+
+
+def play(
+    sink: str,
+    path: str,
+    timeout: float,
+    stop: threading.Event | None = None,
+    *,
+    grace: tuple[float, float, float] = GRACE,
+) -> str | None:
+    """Play a WAV file on one sink only (the default output is not touched); None when it played, else why not.
+
+    The player has a hard deadline: a server that never lets it finish gets it reaped after `timeout` seconds. Setting
+    `stop` ends it early (that is not an error, so it answers None too).
+    """
+    try:
+        proc = subprocess.Popen(
+            ["pw-play", "--target", sink, path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        return f"pw-play could not start ({exc})."
+    deadline = time.monotonic() + timeout
+    waiter = stop if stop is not None else threading.Event()
+    try:
+        while proc.poll() is None:
+            if waiter.wait(0.05):
+                return None
+            if time.monotonic() >= deadline:
+                return f"The audio server did not finish playing within {timeout:g} s."
+    finally:
+        reap(proc, grace)
+    detail = ""
+    if proc.stderr is not None:
+        with contextlib.closing(proc.stderr):
+            detail = (proc.stderr.read().decode("utf-8", "replace").strip().splitlines() or [""])[-1]
+    if proc.returncode != 0:
+        return (
+            f"The audio server refused to play on it{': ' + detail if detail else ''} (pw-play exit {proc.returncode})."
+        )
+    return None

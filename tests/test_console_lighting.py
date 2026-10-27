@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from http_support import HTTP_TIMEOUT
 
-from streamstack import lighting
-from streamstack.console.errors import ActionError
+from streamstack import lightauto, lighting, lightplan
+from streamstack.console.errors import ActionError, Superseded
 from streamstack.console.lighting import DemoLighting, LightingController, PresetLibrary
 from streamstack.console.rig import Rig
 from streamstack.console.server import ConsoleServer
@@ -95,6 +97,33 @@ def test_power_brightness_and_temperature_reach_the_wire(bench: Bench, tmp_path:
     assert not bench.wires["c901-b"].on
     light = by_id(ctl)["c901-a"]
     assert (light["power"], light["brightness"], light["lumen"], light["kelvin"]) == (True, 100, 400, 6500)
+
+
+def test_a_guarded_write_lands_while_the_light_is_as_expected(bench: Bench, tmp_path: Path) -> None:
+    ctl = controller(bench, tmp_path)
+    ctl.act("lighting.power", {"id": "c901-a", "on": True})
+    ctl.act("lighting.brightness", {"id": "c901-a", "percent": 50})
+    light = by_id(ctl)["c901-a"]
+    ctl.write("c901-a", percent=80, expect=(True, light["lumen"], light["kelvin"]))
+    assert by_id(ctl)["c901-a"]["brightness"] == 80
+
+
+def test_a_guarded_write_is_dropped_when_somebody_moved_the_light(bench: Bench, tmp_path: Path) -> None:
+    ctl = controller(bench, tmp_path)
+    ctl.act("lighting.power", {"id": "c901-a", "on": True})
+    ctl.act("lighting.brightness", {"id": "c901-a", "percent": 50})
+    seen = by_id(ctl)["c901-a"]
+    expect = (True, seen["lumen"], seen["kelvin"])
+    ctl.act("lighting.brightness", {"id": "c901-a", "percent": 90})  # a person, after the caller looked
+    wire = bench.wires["c901-a"]
+    writes = len(wire.writes)
+    with pytest.raises(Superseded):
+        ctl.write("c901-a", percent=20, expect=expect)
+    assert len(wire.writes) == writes  # nothing reached the light
+    assert by_id(ctl)["c901-a"]["brightness"] == 90
+    ctl.act("lighting.power", {"id": "c901-a", "on": False})
+    with pytest.raises(Superseded):
+        ctl.write("c901-a", percent=20, expect=expect)  # a power change counts as well
 
 
 def test_all_is_the_default_target(bench: Bench, tmp_path: Path) -> None:
@@ -389,6 +418,55 @@ def test_demo_has_two_beams_from_the_first_snapshot(tmp_path: Path) -> None:
         demo.stop()
 
 
+def _held(demo: DemoLighting) -> list[str]:
+    return [i for i, light in demo.engine.status()["lights"].items() if light["held"]]
+
+
+def test_the_demo_reset_puts_everything_back_and_never_creates_a_hold(tmp_path: Path) -> None:
+    demo = DemoLighting(library=PresetLibrary(tmp_path / "l.json"), plan=lightplan.Store(tmp_path / "plan.json"))
+    demo.poll_once()
+    engine = demo.engine
+    engine.tick()
+    # Leave the rig as a test would: lights moved by hand and held, the schedule on, a camera in use.
+    demo.act("lighting.auto.schedule", {"enabled": True, "hold_minutes": 30})
+    demo.act("lighting.demo.camera", {"on": True})
+    demo.act("lighting.brightness", {"id": "all", "percent": 20})
+    demo.act("lighting.temperature", {"id": "all", "kelvin": 6200})
+    for _ in range(3):
+        engine.tick()
+    assert _held(demo)
+
+    demo.act("lighting.demo.reset", {})
+
+    assert [(x["power"], x["brightness"], x["kelvin"]) for x in demo.state()["lights"]] == [
+        (True, 70, 5000),
+        (True, 55, 4200),
+    ]
+    assert _held(demo) == []
+    assert engine.status()["events"] == [] and engine.status()["session"] is None
+    assert demo.plan.load()["schedule"]["enabled"] is False
+    assert demo.panel.scripted.app is None
+    time.sleep(lightauto.SETTLE_SECONDS + 0.1)  # past any settle window, where a late read-back would be compared
+    for _ in range(4):
+        engine.tick()
+    assert _held(demo) == []
+    assert engine.status()["events"] == []
+
+
+def test_a_hand_write_after_the_demo_reset_is_still_held(tmp_path: Path) -> None:
+    demo = DemoLighting(library=PresetLibrary(tmp_path / "l.json"), plan=lightplan.Store(tmp_path / "plan.json"))
+    demo.poll_once()
+    demo.act("lighting.demo.reset", {})
+    demo.act("lighting.brightness", {"id": "c901-usb-demo-1", "percent": 20})
+    demo.engine.tick()
+    assert _held(demo) == ["c901-usb-demo-1"]
+
+
+def test_only_the_demo_rig_can_reset_its_lights_for_a_test(tmp_path: Path) -> None:
+    with pytest.raises(ActionError, match="Only the demo rig"):
+        controller(Bench(), tmp_path).act("lighting.demo.reset", {})
+
+
 def test_rig_routes_lighting_actions_and_snapshots_the_state(tmp_path: Path) -> None:
     rig = Rig.demo()
     rig.start()
@@ -421,7 +499,7 @@ def server() -> Iterator[ConsoleServer]:
 
 
 def call(server: ConsoleServer, method: str, path: str, body: object = None) -> tuple[int, dict]:
-    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=HTTP_TIMEOUT)
     try:
         headers = {"X-StreamStack-Token": server.token}
         if body is not None:
@@ -451,3 +529,20 @@ def test_a_preset_matches_within_the_light_rounding(bench: Bench, tmp_path: Path
     assert ctl.state()["preset"] == "Soft"
     ctl.act("lighting.brightness", {"id": "c901-a", "percent": soft["brightness"] + 2})
     assert ctl.state()["preset"] == "Soft"  # a lumen step or two is not a different preset
+
+
+def test_the_demo_rig_saves_presets_without_flushing_the_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Save current stalled past 30 s on a busy CI disk when each save fsynced the file, its folder and a backup."""
+    flushed: list[int] = []
+    real = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (flushed.append(fd), real(fd))[1])
+    PresetLibrary(tmp_path / "durable.json").save("Interview", 33, 3300)
+    assert flushed
+    flushed.clear()
+    quick = PresetLibrary(tmp_path / "quick.json", ephemeral=True)
+    quick.save("Interview", 33, 3300)
+    assert flushed == []
+    assert not (tmp_path / "quick.json.bak").exists()
+    assert [p["name"] for p in quick.listing() if not p["builtin"]] == ["Interview"]
+    monkeypatch.setenv("STREAMSTACK_ENV_FILE", str(tmp_path / "env"))
+    assert DemoLighting().library.ephemeral is True

@@ -363,17 +363,17 @@ export async function mount(host, ctx) {
 
   const renderSheet = (d) => {
     const report = d.report || {};
-    const obs = report.observation || {};
+    const seen = report.observation || {};
     if (d.sheet) {
       const src = apiUrl('api/director/sheet.jpg', { v: d.sheet });
       if (R.sheetImg.getAttribute('src') !== src) R.sheetImg.setAttribute('src', src);
     }
     R.sheetImg.hidden = !d.sheet;
     R.sheetEmpty.hidden = !!d.sheet;
-    R.sheetCap.textContent = obs.frames
-      ? `${obs.frames} stills${obs.spacing ? `, ${num(obs.spacing)} s apart` : ''} from ${obs.source || 'the camera'}, sent to Claude as one picture${report.time ? ` · ${relTime(report.time)}` : ''}.`
+    R.sheetCap.textContent = seen.frames
+      ? `${seen.frames} stills${seen.spacing ? `, ${num(seen.spacing)} s apart` : ''} from ${seen.source || 'the camera'}, sent to Claude as one picture${report.time ? ` · ${relTime(report.time)}` : ''}.`
       : '';
-    const pic = obs.picture;
+    const pic = seen.picture;
     R.pic.hidden = !pic;
     if (!pic) return;
     const bins = pic.histogram || [];

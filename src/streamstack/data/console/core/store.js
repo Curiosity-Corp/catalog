@@ -26,7 +26,7 @@ export function emptyState() {
     version: '', demo: false,
     studio: { running: false, busy: false, camera_for_calls: 'off', program_label: null, camera_label: null, bridge: false, voice_chain: false, camlink: null },
     video: {
-      obs: 'offline', obs_error: null, scenes: [], program_scene: null, privacy: false, privacy_scene: 'Be Right Back',
+      scenes: [], program_scene: null, privacy: false, privacy_scene: 'Be Right Back',
       sources: [], selected_source: null,
       look: { brightness: 0, contrast: 0, gamma: 0, saturation: 0, warmth: 0, sharpen_enabled: false, sharpen_amount: 0, lut_enabled: false, lut_amount: 0 },
       limits: { brightness: [-0.5, 0.5], contrast: [-1, 1], gamma: [-1, 1], saturation: [-1, 1], warmth: [-1, 1], sharpen_amount: [0, 1], lut_amount: [0, 1] },
@@ -49,11 +49,19 @@ export function emptyState() {
     audio: {
       mic: { name: null, description: null, present: false, gain_db: 0, muted: false, stalled: false, stalled_since: null, revive: { state: 'idle', message: null } },
       gain_range: [-30, 12],
-      chain: { running: false, available: false, preset: null, presets: [], bypass: false },
-      tone: { bass_db: 0, presence_db: 0, treble_db: 0, pitch_semitones: 0, supported: false },
-      denoise: { engine: 'rnnoise', atten_limit_db: 100, atten_range: [0, 100], supported: false, custom: false, engines: [] },
-      tone_ranges: { bass_db: [-12, 12], presence_db: [-12, 12], treble_db: [-12, 12], pitch_semitones: [-6, 6] },
+      chain: {
+        running: false, available: false, preset: null, presets: [], bypass: false, custom: false, missing: [], error: null,
+        source: 'streamstack_mic', description: 'StreamStack Mic', rate: 48000, engine: 'deepfilternet', stages: [],
+        loudness: { on: false, target_lufs: -16, targets: [-14, -16, -23], auto_db: 0, level_lufs: null, state: 'off', window_db: 12, true_peak_db: -1 },
+      },
+      tone: { bass_db: 0, presence_db: 0, treble_db: 0, supported: false },
+      denoise: { engine: 'deepfilternet', atten_limit_db: 100, atten_range: [0, 100], supported: false, custom: false, engines: [] },
+      tone_ranges: { bass_db: [-12, 12], presence_db: [-12, 12], treble_db: [-12, 12] },
       mic_check: { state: 'idle', seconds: 6, clips: [] },
+      outputs: {
+        available: false, problem: null, default: null, default_label: null, volume_range: [0, 100], devices: [], routes: [], warning: null,
+        test: { state: 'idle', name: null, index: 0, total: 0, all: false, seconds: 2.8, phases: [], elapsed: null },
+      },
     },
     auto: { running: false, backend: null, can_undo: false, busy: false, last_note: null, last_time: null, journal: [] },
     framing: {
@@ -62,6 +70,13 @@ export function emptyState() {
     },
     health: { updated: null, summary: 'ok', checks: [] },
     system: { cpu_percent: null, load: [0, 0, 0], cores: 0 },
+    virtual: { camera: null, mic: null, seen: [] },
+    deck: {
+      render: false, device: { connected: false, source: null },
+      profile: { layout: { rows: 4, cols: 4 }, model: 'virtual-4x4', home: 'main', settings: { brightness: 70, sleep_minutes: 15 }, pristine: true, mismatch: false, pages: [] },
+      surface: { rows: 4, cols: 4, page: { id: '', name: '' }, keys: [], can_back: false, fitted: false },
+      models: [], palette_rev: '0',
+    },
     lighting: {
       scanned: false, lights: [], master: { on: false, all_on: false, brightness: 50, kelvin: 4500 },
       presets: [], preset: null, problem: null, kelvin_range: [2700, 6500], kelvin_step: 100,
@@ -70,7 +85,7 @@ export function emptyState() {
         settings: {
           follow: {
             enabled: true, grace_seconds: 120, start_delay_seconds: 3, turn_off: true,
-            apps: true, virtualcam: true, stream: true, record: true, ignore: [], devices: [],
+            apps: true, ignore: [], devices: [],
           },
           schedule: {
             enabled: true, mode: 'sun', slots: {}, hours: null, fade_seconds: 3, hold_minutes: 90, fill_percent: 60,
@@ -80,7 +95,7 @@ export function emptyState() {
         limits: {}, roles: [], modes: [], slots: [], sources: [],
         status: {
           running: false, where: 'none', owner: 'none', owner_label: '', summary: '',
-          camera: { in_use: false, reason: '', apps: [], obs: [], obs_known: false, grace_left: null, since: null },
+          camera: { in_use: false, reason: '', apps: [], grace_left: null, since: null },
           session: null, lights: {}, events: [],
         },
         service: { state: 'missing', installed: false, message: '', command: '' },
@@ -89,10 +104,29 @@ export function emptyState() {
         curve: { step: 15, brightness: [], kelvin: [] }, hours: [],
       },
     },
+    stream: {
+      status: 'unavailable', uptime_s: 0, bitrate_kbps: 0, dropped_frames: 0, latency_ms: 0, cpu_percent: null, gpu_percent: null,
+      encoders: [], encoder: '', destinations: [], recording: { active: false, file: '', bytes: 0, seconds: 0, format: '' },
+      settings: {
+        codec: 'auto', encoder: 'auto', tier: 'source', fps: 0, bitrate_kbps: 0, rate_control: 'cbr', keyint_s: 2, quality: 0, audio_bitrate_kbps: 128,
+      },
+      output: { width: 0, height: 0, fps: 0 }, audio: { source: '', bitrate_kbps: 0, ok: false, error: '' },
+      last_swap: null, events: [], probe: null,
+    },
     interface: {
       present: false, checked: false, setting: 'auto', profile: null, label: null, usb: null, card: null, mode: null,
       notice: null, error: null, info: [], controls: [], capabilities: {}, unsupported: [], devices: [],
       software_gain: true, demo_profiles: [],
+    },
+    storage: { warnings: [] },
+    hardware: {
+      checked: false, demo: false, taken_at: null, hotplug: { mode: 'stopped', error: null }, rig: null, devices: [],
+      gpus: [], roles: {}, encoder: null, audio: null, capture: null, loopback: null, deck: false, lights: false,
+      notices: [], sources: [], changes: [], error: null, hosts: [], host: null,
+    },
+    diagnostics: {
+      telemetry: { enabled: false, path: '/metrics', url: null, scrapes: 0, last_scrape: null, token_set: false },
+      crashes: { dir: '', reports: [] },
     },
   };
 }

@@ -46,7 +46,7 @@ THE VOICE (a short clip analysed on this machine; the audio itself is never sent
 {voice}
 
 WHAT YOU MAY CHANGE
-Current "Lighting & Color" settings (OBS): {look}
+Current look settings (the native engine's colour grade): {look}
 Allowed ranges: {limits}
 Largest change per pass: {steps}
 Voice presets available (current: {preset}): {presets}
