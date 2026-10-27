@@ -673,19 +673,8 @@
     - streamstack_enabled | bool
     - streamstack_low_latency | bool
 
-# Separate includes so `--tags streamstack-background-removal` and
-# `--tags streamstack-framing` apply only the AI helper dependencies.
-- name: Install the StreamStack background blur plugin
-  ansible.builtin.include_tasks:
-    file: streamstack-background-removal.yml
-    apply:
-      tags: [hardware, streamstack, streamstack-background-removal]
-  tags: [hardware, streamstack, streamstack-background-removal]
-  when:
-    - workstation_profile == 'desktop'
-    - streamstack_enabled | bool
-    - streamstack_background_removal_enabled | bool
-
+# Separate includes so `--tags streamstack-framing` and `--tags streamstack-deepfilter`
+# apply only the AI helper dependencies.
 - name: Install the StreamStack auto-framing dependencies
   ansible.builtin.include_tasks:
     file: streamstack-framing.yml

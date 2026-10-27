@@ -1,0 +1,28 @@
+# Managed by the curiosity workstation role (streamstack task group).
+# The StreamStack Console without a window: it hosts the native video engine
+# (the only writer of the program camera, /dev/video{{ streamstack_program_video_nr | int }}
+# "{{ streamstack_program_label }}") and starts the voice chain ("StreamStack Mic").
+# `streamstack console` opens a window on this same process.
+# Runs for these accounts only: one account at a time may feed the camera.
+[Unit]
+Description=StreamStack Console (native video engine and voice chain, headless)
+After=graphical-session.target pipewire.service wireplumber.service
+Wants=pipewire.service
+{% for user in streamstack_console_users %}
+ConditionUser=|{{ user }}
+{% endfor %}
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/streamstack console --no-window
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+# The engine's ffmpeg child dies with the Console; stop the whole group together.
+KillMode=control-group
+TimeoutStopSec=20
+
+[Install]
+WantedBy=graphical-session.target

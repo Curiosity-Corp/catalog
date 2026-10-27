@@ -1,27 +1,30 @@
 ---
 # =============================================================================
-# StreamStack: call and stream studio (Teams, Zoom, OBS)
+# StreamStack: call and stream studio (Teams, Zoom, streams)
 # =============================================================================
 # One repeatable rig for DSLR + capture card + USB microphone workstations:
 #
 #   Canon (USB live view) --streamstack-canon--> /dev/video42 "Canon EOS 50D"
 #   Elgato Cam Link 4K (UVC) ------------------> /dev/streamstack/camlink
-#   both --> OBS (lighting/colour/LUT, scenes) --> /dev/video43 "StreamStack Camera"
-#   Elgato Wave (or any mic) --> Easy Effects --> "Easy Effects Source"
+#   both --> StreamStack's native video engine (grade, framing, blur on the GPU,
+#            hosted by the Console) --> /dev/video43 "StreamStack Camera"
+#   Elgato Wave (or any mic) --> StreamStack's PipeWire voice chain --> "StreamStack Mic"
 #
-# Teams and Zoom then pick "StreamStack Camera" and "Easy Effects Source".
-# Both loopback nodes use exclusive_caps=1, which Chromium-based browsers
-# (Teams web) require before they list a virtual camera.
+# Teams and Zoom then pick "StreamStack Camera" and "StreamStack Mic". Both
+# loopback nodes use exclusive_caps=1, which Chromium-based browsers (Teams
+# web) require before they list a virtual camera.
 #
-# The application (CLI, Console, panel menu, auto mode, presets) is the StreamStack
-# project, vendored at files/streamstack as a squashed git subtree of a release
-# tag; this file wires it into the host: packages, the loopback cameras, udev,
-# the settings file, and the install under /usr/local.
+# The application (CLI, Console, native engine, voice chain, panel menu, auto
+# mode, presets) is the StreamStack project, vendored at files/streamstack as a
+# squashed git subtree of a release tag; this file wires it into the host:
+# packages, the loopback cameras, udev, the settings file, the install under
+# /usr/local and the user services. There is no OBS Studio and no Easy Effects
+# any more; a host that still has them gets them removed.
 #
 # Included only when `streamstack_enabled` is true (the hardware profile's
-# `streamstack` flag, or a host-local override). Per-user OBS and Easy Effects
-# defaults are seeded once and never overwritten; `streamstack setup --force`
-# restores them on request. See docs/streamstack.md.
+# `streamstack` flag, or a host-local override). Per-user defaults are seeded
+# once and never overwritten; `streamstack setup --force` restores them on
+# request. See docs/streamstack.md.
 # =============================================================================
 
 - name: Validate the StreamStack settings
@@ -65,6 +68,26 @@
   ansible.builtin.apt:
     name: "{{ streamstack_packages }}"
     state: present
+
+# StreamStack makes the program camera and the microphone itself (native video
+# engine, PipeWire voice chain). Packages only: users' own OBS and Easy Effects
+# settings stay in their homes, and `streamstack setup` has already imported the
+# Easy Effects voice presets once.
+- name: Remove OBS Studio, Easy Effects and the OBS background plugin
+  ansible.builtin.apt:
+    name: "{{ streamstack_retired_packages }}"
+    state: absent
+
+- name: Remove the OBS background plugin links and the Easy Effects autostart
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/lib/x86_64-linux-gnu/obs-plugins/obs-backgroundremoval.so
+    - /usr/share/obs/obs-plugins/obs-backgroundremoval
+    - /usr/local/lib/obs-plugins/obs-backgroundremoval.so
+    - /usr/local/share/obs/obs-plugins/obs-backgroundremoval
+    - /etc/xdg/autostart/streamstack-easyeffects.desktop
 
 - name: Check for the v4l2loopback kernel module
   ansible.builtin.command: modinfo -n v4l2loopback
@@ -110,7 +133,7 @@
     mode: "0644"
     content: |
       # Managed by the curiosity workstation role (streamstack task group).
-      # video{{ streamstack_camera_video_nr }}: camera bridge, video{{ streamstack_program_video_nr }}: OBS virtual camera.
+      # video{{ streamstack_camera_video_nr }}: camera bridge, video{{ streamstack_program_video_nr }}: program camera (the native engine).
       options v4l2loopback devices=2 video_nr={{ streamstack_camera_video_nr }},{{ streamstack_program_video_nr }} card_label="{{ streamstack_camera_label }},{{ streamstack_program_label }}" exclusive_caps=1,1 max_buffers=2
   when: not (streamstack_camera_external | bool)
 
@@ -172,7 +195,7 @@
       # when the add event is processed.
       SUBSYSTEM=="video4linux", KERNEL=="video{{ streamstack_camera_video_nr }}", GROUP="video", MODE="0660", TAG+="uaccess"
       SUBSYSTEM=="video4linux", KERNEL=="video{{ streamstack_program_video_nr }}", GROUP="video", MODE="0660", TAG+="uaccess"
-      # Stable capture-card path for OBS: /dev/streamstack/camlink
+      # Stable capture-card path for the native engine: /dev/streamstack/camlink
       {% for usb_id in streamstack_camlink_usb_ids %}
       SUBSYSTEM=="video4linux", ATTRS{idVendor}=="{{ usb_id.split(':')[0] }}", ATTRS{idProduct}=="{{ usb_id.split(':')[1] }}", ATTR{index}=="0", SYMLINK+="streamstack/camlink"
       {% endfor %}
@@ -260,7 +283,7 @@
     daemon_reload: "{{ _streamstack_loopback_unit is changed }}"
 
 # Reload only an idle module that StreamStack configures: an open camera (a
-# call, OBS, the bridge) holds a reference. Otherwise add the missing nodes
+# call, the Console, the bridge) holds a reference. Otherwise add the missing nodes
 # next to the open ones, and leave a misnamed node for the next boot.
 - name: Bring up the StreamStack loopback cameras
   ansible.builtin.command: /usr/local/sbin/curiosity-streamstack-loopback
@@ -293,6 +316,7 @@
 # copy never deletes, so a module dropped upstream would linger; start clean
 # whenever the version changes.
 - name: Remove a StreamStack package of another version
+  register: _streamstack_package_replaced
   ansible.builtin.file:
     path: /usr/local/lib/streamstack/streamstack
     state: absent
@@ -390,20 +414,19 @@
     state: absent
   when: not (_streamstack_bridge_autostart | bool)
 
-- name: Set the Easy Effects voice chain autostart
+# The voice chain host runs under the Console (it starts it by itself); this unit
+# is installed for a host that wants the voice chain without the Console
+# (`systemctl --user enable --now streamstack-audio-chain`) and is not enabled
+# here, so two supervisors never fight over the same PipeWire host. The deck
+# unit needs the `deck` extra and is enabled per user by `streamstack deck enable`.
+- name: Install the StreamStack voice chain and deck user services
   ansible.builtin.copy:
-    src: streamstack/packaging/applications/streamstack-easyeffects.desktop
-    dest: /etc/xdg/autostart/streamstack-easyeffects.desktop
+    content: "{{ lookup('ansible.builtin.file', 'streamstack/packaging/systemd/user/' ~ item ~ '.service') | replace('ExecStart=streamstack ', 'ExecStart=/usr/local/bin/streamstack ') }}\n"
+    dest: "/etc/systemd/user/{{ item }}.service"
     owner: root
     group: root
     mode: "0644"
-  when: streamstack_easyeffects_autostart | bool
-
-- name: Remove the Easy Effects voice chain autostart
-  ansible.builtin.file:
-    path: /etc/xdg/autostart/streamstack-easyeffects.desktop
-    state: absent
-  when: not (streamstack_easyeffects_autostart | bool)
+  loop: [streamstack-audio-chain, streamstack-deck]
 
 - name: Install the StreamStack auto mode user service
   ansible.builtin.copy:
@@ -466,6 +489,43 @@
     state: absent
   when: not (streamstack_lights_autostart | bool)
 
+# The Console hosts the native video engine, which is the only writer of the
+# program camera, and starts the voice chain. Headless (no window) it runs for
+# as long as the session does; `ConditionUser` keeps it to the configured
+# accounts, so a second logged-in user never fights for /dev/video43.
+- name: Install the StreamStack Console user service
+  ansible.builtin.template:
+    src: streamstack-console.service.j2
+    dest: /etc/systemd/user/streamstack-console.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ensure the global user graphical-session.target.wants directory exists for the Console
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: streamstack_console_users | length > 0
+
+- name: Start the StreamStack Console (video engine and voice chain) at login
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants/streamstack-console.service
+    src: /etc/systemd/user/streamstack-console.service
+    state: link
+    owner: root
+    group: root
+    force: true
+  when: streamstack_console_users | length > 0
+
+- name: Leave the StreamStack Console to `streamstack console`
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants/streamstack-console.service
+    state: absent
+  when: streamstack_console_users | length == 0
+
 - name: Start the StreamStack panel icon at login
   ansible.builtin.copy:
     src: streamstack/packaging/applications/streamstack-tray.desktop
@@ -489,9 +549,9 @@
     label: "{{ item.name }}"
   register: _streamstack_homes
 
-# Seeds only missing files, so a user's own OBS scenes and voice tweaks survive
-# every ansible-pull.
-- name: Seed StreamStack OBS and Easy Effects defaults for each user
+# Seeds only missing files (and imports old Easy Effects voice presets once), so
+# a user's own voice tweaks survive every ansible-pull.
+- name: Seed StreamStack defaults for each user
   ansible.builtin.command:
     argv: [/usr/local/bin/streamstack, setup, --quiet]
   become: true
@@ -503,3 +563,81 @@
     label: "{{ item.item.name }}"
   when: item.stat.isdir | default(false)
   changed_when: false
+
+# The user manager of each Console account starts the Console now, so the
+# program camera and StreamStack Mic exist without a new login. The unit only
+# runs where its ConditionUser matches. A Console from an older StreamStack is
+# restarted once, when this run replaced the package. A user without a running
+# manager (not logged in, no linger) picks the unit up at the next login.
+- name: Check which Console accounts have a running user manager
+  ansible.builtin.stat:
+    path: "/run/user/{{ getent_passwd[item][1] }}/bus"
+  loop: "{{ streamstack_console_users | select('in', getent_passwd.keys()) | list }}"
+  register: _streamstack_console_managers
+
+- name: Reload the user units and start the StreamStack Console
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ item.item }}"
+      - --
+      - env
+      - "XDG_RUNTIME_DIR=/run/user/{{ getent_passwd[item.item][1] }}"
+      - systemctl
+      - --user
+      - "{{ 'restart' if _streamstack_package_replaced is changed else 'start' }}"
+      - streamstack-console.service
+  loop: "{{ _streamstack_console_managers.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists | default(false)
+  changed_when: true
+
+# StreamStack never touches the default source (docs/audio-chain.md): the host
+# makes the processed voice the default so an app that records from "default"
+# (Teams, Zoom) gets it. Persisted by WirePlumber per user; the sink is left
+# alone. Waits for the source to exist: the Console starts the chain.
+- name: Make StreamStack Mic the default microphone for each Console account
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      for _ in $(seq 1 30); do
+        pactl list short sources | cut -f2 | grep -qx streamstack_mic && break
+        sleep 2
+      done
+      pactl list short sources | cut -f2 | grep -qx streamstack_mic || { echo "streamstack_mic absent"; exit 3; }
+      if [ "$(pactl get-default-source)" = streamstack_mic ]; then echo unchanged; else
+        pactl set-default-source streamstack_mic && echo changed; fi
+    executable: /bin/bash
+  become: true
+  become_user: "{{ item.item }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ getent_passwd[item.item][1] }}"
+  loop: "{{ _streamstack_console_managers.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists | default(false)
+  register: _streamstack_default_source
+  changed_when: "'changed' in _streamstack_default_source.stdout"
+  failed_when: false
+
+- name: Report a Console account whose StreamStack Mic did not appear
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.item }}: StreamStack Mic is not available yet
+      ({{ item.stdout | default('') }}{{ item.stderr | default('') }}); run
+      `streamstack doctor` and `streamstack chain status` as that user. The
+      default microphone is unchanged.
+  loop: "{{ _streamstack_default_source.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item | default('') }}"
+  when: item.rc is defined and item.rc != 0
+
+# Last, once the voice chain carries the microphone: a running Easy Effects would
+# keep publishing "Easy Effects Source" until it exits.
+- name: Stop Easy Effects processes that outlive the package
+  ansible.builtin.command: pkill -x easyeffects
+  register: _streamstack_easyeffects_stop
+  changed_when: _streamstack_easyeffects_stop.rc == 0
+  failed_when: _streamstack_easyeffects_stop.rc not in [0, 1]

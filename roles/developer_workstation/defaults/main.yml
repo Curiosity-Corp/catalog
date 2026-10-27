@@ -1139,10 +1139,13 @@ minimal_desktop_display_broadcast_rgb: "{{ (hardware_profiles.get(hardware_profi
 # Derived from the selected hardware profile's optional `streamstack` flag; set
 # `streamstack_enabled: true` in /etc/ansible/local-vars.yml on any desktop that
 # runs Teams/Zoom calls or streams with a DSLR, capture card or USB microphone.
-# Installs OBS Studio, Easy Effects (with the LSP/Calf plugin sets), qpwgraph
-# and camera tools, creates two exclusive_caps loopback cameras (the camera
-# bridge and the OBS virtual camera), and seeds per-user OBS scenes and voice
-# presets without ever overwriting a user's own changes.
+# Installs the vendored StreamStack release (its own native video engine, which
+# grades the camera on the GPU and writes the "StreamStack Camera" loopback
+# node, and its PipeWire voice chain "StreamStack Mic"), the camera and audio
+# tools, creates two exclusive_caps loopback cameras (the camera bridge and the
+# program camera), and runs the Console headless at login for the call users.
+# OBS Studio and Easy Effects are not used by StreamStack any more and the role
+# removes them. Per-user defaults are seeded once and never overwritten.
 streamstack_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('streamstack', false) | bool }}"
 streamstack_camera_video_nr: 42
 streamstack_camera_label: Canon EOS 50D
@@ -1153,7 +1156,7 @@ streamstack_camera_label: Canon EOS 50D
 streamstack_camera_external: false
 streamstack_program_video_nr: 43
 streamstack_program_label: StreamStack Camera
-# OBS canvas/output and Canon bridge frame. Teams sends at most 1080p30 and
+# Program camera size and rate (the native engine's canvas) and Canon bridge frame. Teams sends at most 1080p30 and
 # Zoom at most 1080p30 (HD on), so higher rates only cost CPU.
 streamstack_width: 1920
 streamstack_height: 1080
@@ -1167,8 +1170,16 @@ streamstack_canon_bridge_command: ""
 # Start the Canon bridge at login. Off by default: `streamstack studio` starts
 # it on demand, so an unplugged camera never leaves a restarting unit behind.
 streamstack_canon_bridge_autostart: false
-# Run Easy Effects in the background so "Easy Effects Source" is always there.
-streamstack_easyeffects_autostart: true
+# Run the StreamStack Console headless (`streamstack console --no-window`) in
+# the graphical session of these accounts. The Console hosts the native video
+# engine (the only writer of the program camera /dev/video43) and starts the
+# voice chain "StreamStack Mic", so calls have both without anyone opening a
+# window; opening the Console later attaches to the same process. Only one
+# account at a time may feed the camera: list the person who sits at the studio,
+# not every call user. Empty runs no Console at login (`streamstack console`
+# on demand).
+streamstack_console_users:
+  - mrh
 streamstack_voice_preset: StreamStack Voice
 # Part of the call microphone's PipeWire name or description (auto mode levels
 # it, mic-check records it). Empty picks an Elgato Wave, then the default input;
@@ -1233,7 +1244,7 @@ streamstack_low_latency: true
 # (no resampling). Quantum 256 = 5.3 ms per graph cycle, down from 21 ms: USB
 # audio moves in 1 ms (full-speed) or 125 us (high-speed) packets and the
 # two-period ALSA buffer needs a few packets of slack to stay free of xruns,
-# while Easy Effects' RNNoise works on 10 ms (480 sample) frames and adds its
+# while the voice chain's RNNoise works on 10 ms (480 sample) frames and adds its
 # own buffering below that size whatever the quantum. 128 (2.7 ms) stays
 # allowed for a client that asks (PIPEWIRE_QUANTUM=128/48000); the maximum
 # drops from 2048 to 1024 so one greedy client cannot pull the whole graph
@@ -1280,45 +1291,18 @@ streamstack_intel_media_packages:
 # NO_HZ_FULL, which is already low-latency; opt in with for example
 # ["threadirqs", "preempt=full"] and reboot.
 streamstack_kernel_args: []
-# StreamStack AI dependencies (tasks/streamstack-background-removal.yml and
-# tasks/streamstack-framing.yml). Each group is optional and degrades by itself:
-# without the plugin StreamStack hides the blur controls, without the framing
-# packages the Console shows Auto-framing disabled. Nothing is restarted (OBS
-# loads plugins at its next start).
-streamstack_background_removal_enabled: true
+# StreamStack AI dependencies (tasks/streamstack-framing.yml and
+# tasks/streamstack-deepfilter.yml). Each group is optional and degrades by
+# itself: without the framing packages the Console shows Auto-framing disabled,
+# without the DeepFilterNet plugin the voice chain falls back to RNNoise or no
+# neural denoise. Background blur runs inside the native engine on the Intel
+# Arc through OpenVINO (the framing group installs it); nothing is restarted.
 streamstack_framing_enabled: true
 streamstack_deepfilter_enabled: true
 
-# obs-backgroundremoval (royshil, GPL-3.0-or-later): OBS filter kind
-# `background_removal`, which StreamStack's "Blur background" needs (1.4.1+).
-# Ubuntu has no package, so the release .deb (built for Debian forky; every
-# soname it needs exists on Ubuntu 26.04) is pinned by version and sha256.
-# Deliberately pinned, unlike the runtime-discovered application releases: the
-# plugin links against the archive's onnxruntime/OpenCV sonames, so a newer
-# upstream build is only taken after it is checked against Ubuntu's libraries.
-# The install never replaces a newer installed version (no rollback). The
-# variables are named *_release because the update policy reserves *_version.
-# Bump release and checksum together (the GitHub release lists each asset's
-# digest). The .deb installs under /usr/local, which Ubuntu's libobs does NOT
-# search (it only looks in the system paths below), so the role links the
-# module and its data there (Curiosity-Corp/catalog#103).
-streamstack_backgroundremoval_release: "1.4.1"
-streamstack_backgroundremoval_deb_release: "1.4.1~forky"
-streamstack_backgroundremoval_sha256: "116810f21d87297511d35ec99c6a837ee077aee6280d5118f55cbfe4dfb9412b"
-streamstack_backgroundremoval_url: >-
-  https://github.com/royshil/obs-backgroundremoval/releases/download/{{ streamstack_backgroundremoval_release }}/obs-backgroundremoval_{{ streamstack_backgroundremoval_release }}.forky_amd64.deb
-streamstack_backgroundremoval_packages:
-  - libonnxruntime1.23
-  - libopencv-core410
-  - libopencv-imgproc410
-streamstack_backgroundremoval_installed_module: /usr/local/lib/obs-plugins/obs-backgroundremoval.so
-streamstack_backgroundremoval_installed_data: /usr/local/share/obs/obs-plugins/obs-backgroundremoval
-streamstack_obs_module_dir: /usr/lib/x86_64-linux-gnu/obs-plugins
-streamstack_obs_data_dir: /usr/share/obs/obs-plugins
-
 # DeepFilterNet LADSPA plugin (Rikorose/DeepFilterNet, MIT or Apache-2.0, at
-# your option): the library Easy Effects 8.1.2's Deep Noise Remover loads at run
-# time; StreamStack's DeepFilterNet voice option needs it (catalog#102). The
+# your option): the library StreamStack's voice chain loads for its neural
+# denoise stage (docs/voice-denoise.md upstream; catalog#102). The
 # release's x86_64 glibc build is a single ELF shared object (exports
 # ladspa_descriptor), pinned by version and sha256 (checked by downloading the
 # asset). The install never replaces a newer or unrecorded library. Variables
@@ -1373,10 +1357,6 @@ streamstack_framing_model_url: >-
   https://github.com/opencv/opencv_zoo/raw/f12e12798e8314f7c074a6656816c048dcc95b7a/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
 streamstack_framing_model_sha256: "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
 streamstack_packages:
-  - obs-studio
-  - easyeffects
-  - lsp-plugins-lv2
-  - calf-plugins
   # ZamGate, ZamDynamicEQ, ZamComp and ZaMaximX2: the gate, de-esser, compressor
   # and limiter of StreamStack's voice chain (docs/audio-chain.md upstream).
   - zam-plugins
@@ -1393,7 +1373,13 @@ streamstack_packages:
   - gir1.2-gtk-3.0
   - gir1.2-ayatanaappindicator3-0.1
   - libnotify-bin
-  - python3-websocket
+# What StreamStack used before its native engine and voice chain, removed from
+# every StreamStack host (packages only; users' own OBS and Easy Effects
+# settings stay in their homes). obs-backgroundremoval was a plugin of OBS.
+streamstack_retired_packages:
+  - obs-studio
+  - easyeffects
+  - obs-backgroundremoval
 
 hardware_profiles:
   generic:
