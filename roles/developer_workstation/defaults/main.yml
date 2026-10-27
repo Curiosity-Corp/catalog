@@ -1245,12 +1245,40 @@ streamstack_audio_max_quantum: 1024
 # WirePlumber ALSA rules for the audio interface (anchored regexes on the
 # PipeWire node name). Idle interfaces are never suspended (suspending a USB
 # interface mid-call is audible as a dropout while it wakes), and the ALSA
-# period/headroom are pinned in frames.
+# period/headroom are pinned in frames. Write a literal dot as `[.]`, never
+# `\\.`: the patterns are rendered into a WirePlumber SPA-JSON string, where a
+# backslash escape is a parse error that makes WirePlumber drop the whole file
+# (incident 2026-10-27). tests/test_streamstack_low_latency.py rejects it.
 streamstack_audio_node_patterns:
-  - "alsa_(input|output)\\.usb-Focusrite_.*"
-  - "alsa_(input|output)\\.usb-Elgato_Systems_Elgato_Wave_XLR.*"
+  - "alsa_(input|output)[.]usb-Focusrite_.*"
+  - "alsa_(input|output)[.]usb-Elgato_Systems_Elgato_Wave_XLR.*"
+# One WirePlumber per studio card. Every logged-in user runs their own
+# PipeWire + WirePlumber, and two of them probing the same USB audio card at the
+# same time makes the ACP duplex probe fail: the Wave XLR then comes up with
+# output profiles only and the call has no microphone (dm313red, 2026-10-27).
+# WirePlumber 0.5 has no seat/logind switch for the ALSA monitor (only bluez has
+# one), so the role installs ~/.config/wireplumber/wireplumber.conf.d/
+# 50-curiosity-streamstack-exclusive-audio.conf for every dev_users account that
+# is NOT in streamstack_audio_owner_users; it sets `device.disabled = true` on
+# the cards matched by streamstack_audio_card_patterns (anchored regexes on the
+# PipeWire device name, `[.]` for a dot). Takes effect at that user's next
+# WirePlumber start (next login). Nothing is applied when no owner exists on the
+# host, so an unexpected owner name can never silence every user. false removes
+# the drop-ins again.
+streamstack_audio_exclusive: true
+streamstack_audio_owner_users:
+  - mrh
+streamstack_audio_card_patterns:
+  - "alsa_card[.]usb-Focusrite_.*"
+  - "alsa_card[.]usb-Elgato_.*"
 streamstack_audio_period_size: 128
 streamstack_audio_headroom: 64
+# Restart policy drop-in for a user's canonctl-ptp-webcam.service (the Canon
+# PTP bridge from the canonctl repo), written only for users who have that unit:
+# no start limit, exponential backoff capped at 60 s. Without it three boot-time
+# failures inside 120 s left the bridge dead for 2.5 days (2026-10-24).
+streamstack_canonctl_webcam_unit: canonctl-ptp-webcam.service
+streamstack_canonctl_webcam_resilience: true
 # Realtime scheduling for the audio group (PipeWire's own @pipewire group is
 # already covered by the pipewire package's limits.d file).
 streamstack_realtime_group: audio

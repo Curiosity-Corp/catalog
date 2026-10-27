@@ -353,6 +353,65 @@ regexes on the node name), or with a later-sorting drop-in of your own. If a
 property hears crackles, raise `streamstack_audio_headroom` first, then the
 quantum; verify with `pw-top` (ERR column) or `pw-metadata -n settings`.
 
+### One WirePlumber per studio card
+
+Every logged-in user runs their own PipeWire and WirePlumber. When two of them
+see the same USB audio card (the Wave XLR, a Focusrite, the Cam Link's audio),
+both probe it at once, and the ACP duplex probe can fail: the card then comes
+up with output profiles only and a call has no microphone (dm313red,
+2026-10-27, after boot and after a replug, with `mrh` on the seat and
+`seantech` in a seatless manager session). A WirePlumber restart while nobody
+else holds the card brings the duplex profile back, but only until the next
+boot or replug.
+
+WirePlumber 0.5 has no seat or logind switch for the ALSA monitor (only the
+bluez monitor has `monitor.bluez.seat-monitoring`; checked in
+`/usr/share/wireplumber/wireplumber.conf`), so the role uses a per-user rule.
+Every `dev_users` account that is not in `streamstack_audio_owner_users`
+(default `mrh`) gets
+`~/.config/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-exclusive-audio.conf`,
+which sets `device.disabled = true` on the cards matching
+`streamstack_audio_card_patterns` (Focusrite, Elgato). The ALSA monitor skips a
+disabled device before it creates it, so that user's WirePlumber never opens the
+card. The owner's session and the system-wide tuning above are unchanged, and
+other users keep their onboard and HDMI audio.
+
+- `streamstack_audio_exclusive: false` removes the drop-ins again.
+- Accounts that are not on the host are skipped, and nothing is applied when no
+  owner exists on the host, so a wrong owner name cannot silence every user.
+- Takes effect at the excluded user's next WirePlumber start (next login); the
+  role restarts nothing. The owner needs no restart.
+- Verify: `fuser -v /dev/snd/controlC*` lists only the owner's `wireplumber`, and
+  the other user's `pactl list cards short` no longer shows the studio cards.
+
+### WirePlumber drop-ins must be valid SPA-JSON
+
+A backslash escape such as `\.` inside a WirePlumber string is a parse error,
+and WirePlumber then ignores the whole file ("section 'monitor.alsa.rules' has
+no value"): the period and keep-awake rules in
+`50-curiosity-streamstack-alsa.conf` were silently not applied from at least
+2026-10-24 to 2026-10-27. Write a literal dot as `[.]` in
+`streamstack_audio_node_patterns` and `streamstack_audio_card_patterns`; the
+role refuses patterns with a backslash or quote, and
+`tests/test_streamstack_low_latency.py` renders both drop-ins and validates them
+(with `spa-json-dump` from PipeWire when it is installed). Check a live host
+with `journalctl --user -u wireplumber | grep wp-conf`, or
+`spa-json-dump /etc/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-alsa.conf`.
+
+### Canon bridge restart policy
+
+A user's `canonctl-ptp-webcam.service` (the Canon PTP bridge, shipped by the
+canonctl repo) that failed three times inside its 120 s start limit just after
+boot stayed dead for 2.5 days, so calls only saw the Cam Link. For every user
+who has that unit, the role writes
+`~/.config/systemd/user/canonctl-ptp-webcam.service.d/10-curiosity-resilience.conf`:
+`StartLimitIntervalSec=0` plus `RestartSec=5`, `RestartSteps=5`,
+`RestartMaxDelaySec=60`. `Restart=on-failure` is kept on purpose (not
+`always`): a bridge stopped by hand or by SIGINT stays stopped, and an unplugged
+camera costs at most one start attempt a minute. The running bridge is not
+restarted; the drop-in applies at the next `systemctl --user daemon-reload` or
+login. Switch off with `streamstack_canonctl_webcam_resilience: false`.
+
 ### Realtime
 
 `rtkit` is installed and the `audio` group gets `rtprio 95`, `memlock
