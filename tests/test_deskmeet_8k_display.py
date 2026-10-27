@@ -68,10 +68,12 @@ def test_only_the_deskmeet_b760_profile_opts_in() -> None:
     assert deskmeet["i915_pcon_frl_444"] is True
     assert deskmeet["display_scale"] == 2.25
     assert deskmeet["broadcast_rgb"] == "Full"
+    # The 8K60 DSC output (A380 DP-4) wins over the 8K30 PCON fallback (DP-3).
+    assert deskmeet["display_outputs"] == ["DP-4"]
     for name, profile in PROFILES.items():
         if name == "deskmeet-b760":
             continue
-        for key in ("i915_pcon_frl_444", "display_scale", "broadcast_rgb"):
+        for key in ("i915_pcon_frl_444", "display_scale", "broadcast_rgb", "display_outputs"):
             assert key not in profile, f"{name} must not set {key}"
 
 
@@ -120,7 +122,9 @@ def test_derived_variables_follow_the_profile_and_default_off() -> None:
     assert _derived("i915_pcon_frl_444_enabled", PROFILES, "deskmeet-b760") == "True"
     assert _derived("minimal_desktop_display_scale", PROFILES, "deskmeet-b760") == "2.25"
     assert _derived("minimal_desktop_display_broadcast_rgb", PROFILES, "deskmeet-b760") == "Full"
+    assert _derived("minimal_desktop_display_outputs_preferred", PROFILES, "deskmeet-b760") == "['DP-4']"
     for name in set(PROFILES) - {"deskmeet-b760"} | {"no-such-profile"}:
+        assert _derived("minimal_desktop_display_outputs_preferred", PROFILES, name) == "[]", name
         assert _derived("i915_pcon_frl_444_enabled", PROFILES, name) == "False", name
         assert _derived("minimal_desktop_display_scale", PROFILES, name) == "1", name
         assert _derived("minimal_desktop_display_broadcast_rgb", PROFILES, name) == "", name
@@ -313,6 +317,91 @@ def _run_display_setup(broadcast: str | None, prop: str = XRANDR_PROP) -> tuple[
         calls_file = root / "calls"
         calls = calls_file.read_text().splitlines() if calls_file.exists() else []
     return result, calls
+
+
+# xrandr --query on deskmeet1, 2026-10-27: both cables connected, DP-4 at 8K60.
+XRANDR_QUERY_DUAL = """\
+Screen 0: minimum 320 x 200, current 7680 x 4320, maximum 16384 x 16384
+DP-1 disconnected (normal left inverted right x axis y axis)
+DP-2 disconnected (normal left inverted right x axis y axis)
+DP-3 connected (normal left inverted right x axis y axis)
+   3840x2160     60.00 + 120.00   100.00   119.88    50.00    59.94    30.00    25.00    24.00    29.97    23.98
+   7680x4320     30.00    25.00    24.00    29.97    23.98
+   4096x2160    120.00   100.00   119.88    60.00    50.00    59.94    30.00    24.00    29.97    23.98
+   3840x1600    119.93    59.96
+DP-4 connected primary 7680x4320+0+0 (normal left inverted right x axis y axis) 1872mm x 1053mm
+   3840x2160     60.00 + 120.00   100.00   119.88    50.00    59.94    30.00    25.00    24.00    29.97    23.98
+   7680x4320     60.00*   50.00    59.94    30.00    25.00    24.00    29.97    23.98
+   4096x2160    120.00   100.00   119.88    60.00    50.00    59.94    30.00    24.00    29.97    23.98
+   3840x1600    119.93    59.96
+DP-5 disconnected (normal left inverted right x axis y axis)
+"""
+XRANDR_PROP_DUAL = """\
+Screen 0: minimum 320 x 200, current 7680 x 4320, maximum 16384 x 16384
+DP-3 connected (normal left inverted right x axis y axis)
+\tBroadcast RGB: Automatic
+\t\tsupported: Automatic, Full, Limited 16:235
+DP-4 connected primary 7680x4320+0+0 (normal left inverted right x axis y axis) 1872mm x 1053mm
+\tBroadcast RGB: Full
+\t\tsupported: Automatic, Full, Limited 16:235
+   7680x4320     60.00*
+"""
+
+
+def _display_outputs_file(preferred: list[str], outputs: list[str]) -> str:
+    from ansible.plugins.filter.core import FilterModule
+
+    copy = _named(_tasks("minimal-desktop-display-setup.yml"), "Record the preferred display outputs")
+    env = jinja2.Environment(keep_trailing_newline=True, trim_blocks=True)
+    env.filters.update(FilterModule().filters())
+    return env.from_string(copy["ansible.builtin.copy"]["content"]).render(
+        minimal_desktop_display_outputs_preferred=preferred,
+        minimal_desktop_display_outputs=outputs,
+    )
+
+
+def test_the_profile_outputs_go_first_and_other_hosts_are_unchanged() -> None:
+    host = ["DP-1", "DP-2", "DP-3", "DP-4"]
+    names = [line for line in _display_outputs_file(["DP-4"], host).splitlines() if line and not line.startswith("#")]
+    assert names == ["DP-4", "DP-1", "DP-2", "DP-3"]
+    # No profile preference: exactly the host's list, duplicates and all.
+    for outputs in (host, [], ["HDMI-A-1", "DP-1", "HDMI-A-1"]):
+        names = [line for line in _display_outputs_file([], outputs).splitlines() if line and not line.startswith("#")]
+        assert names == outputs
+
+
+def test_display_setup_drives_dp4_at_8k60_with_full_range_and_turns_dp3_off() -> None:
+    with tempfile.TemporaryDirectory(prefix="display-dual-") as temp_dir:
+        root = Path(temp_dir)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        (root / "query").write_text(XRANDR_QUERY_DUAL)
+        (root / "prop").write_text(XRANDR_PROP_DUAL)
+        fake = bin_dir / "xrandr"
+        fake.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "--query" ]; then cat "$FAKE_ROOT/query"; exit 0; fi\n'
+            'if [ "$1" = "--prop" ]; then cat "$FAKE_ROOT/prop"; exit 0; fi\n'
+            'printf "%s\\n" "$*" >>"$FAKE_ROOT/calls"\n'
+        )
+        fake.chmod(0o755)
+        (root / "display-outputs").write_text(
+            _display_outputs_file(PROFILES["deskmeet-b760"]["display_outputs"], ["DP-1", "DP-2", "DP-3", "DP-4"])
+        )
+        (root / "display-broadcast-rgb").write_text("# Managed by Ansible.\nFull\n")
+        env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "FAKE_ROOT": str(root),
+            "CURIOSITY_DISPLAY_OUTPUTS": str(root / "display-outputs"),
+            "CURIOSITY_DISPLAY_BROADCAST_RGB": str(root / "display-broadcast-rgb"),
+        }
+        result = subprocess.run(["sh", str(DISPLAY_SETUP)], text=True, capture_output=True, env=env)
+        calls = (root / "calls").read_text().splitlines()
+    assert result.returncode == 0 and result.stderr == "", result.stderr
+    assert calls == [
+        "--output DP-4 --mode 7680x4320 --rate 60.00 --primary --output DP-3 --off",
+        "--output DP-4 --set Broadcast RGB Full",
+    ]
 
 
 def test_display_setup_sets_broadcast_rgb_full_on_the_chosen_output() -> None:
@@ -562,7 +651,7 @@ def test_whole_number_scales_render_what_they_always_did() -> None:
 # --- console video (kernel video= argument) and readable fbcon font ------------
 
 CONSOLE_VIDEO = TASKS / "console-video.yml"
-CONSOLE_VIDEO_VALUE = "DP-3:7680x4320@30"
+CONSOLE_VIDEO_VALUE = "DP-4:7680x4320@60"
 CONSOLE_VIDEO_RE = re.compile(r"^[A-Za-z0-9-]+:[0-9]{3,5}x[0-9]{3,5}@[0-9]{1,3}\Z")
 
 
@@ -595,6 +684,20 @@ def test_only_the_deskmeet_b760_profile_sets_console_video_and_tuning() -> None:
         if name != "deskmeet-b760":
             assert "console_video" not in profile, name
             assert "console_tuning" not in profile, name
+
+
+def test_console_video_is_a_cta_8k_mode_on_the_8k60_output() -> None:
+    # CTA-861 defines 7680x4320 (16:9) only at these rates (VIC 194-201); the
+    # TV's EDID on DP-4 lists VIC 199 (60 Hz, 2376 MHz). Anything else would be a
+    # custom timing, which the TV rejects ("mode not supported").
+    connector, mode = CONSOLE_VIDEO_VALUE.split(":")
+    size, rate = mode.split("@")
+    assert connector == "DP-4"
+    assert size == "7680x4320"
+    assert int(rate) in {24, 25, 30, 48, 50, 60, 100, 120}
+    assert int(rate) == 60
+    # The console output is the one the display helper prefers.
+    assert PROFILES["deskmeet-b760"]["display_outputs"][0] == connector
 
 
 def test_console_video_and_tuning_are_derived_and_default_off() -> None:
@@ -666,11 +769,11 @@ def test_the_dropin_appends_and_preserves_earlier_command_line_arguments() -> No
     dropin = _console_video_dropin()
     assigned = [line for line in dropin.splitlines() if line and not line.startswith("#")]
     assert assigned == [
-        'GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }video=DP-3:7680x4320@30"'
+        'GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }video=DP-4:7680x4320@60"'
     ]
-    assert _grub_cmdline_after(dropin, "quiet splash") == "quiet splash video=DP-3:7680x4320@30"
-    assert _grub_cmdline_after(dropin, "") == "video=DP-3:7680x4320@30"
-    assert _grub_cmdline_after(dropin, None) == "video=DP-3:7680x4320@30"
+    assert _grub_cmdline_after(dropin, "quiet splash") == "quiet splash video=DP-4:7680x4320@60"
+    assert _grub_cmdline_after(dropin, "") == "video=DP-4:7680x4320@60"
+    assert _grub_cmdline_after(dropin, None) == "video=DP-4:7680x4320@60"
     # Never reduced blanking, custom timings or other mode flags.
     assert "R" not in dropin.split("video=")[1].split('"')[0]
 

@@ -167,26 +167,29 @@ Service logs: `journalctl -u curiosity-console-tuning`.
 
 ## DeskMeet 8K: every VT at the TV's own mode
 
-The `deskmeet-b760` hardware profile (Arc A380 -> VL605 DP-to-HDMI 2.1 PCON ->
+The `deskmeet-b760` hardware profile (Arc A380 -> DP-to-HDMI 2.1 cable ->
 Samsung 8K TV) uses two opt-in pieces so the boot console, every fbcon VT and X
-all run 7680x4320@30 and a VT switch causes no modeset. Without them fbcon came
-up at 3840x2160@60 while X ran 7680x4320@30.
+all run the same 8K mode and a VT switch causes no modeset. Without them fbcon
+came up at 3840x2160@60 while X ran 8K. Since 2026-10-27 the primary path is
+the A380's DP-4 at 7680x4320@60 with DSC (RGB 4:4:4); the StarTech/VL605 PCON
+cable on DP-3 (8K30 only) is the fallback.
 
 **Kernel mode (`console_video`, `tasks/console-video.yml`).** The profile key
-`console_video: "DP-3:7680x4320@30"` (derived variable `console_video`,
+`console_video: "DP-4:7680x4320@60"` (derived variable `console_video`,
 empty by default) installs `/etc/default/grub.d/92-curiosity-console-video.cfg`:
 
 ```sh
-GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }video=DP-3:7680x4320@30"
+GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }video=DP-4:7680x4320@60"
 ```
 
 It appends to whatever earlier files set and never edits `/etc/default/grub`.
 GRUB is regenerated (`update-grub`, else `grub-mkconfig`) only when the drop-in
 changed. When `console_video` is empty the role removes the drop-in and
 regenerates GRUB. The value must match `connector:WxH@Hz`; anything else (a
-trailing `R`, spaces, extra flags) fails the run. `DP-3` is the kernel connector
+trailing `R`, spaces, extra flags) fails the run. `DP-4` is the kernel connector
 name (`curiosity-console-status` lists them); the kernel matches the argument
-against the probed EDID modes (CTA VIC 194-196, 1188 MHz).
+against the probed EDID modes (CTA VIC 199, 7680x4320@60, 2376 MHz; the DP-3
+fallback cable only offers VIC 194-196, 8K24-30 at 1188 MHz).
 
 **Never use non-CTA timings.** Use only a mode the EDID advertises. Reduced
 blanking (`R`) or custom timings make this TV show "mode not supported" at 8K.
