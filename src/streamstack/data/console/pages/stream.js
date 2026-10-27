@@ -322,7 +322,7 @@ export async function mount(host, ctx) {
     R.recordClock.hidden = !rec.active;
     R.recordClock.textContent = rec.active ? clock(rec.seconds) : '';
     R.recordCard.setAttribute('tone', rec.active ? 'live' : '');
-    R.recordSub.textContent = rec.active ? `${baseName(rec.file)} · ${bytes(rec.bytes)}` : `Saves the program to a ${recFormat.toUpperCase()} file on this machine.`;
+    R.recordSub.textContent = rec.active ? `${baseName(rec.file)} · ${bytes(rec.bytes)}${rec.free_mb != null ? ` · ${rec.free_mb >= 10240 ? `${Math.round(rec.free_mb / 1024)} GB` : `${rec.free_mb} MB`} free${rec.minutes_left != null ? ` (about ${Math.round(rec.minutes_left)} min)` : ''}` : ''}${rec.raw_mic ? ' · raw mic track' : ''}` : rec.stopped ? `Stopped: ${rec.stopped}. Everything recorded so far is saved.` : `Saves the program to a ${recFormat.toUpperCase()} file on this machine.`;
     R.recBtn.hidden = rec.active;
     R.recStopBtn.hidden = !rec.active;
     R.recBtn.toggleAttribute('disabled', !available(s));

@@ -398,6 +398,16 @@ class LightingController:
             return {"kind": "io", "message": f"{broken[0]['name']}: {broken[0]['error']}"}
         return None
 
+    def camera_in_use(self) -> bool:
+        """Whether an app has the camera open (the stand-in for "a call is running" until call detection lands)."""
+        if self.panel is None:
+            return False
+        try:
+            return self.panel.camera_in_use()
+        except (OSError, ValueError) as exc:
+            log.info("camera use unknown: %s", exc)
+            return False
+
     def state(self) -> dict[str, Any]:
         presets = self.library.listing()
         plan = self.plan.load()

@@ -46,6 +46,8 @@ class FakeSession:
         self.open_error: CameraError | None = None
         self.closed = False
         self.keep: set[str] = set()  # settings the "camera" silently refuses to change
+        self.rests: list[bool] = []
+        self.rest_error: CameraError | None = None
 
     def open(self) -> None:
         if self.open_error:
@@ -72,6 +74,15 @@ class FakeSession:
                 continue
             if key in self.settings:
                 self.settings[key].value = value
+
+    def rest(self, on: bool) -> None:
+        self.rests.append(on)
+        if on:
+            self.paused = True  # live view ended: no frames until it resumes
+        else:
+            if self.rest_error:
+                raise self.rest_error
+            self.paused = False
 
     def stderr_tail(self) -> str:
         return ""
@@ -395,3 +406,80 @@ def test_settings_read_the_config_with_safe_fallbacks() -> None:
         }
     )
     assert s.canvas == (1920, 720) and s.output == "fill" and s.decode == "auto"
+
+
+# -- resting live view while the engine is idle (#128) ------------------------------------------------------------
+
+
+def test_rest_ends_live_view_holds_the_picture_and_resumes_on_release(fast: None) -> None:
+    r = Rig()
+    r.start()
+    wait_for(lambda: r.encoders and r.encoders[-1].fed > 3)
+    assert r.call(op="rest", seconds=30) == {"ok": True, "resting": True, "seconds": 30.0}
+    wait_for(lambda: r.bridge.state == "idle")
+    assert r.session.rests == [True]
+    assert "no app uses the camera" in r.bridge.message
+    assert r.call(op="status")["status"]["resting"] is True
+    fed = r.encoders[-1].fed
+    wait_for(lambda: r.encoders[-1].fed > fed + 3)  # the last frame keeps /dev/video42 alive at HOLD_FPS
+    assert r.call(op="rest", seconds=0)["resting"] is False
+    wait_for(lambda: r.bridge.state == "running")
+    assert r.session.rests == [True, False]
+    assert r.call(op="status")["status"]["resting"] is False
+    r.stop()
+
+
+def test_a_rest_lease_that_is_not_renewed_resumes_by_itself(fast: None) -> None:
+    """The Console died while the engine was idle: the body must not stay dark."""
+    r = Rig()
+    r.start()
+    wait_for(lambda: r.encoders and r.encoders[-1].fed > 3)
+    r.call(op="rest", seconds=0.3)
+    wait_for(lambda: r.bridge.state == "idle")
+    wait_for(lambda: r.bridge.state == "running", timeout=5)
+    assert r.session.rests == [True, False]
+    r.stop()
+
+
+def test_a_renewed_lease_keeps_resting(fast: None) -> None:
+    r = Rig()
+    r.start()
+    wait_for(lambda: r.encoders and r.encoders[-1].fed > 3)
+    for _ in range(6):
+        r.call(op="rest", seconds=0.4)
+        time.sleep(0.1)
+    assert r.bridge.state == "idle" and r.session.rests == [True]
+    r.stop()
+
+
+def test_rest_rejects_bad_durations_and_caps_the_lease(rig: Rig) -> None:
+    assert rig.call(op="rest", seconds="soon")["ok"] is False
+    assert rig.call(op="rest", seconds=-1)["ok"] is False
+    assert rig.call(op="rest", seconds=float("nan"))["ok"] is False
+    assert rig.call(op="rest", seconds=10**6)["seconds"] == bridge_mod.MAX_REST
+    rig.call(op="rest", seconds=0)
+
+
+def test_resting_is_never_mistaken_for_a_stall(fast: None) -> None:
+    r = Rig()
+    r.start()
+    wait_for(lambda: r.encoders and r.encoders[-1].fed > 3)
+    r.call(op="rest", seconds=30)
+    wait_for(lambda: r.bridge.state == "idle")
+    time.sleep(bridge_mod.SOURCE_STALL * 2)  # longer than the stall limit
+    assert len(r.sessions) == 1 and not r.session.closed  # the session was not restarted
+    r.stop()
+
+
+def test_a_camera_that_cannot_resume_restarts_the_session(fast: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bridge_mod, "RESTART_BACKOFF", 0.01, raising=False)
+    r = Rig()
+    r.start()
+    wait_for(lambda: r.encoders and r.encoders[-1].fed > 3)
+    r.session.rest_error = CameraError("usb went away", "io")
+    r.call(op="rest", seconds=30)
+    wait_for(lambda: r.bridge.state == "idle")
+    r.call(op="rest", seconds=0)
+    wait_for(lambda: len(r.sessions) > 1, timeout=10)  # a fresh session, in live view
+    r.call(op="rest", seconds=0)
+    r.stop()

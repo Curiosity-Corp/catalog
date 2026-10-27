@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Release tooling for StreamStack (a developer tool; it is not part of the wheel).
 
-    scripts/release.py prepare [VERSION]   promote "Unreleased", bump __version__, print the tag command
+    scripts/release.py prepare [VERSION]   compile changelog.d/ fragments into CHANGELOG.md, bump __version__
+    scripts/release.py check-fragments     CI gate for a merge request: a src/ change needs a changelog fragment
     scripts/release.py check-tag TAG       CI gate: tag == __version__, CHANGELOG section, patch-only policy
     scripts/release.py notes TAG           print the CHANGELOG section of TAG (the GitLab Release notes)
     scripts/release.py upload-assets ...   CI: upload the built files to the project's Generic Package Registry
+
+Changelog fragments: every merge request adds ``changelog.d/<issue-or-slug>.<type>.md`` instead of editing
+CHANGELOG.md (see changelog.d/README.md), so parallel merge requests never conflict. ``prepare`` compiles them.
 
 Versioning rule (owner decision): StreamStack ships 0.0.x PATCH releases. A release whose major or minor differs
 from the current version is refused unless the owner approved it and ``--owner-approved-minor`` is passed (in CI
@@ -36,6 +40,14 @@ SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 VERSION_LINE = re.compile(r'^(__version__\s*=\s*")([^"]+)(")', re.MULTILINE)
 UNRELEASED_HEADING = re.compile(r"^## \[Unreleased\][ \t]*$", re.MULTILINE)
 SECTION_HEADING = re.compile(r"^## \[(?P<version>[^\]]+)\](?: - (?P<date>\d{4}-\d{2}-\d{2}))?[ \t]*$", re.MULTILINE)
+
+FRAGMENT_DIR = Path("changelog.d")
+FRAGMENT_TYPES = ("added", "changed", "deprecated", "removed", "fixed", "security")
+FRAGMENT_NAME = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9_-]*)\.(?P<type>[a-z]+)\.md$")
+SKIP_LABEL = "skip-changelog"
+SKIP_TRAILER = re.compile(r"^Skip-Changelog:[ \t]*\S", re.MULTILINE | re.IGNORECASE)
+RELEASE_SUBJECT = re.compile(r"^chore\(release\): ", re.MULTILINE)
+SOURCE_PREFIX = "src/"
 
 Version = tuple[int, int, int]
 
@@ -140,14 +152,114 @@ def unreleased_body(text: str) -> str:
     return section_body(text, "Unreleased")
 
 
-def promote_unreleased(text: str, version: str, date: str) -> str:
-    """Rename the Unreleased section to a dated version heading and leave a fresh empty Unreleased above it."""
+def promote_unreleased(text: str, version: str, date: str, fragments: dict[str, list[str]] | None = None) -> str:
+    """Turn Unreleased (plus the compiled fragments) into a dated version heading, with a fresh empty Unreleased."""
     if has_section(text, version):
         raise ReleaseError(f"CHANGELOG.md already has a ## [{version}] section")
-    unreleased_body(text)  # raises when Unreleased is missing or has nothing in it
+    if not fragments:
+        unreleased_body(text)  # raises when Unreleased is missing or has nothing in it
+    elif not has_section(text, "Unreleased"):
+        raise ReleaseError("CHANGELOG.md has no ## [Unreleased] section")
     if len(UNRELEASED_HEADING.findall(text)) != 1:
         raise ReleaseError("CHANGELOG.md must have exactly one ## [Unreleased] heading")
+    if fragments:
+        body = merge_release_body(_unreleased_text(text), fragments)
+        start, end = next((s, e) for name, s, e in _sections(text) if name == "Unreleased")
+        return f"{text[:start]}## [Unreleased]\n\n## [{version}] - {date}\n\n{body}\n{text[end:]}"
     return UNRELEASED_HEADING.sub(f"## [Unreleased]\n\n## [{version}] - {date}", text, count=1)
+
+
+# ---------------------------------------------------------------------------
+# Changelog fragments
+# ---------------------------------------------------------------------------
+
+
+def _natural_key(name: str) -> list[tuple[int, int, str]]:
+    """Sort 2 before 10: digit runs compare as numbers."""
+    return [(0, int(part), "") if part.isdigit() else (1, 0, part) for part in re.split(r"(\d+)", name) if part]
+
+
+def fragment_files(root: Path) -> list[Path]:
+    """Every file in changelog.d/ that is not the README, sorted by name (issue numbers numerically)."""
+    directory = root / FRAGMENT_DIR
+    if not directory.is_dir():
+        return []
+    return sorted(
+        (p for p in directory.iterdir() if p.is_file() and p.name != "README.md" and not p.name.startswith(".")),
+        key=lambda p: _natural_key(p.name),
+    )
+
+
+def fragment_problem(name: str, text: str | None = None) -> str | None:
+    """Why ``changelog.d/<name>`` is not a valid fragment, or None when it is."""
+    match = FRAGMENT_NAME.match(name)
+    if not match:
+        return f"{FRAGMENT_DIR}/{name}: the name must be <issue-or-slug>.<type>.md"
+    if match.group("type") not in FRAGMENT_TYPES:
+        return f"{FRAGMENT_DIR}/{name}: type {match.group('type')!r} is not one of {', '.join(FRAGMENT_TYPES)}"
+    if text is not None and not text.strip():
+        return f"{FRAGMENT_DIR}/{name}: the fragment is empty"
+    return None
+
+
+def render_entry(text: str) -> str:
+    """One fragment as a CHANGELOG bullet: a leading ``- `` is optional, continuation lines are indented."""
+    lines = text.strip().splitlines()
+    if lines and lines[0].startswith(("- ", "* ")):
+        lines[0] = lines[0][2:]
+    out = ["- " + lines[0].rstrip()]
+    for line in lines[1:]:
+        out.append(f"  {line.rstrip()}" if line.strip() and not line.startswith(" ") else line.rstrip())
+    return "\n".join(out)
+
+
+def read_fragments(root: Path) -> dict[str, list[str]]:
+    """The rendered entries of every fragment, by type; raises on a malformed fragment."""
+    entries: dict[str, list[str]] = {}
+    for path in fragment_files(root):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ReleaseError(f"cannot read {FRAGMENT_DIR}/{path.name}: {exc}") from exc
+        match = FRAGMENT_NAME.match(path.name)
+        problem = fragment_problem(path.name, text)
+        if problem or not match:
+            raise ReleaseError(problem or f"{FRAGMENT_DIR}/{path.name}: bad fragment name")
+        entries.setdefault(match.group("type"), []).append(render_entry(text))
+    return entries
+
+
+def _split_groups(body: str) -> tuple[str, dict[str, str]]:
+    """A section body as (text before the first ``###``, {heading: text}); repeated headings are joined."""
+    parts = re.split(r"^### (.+?)[ \t]*$", body, flags=re.MULTILINE)
+    groups: dict[str, str] = {}
+    for heading, text in zip(parts[1::2], parts[2::2], strict=True):
+        key = heading.strip()
+        groups[key] = (groups[key] + "\n" + text.strip("\n")) if key in groups else text.strip("\n")
+    return parts[0].strip("\n"), groups
+
+
+def merge_release_body(unreleased: str, fragments: dict[str, list[str]]) -> str:
+    """Hand-written Unreleased entries (legacy) first, then the fragments, grouped under Keep-a-Changelog headings."""
+    preamble, groups = _split_groups(unreleased)
+    chunks = [preamble] if preamble.strip() else []
+    order = [t.capitalize() for t in FRAGMENT_TYPES]
+    for heading in [*order, *(h for h in groups if h not in order)]:
+        pieces = [groups[heading]] if heading in groups else []
+        pieces += fragments.get(heading.lower(), []) if heading in order else []
+        if pieces:
+            chunks.append(f"### {heading}\n" + "\n".join(pieces))
+    return "\n\n".join(chunks) + "\n"
+
+
+def _unreleased_text(text: str) -> str:
+    """The Unreleased body, empty when the section has nothing in it."""
+    try:
+        return unreleased_body(text)
+    except ReleaseError as exc:
+        if "empty" in str(exc):
+            return ""
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -219,16 +331,23 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         dt.date.fromisoformat(date)
     except ValueError as exc:
         raise ReleaseError(f"--date {date!r} is not YYYY-MM-DD") from exc
-    new_changelog = promote_unreleased(changelog, version, date)
+    fragments = read_fragments(root)
+    fragment_count = len(fragment_files(root))
+    new_changelog = promote_unreleased(changelog, version, date, fragments)
     new_init = write_version(init_text, version)
     if args.dry_run:
-        print(f"dry run: would release {version} ({date}); {format_version(current)} -> {version}")
+        print(
+            f"dry run: would release {version} ({date}); {format_version(current)} -> {version}; "
+            f"{sum(len(v) for v in fragments.values())} fragment entries"
+        )
     else:
         changelog_path.write_text(new_changelog, encoding="utf-8")
+        for path in fragment_files(root):
+            path.unlink()
         if new_init != init_text:
             init_path.write_text(new_init, encoding="utf-8")
         print(
-            f"prepared {version} ({date}): CHANGELOG.md promoted"
+            f"prepared {version} ({date}): CHANGELOG.md compiled from {fragment_count} fragment(s)"
             + ("" if new_init != init_text else ", __version__ already current")
         )
     print("next:")
@@ -245,7 +364,89 @@ def cmd_check_tag(args: argparse.Namespace) -> int:
         raise ReleaseError(f"tag {args.tag} names {version} but streamstack.__version__ is {in_tree}")
     check_policy(parse_version(version), args.owner_approved_minor)
     section_body((root / CHANGELOG_FILE).read_text(encoding="utf-8"), version)
+    left = [p.name for p in fragment_files(root)]
+    if left:
+        raise ReleaseError(
+            f"{FRAGMENT_DIR}/ still holds {len(left)} fragment(s) ({', '.join(left[:5])}): "
+            "`scripts/release.py prepare` compiles and deletes them; the release commit must not ship them"
+        )
     print(f"release {version}: tag, __version__ and CHANGELOG agree")
+    return 0
+
+
+def changed_files(root: Path, base: str, head: str) -> dict[str, str]:
+    """{path: status letter} for what ``head`` changes relative to ``base`` (no rename detection)."""
+    out = git(root, "diff", "--name-status", "--no-renames", base, head)
+    changes: dict[str, str] = {}
+    for line in out.splitlines():
+        status, _, path = line.partition("\t")
+        if path:
+            changes[path] = status[:1]
+    return changes
+
+
+def ensure_commit(root: Path, sha: str) -> None:
+    """CI clones are shallow: fetch ``sha`` when it is not in the checkout."""
+    if git_ok(root, "cat-file", "-e", f"{sha}^{{commit}}"):
+        return
+    for fetch in (("fetch", "--quiet", "--depth=200", "origin", sha), ("fetch", "--quiet", "--unshallow", "origin")):
+        if git_ok(root, *fetch) and git_ok(root, "cat-file", "-e", f"{sha}^{{commit}}"):
+            return
+    raise ReleaseError(f"cannot find the merge request's base commit {sha} (shallow clone?)")
+
+
+def fragment_gate(
+    changes: dict[str, str], messages: str, labels: Sequence[str], description: str, texts: dict[str, str]
+) -> list[str]:
+    """The reasons a merge request fails the changelog gate; empty when it passes. Pure, so it is unit-tested."""
+    if RELEASE_SUBJECT.search(messages):
+        return []  # a release commit compiles CHANGELOG.md, deletes the fragments and bumps the version
+    skip = SKIP_LABEL in labels or bool(SKIP_TRAILER.search(messages) or SKIP_TRAILER.search(description))
+    problems: list[str] = []
+    prefix = f"{FRAGMENT_DIR}/"
+    if str(CHANGELOG_FILE) in changes and not skip:
+        problems.append(
+            "CHANGELOG.md is edited directly. Add a fragment instead, changelog.d/<issue>.<type>.md; "
+            "`scripts/release.py prepare` compiles them at release time (see changelog.d/README.md)."
+        )
+    for path, status in sorted(changes.items()):
+        name = path[len(prefix) :]
+        if not path.startswith(prefix) or "/" in name or name == "README.md" or status == "D":
+            continue
+        problem = fragment_problem(name, texts.get(path))
+        if problem:
+            problems.append(problem)
+    added = [p for p, st in changes.items() if p.startswith(prefix) and st in "AM" and p[len(prefix) :] != "README.md"]
+    touches_src = any(p.startswith(SOURCE_PREFIX) for p in changes)
+    if touches_src and not added and not skip:
+        problems.append(
+            f"this merge request changes {SOURCE_PREFIX} but adds no changelog fragment. Add "
+            "changelog.d/<issue>.<type>.md (type: " + ", ".join(FRAGMENT_TYPES) + "), or skip it explicitly with the "
+            f"`{SKIP_LABEL}` label or a `Skip-Changelog: <reason>` commit trailer."
+        )
+    return problems
+
+
+def cmd_check_fragments(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    base = args.base or os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA", "")
+    if not base:
+        raise ReleaseError("pass --base <sha> (CI: CI_MERGE_REQUEST_DIFF_BASE_SHA is set on merge request pipelines)")
+    ensure_commit(root, base)
+    changes = changed_files(root, base, args.head)
+    messages = git(root, "log", "--no-merges", "--format=%B%x00", f"{base}..{args.head}")
+    labels = [x.strip() for x in (args.labels or os.environ.get("CI_MERGE_REQUEST_LABELS", "")).split(",") if x.strip()]
+    description = os.environ.get("CI_MERGE_REQUEST_DESCRIPTION", "")
+    texts: dict[str, str] = {}
+    for path, status in changes.items():
+        if path.startswith(f"{FRAGMENT_DIR}/") and status != "D" and (root / path).is_file():
+            texts[path] = (root / path).read_text(encoding="utf-8", errors="replace")
+    problems = fragment_gate(changes, messages, labels, description, texts)
+    if problems:
+        for problem in problems:
+            print(f"changelog: {problem}", file=sys.stderr)
+        return 1
+    print("changelog: ok")
     return 0
 
 
@@ -321,6 +522,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("RELEASE_OWNER_APPROVED_MINOR", "").lower() == "true",
     )
     check_tag.set_defaults(func=cmd_check_tag)
+
+    fragments = sub.add_parser("check-fragments", help="CI gate: a merge request adds a changelog fragment")
+    fragments.add_argument("--base", help="the merge request's base commit (default: CI_MERGE_REQUEST_DIFF_BASE_SHA)")
+    fragments.add_argument("--head", default="HEAD")
+    fragments.add_argument("--labels", help="comma-separated MR labels (default: CI_MERGE_REQUEST_LABELS)")
+    fragments.set_defaults(func=cmd_check_fragments)
 
     notes = sub.add_parser("notes", help="print the CHANGELOG section of a tag")
     notes.add_argument("tag")

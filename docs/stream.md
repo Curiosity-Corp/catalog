@@ -99,6 +99,8 @@ machine mount `/proc` with `hidepid=2`.
 | `STREAMSTACK_STREAM_AUDIO` | `streamstack_mic` | PipeWire/Pulse source name for the program audio (falls back to `default` with a warning) |
 | `STREAMSTACK_STREAM_AUDIO_OFFSET_MS` | `0` | lip-sync trim; positive delays the sound |
 | `STREAMSTACK_RECORD_DIR` | `~/Videos/StreamStack` | where recordings go |
+| `STREAMSTACK_RECORD_RAW_MIC` | `true` | keep the unprocessed microphone as a third track of every recording (see "Crash-safe recording") |
+| `STREAMSTACK_RECORD_MIN_FREE_MB` | `1024` | free disk space a recording must leave: refused below twice this, warned at three times, ended (file saved) at this |
 | `STREAMSTACK_STREAM_MAX_ENCODES` | `2` | encodes that may run at once (1 to 3) |
 
 The picture comes from `STREAMSTACK_PROGRAM_DEVICE` (default `/dev/video43`) at the size and rate of `STREAMSTACK_WIDTH`,
@@ -157,7 +159,7 @@ ingest.
 | `encoders` | list | one per running encode: `codec`, `encoder`, `label`, `backend`, `device`, `bitrate_kbps`, `fps`, `encoder_dropped`, `cpu_percent`, `gpu_percent` (as above, per encode), `latency_ms` (measured capture to relay), `swapping`, `swaps`, `failed` (text), `destinations` (ids) |
 | `encoder` | text | the encoder names in use, comma separated; empty when idle |
 | `destinations` | list | see below |
-| `recording` | object | `active`, `file`, `bytes`, `seconds`, `format`, and when active `state`, `last_error` |
+| `recording` | object | `active`, `file`, `bytes`, `seconds`, `format`, and when active `state`, `last_error`, `raw_mic`, `raw_error`, `free_mb`, `minutes_left`; after a disk-guard stop `stopped` |
 | `settings` | object | the current settings (the keys above) |
 | `output` | object | `width`, `height`, `fps` actually produced |
 | `audio` | object | `source`, `bitrate_kbps`, `ok`, `error` |
@@ -273,3 +275,29 @@ What was **not** measured, and so is not claimed:
 - Behaviour on a congested uplink (no pacing, no congestion control: see the limits above).
 - Longer than 20 s per case, and more than one WHIP destination at once.
 - The CPU figures include other agents' load on a shared 28-core host (load average about 2), so single runs carry noise.
+
+## Crash-safe recording
+
+A recording is meant to survive a bad day: a crash, a power cut, a full disk, a service restart.
+
+- **What a file holds.** Track 1 is the picture, track 2 the processed program sound (the one that goes to a live
+  destination), track 3 the **raw microphone**, the unprocessed capture, so voice processing can be redone in an editor.
+  Live destinations never get track 3 and are never delayed by it. A recording carries on with the processed sound
+  alone, and says so, when the raw capture cannot start or stops. Turn the track off with
+  `STREAMSTACK_RECORD_RAW_MIC=false`. It is skipped when there is no separate raw microphone.
+- **Disk guard.** A recording is refused when free space is under twice `STREAMSTACK_RECORD_MIN_FREE_MB`, a warning
+  shows once at three times it, and at the minimum the recording ends on its own: the file is closed, the Console
+  shows an error naming the file, and everything recorded so far is kept. The Stream page shows free space and the time
+  left at the current bitrate (`free_mb`, `minutes_left`).
+- **After `kill -9`, an out-of-memory kill or a power cut.** MKV is written flushed and fsynced about once a second
+  with no index, so it plays up to the last second but cannot seek and has no duration. While a recording runs a marker
+  `<file>.recording` sits beside it. At the next start the Console looks for markers whose writer is gone and remuxes
+  each file with `ffmpeg -c copy` (nothing is re-encoded) into one with an index, checks it, and only then replaces the
+  original (it must hold every track and at least 97 percent of the bytes; otherwise both files stay and the Console says
+  so). A fragmented MP4 needs no repair; it is checked and left as it is. A file that never got a frame is removed.
+- **Stopping the Console (SIGTERM, SIGINT).** The recording is stopped first: the sink is flushed, fsynced and closed,
+  the marker is removed and every ffmpeg is ended before the Console exits. A clean stop leaves an MKV without an index
+  (as `record.stop` does); `ffmpeg -i in.mkv -c copy out.mkv` adds one.
+
+Tests: `tests/test_stream_crash_safe.py` covers all of it with real ffmpeg, including a recorder killed with SIGKILL and a
+Console stopped with SIGTERM.

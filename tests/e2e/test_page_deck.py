@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
-from support import LOADED, App, Rig, poll, quiet, tap
+from support import LOADED, App, Rig, drag_onto, poll, quiet, tap
 
 
 @pytest.fixture
@@ -94,21 +94,17 @@ def test_dragging_an_option_onto_a_key_assigns_it(dk: App, rig: Rig) -> None:
     # state-read: the page layout; switching tab posts nothing
     last = rig.state()["deck"]["profile"]["pages"][4]
     free = next(i for i, k in enumerate(last["keys"]) if k["empty"])
-    option(page, "Privacy").first.drag_to(cap(page, free))
+    drag_onto(page, option(page, "Privacy").first, cap(page, free), kind="option")
     assert poll(rig, lambda s: s["deck"]["profile"]["pages"][4]["keys"][free]["raw"]["action"] == "video.privacy")
 
 
 def test_dragging_a_key_onto_another_swaps_them_and_onto_the_trash_clears_it(dk: App, rig: Rig) -> None:
     page = dk.page
     before = main_keys(rig)
-    cap(page, 0).drag_to(cap(page, 1))
+    drag_onto(page, cap(page, 0), cap(page, 1))
     assert poll(rig, lambda s: main_keys(rig)[0]["raw"] == before[1]["raw"])
     assert main_keys(rig)[1]["raw"] == before[0]["raw"]
-    cap(page, 1).hover()  # the trash only appears once a key is being dragged
-    page.mouse.down()
-    cap(page, 2).hover()
-    page.locator(".dk-trash").hover()
-    page.mouse.up()
+    drag_onto(page, cap(page, 1), page.locator(".dk-trash"))  # the trash only appears once a key is being dragged
     assert poll(rig, lambda s: main_keys(rig)[1]["empty"])
 
 

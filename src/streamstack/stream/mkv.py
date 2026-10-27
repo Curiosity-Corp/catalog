@@ -45,11 +45,13 @@ ID_VIDEO = 0xE0
 ID_PIXEL_WIDTH = 0xB0
 ID_PIXEL_HEIGHT = 0xBA
 ID_DEFAULT_DURATION = 0x23E383
+ID_TRACK_NAME = 0x536E
 
 TOP_LEVEL = {ID_SEEKHEAD, ID_INFO, ID_TRACKS, ID_TAGS, ID_CUES, ID_CLUSTER, ID_VOID, 0x1941A469, 0x1043A770}
 MAX_ELEMENT = 32 * 1024 * 1024  # a single non-streamed element (a frame, the tracks) larger than this is corruption
 MAX_BUFFER = 64 * 1024 * 1024
 TRACK_VIDEO, TRACK_AUDIO = 1, 2
+TRACK_RAW = 3  # the unprocessed microphone, written to recordings only (never to a live destination)
 
 
 class MkvError(ValueError):
@@ -193,8 +195,10 @@ def parse_track_entry(body: bytes, raw: bytes) -> Track:
     return Track(number, kind, codec, width, height, raw)
 
 
-def renumber_track(track: Track, number: int) -> bytes:
-    """The track entry with another track number (and a number-derived uid), everything else byte for byte."""
+def renumber_track(track: Track, number: int, name: str = "") -> bytes:
+    """The track entry with another track number (and a number-derived uid), everything else byte for byte.
+
+    `name` (when given) replaces the track's Name, which editors and players show in their track lists."""
     ident = read_id(track.raw, 0)
     sized = read_size(track.raw, ident[0]) if ident else None
     if ident is None or sized is None or sized[1] is None:
@@ -206,8 +210,12 @@ def renumber_track(track: Track, number: int) -> bytes:
             parts.append(uint_element(ID_TRACK_NUMBER, number))
         elif child_id == ID_TRACK_UID:
             parts.append(uint_element(ID_TRACK_UID, number))
+        elif child_id == ID_TRACK_NAME and name:
+            continue
         else:
             parts.append(raw_child)
+    if name:
+        parts.append(element(ID_TRACK_NAME, name.encode()))
     return element(ID_TRACK_ENTRY, b"".join(parts))
 
 
@@ -339,8 +347,16 @@ class Demuxer:
 # -- writer --------------------------------------------------------------------------------------------------
 
 
-def stream_header(video: Track | None, audio: Track | None, app: str = "StreamStack") -> bytes:
-    """EBML header, an unknown-size Segment, Info and Tracks: video is track 1, audio track 2."""
+def stream_header(
+    video: Track | None,
+    audio: Track | None,
+    app: str = "StreamStack",
+    raw: Track | None = None,
+    names: dict[int, str] | None = None,
+) -> bytes:
+    """EBML header, an unknown-size Segment, Info and Tracks: video is track 1, audio track 2, the raw microphone
+    (recordings only) track 3. `names` labels tracks by their new number."""
+    names = names or {}
     ebml = element(
         ID_EBML,
         uint_element(0x4286, 1)  # EBMLVersion
@@ -359,9 +375,11 @@ def stream_header(video: Track | None, audio: Track | None, app: str = "StreamSt
     )
     entries = b""
     if video is not None:
-        entries += renumber_track(video, TRACK_VIDEO)
+        entries += renumber_track(video, TRACK_VIDEO, names.get(TRACK_VIDEO, ""))
     if audio is not None:
-        entries += renumber_track(audio, TRACK_AUDIO)
+        entries += renumber_track(audio, TRACK_AUDIO, names.get(TRACK_AUDIO, ""))
+    if raw is not None:
+        entries += renumber_track(raw, TRACK_RAW, names.get(TRACK_RAW, ""))
     segment = enc_id(ID_SEGMENT) + b"\x01\xff\xff\xff\xff\xff\xff\xff"  # unknown size
     return ebml + segment + info + element(ID_TRACKS, entries)
 

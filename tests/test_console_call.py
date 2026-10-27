@@ -351,3 +351,20 @@ def test_console_mute_delivers_digital_silence_so_it_is_the_one_case_that_cannot
         desk.call.on_meters({"mic": {"rms_db": -90.0}})  # what a muted node delivers while the person talks
     assert desk.toasts == []
     assert desk.call.state()["muted_warning"]["count"] == 0
+
+
+def test_demo_reset_ends_a_call_at_once_with_no_leave_hold() -> None:
+    """A muted call left over from the last test must not linger into the next one: the e2e reset
+    (`call.demo_reset`) used to leave the monitor in_call and muted for the leave hold, long enough for the
+    demo's speech-like meters to raise a warning on the fresh watcher (job 1603148)."""
+    clock = Clock()
+    demo = DemoCall(clock=clock)
+    demo.act("call.demo", {"app": "Teams", "corked": True})
+    demo.monitor.poll_once()
+    clock.now += callmod.DEMO_SETTLE_S + 0.1
+    assert demo.monitor.poll_once().state.value == "in_call"
+    demo.act("call.demo_reset", {})
+    assert demo.monitor.snapshot().state.value == "idle"
+    for i in range(30):  # a second of loud talking in the stale window raises nothing
+        demo.on_meters({"mic": {"rms_db": -20.0}}, now=clock.now + i / 30)
+    assert demo.state()["muted_warning"]["count"] == 0

@@ -33,6 +33,8 @@ HANG_LIMIT = 45.0  # a loop iteration this long means libgphoto2 is stuck: exit 
 HOLD_FPS = 5.0  # while live view is paused the last frame is re-sent this often so the loopback never goes dark
 REFRESH_EVERY = 0.5  # shared session: one control is re-read this often, so dial changes on the body show up
 STATS_EVERY = 1.0
+MAX_REST = 120.0  # the longest lease one `rest` request can take; the Console renews it every few seconds
+REST_MESSAGE = "Live view is off while no app uses the camera; it returns when one opens StreamStack Camera"
 LABELS = {"qsv": "GPU (Intel Quick Sync)", "vaapi": "GPU (VA-API)", "cpu": "CPU", "legacy": "CPU (legacy command)"}
 
 
@@ -141,6 +143,8 @@ class Bridge:
         self._refresh_i = 0
         self._last_refresh = 0.0
         self._last_hold = 0.0
+        self.rest_until = 0.0  # live view stays off until this clock time (a lease the Console renews)
+        self._resting = False
         self.plan: encode.Plan | None = None
         self.node = ""
 
@@ -153,6 +157,8 @@ class Bridge:
         op = str(request.get("op", ""))
         if op == "status":
             return {"ok": True, "status": self.status()}
+        if op == "rest":
+            return self._rest_request(request)
         if op not in ("set", "action", "refresh"):
             return {"ok": False, "error": f"unknown request {op!r}"}
         if self.stop_event.is_set():
@@ -162,6 +168,20 @@ class Bridge:
         if not cmd.done.wait(timeout=20.0):
             return {"ok": False, "error": "the camera did not answer in time"}
         return cmd.result or {"ok": False, "error": "no result"}
+
+    def _rest_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        """`rest` with `seconds` > 0 ends live view for that long (renewed by the Console while the engine is idle);
+        0 resumes it. A lease, so a Console that dies never leaves the camera dark. Answered at once: the bridge
+        thread does the work on its next iteration (libgphoto2 is not thread-safe)."""
+        try:
+            seconds = float(request.get("seconds", 0))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "seconds must be a number"}
+        if seconds != seconds or seconds < 0:  # NaN or negative
+            return {"ok": False, "error": "seconds must be zero or more"}
+        seconds = min(seconds, MAX_REST)
+        self.rest_until = self.clock() + seconds if seconds > 0 else 0.0
+        return {"ok": True, "resting": seconds > 0, "seconds": seconds}
 
     def run(self) -> int:
         threading.Thread(target=self._watchdog, daemon=True, name="canon-watchdog").start()
@@ -192,6 +212,7 @@ class Bridge:
     def _cycle(self) -> None:
         session = self.make_session()
         self.session = session
+        self._resting = False  # a fresh session is in live view mode; the loop rests it again while the lease holds
         self.heartbeat = self.clock()
         self._set_state("starting", "Opening the camera")
         try:
@@ -224,6 +245,13 @@ class Bridge:
         while not self.stop_event.is_set():
             self.heartbeat = now = self.clock()
             self._drain()
+            if now < self.rest_until:
+                self._rest(session, now)
+                last_real = self.clock()  # resting is deliberate, never a stall
+                continue
+            if self._resting:
+                self._resume(session)
+                last_real = self.clock()
             t0 = self.clock()
             frame = session.next_frame(0.25)
             now = self.clock()
@@ -242,6 +270,36 @@ class Bridge:
             if session.shared and now - self._last_refresh >= REFRESH_EVERY:
                 self._refresh_one(session)
             self._stats(now)
+
+    def _rest(self, session: Session, now: float) -> None:
+        """Live view off (the camera's mirror and sensor are not kept busy for nobody); the loopback stays fed with the
+        last frame at HOLD_FPS so /dev/video42 keeps its producer and the engine, when it wakes, finds a picture."""
+        if not self._resting:
+            self._resting = True
+            self._set_state("idle", REST_MESSAGE)
+            end = getattr(session, "rest", None)
+            if end is not None:
+                try:
+                    end(True)
+                except CameraError as exc:
+                    log(f"live view not ended (frames simply stop being read): {exc}")
+        if self.last_frame is not None and now - self._last_hold >= 1.0 / HOLD_FPS:
+            self._last_hold = now
+            self._push(self.last_frame, count=False)
+        self._stats(now)
+        self.stop_event.wait(0.1)
+
+    def _resume(self, session: Session) -> None:
+        self._resting = False
+        self._set_state("starting", "Live view resuming")
+        begin = getattr(session, "rest", None)
+        if begin is None:
+            return
+        try:
+            begin(False)
+        except CameraError as exc:
+            log(f"live view did not resume cleanly: {exc}")
+            raise  # the cycle restarts the session, with backoff
 
     def _idle(self, session: Session, now: float, silent: float) -> None:
         paused = bool(getattr(session, "paused", False))
@@ -579,6 +637,7 @@ class Bridge:
             "pid": os.getpid(),
             "uptime_s": int(self.clock() - self.started),
             "session": "shared" if (self.session is not None and self.session.shared) else "pause",
+            "resting": self._resting,
             "usb": self.usb(),
             "decode": {
                 "path": plan.name if plan and enc else None,

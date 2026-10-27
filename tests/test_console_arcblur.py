@@ -352,8 +352,10 @@ def test_a_failed_blur_shows_in_the_health_checks(tmp_path: Path) -> None:
         video.act("video.blur", {"on": True})
         assert wait_for(lambda: video.state()["blur"]["arc"]["state"] == "failed")
         checks = video.health_checks()
-        assert [c["id"] for c in checks] == ["video-engine", "video-blur"]
-        assert "out of memory" in checks[1]["detail"]
+        ids = [c["id"] for c in checks]
+        assert ids[0] == "video-engine" and ids[-1] == "video-blur"  # the delivery row, when shown, sits between
+        assert set(ids) <= {"video-engine", "video-delivery", "video-blur"}
+        assert "out of memory" in checks[-1]["detail"]
         assert video.state()["blur"]["on"] is False
     finally:
         video.stop()

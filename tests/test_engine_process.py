@@ -36,6 +36,15 @@ if mode == "die":
     sys.stderr.write("Device or resource busy\\n"); sys.exit(1)
 out = os.fdopen(fd, "w")
 out.write("fps=20.0\\ndrop_frames=2\\nspeed=1.0x\\nprogress=continue\\n"); out.flush()
+if mode == "stall":  # one frame, then ffmpeg blocks in the V4L2 read: alive, silent, counter stuck
+    out.write("frame=1\\nprogress=continue\\n"); out.flush()
+if mode == "flow":  # a healthy child: the counter keeps moving
+    import threading
+    def count():
+        n = 0
+        while True:
+            n += 1; out.write(f"frame={n}\\nprogress=continue\\n"); out.flush(); time.sleep(0.05)
+    threading.Thread(target=count, daemon=True).start()
 sys.stdout.buffer.write(b"\\xff\\xd8\\xff\\xe0jpegbytes\\xff\\xd9"); sys.stdout.flush()
 with open(log, "ab", buffering=0) as handle:
     while True:
@@ -328,3 +337,100 @@ def test_a_blur_spec_without_a_feed_is_an_error_not_a_hang(tmp_path: Path) -> No
     )
     with pytest.raises(GraphError, match="blur feed"):
         eng._open_blur_pipes(eng._spec)
+
+
+# -- the delivery guard: before_child / on_exit / the stall watchdog ----------------------------------------------
+
+
+def test_a_source_that_is_not_ready_keeps_the_child_from_starting(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(process, "NOT_READY_POLL", 0.02)
+    answers = ["Canon EOS 50D has no producer on /dev/video42"]
+    asked: list[object] = []
+
+    def guard(spec: Spec) -> str | None:
+        asked.append(spec)
+        return answers[0] if answers else None
+
+    started: list[list[str]] = []
+    eng = process.VideoEngine(
+        SPEC, dict(NEUTRAL), popen=fake_popen(tmp_path / "in.log", started=started), before_child=guard
+    )
+    eng.start()
+    try:
+        assert wait_for(lambda: eng.state()["state"] == "waiting" and len(asked) >= 3)
+        assert started == [] and eng.state()["error"] == answers[0] and eng.state()["not_ready"] == answers[0]
+        answers.clear()  # the camera came back: no click, the child starts
+        assert wait_for(lambda: eng.state()["state"] == "running")
+        assert len(started) == 1 and eng.state()["not_ready"] is None
+    finally:
+        eng.stop()
+
+
+def test_a_guard_that_raises_does_not_stop_the_engine(tmp_path: Path) -> None:
+    def broken(spec: Spec) -> str | None:
+        raise RuntimeError("probe blew up")
+
+    eng = process.VideoEngine(SPEC, dict(NEUTRAL), popen=fake_popen(tmp_path / "in.log"), before_child=broken)
+    eng.start()
+    try:
+        assert wait_for(lambda: eng.state()["state"] == "running")
+    finally:
+        eng.stop()
+
+
+def test_on_exit_hears_about_a_child_that_dies(tmp_path: Path) -> None:
+    exits: list[tuple[str, int]] = []
+    eng = process.VideoEngine(
+        SPEC, dict(NEUTRAL), popen=fake_popen(tmp_path / "in.log", "die"), on_exit=lambda why, n: exits.append((why, n))
+    )
+    eng.start()
+    try:
+        assert wait_for(lambda: len(exits) >= 2)
+        assert "Device or resource busy" in exits[0][0] and exits[0][1] == 1 and exits[1][1] == 2
+    finally:
+        eng.stop()
+
+
+def test_a_stalled_child_is_stopped_and_restarted(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(process, "STALL_SECONDS", 0.3)
+    exits: list[tuple[str, int]] = []
+    started: list[list[str]] = []
+    eng = process.VideoEngine(
+        SPEC,
+        dict(NEUTRAL),
+        popen=fake_popen(tmp_path / "in.log", "stall", started),
+        on_exit=lambda why, n: exits.append((why, n)),
+    )
+    eng.start()
+    try:
+        assert wait_for(lambda: exits and "stopped delivering frames" in exits[0][0], timeout=8)
+        assert wait_for(lambda: len(started) >= 2, timeout=8)  # and it tries again by itself
+    finally:
+        eng.stop()
+
+
+def test_a_child_that_never_delivers_a_frame_is_stopped_after_the_first_frame_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(process, "STALL_FIRST", 0.3)
+    exits: list[tuple[str, int]] = []
+    eng = process.VideoEngine(
+        SPEC, dict(NEUTRAL), popen=fake_popen(tmp_path / "in.log"), on_exit=lambda why, n: exits.append((why, n))
+    )
+    eng.start()  # the stand-in reports progress but no frame counter at all
+    try:
+        assert wait_for(lambda: exits and "delivered no frame" in exits[0][0], timeout=8)
+    finally:
+        eng.stop()
+
+
+def test_a_child_whose_counter_moves_is_left_alone(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(process, "STALL_SECONDS", 0.3)
+    eng = process.VideoEngine(SPEC, dict(NEUTRAL), popen=fake_popen(tmp_path / "in.log", "flow"))
+    eng.start()
+    try:
+        assert wait_for(lambda: eng.state()["state"] == "running")
+        time.sleep(1.0)
+        assert eng.state()["restarts"] == 0 and eng.state()["state"] == "running"
+    finally:
+        eng.stop()

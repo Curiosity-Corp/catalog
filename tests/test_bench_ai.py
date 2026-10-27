@@ -3,12 +3,14 @@ skipping and a tiny synthetic CPU run. Nothing here opens a camera or a GPU."""
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any, ClassVar
 
 import pytest
 
@@ -126,6 +128,58 @@ def test_gpu_top_skips_cleanly_when_the_tool_is_missing(monkeypatch: pytest.Monk
         pass
     assert "not installed" in result["note"]
     assert "busy" not in result
+
+
+def test_gpu_top_through_sudo_when_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[list[str]] = []
+
+    class FakeProcess:
+        def __init__(self, command: list[str], **kwargs: object) -> None:
+            started.append(command)
+
+        def send_signal(self, sig: int) -> None:
+            pass
+
+        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+            return "", ""
+
+    monkeypatch.setattr(bench.shutil, "which", lambda name: "/usr/bin/intel_gpu_top")
+    monkeypatch.setattr(bench.subprocess, "Popen", FakeProcess)
+    for sudo, prefix in ((True, ["sudo", "-n"]), (False, [])):
+        with bench.gpu_top(True, "pci:vendor=8086,device=56a5", {}, sudo=sudo):
+            pass
+        assert started[-1] == [
+            *prefix,
+            "/usr/bin/intel_gpu_top",
+            "-J",
+            "-s",
+            "250",
+            "-d",
+            "pci:vendor=8086,device=56a5",
+        ]
+
+
+def test_each_rig_compiles_into_its_own_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    dirs: list[Path] = []
+
+    def verify(path: Path | None = None, spec: model.ModelSpec = model.YUNET) -> Path:
+        return Path("/nonexistent/x.onnx")
+
+    def open_backend(name: str, path: Path, candidate: object, opts: Any) -> object:
+        dirs.append(opts.cache_dir)
+        raise bench.Unavailable("stop here")
+
+    monkeypatch.setattr(bench.models, "verify", verify)
+    monkeypatch.setattr(bench, "open_backend", open_backend)
+
+    class CamLink(FakeSource):
+        label = "camlink"
+
+    sources = [FakeSource(), CamLink()]
+    opts = args("--synthetic", "--models", "sinet", "--backends", "ov-cpu")
+    opts.cache_dir = Path("/cache")
+    bench.run_matrix(sources, opts)
+    assert dirs == [Path("/cache/canon"), Path("/cache/camlink")]
 
 
 def test_gpu_top_is_not_started_when_not_asked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -293,6 +347,69 @@ def test_matrix_measures_and_skips_a_missing_gpu_with_its_reason(fake_backend: l
 
 
 @needs_numpy
+def test_a_measured_rig_size_run_evaluates_the_gates(fake_backend: list[str]) -> None:
+    opts = args("--synthetic", "--measured", "--models", "yunet-2023mar", "--backends", "ort-cpu", "--iterations", "3")
+    opts.cache_dir = Path("/nonexistent")
+    rows = bench.run_matrix([FakeSource()], opts)
+    assert [r.gate for r in rows] in (["PASS"], ["FAIL"])  # a verdict, not n/a
+
+
+def test_auto_gpu_device_is_the_discrete_arc_not_gpu_0(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeCore:
+        available_devices = ("CPU", "GPU.0", "GPU.1")
+        props: ClassVar[dict[tuple[str, str], str]] = {
+            ("GPU.0", "FULL_DEVICE_NAME"): "Intel(R) UHD Graphics 770 (iGPU)",
+            ("GPU.0", "DEVICE_TYPE"): "Type.INTEGRATED",
+            ("GPU.1", "FULL_DEVICE_NAME"): "Intel(R) Arc(TM) A380 Graphics (dGPU)",
+            ("GPU.1", "DEVICE_TYPE"): "Type.DISCRETE",
+            ("GPU.1", "GPU_DEVICE_ID"): "0x56a5",
+        }
+
+        def get_property(self, device: str, name: str) -> str:
+            return self.props[(device, name)]
+
+        def read_model(self, path: str) -> object:
+            raise RuntimeError(f"reached the model on {path}")
+
+    monkeypatch.setattr(bench, "_ov_core", lambda: FakeCore())
+    with pytest.raises(bench.Unavailable, match="reached the model"):
+        bench.open_openvino(Path("x.onnx"), bench.CANDIDATES[0], args("--synthetic"), "auto")
+    assert args("--synthetic").gpu_device == "auto"
+
+
+def test_auto_gpu_device_without_a_gpu_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeCore:
+        available_devices = ("CPU",)
+
+    monkeypatch.setattr(bench, "_ov_core", lambda: FakeCore())
+    with pytest.raises(bench.Unavailable, match=r"lists no GPU \(devices: CPU\)"):
+        bench.open_openvino(Path("x.onnx"), bench.CANDIDATES[0], args("--synthetic"), "auto")
+
+
+@needs_numpy
+def test_gpu_top_samples_the_gpu_the_model_ran_on(fake_backend: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str | None] = []
+
+    @contextlib.contextmanager
+    def fake_top(enabled: bool, device: str | None, result: dict[str, object], *, sudo: bool = False):
+        seen.append(device)
+        yield
+
+    def open_backend(name: str, path: Path, candidate: object, opts: object) -> object:
+        return bench.Runner(lambda data: None, 32, 32, "nchw", "GPU.1", 1.0, 1.0, pci_device_id="56a5")
+
+    monkeypatch.setattr(bench, "gpu_top", fake_top)
+    monkeypatch.setattr(bench, "open_backend", open_backend)
+    opts = args("--synthetic", "--models", "sinet", "--backends", "ov-gpu", "--iterations", "2", "--warmup", "0")
+    opts.cache_dir = Path("/nonexistent")
+    bench.run_matrix([FakeSource()], opts)
+    assert seen == ["pci:vendor=8086,device=56a5"]
+    opts.gpu_top_device = "drm:/dev/dri/card1"  # an explicit filter wins
+    bench.run_matrix([FakeSource()], opts)
+    assert seen[-1] == "drm:/dev/dri/card1"
+
+
+@needs_numpy
 def test_a_model_that_fails_while_running_is_reported_not_raised(
     fake_backend: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -401,11 +518,11 @@ def test_update_doc_replaces_only_the_marked_block(tmp_path: Path) -> None:
     doc = tmp_path / "doc.md"
     doc.write_text(DOC)
     block = bench.doc_block([make_row()], args("--clip", "a=b.mkv"), host(), stamp())
-    bench.update_doc(doc, block, synthetic=False)
+    bench.update_doc(doc, block)
     text = doc.read_text()
     assert text.startswith("# Doc\n\nbefore\n\n") and text.endswith("\n\nafter\n")
     assert "\nold\n" not in text and "bench-ai:kind=recorded" in text
-    bench.update_doc(doc, block, synthetic=False)  # idempotent
+    bench.update_doc(doc, block)  # idempotent
     assert doc.read_text() == text
 
 
@@ -413,20 +530,46 @@ def test_synthetic_numbers_never_replace_recorded_ones(tmp_path: Path) -> None:
     doc = tmp_path / "doc.md"
     doc.write_text(DOC)
     recorded = bench.doc_block([make_row()], args("--clip", "a=b.mkv"), host(), stamp())
-    bench.update_doc(doc, recorded, synthetic=False)
+    bench.update_doc(doc, recorded)
     synthetic = bench.doc_block([make_row(synthetic=True)], args("--synthetic"), host(), stamp())
     with pytest.raises(bench.BenchError, match="recorded numbers"):
-        bench.update_doc(doc, synthetic, synthetic=True)
+        bench.update_doc(doc, synthetic)
     assert "bench-ai:kind=recorded" in doc.read_text()
+
+
+def test_a_rig_size_run_replaces_a_placeholder_but_not_recorded_numbers(tmp_path: Path) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text(DOC)
+    measured = bench.doc_block(
+        [make_row(synthetic=True, gate="PASS")], args("--synthetic", "--measured"), host(), stamp()
+    )
+    assert "bench-ai:kind=rig-size" in measured and "SYNTHETIC PLACEHOLDER" not in measured
+    assert "no live device was opened" in measured
+    bench.update_doc(doc, measured)
+    placeholder = bench.doc_block([make_row(synthetic=True)], args("--synthetic"), host(), stamp())
+    with pytest.raises(bench.BenchError, match="rig-size numbers"):
+        bench.update_doc(doc, placeholder)
+    recorded = bench.doc_block([make_row()], args("--clip", "a=b.mkv"), host(), stamp())
+    bench.update_doc(doc, recorded)  # a recorded clip is the strongest evidence and replaces rig-size
+    with pytest.raises(bench.BenchError, match="recorded numbers"):
+        bench.update_doc(doc, measured)
+
+
+def test_measured_needs_generated_frames() -> None:
+    with pytest.raises(SystemExit):
+        args("--measured", "--clip", "a.mkv")
+    assert bench.run_kind(args("--synthetic", "--measured")) == "rig-size"
+    assert bench.run_kind(args("--synthetic")) == "synthetic"
+    assert bench.run_kind(args("--clip", "a.mkv")) == "recorded"
 
 
 def test_update_doc_needs_the_markers_and_a_readable_file(tmp_path: Path) -> None:
     plain = tmp_path / "plain.md"
     plain.write_text("# nothing here\n")
     with pytest.raises(bench.BenchError, match="no <!-- bench-ai:begin -->"):
-        bench.update_doc(plain, "x", synthetic=False)
+        bench.update_doc(plain, "x")
     with pytest.raises(bench.BenchError, match="cannot read"):
-        bench.update_doc(tmp_path / "missing.md", "x", synthetic=False)
+        bench.update_doc(tmp_path / "missing.md", "x")
 
 
 def test_the_repo_doc_has_the_block_the_harness_updates() -> None:

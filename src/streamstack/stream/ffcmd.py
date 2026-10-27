@@ -45,6 +45,7 @@ class AudioSource:
     kind: str = "pulse"  # pulse (PipeWire's pulse server) | lavfi (tests)
     name: str = "default"
     offset_ms: int = 0  # positive delays the sound against the picture (lip-sync trim)
+    tone_hz: int = 440  # lavfi only: the test tone, so tests can tell two tracks apart
 
 
 @dataclass(frozen=True)
@@ -212,7 +213,7 @@ def audio_generation_argv(
     """The audio encoder: Opus, 20 ms frames, 48 kHz stereo, Matroska on stdout."""
     argv = [ffmpeg, *QUIET]
     if source.kind == "lavfi":
-        argv += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"]
+        argv += ["-f", "lavfi", "-i", f"sine=frequency={source.tone_hz}:sample_rate=48000"]
     else:
         argv += [
             "-f", "pulse",

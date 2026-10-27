@@ -418,3 +418,177 @@ def test_upload_retries_a_server_error_then_gives_up_on_a_client_error(
     with pytest.raises(release.ReleaseError, match="HTTP 401"):
         release.upload_file("https://gl.example/x", path, "tok")
     assert calls == [401]
+
+
+# --- changelog fragments ---------------------------------------------------------------------------------------
+
+
+def _fragment(root: Path, name: str, text: str) -> None:
+    (root / "changelog.d").mkdir(exist_ok=True)
+    (root / "changelog.d" / name).write_text(text)
+
+
+def test_prepare_compiles_fragments_sorted_and_deletes_them(release: ModuleType, repo: Path) -> None:
+    _fragment(repo, "README.md", "# how to\n")
+    _fragment(repo, "10.fixed.md", "Ten.\n")
+    _fragment(repo, "2.fixed.md", "- Two, already a bullet.\n\nSecond paragraph.\n")
+    _fragment(repo, "7.added.md", "Seven\nwraps onto a second line.\n")
+    _fragment(repo, "9.security.md", "Nine.\n")
+    assert _prepare(release, repo, "--date", "2026-10-24") == 0
+    text = (repo / "CHANGELOG.md").read_text()
+    section = release.section_body(text, "0.0.8")
+    assert section.index("- A thing") < section.index("- Two") < section.index("- Ten")
+    assert section.index("### Added") < section.index("### Fixed") < section.index("### Security")
+    assert "- Seven\n  wraps onto a second line." in section
+    assert "## [Unreleased]\n\n## [0.0.8] - 2026-10-24" in text
+    assert [p.name for p in (repo / "changelog.d").iterdir()] == ["README.md"]
+
+
+def test_prepare_with_only_fragments_and_an_empty_unreleased(release: ModuleType, repo: Path) -> None:
+    (repo / "CHANGELOG.md").write_text(CHANGELOG.replace("### Fixed\n\n- A thing that was broken.\n\n", ""))
+    _fragment(repo, "136.changed.md", "Changelog fragments.\n")
+    assert _prepare(release, repo, "--date", "2026-10-24") == 0
+    assert release.section_body((repo / "CHANGELOG.md").read_text(), "0.0.8") == "### Changed\n- Changelog fragments.\n"
+
+
+def test_prepare_still_refuses_when_there_is_nothing_to_release(release: ModuleType, repo: Path) -> None:
+    (repo / "CHANGELOG.md").write_text(CHANGELOG.replace("### Fixed\n\n- A thing that was broken.\n\n", ""))
+    assert _prepare(release, repo, "--date", "2026-10-24") == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "needle"),
+    [
+        ("140.fix.md", "x", "not one of"),
+        ("140.md", "x", "<issue-or-slug>.<type>.md"),
+        ("140.fixed.txt", "x", "<issue-or-slug>.<type>.md"),
+        ("140.fixed.md", "  \n", "empty"),
+    ],
+)
+def test_prepare_refuses_a_malformed_fragment_and_changes_nothing(
+    release: ModuleType, repo: Path, capsys: pytest.CaptureFixture[str], name: str, text: str, needle: str
+) -> None:
+    _fragment(repo, name, text)
+    assert _prepare(release, repo, "--date", "2026-10-24") == 1
+    assert needle in capsys.readouterr().err
+    assert "## [0.0.8]" not in (repo / "CHANGELOG.md").read_text()
+    assert (repo / "changelog.d" / name).exists()
+
+
+def test_dry_run_keeps_the_fragments(release: ModuleType, repo: Path) -> None:
+    _fragment(repo, "1.added.md", "One.\n")
+    assert _prepare(release, repo, "--dry-run") == 0
+    assert (repo / "changelog.d/1.added.md").exists()
+
+
+def test_the_tag_gate_refuses_leftover_fragments(
+    release: ModuleType, repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _released(release, repo)
+    _fragment(repo, "5.fixed.md", "Late.\n")
+    assert release.main(["--root", str(repo), "check-tag", "v0.0.8"]) == 1
+    assert "5.fixed.md" in capsys.readouterr().err
+
+
+SRC = {"src/streamstack/x.py": "M"}
+FRAG = {"changelog.d/140.fixed.md": "A"}
+
+
+def _gate(
+    release: ModuleType,
+    changes: dict[str, str],
+    messages: str = "feat: x\n",
+    labels: tuple[str, ...] = (),
+    description: str = "",
+    texts: dict[str, str] | None = None,
+) -> list[str]:
+    texts = {p: "entry\n" for p, s in changes.items() if p.startswith("changelog.d/")} if texts is None else texts
+    return release.fragment_gate(changes, messages, labels, description, texts)
+
+
+def test_gate_passes_a_src_change_with_a_fragment(release: ModuleType) -> None:
+    assert _gate(release, {**SRC, **FRAG}) == []
+
+
+def test_gate_passes_a_change_outside_src_without_a_fragment(release: ModuleType) -> None:
+    assert _gate(release, {"docs/x.md": "M", "tests/test_x.py": "A"}) == []
+
+
+def test_gate_fails_a_src_change_without_a_fragment(release: ModuleType) -> None:
+    (problem,) = _gate(release, SRC)
+    assert "adds no changelog fragment" in problem and "skip-changelog" in problem
+
+
+def test_a_deleted_fragment_does_not_count_as_added(release: ModuleType) -> None:
+    assert _gate(release, {**SRC, "changelog.d/140.fixed.md": "D"})
+
+
+def test_gate_fails_a_direct_changelog_edit(release: ModuleType) -> None:
+    (problem,) = _gate(release, {"CHANGELOG.md": "M", **FRAG})
+    assert "edited directly" in problem and "changelog.d" in problem
+
+
+def test_gate_exempts_release_commits(release: ModuleType) -> None:
+    changes = {"CHANGELOG.md": "M", "src/streamstack/__init__.py": "M", "changelog.d/1.fixed.md": "D"}
+    assert _gate(release, changes, messages="chore(release): 0.0.13\n\nbody\n\x00") == []
+
+
+def test_gate_skip_by_label_and_by_trailer_and_by_description(release: ModuleType) -> None:
+    assert _gate(release, SRC, labels=("bug", "skip-changelog")) == []
+    assert _gate(release, SRC, messages="refactor: x\n\nSkip-Changelog: pure refactor\n\x00") == []
+    assert _gate(release, SRC, description="Closes #1\n\nSkip-Changelog: internal\n") == []
+    assert _gate(release, SRC, messages="refactor: mentions Skip-Changelog: nothing\n")  # not a trailer line
+    assert _gate(release, SRC, messages="x\n\nSkip-Changelog:\n")  # a trailer needs a reason
+
+
+def test_gate_validates_added_fragments(release: ModuleType) -> None:
+    assert any("not one of" in p for p in _gate(release, {**SRC, "changelog.d/1.bug.md": "A"}))
+    assert any(
+        "empty" in p
+        for p in _gate(release, {**SRC, "changelog.d/1.fixed.md": "A"}, texts={"changelog.d/1.fixed.md": ""})
+    )
+    assert _gate(release, {**SRC, "changelog.d/README.md": "M"})  # the README is not a fragment
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_check_fragments_against_a_real_branch(
+    release: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "mr"
+    (root / "src/streamstack").mkdir(parents=True)
+    (root / "src/streamstack/__init__.py").write_text(INIT)
+    (root / "CHANGELOG.md").write_text(CHANGELOG)
+
+    def run(*args: str) -> str:
+        done = subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True, text=True)
+        return done.stdout.strip()
+
+    for args in (("init", "-q", "-b", "main"), ("config", "user.email", "t@example.org"), ("config", "user.name", "T")):
+        run(*args)
+    run("add", ".")
+    run("commit", "-q", "-m", "init")
+    base = run("rev-parse", "HEAD")
+    for var in ("CI_MERGE_REQUEST_LABELS", "CI_MERGE_REQUEST_DESCRIPTION", "CI_MERGE_REQUEST_DIFF_BASE_SHA"):
+        monkeypatch.delenv(var, raising=False)
+
+    def check() -> int:
+        return release.main(["--root", str(root), "check-fragments", "--base", base])
+
+    (root / "src/streamstack/new.py").write_text("x = 1\n")
+    run("add", ".")
+    run("commit", "-q", "-m", "feat: new")
+    assert check() == 1
+    assert "adds no changelog fragment" in capsys.readouterr().err
+
+    _fragment(root, "140.added.md", "New module.\n")
+    run("add", ".")
+    run("commit", "-q", "-m", "docs: fragment")
+    assert check() == 0
+
+    (root / "CHANGELOG.md").write_text(CHANGELOG + "\n- sneaky\n")
+    run("add", ".")
+    run("commit", "-q", "-m", "docs: changelog")
+    assert check() == 1
+    assert "edited directly" in capsys.readouterr().err
+    monkeypatch.setenv("CI_MERGE_REQUEST_LABELS", "skip-changelog")
+    assert check() == 0

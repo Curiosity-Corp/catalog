@@ -1,0 +1,4 @@
+# SYNTHESIZED from the format strings in Linux sound/usb/mixer_scarlett2.c and the usbcore messages; not captured from a device (#130 asks for a capture once the 2i2 enumerates on deskmeet1).
+numid=1,iface=MIXER,name='PCM Playback Switch'
+  ; type=BOOLEAN,access=rw------,values=1
+  : values=on

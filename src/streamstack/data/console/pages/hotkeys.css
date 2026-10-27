@@ -1,0 +1,31 @@
+/* hotkeys.css — the Hotkeys and MIDI card of the Deck page (pages/hotkeys.js). Scoped to the Deck page: page stylesheets stay loaded after navigation. */
+@scope ([data-page="deck"]) {
+  .hk { display: block; min-width: 0; }
+  .hk-where { margin: 0 0 var(--s-2); font-size: var(--fs-sm); color: var(--text-2); overflow-wrap: anywhere; }
+  .hk-where[data-ok="false"] { color: var(--amber); }
+  .hk-list { list-style: none; margin: var(--s-3) 0; padding: 0; display: grid; gap: var(--s-2); }
+  .hk-row { display: grid; grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr) auto; gap: var(--s-2) var(--s-3); align-items: center; padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface-2); min-width: 0; }
+  .hk-where-t { font-weight: 700; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .hk-what { font-size: var(--fs-sm); min-width: 0; overflow-wrap: anywhere; }
+  .hk-badge { justify-self: start; padding: 0.1rem 0.55rem; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600; background: var(--surface-3); color: var(--text-2); }
+  .hk-badge[data-status="ok"] { color: var(--green); }
+  .hk-badge[data-status="conflict"], .hk-badge[data-status="refused"], .hk-badge[data-status="unmapped"], .hk-badge[data-status="waiting"], .hk-badge[data-status="pending"] { color: var(--amber); }
+  .hk-last { grid-column: 2 / 3; font-size: var(--fs-xs); color: var(--text-3); min-width: 0; overflow-wrap: anywhere; }
+  .hk-last[data-ok="false"] { color: var(--amber); }
+  .hk-acts { grid-column: 3 / 4; grid-row: 1 / 3; display: flex; gap: var(--s-2); }
+  .hk-mini { padding: 0.2rem 0.6rem; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); border: 1px solid var(--line-strong); background: var(--surface-2); }
+  .hk-mini:hover { color: var(--text); background: var(--surface-3); }
+  .hk-form { display: grid; gap: var(--s-3); margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--line); }
+  .hk-trigger, .hk-scale { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--s-3); align-items: end; min-width: 0; }
+  .hk-midi { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: end; }
+  .hk-midi[hidden], .hk-scale[hidden], .hk .dk-field[hidden] { display: none; }
+  .hk-events { list-style: none; margin: var(--s-3) 0 0; padding: 0; display: grid; gap: 0.2rem; font-size: var(--fs-xs); color: var(--text-3); }
+  .hk-events li[data-level="warn"] { color: var(--amber); }
+  .hk-events li[data-level="ok"] { color: var(--green); }
+  .hk-events time { font-variant-numeric: tabular-nums; }
+  .hk-link { display: inline-block; margin-right: var(--s-3); font-size: var(--fs-sm); color: var(--accent-strong); cursor: pointer; text-decoration: underline; }
+  @media (max-width: 860px) {
+    .hk-row { grid-template-columns: minmax(0, 1fr); }
+    .hk-last, .hk-acts { grid-column: auto; grid-row: auto; }
+  }
+}

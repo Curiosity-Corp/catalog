@@ -156,7 +156,9 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
                 and st
             ),
         )
+        rig.act("hotkeys.demo.reset")
         rig.act("deck.reset")  # the default profile on the simulated 4x4 deck, first page
+        rig.act("slots.demo.reset")  # no time-of-day profiles, the demo clock back where it started
         if s["hardware"]["host"] != "dm313red":
             rig.act("hardware.demo_host", host="dm313red")  # the recorded studio the demo starts with
         if not s["studio"]["running"]:
@@ -166,6 +168,7 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             rig.act("video.privacy", on=False)
         if s["audio"]["mic"].get("stalled"):
             rig.act("audio.demo_stall", on=False)
+        rig.act("audio.demo_check_hold", on=False)
         rig.act("audio.clip_clear")
         rig.act("call.demo_reset")  # no call, the warning at its defaults
         rig.act("audio.demo_output_reset")  # outputs plugged, first the default

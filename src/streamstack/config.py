@@ -37,6 +37,10 @@ DEFAULTS = {
     "STREAMSTACK_STREAM_AUDIO": "streamstack_mic",
     "STREAMSTACK_STREAM_AUDIO_OFFSET_MS": "0",
     "STREAMSTACK_RECORD_DIR": "~/Videos/StreamStack",
+    # Recordings keep the unprocessed microphone as a third track (editable later), and stop cleanly, with the file
+    # finished, before the disk fills: below this much free space a recording is refused, and at it, ended.
+    "STREAMSTACK_RECORD_RAW_MIC": "true",
+    "STREAMSTACK_RECORD_MIN_FREE_MB": "1024",
     "STREAMSTACK_STREAM_MAX_ENCODES": "2",
     # Cam Link capture mode: "auto" picks the best the HDMI source offers (1080p60 > 1080p50 > 1080p30, raw before
     # MJPEG) and the program camera follows it; "off" keeps STREAMSTACK_WIDTH/_HEIGHT/_FPS; "1920x1080@60 YUYV"
@@ -54,7 +58,21 @@ DEFAULTS = {
     # picks the discrete Arc; or an OpenVINO device id such as GPU.1.
     "STREAMSTACK_ENGINE_BLUR": "auto",
     "STREAMSTACK_ENGINE_BLUR_DEVICE": "auto",
+    # Idle the engine and the Canon live view while no app reads StreamStack Camera (#128): auto | off. The engine rests
+    # after _AFTER seconds without a reader and wakes within a second of the first one; a placeholder keeps the camera
+    # listed meanwhile. _IGNORE lists process names (comma separated) whose open handle does not count as a reader.
+    "STREAMSTACK_ENGINE_IDLE": "auto",
+    "STREAMSTACK_ENGINE_IDLE_AFTER": "10",
+    "STREAMSTACK_ENGINE_IDLE_IGNORE": "",
     "STREAMSTACK_CAMERA_EXTERNAL": "false",
+    # When the camera loses its picture (the bridge died, the cable came out): `slate` keeps StreamStack Camera fed with
+    # a "camera reconnecting" card at the engine's size, `hold` shows the last frame darkened instead, `off` writes
+    # nothing. FALLBACK auto moves the program camera to another camera that delivers (the Cam Link) after _AFTER
+    # seconds and back after _BACK seconds of a steady picture; off keeps the picked camera (docs/camera-delivery.md).
+    "STREAMSTACK_CAMERA_LOSS": "slate",
+    "STREAMSTACK_CAMERA_FALLBACK": "auto",
+    "STREAMSTACK_CAMERA_FALLBACK_AFTER": "6",
+    "STREAMSTACK_CAMERA_FALLBACK_BACK": "5",
     "STREAMSTACK_CANON_BRIDGE": "gphoto2",
     "STREAMSTACK_CANON_COMMAND": "",
     # native: the camera's own aspect, never enlarged; fill: crop to the canvas (the 0.2 behaviour)

@@ -193,6 +193,13 @@ CPU fallback on purpose: without an Arc the Console says "Unavailable: <reason>"
 fps, inference ms, mask age). Settings are saved in `video.json`. `STREAMSTACK_ENGINE_BLUR=off` removes the branch;
 `STREAMSTACK_ENGINE_BLUR_DEVICE` picks a device. Measure again with `tools/bench_blur.py`.
 
+## Idle
+
+The supervisor child is stopped, not paused, while no app reads StreamStack Camera: see
+[camera-delivery.md](camera-delivery.md#idle-when-no-app-reads-the-camera). The Console owns the decision
+(`engine/idle.py`, `console/native.py`); `VideoEngine` needs nothing beyond `start()` and `stop()`, and the delivery
+guard releases the placeholder before the child opens the node, as it does after a camera loss.
+
 ## Left for other issues
 
 - Compositing the blur on the GPU (see above).

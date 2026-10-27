@@ -428,6 +428,12 @@ class CallDetector:
         )
         return self._snap
 
+    def reset(self) -> CallSnapshot:
+        """Forget the call at once, with no leave hold (the demo rig reset)."""
+        self._capture_since = self._gone_since = None
+        self._snap = CallSnapshot(since=self._clock())
+        return self._snap
+
     def _quiet(self, previous: CallSnapshot, now: float) -> CallSnapshot:
         if previous.state is CallState.IDLE:
             return previous
@@ -520,6 +526,20 @@ class CallMonitor:
         """An adapter's report of the call app's true mute state; None withdraws it."""
         with self._lock:
             self._external = None if muted is None else ExternalMute(muted, source, self._clock())
+
+    def reset(self) -> CallSnapshot:
+        """Drop the call, the adapter's report and the leave hold now; listeners hear of the change as usual."""
+        with self._lock:
+            before = self._detector.snapshot
+            self._external = None
+            after = self._detector.reset()
+            listeners = list(self._listeners) if _changed(before, after) else []
+        for listener in listeners:
+            try:
+                listener(before, after)
+            except Exception:
+                log.exception("call state listener failed")
+        return after
 
     def poll_once(self) -> CallSnapshot:
         """Look now and update the snapshot (the thread's body; tests call it directly)."""

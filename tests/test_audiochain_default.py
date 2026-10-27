@@ -12,6 +12,7 @@ from test_audiochain_runtime import DUMP, done, model
 from streamstack.audiochain import chain, cli, defaults, graph, stages
 
 WAVE = "alsa_input.usb-Elgato_Systems_Elgato_Wave_XLR_DS23M2A00049-00.mono-fallback"
+CAM_LINK = "alsa_input.usb-Elgato_Cam_Link_4K_0004A1B2C3-03.analog-stereo"
 
 
 @pytest.fixture
@@ -22,8 +23,15 @@ def plugins_present(monkeypatch: pytest.MonkeyPatch) -> None:
 class Metadata:
     """A `pw-metadata` and `pw-dump` that keep the default metadata in memory and record every call."""
 
-    def __init__(self, configured: str | None = WAVE, readable: bool = True, set_ok: bool = True) -> None:
+    def __init__(
+        self,
+        configured: str | None = WAVE,
+        readable: bool = True,
+        set_ok: bool = True,
+        sources: tuple[str, ...] = (WAVE, CAM_LINK),
+    ) -> None:
         self.configured = configured
+        self.sources = sources
         self.readable = readable
         self.set_ok = set_ok
         self.calls: list[list[str]] = []
@@ -31,7 +39,15 @@ class Metadata:
     def __call__(self, argv: list[str], timeout: float = 10) -> subprocess.CompletedProcess[str] | None:
         self.calls.append(argv)
         if argv[0] == "pw-dump":
-            return done(json.dumps(DUMP))
+            nodes = [
+                {
+                    "id": 100 + i,
+                    "type": "PipeWire:Interface:Node",
+                    "info": {"props": {"node.name": name, "media.class": "Audio/Source"}},
+                }
+                for i, name in enumerate(self.sources)
+            ]
+            return done(json.dumps([*DUMP, *nodes]))
         if argv[0] == "pw-cli":
             return done()
         if argv[0] != "pw-metadata":
@@ -72,20 +88,20 @@ def test_reading_the_configured_default_ignores_other_keys_and_objects() -> None
     assert defaults.read_configured(runner) == (True, None)
 
 
-def test_claim_then_release_gives_the_previous_microphone_back(tmp_path: Path) -> None:
+def test_claim_then_release_gives_the_plans_microphone_back(tmp_path: Path) -> None:
     md = Metadata(WAVE)
     assert defaults.claim(tmp_path, md) == "claimed"
     assert md.configured == graph.NODE_NAME and defaults.claimed(tmp_path)
-    assert defaults.release(tmp_path, md) == "released"
+    assert defaults.release(tmp_path, WAVE, md) == "released"
     assert md.configured == WAVE and not defaults.claimed(tmp_path)
-    assert defaults.release(tmp_path, md) == "none"  # nothing left to give back, nothing written
+    assert defaults.release(tmp_path, WAVE, md) == "none"  # nothing left to give back, nothing written
     assert len(md.writes()) == 2
 
 
-def test_with_no_configured_default_the_key_is_deleted_on_release(tmp_path: Path) -> None:
+def test_with_no_microphone_known_the_key_is_deleted_on_release(tmp_path: Path) -> None:
     md = Metadata(None)
     assert defaults.claim(tmp_path, md) == "claimed"
-    assert defaults.release(tmp_path, md) == "released"
+    assert defaults.release(tmp_path, None, md) == "released"
     assert md.configured is None and any("-d" in c for c in md.writes())
 
 
@@ -95,8 +111,60 @@ def test_a_second_claim_changes_nothing(tmp_path: Path) -> None:
     writes = len(md.writes())
     assert defaults.claim(tmp_path, md) == "held"
     assert len(md.writes()) == writes
-    defaults.release(tmp_path, md)
-    assert md.configured == WAVE  # the first previous value survived the second claim
+    defaults.release(tmp_path, WAVE, md)
+    assert md.configured == WAVE
+
+
+def test_release_never_restores_a_recorded_camera_default(tmp_path: Path) -> None:
+    """#142: the default was the Cam Link's HDMI audio when the chain started; stop must give the Wave XLR."""
+    md = Metadata(CAM_LINK)
+    assert defaults.claim(tmp_path, md) == "claimed"
+    assert defaults.release(tmp_path, WAVE, md) == "released"
+    assert md.configured == WAVE
+    assert not any(CAM_LINK in " ".join(w) for w in md.writes()[1:])
+
+
+def test_a_record_left_by_an_older_version_does_not_steer_release(tmp_path: Path) -> None:
+    md = Metadata(graph.NODE_NAME)
+    path = defaults.state_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"claimed": graph.NODE_NAME, "previous": CAM_LINK}))
+    assert defaults.release(tmp_path, WAVE, md) == "released"
+    assert md.configured == WAVE
+
+
+def test_a_default_still_naming_the_chain_is_reset_even_without_a_record(tmp_path: Path) -> None:
+    """#142: the record was lost (a crash, a forgotten claim) and stop left streamstack_mic as the default."""
+    md = Metadata(graph.NODE_NAME)
+    assert not defaults.claimed(tmp_path)
+    assert defaults.release(tmp_path, WAVE, md) == "released"
+    assert md.configured == WAVE
+
+
+def test_an_absent_microphone_is_never_made_the_default(tmp_path: Path) -> None:
+    md = Metadata(graph.NODE_NAME, sources=(CAM_LINK,))  # the Wave is unplugged
+    assert defaults.release(tmp_path, WAVE, md) == "released"
+    assert md.configured is None  # the key is deleted: the session manager picks, we name no missing node
+
+
+def test_release_with_unreadable_pw_dump_deletes_rather_than_naming_a_node_it_cannot_check(tmp_path: Path) -> None:
+    md = Metadata(graph.NODE_NAME)
+    runner = lambda argv, timeout=10: done("", 1) if argv[0] == "pw-dump" else md(argv, timeout)  # noqa: E731
+    assert defaults.release(tmp_path, WAVE, runner) == "released"
+    assert md.configured is None
+
+
+def test_the_chain_node_is_never_its_own_release_target(tmp_path: Path) -> None:
+    md = Metadata(graph.NODE_NAME)
+    assert defaults.release(tmp_path, graph.NODE_NAME, md) == "released"
+    assert md.configured is None
+
+
+def test_only_audio_sources_count_as_present() -> None:
+    md = Metadata(WAVE, sources=(WAVE,))
+    assert defaults.present_sources(md) == {WAVE, "alsa_input.usb-Wave", graph.NODE_NAME}
+    assert defaults.present_sources(lambda argv, timeout=10: done("not json")) is None
+    assert defaults.present_sources(lambda argv, timeout=10: None) is None
 
 
 def test_a_default_chosen_by_hand_is_left_alone(tmp_path: Path) -> None:
@@ -108,24 +176,24 @@ def test_a_default_chosen_by_hand_is_left_alone(tmp_path: Path) -> None:
     md.configured = graph.NODE_NAME
     defaults.claim(tmp_path, md)
     md.configured = "alsa_input.third"
-    assert defaults.release(tmp_path, md) == "user-changed"
+    assert defaults.release(tmp_path, WAVE, md) == "user-changed"
     assert md.configured == "alsa_input.third"
 
 
-def test_a_stale_claim_of_ours_is_never_restored_as_the_raw_microphone(tmp_path: Path) -> None:
+def test_a_stale_claim_of_ours_is_replaced_by_the_plans_microphone(tmp_path: Path) -> None:
     md = Metadata(graph.NODE_NAME)  # a crash lost our record, the key still names the chain
     assert defaults.claim(tmp_path, md) == "claimed"
-    defaults.release(tmp_path, md)
-    assert md.configured is None
+    defaults.release(tmp_path, WAVE, md)
+    assert md.configured == WAVE
 
 
 def test_unreadable_metadata_keeps_the_claim_for_the_next_try(tmp_path: Path) -> None:
     md = Metadata(WAVE)
     defaults.claim(tmp_path, md)
     md.readable = False
-    assert defaults.release(tmp_path, md) == "unavailable" and defaults.claimed(tmp_path)
+    assert defaults.release(tmp_path, WAVE, md) == "unavailable" and defaults.claimed(tmp_path)
     md.readable = True
-    assert defaults.release(tmp_path, md) == "released" and md.configured == WAVE
+    assert defaults.release(tmp_path, WAVE, md) == "released" and md.configured == WAVE
     assert defaults.claim(tmp_path, Metadata(readable=False)) == "unavailable"
 
 
@@ -135,7 +203,7 @@ def test_a_refused_write_leaves_no_claim_behind(tmp_path: Path) -> None:
     ok = Metadata(WAVE)
     defaults.claim(tmp_path, ok)
     ok.set_ok = False
-    assert defaults.release(tmp_path, ok) == "failed" and defaults.claimed(tmp_path)
+    assert defaults.release(tmp_path, WAVE, ok) == "failed" and defaults.claimed(tmp_path)
 
 
 def runtime(tmp_path: Path, md: Metadata, now: list[float], **kw: object) -> chain.ChainRuntime:
@@ -214,9 +282,34 @@ def test_cli_status_says_which_microphone_apps_get(
     assert "(not StreamStack Mic)" in capsys.readouterr().out
 
 
-def test_cli_release_default_with_no_claim_is_quiet(capsys: pytest.CaptureFixture[str]) -> None:
+class _Rt:
+    def __init__(self, microphone: str | None) -> None:
+        self.microphone = microphone
+
+
+def test_cli_release_default_with_no_claim_is_quiet(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "_runtime", lambda cfg, **kw: _Rt(WAVE))
+    monkeypatch.setattr(defaults, "release", lambda state_dir, microphone=None, run=None: "none")
     assert cli.release_default({}) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_cli_release_default_hands_the_plans_microphone_to_release(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#142: `chain stop` must pass the Plan's microphone, not rely on a recorded previous default."""
+    seen: list[str | None] = []
+
+    def release(state_dir: Path, microphone: str | None = None, run: object = None) -> str:
+        seen.append(microphone)
+        return "released"
+
+    monkeypatch.setattr(cli, "_runtime", lambda cfg, **kw: _Rt(WAVE))
+    monkeypatch.setattr(defaults, "release", release)
+    assert cli.release_default({}) == 0
+    assert seen == [WAVE] and "default microphone is back to" in capsys.readouterr().out
 
 
 def test_the_chain_node_keeps_the_name_apps_show() -> None:

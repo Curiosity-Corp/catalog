@@ -189,10 +189,9 @@ class ProcScanner:
         result = Scan()
         skip = set(ignore)
         wanted = {os.path.realpath(d) for d in devices} | set(devices)
+        if not wanted:
+            return result
         for pid in self._pids():
-            comm = _read(self.proc / str(pid) / "comm")
-            if not wanted:
-                continue
             try:
                 fds = os.listdir(self.proc / str(pid) / "fd")
             except OSError:
@@ -206,7 +205,10 @@ class ProcScanner:
                 if target in wanted:
                     held = target
                     break
-            if held is None or comm in skip or friendly(comm) in skip:
+            if held is None:
+                continue
+            comm = _read(self.proc / str(pid) / "comm")  # only a process that holds a node is worth naming
+            if comm in skip or friendly(comm) in skip:
                 continue
             if self._is_plumbing(pid, comm):
                 continue

@@ -12,6 +12,7 @@
 import { h, renderList } from '../core/util.js';
 import { iconHTML, ICON_NAMES } from '../components/icons.js';
 import { apiUrl, getJson } from '../core/api.js';
+import { mountHotkeys } from './hotkeys.js';
 
 const TEMPLATE = `
 <div class="dk">
@@ -151,12 +152,14 @@ export async function mount(host, ctx) {
   const { store, act, actStream, flushStream, toast, registerCommands } = ctx;
   await ctx.ensureCss(new URL('./common.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./deck.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./hotkeys.css', import.meta.url).href);
   document.title = 'Deck · StreamStack';
   host.innerHTML = TEMPLATE;
   const R = {};
   host.querySelectorAll('[data-ref]').forEach((el) => { R[el.dataset.ref] = el; });
   const off = [];
   const deck = () => store.state.deck;
+  off.push(mountHotkeys(host.querySelector('.dk-main'), ctx)); // global hotkeys and MIDI: its own card under the deck settings
 
   // Local UI state: what this window is looking at (never sent anywhere).
   const ui = { mode: 'edit', page: null, selected: null, search: '', adopt: null, focusName: false, palette: [], paletteRev: null, dragging: null };

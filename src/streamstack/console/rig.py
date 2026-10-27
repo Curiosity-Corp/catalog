@@ -20,6 +20,18 @@ def no_deck() -> dict:
     return empty_state()
 
 
+def no_slots() -> dict:
+    from streamstack.console.slots import empty_state
+
+    return empty_state()
+
+
+def no_hotkeys() -> dict:
+    from streamstack.console.hotkeys import empty_state
+
+    return empty_state()
+
+
 def empty_diagnostics() -> dict:
     return {
         "telemetry": {
@@ -88,6 +100,8 @@ class Rig:
         diagnostics: Any = None,
         hardware: Any = None,
         call: Any = None,
+        slots: Any = None,
+        hotkeys: Any = None,
     ) -> None:
         self.audio, self.video, self.studio = audio, video, studio
         self.lighting = lighting  # optional: a rig without lights reports an empty lighting object
@@ -99,12 +113,28 @@ class Rig:
         self.diagnostics = diagnostics  # optional: telemetry and crash reports (telemetry.*, crash.* actions)
         self.hardware = hardware  # optional: the hardware probe and Plan (hardware.* actions, "hardware" state)
         self.call = call  # optional: call awareness (call.* actions, "call" state, `call.snapshot()` for features)
+        self.slots = slots  # optional: time-of-day look profiles (slots.* actions, "slots" state)
+        self.hotkeys = hotkeys  # optional: global hotkeys and MIDI (hotkeys.* actions, "hotkeys" state)
         self.demo = demo
         self.on_toast: Notify | None = None  # the hub sets this
         self._started = False
         self._lock = threading.Lock()
         self._unsubscribe_store: Callable[[], None] | None = None
-        controllers = (audio, video, studio, lighting, interface, framing, self.presets, stream, deck, hardware, call)
+        controllers = (
+            audio,
+            video,
+            studio,
+            lighting,
+            interface,
+            framing,
+            self.presets,
+            stream,
+            deck,
+            hardware,
+            call,
+            slots,
+            hotkeys,
+        )
         for controller in controllers:
             if controller is not None:
                 controller.notify = self.notify
@@ -112,6 +142,11 @@ class Rig:
             deck.rig = self  # pressing a key runs a Console action
         if call is not None and callable(getattr(audio, "mic_muted", None)):
             call.own_muted = audio.mic_muted  # the Console's own mute: the microphone is silent, nothing to detect
+        if slots is not None:
+            slots.dispatch = self.act  # a profile is applied with the actions a person would press
+            slots.rig = self  # a profile reads what is on and what changed from the snapshot
+        if hotkeys is not None:
+            hotkeys.rig = self  # a hotkey or a MIDI control runs a Console action
 
     # -- construction ---------------------------------------------------------
 
@@ -125,9 +160,11 @@ class Rig:
         from streamstack.console.diagnostics import Diagnostics
         from streamstack.console.framing import FramingController
         from streamstack.console.hardware import HardwareController
+        from streamstack.console.hotkeys import HotkeysController
         from streamstack.console.interface import InterfaceController
         from streamstack.console.lighting import LightingController
         from streamstack.console.native import NativeVideo
+        from streamstack.console.slots import SlotsController
         from streamstack.console.stream import StreamController
         from streamstack.console.studio import StudioController
 
@@ -136,21 +173,30 @@ class Rig:
         hardware = HardwareController(cfg)
         plan = hardware.wait_plan  # the video engine and the stream pick their GPU from the Plan by role
         video = NativeVideo(cfg, plan=plan)
+        stream = StreamController(cfg, plan=plan)
+        # a running stream or recording reads /dev/video43 through its own ffmpeg (plumbing to the reader scan): it
+        # must keep the engine awake
+        video.add_demand("streaming", lambda: stream.service.running)
         audio = AudioController(cfg)
         audio.plan_source = hardware.plan  # the voice chain follows the Plan: microphone by USB id, rate, quantum
         audio.plan_refresh = lambda: hardware.act("hardware.refresh", {})
+        lighting = LightingController()
+        call = CallController(cfg, settings_path=live_settings_path())
+        slots = SlotsController(lambda action, params: None, in_call=call.active)
         return cls(
             audio,
             video,
             StudioController(cfg),
-            lighting=LightingController(),
+            lighting=lighting,
             interface=InterfaceController(cfg),
             framing=FramingController(cfg, video),
-            stream=StreamController(cfg, plan=plan),
+            stream=stream,
             deck=DeckController(),
             diagnostics=Diagnostics(cfg),
             hardware=hardware,
-            call=CallController(cfg, settings_path=live_settings_path()),
+            call=call,
+            slots=slots,
+            hotkeys=HotkeysController(),
         )
 
     @classmethod
@@ -162,25 +208,32 @@ class Rig:
         from streamstack.console.diagnostics import Diagnostics
         from streamstack.console.framing import DemoFraming
         from streamstack.console.hardware import DemoHardware
+        from streamstack.console.hotkeys import DemoHotkeys
         from streamstack.console.interface import DemoInterface
         from streamstack.console.lighting import DemoLighting
+        from streamstack.console.slots import DemoSlots
         from streamstack.console.stream import DemoStream
         from streamstack.console.studio import DemoStudio
         from streamstack.console.video import DemoVideo
 
+        lighting = DemoLighting()
+        call = DemoCall()
+        slots = DemoSlots(lambda action, params: None, in_call=call.active)
         return cls(
             DemoAudio(),
             DemoVideo(),
             DemoStudio(),
             demo=True,
-            lighting=DemoLighting(),
+            lighting=lighting,
             interface=DemoInterface(),
             framing=DemoFraming(),
             stream=DemoStream(),
             deck=DemoDeck(),
             diagnostics=Diagnostics(),
             hardware=DemoHardware(),
-            call=DemoCall(),
+            call=call,
+            slots=slots,
+            hotkeys=DemoHotkeys(),
         )
 
     # -- lifecycle ------------------------------------------------------------
@@ -193,7 +246,9 @@ class Rig:
         controllers = controllers if self.framing is None else (*controllers, self.framing)
         controllers = controllers if self.stream is None else (*controllers, self.stream)
         controllers = controllers if self.call is None else (*controllers, self.call)
-        return controllers if self.deck is None else (*controllers, self.deck)
+        controllers = controllers if self.deck is None else (*controllers, self.deck)
+        controllers = controllers if self.hotkeys is None else (*controllers, self.hotkeys)
+        return controllers if self.slots is None else (*controllers, self.slots)  # last: it acts through the others
 
     def start(self) -> None:
         with self._lock:
@@ -304,6 +359,8 @@ class Rig:
             "hardware": self.hardware.state() if self.hardware is not None else _no_hardware(),
             "call": self.call.state() if self.call is not None else _no_call(),
         }
+        snap["slots"] = self.slots.state(snap) if self.slots is not None else no_slots()
+        snap["hotkeys"] = self.hotkeys.state(snap) if self.hotkeys is not None else no_hotkeys()
         snap["deck"] = self.deck.state(snap) if self.deck is not None else no_deck()  # last: its keys show the rest
         return snap
 
@@ -352,6 +409,14 @@ class Rig:
             if self.deck is None:
                 raise ActionError("Stream Deck support is not part of this rig.", 409)
             controller = self.deck
+        elif prefix == "slots":
+            if self.slots is None:
+                raise ActionError("Time-of-day profiles are not part of this rig.", 409)
+            controller = self.slots
+        elif prefix == "hotkeys":
+            if self.hotkeys is None:
+                raise ActionError("Hotkeys are not part of this rig.", 409)
+            controller = self.hotkeys
         elif prefix == "framing":
             if self.framing is None:
                 raise ActionError("Auto-framing is not part of this rig.", 409)

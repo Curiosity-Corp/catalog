@@ -317,6 +317,20 @@ def test_the_demo_rig_answers_with_the_same_state_keys_as_the_real_one(video: Na
     assert demo.state()["limits"] == video.state()["limits"]
 
 
+def test_the_demo_engine_block_has_the_same_idle_keys_as_the_real_one(video: NativeVideo) -> None:
+    demo = console_video.DemoVideo(lambda level, text: None)
+    assert set(demo.state()["engine"]["idle"]) == set(video.state()["engine"]["idle"])
+
+
+def test_the_demo_can_show_idle_and_keep_awake(video: NativeVideo) -> None:
+    demo = console_video.DemoVideo(lambda level, text: None)
+    demo.act("video.idle.demo", {"state": "idle"})
+    assert demo.state()["engine"]["state"] == "idle" and demo.state()["engine"]["idle"]["state"] == "idle"
+    demo.act("video.idle.demo", {"state": "running"})
+    demo.act("video.keepalive", {"on": True})
+    assert demo.state()["engine"]["idle"]["keep_alive"] is True
+
+
 def test_frames_are_cached_briefly_and_shared_between_viewers(video: NativeVideo, monkeypatch) -> None:
     grabs: list[tuple[str, int]] = []
     monkeypatch.setattr(video, "_grab", lambda name, width: grabs.append((name, width)) or b"\xff\xd8jpeg")

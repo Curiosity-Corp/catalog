@@ -8,6 +8,12 @@
 * **Background blur** (`Spec.blur`, see blurfeed.py) adds two pipes per child, camera frames out and person masks in,
   and a pump thread that answers one with the other. On, off and strength are commands to `maskedmerge@blur` and
   `gblur@bg` like any other control; nothing restarts.
+* **Delivery guard** keeps the output node fed from the outside: before every child start `before_child(spec)` may
+  answer "not ready: <why>" (the source camera has no producer), and the supervisor then waits and asks again instead
+  of letting ffmpeg fail on the camera; `on_exit` is told when a child ended. The Console uses both to run the
+  "camera reconnecting" slate (engine/slate.py) on the same node while no child writes it. A child that is alive but
+  whose frame counter stops for `STALL_SECONDS` (a bridge that died while ffmpeg waits in `read()`) is stopped and
+  treated like any other exit.
 * **Progress** (`-progress`) gives frames per second and drops; the second output is the low-rate uncropped JPEG the
   framing detector reads (`latest_frame`).
 """
@@ -34,6 +40,11 @@ BACKOFF = (0.5, 1.0, 2.0, 5.0)
 STABLE_SECONDS = 10.0  # a child that ran this long resets the backoff
 STOP_GRACE = (2.0, 2.0)  # seconds after `q`, after SIGTERM; then SIGKILL
 FRAME_MAX_AGE = 3.0
+STALL_SECONDS = 4.0  # no new frame for this long on a running child means its source has stopped
+STALL_FIRST = 10.0  # a camera may need this long to deliver its first frame (a Cam Link waking, a PTP bridge)
+NOT_READY_POLL = 1.0  # how often a source that is not ready is asked again
+BeforeChild = Callable[[Spec], str | None]
+OnExit = Callable[[str, int], None]
 
 
 class VideoEngine:
@@ -48,7 +59,11 @@ class VideoEngine:
         clock: Callable[[], float] = time.monotonic,
         notify: Notify | None = None,
         pass_fds: tuple[int, ...] = (),
+        before_child: BeforeChild | None = None,
+        on_exit: OnExit | None = None,
     ) -> None:
+        self._before_child = before_child
+        self._on_exit = on_exit
         self._pass_fds = pass_fds
         self._spec = spec
         self._look = dict(look or {})
@@ -75,6 +90,8 @@ class VideoEngine:
         self._frame: tuple[float, bytes] | None = None
         self._frame_cond = threading.Condition()
         self._last_apply_ms: float | None = None
+        self._stalled: str | None = None  # set by the watchdog for the child it is stopping
+        self._not_ready: str | None = None  # why the source is not ready now, None when it is
 
     # -- lifecycle -----------------------------------------------------------------------------------------------
 
@@ -250,6 +267,7 @@ class VideoEngine:
             "pid": proc.pid if proc is not None else None,
             "crop": None if self._rect is None else vars(self._rect),
             "blackout": self._blackout,
+            "not_ready": self._not_ready,
             "blur": self._blur.stats() if self._blur is not None and spec.blur is not None else None,
         }
 
@@ -275,6 +293,10 @@ class VideoEngine:
     def _run(self) -> None:
         failures = 0
         while not self._halt.is_set():
+            if self._source_not_ready():
+                self._wake.wait(NOT_READY_POLL)
+                self._wake.clear()
+                continue
             began = self._clock()
             try:
                 self._run_child()
@@ -289,8 +311,39 @@ class VideoEngine:
                 if self._state != "error":
                     self._state = "waiting"
                 self._restarts += 1
+                reason = self._error or "the video engine stopped"
+            self._child_exited(reason, failures)
             self._wake.wait(wait)
             self._wake.clear()
+
+    def _source_not_ready(self) -> bool:
+        """Ask the guard whether the source can be read now. While it cannot, the state is `waiting` and the reason is
+        the guard's, and nothing is started (a camera that is gone must not make ffmpeg fail every second)."""
+        if self._before_child is None:
+            return False
+        with self.lock:
+            spec = self._spec
+        try:
+            reason = self._before_child(spec)
+        except Exception:
+            log.exception("engine delivery guard failed; starting the child anyway")
+            reason = None
+        with self.lock:
+            changed = reason != self._not_ready
+            self._not_ready = reason
+            if reason is not None:
+                self._state, self._error = "waiting", reason
+        if reason is not None and changed:
+            log.warning("engine: %s", reason)
+        return reason is not None
+
+    def _child_exited(self, reason: str, failures: int) -> None:
+        if self._on_exit is None:
+            return
+        try:
+            self._on_exit(reason, failures)
+        except Exception:
+            log.exception("engine exit hook failed")
 
     def _fail(self, message: str) -> None:
         with self.lock:
@@ -364,15 +417,51 @@ class VideoEngine:
             )
         for thread in readers:
             thread.start()
+        watchdog = threading.Thread(
+            target=self._watch_stall, args=(proc,), daemon=True, name="streamstack-engine-watch"
+        )
+        watchdog.start()
         code = proc.wait()
-        for thread in readers:
+        for thread in (*readers, watchdog):
             thread.join(timeout=1)
         with self.lock:
             self._proc, self._sent = None, None
+            stalled, self._stalled = self._stalled, None
+        if stalled and not self._halt.is_set():
+            self._fail(stalled)
+            return
         if self._halt.is_set() or code in (-15, 255):
             return
         tail = " | ".join(list(self._stderr)[-3:]) or f"exit code {code}"
         self._fail(f"the video engine stopped: {tail}")
+
+    def _watch_stall(self, proc: subprocess.Popen) -> None:
+        """Stop a child whose frame counter has not moved for STALL_SECONDS (STALL_FIRST before its first frame).
+
+        ffmpeg blocks in the V4L2 read when the producer of a loopback source goes away, so it neither exits nor
+        writes: the supervisor would wait forever while the program node goes quiet."""
+        began = last_move = self._clock()
+        frame, moved = None, False
+        while proc.poll() is None and not self._halt.is_set():
+            self._halt.wait(0.5)
+            with self.lock:
+                now_frame = self._progress.get("frame")
+            now = self._clock()
+            if now_frame != frame:
+                frame, last_move, moved = now_frame, now, True
+            limit = STALL_SECONDS if moved else STALL_FIRST
+            if now - (last_move if moved else began) < limit:
+                continue
+            seconds = now - (last_move if moved else began)
+            with self.lock:
+                self._stalled = (
+                    f"the camera stopped delivering frames ({seconds:.0f} s without one)"
+                    if moved
+                    else f"the camera delivered no frame in {seconds:.0f} s"
+                )
+            log.warning("engine: %s", self._stalled)
+            self._terminate(proc)
+            return
 
     def _open_blur_pipes(self, spec: Spec) -> tuple[int, int, int, int] | None:
         """(seg read, seg write, mask read, mask write) for a child that has a blur branch, else None."""

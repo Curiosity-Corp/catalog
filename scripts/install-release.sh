@@ -11,7 +11,14 @@
 # GITLAB_TOKEN or `glab`, handed to curl on stdin, and never printed. See docs/release.md.
 set -euo pipefail
 
-HOST="${STREAMSTACK_GITLAB_HOST:-git.developerdojo.org}"
+# The release host is configuration, never written into the code: STREAMSTACK_GITLAB_HOST (a bare host name), else
+# CI_SERVER_HOST (GitLab CI), else the host of this checkout's git remote when the script runs from one.
+HOST="${STREAMSTACK_GITLAB_HOST:-${CI_SERVER_HOST:-}}"
+if [ -z "$HOST" ] && command -v git >/dev/null 2>&1; then
+  remote="$(git -C "$(dirname "$0")" remote get-url origin 2>/dev/null || true)"
+  remote="${remote#*://}"; remote="${remote#*@}"; HOST="${remote%%[:/]*}"
+fi
+HOST="${HOST#https://}"; HOST="${HOST%%/*}"
 PROJECT_ID="${STREAMSTACK_PROJECT_ID:-2122}"
 PACKAGE="streamstack-release"
 
@@ -36,6 +43,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "give a release version such as 0.0.8" >&2; usage; }
+
+[ -n "$HOST" ] || { echo "no release host: set STREAMSTACK_GITLAB_HOST to the GitLab host that serves the StreamStack package registry" >&2; exit 1; }
 
 token="${GITLAB_TOKEN:-}"
 if [ -z "$token" ] && command -v glab >/dev/null 2>&1; then

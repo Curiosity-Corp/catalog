@@ -18,7 +18,8 @@ than `0.0.8`, so installing a `0.0.x` release over one of them needs `--force` (
 
 ## Cut a release
 
-1. All work for the release is merged to `main` with its entries under `## [Unreleased]` in `CHANGELOG.md`.
+1. All work for the release is merged to `main`, each merge request with its changelog fragment in `changelog.d/`
+   (see [Changelog fragments](#changelog-fragments)). `CHANGELOG.md` itself is only edited by the release commit.
 2. On an up-to-date `main` checkout with a clean tree (use a worktree, not a shared clone):
 
    ```bash
@@ -27,9 +28,9 @@ than `0.0.8`, so installing a `0.0.x` release over one of them needs `--force` (
    scripts/release.py prepare --dry-run  # check everything, change nothing
    ```
 
-   It checks the working tree (clean, on `main`, not behind `origin/main`, tag not taken), moves "Unreleased" to
-   `## [X.Y.Z] - date` with a fresh empty "Unreleased" above it, sets `streamstack.__version__`, and prints the
-   remaining commands.
+   It checks the working tree (clean, on `main`, not behind `origin/main`, tag not taken), compiles every fragment in
+   `changelog.d/` (plus anything still hand-written under "Unreleased") into `## [X.Y.Z] - date` with a fresh empty
+   "Unreleased" above it, deletes the fragments, sets `streamstack.__version__`, and prints the remaining commands.
 3. Before tagging, run `gitleaks detect --source . --no-git --redact --config .gitleaks.toml` (the unit tests do it
    when `gitleaks` is installed). Secret scanning only blocks on tags, and tags are immutable (the server refuses to
    delete or move one), so a finding found on the tag pipeline costs a version number: v0.0.8 and v0.0.9 were
@@ -48,6 +49,26 @@ The `v*` tag pattern must be a **protected tag** in the project (Settings, Repos
 `release-evidence` run on the `ci-dispatch` runner, which only serves protected refs; on an unprotected tag those
 jobs sit "stuck".
 
+## Changelog fragments
+
+`CHANGELOG.md` is **not** edited by feature merge requests: every merge to `main` used to invalidate the changelog
+hunk of every other open merge request, and a wave of parallel MRs rebased two or three times each. Instead each
+merge request adds `changelog.d/<issue>.<type>.md` (one file per entry, `type` is `added`, `changed`, `deprecated`,
+`removed`, `fixed` or `security`), and the release compiles them. The full how-to is `changelog.d/README.md`:
+
+```bash
+echo 'What changed for the user, and why (#140).' > changelog.d/140.security.md
+```
+
+Gates:
+
+- **Merge requests** run `changelog-check` (`scripts/release.py check-fragments`). It fails a merge request that
+  edits `CHANGELOG.md`, that changes `src/` without adding a fragment, or that adds a malformed fragment. Release
+  commits (`chore(release): ...`) are exempt. An explicit opt-out is the `skip-changelog` merge request label, or a
+  `Skip-Changelog: <reason>` trailer on a commit (or a line in the MR description).
+- **The release commit** is made by `scripts/release.py prepare`, which deletes the fragments it compiled.
+- **The tag pipeline** (`release-verify`) refuses a tag whose tree still holds fragments.
+
 ## The tag pipeline
 
 The pipeline is the org's launch-sequence `python-package` template (pinned to a release tag in `.gitlab-ci.yml`)
@@ -55,7 +76,8 @@ plus StreamStack's own jobs. On a tag every gate runs again before anything is p
 
 | Stage | Job | What it does |
 | --- | --- | --- |
-| preflight | `release-verify` | tag == `streamstack.__version__`, `CHANGELOG.md` has a non-empty `## [X.Y.Z]` section, patch-only rule |
+| preflight | `release-verify` | tag == `streamstack.__version__`, `CHANGELOG.md` has a non-empty `## [X.Y.Z]` section, no fragments left in `changelog.d/`, patch-only rule |
+| preflight | `changelog-check` | merge requests only: a `src/` change adds a changelog fragment, `CHANGELOG.md` is not edited directly |
 | preflight | `lint`, `test` | ruff, and the unit tests on Python 3.13 |
 | source-security | `sast`, `e2e` | semgrep and gitleaks (blocking on tags), the Console browser suite |
 | supply-chain | `lockfile-verify`, `dependency-scan`, `scorecard` | the wheel has no runtime dependencies (asserted), dependency and repository posture scans |
@@ -74,12 +96,19 @@ merge; only `python-publish` and the release jobs need a tag.
 
 For release `X.Y.Z`:
 
-- PyPI registry: `https://git.developerdojo.org/api/v4/projects/2122/packages/pypi/simple` (wheel and sdist)
+- PyPI registry: `https://$STREAMSTACK_GITLAB_HOST/api/v4/projects/2122/packages/pypi/simple` (wheel and sdist)
 - Generic Package Registry, package `streamstack-release`, version `X.Y.Z`:
   `streamstack-X.Y.Z-py3-none-any.whl`, `streamstack-X.Y.Z.tar.gz`, `SHA256SUMS`, `RELEASE-SHA256SUMS`,
   `RELEASE-SHA256SUMS.cose.sig`, `python-sbom.cdx.json`
 
 The project is private: every download needs a GitLab token (`PRIVATE-TOKEN` header).
+
+**The release host is configuration, never code.** The GitLab host that serves the registry is not written into
+anything this repository ships (the public catalog contract gate forbids it). Set `STREAMSTACK_GITLAB_HOST` to the bare
+host name (`$STREAMSTACK_GITLAB_HOST` in the URLs here); `STREAMSTACK_PROJECT_ID` overrides the default project id
+`2122`. In a pipeline of the project `CI_SERVER_HOST` supplies it, and `scripts/install-release.sh` also falls back to
+the host of the checkout's `origin` remote. `streamstack chain install-plugin`, `streamstack verify-install` and the
+install script all read it the same way (`streamstack.registry`) and say which variable to set when it is missing.
 
 ## Signing
 
@@ -159,7 +188,7 @@ releases above 0.0.8; `--system-site-packages` lets the tray use the distributio
 `streamstack setup` afterwards, as before.
 
 Alternatively, straight from the registry: `pipx install --force --system-site-packages streamstack==0.0.8
---index-url https://__token__:$GITLAB_TOKEN@git.developerdojo.org/api/v4/projects/2122/packages/pypi/simple`
+--index-url https://__token__:$GITLAB_TOKEN@$STREAMSTACK_GITLAB_HOST/api/v4/projects/2122/packages/pypi/simple`
 (this skips the signature and manifest checks).
 
 The `developer_workstation` catalog role installs a vendored copy of a release tag with `make install`-style copies

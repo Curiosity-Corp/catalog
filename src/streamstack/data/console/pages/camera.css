@@ -71,7 +71,7 @@
   /* long scene names wrap onto a second line rather than being cut off */
   .c-scenes ss-pad::part(label) { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; font-size: var(--fs-sm); overflow-wrap: anywhere; }
   .c-scenes ss-pad { --pad-min: 3rem; }
-  .outs { display: grid; grid-template-columns: repeat(3, auto); gap: var(--s-2); justify-content: end; }
+  .outs { display: grid; grid-template-columns: repeat(4, auto); gap: var(--s-2); justify-content: end; }
   .outs ss-button::part(button) { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0.1rem; min-height: 3.2rem; text-align: left; padding: var(--s-2) 0.7rem; font-size: var(--fs-sm); }
   .c-scenes ss-pad::part(button) { padding: var(--s-2) 0.6rem; }
   .o-l { display: block; font-weight: 700; }
@@ -132,7 +132,7 @@
     .pv-tools .lbl { display: none; }
     .cam { --bottom-h: 7.2rem; }
     .c-bottom { grid-template-columns: minmax(0, 1fr); }
-    .outs { grid-template-columns: repeat(3, minmax(0, 1fr)); justify-content: stretch; }
+    .outs { grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; }
   }
 
   /* ---- narrow: one column; the grade faders first after the picture ---- */

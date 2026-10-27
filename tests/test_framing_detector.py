@@ -205,6 +205,45 @@ def test_open_detector_needs_a_verified_model_and_a_known_device() -> None:
         open_detector("tpu", backends=[("fake", FakeDetector)])
 
 
+class FakeCore:
+    """OpenVINO's Core as far as device choice goes, with the properties recorded on a real host."""
+
+    def __init__(self, devices: list[str], props: dict[str, tuple[str, str]]) -> None:
+        self.available_devices = devices
+        self._props = props
+
+    def get_property(self, device: str, key: str) -> str:
+        if device not in self._props:
+            raise RuntimeError(f"no {key} for {device}")
+        name, kind = self._props[device]
+        return name if key == "FULL_DEVICE_NAME" else kind
+
+
+# Recorded on deskmeet1 (OpenVINO 2026.4.1): the iGPU enumerates first, so the Arc is GPU.1.
+DESKMEET1 = {
+    "GPU.0": ("Intel(R) UHD Graphics 770 (iGPU)", "Type.INTEGRATED"),
+    "GPU.1": ("Intel(R) Arc(TM) A380 Graphics (dGPU)", "Type.DISCRETE"),
+}
+
+
+def test_choose_device_picks_the_arc_by_type_not_by_number() -> None:
+    core = FakeCore(["CPU", "GPU.0", "GPU.1"], DESKMEET1)
+    assert detector.choose_device(core, "auto") == "GPU.1"
+    assert detector.choose_device(core, "gpu") == "GPU.1"
+    assert detector.choose_device(core, "cpu") == "CPU"
+    # dm313red: the Arc alone is GPU (or GPU.0).
+    assert detector.choose_device(FakeCore(["CPU", "GPU"], {"GPU": DESKMEET1["GPU.1"]}), "auto") == "GPU"
+    # An iGPU-only machine still uses its Intel GPU.
+    assert detector.choose_device(FakeCore(["CPU", "GPU.0"], {"GPU.0": DESKMEET1["GPU.0"]}), "auto") == "GPU.0"
+
+
+def test_choose_device_falls_back_when_gpus_cannot_be_described() -> None:
+    core = FakeCore(["CPU", "GPU.0"], {})
+    assert detector.choose_device(core, "auto") == "CPU"
+    assert detector.choose_device(core, "gpu") == "GPU.0"
+    assert detector.choose_device(FakeCore(["CPU"], {}), "gpu") == "CPU"
+
+
 def test_modules_are_reported_without_importing_them() -> None:
     assert set(available_modules()) == {"numpy", "cv2", "openvino"}
 

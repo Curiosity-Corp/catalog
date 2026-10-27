@@ -34,6 +34,8 @@ HOLD_LIMIT_MS = 1500  # how much of the old encoder's output may wait for the ne
 MERGE_WAIT_MS = 150  # a block never waits longer than this for the other stream to catch up
 MAX_CLUSTER_MS = 1000
 LATENCY_ALPHA = 0.1
+TRACK_MAP = {mkv.TRACK_VIDEO: 1, mkv.TRACK_AUDIO: 2, mkv.TRACK_RAW: 3}
+RAW_LABELS = ("Microphone (processed)", "Microphone (raw)")  # track names in a recording that carries both
 
 
 class GenerationState:
@@ -283,6 +285,8 @@ class Attached:
     started: bool = False
     bytes_out: int = 0
     clusters: int = 0
+    wants_raw: bool = False  # a recording: it also takes the unprocessed microphone track
+    raw_declared: bool = False  # the header it was opened with carries that track
 
 
 @dataclass
@@ -321,6 +325,7 @@ class Chain:
         self.merger = Merger()
         self._sinks: dict[str, Attached] = {}
         self.audio: Track | None = None
+        self.raw: Track | None = None  # the unprocessed microphone; only sinks that asked for it receive it
         self.video: Track | None = None
         self._batch: list[Block] = []
         self.on_retire: Callable[[int], None] = lambda gen: None
@@ -340,6 +345,24 @@ class Chain:
             self.audio = track
             if track is None:
                 self.merger.ignore(mkv.TRACK_AUDIO)
+
+    def set_raw(self, track: Track | None) -> None:
+        with self._lock:
+            self.raw = track
+
+    def wants_raw(self) -> bool:
+        with self._lock:
+            return any(a.wants_raw for a in self._sinks.values())
+
+    def raw_block(self, block: Block) -> None:
+        """A block of the raw microphone. It rides the same merger so it stays in time order, but it never joins the
+        watermark: a stalled raw capture can delay nothing that is live."""
+        with self._lock:
+            if self.raw is None or not any(a.wants_raw for a in self._sinks.values()):
+                return
+            now = self.clock()
+            self.merger.push(block, now)
+            self._pump(now)
 
     def generation_header(self, gen: int, track: Track) -> None:
         with self._lock:
@@ -421,9 +444,9 @@ class Chain:
 
     # -- sinks --------------------------------------------------------------------------------------------
 
-    def attach(self, sink: Sink, restart_on_geometry: bool = True) -> None:
+    def attach(self, sink: Sink, restart_on_geometry: bool = True, wants_raw: bool = False) -> None:
         with self._lock:
-            self._sinks[sink.name] = Attached(sink, restart_on_geometry)
+            self._sinks[sink.name] = Attached(sink, restart_on_geometry, wants_raw=wants_raw)
 
     def detach(self, name: str) -> None:
         with self._lock:
@@ -471,13 +494,20 @@ class Chain:
                 if not starts_stream or keyframe is None:
                     continue
                 blocks = [b for b in batch if b.ts_ms >= keyframe.ts_ms]
-                header = mkv.stream_header(self.video, self.audio)
+                raw = self.raw if attached.wants_raw else None
+                names = {mkv.TRACK_AUDIO: RAW_LABELS[0], mkv.TRACK_RAW: RAW_LABELS[1]} if raw is not None else None
+                header = mkv.stream_header(self.video, self.audio, raw=raw, names=names)
+                attached.raw_declared = raw is not None
                 try:
                     attached.sink.open(header)
                 except OSError:
                     continue
                 attached.started = True
                 attached.bytes_out += len(header)
+            if not attached.raw_declared:
+                blocks = [b for b in blocks if b.track != mkv.TRACK_RAW]
+            if not blocks:
+                continue
             data = self._cluster(blocks)
             videos = sum(1 for b in blocks if b.track == mkv.TRACK_VIDEO)
             first = blocks[0]
@@ -493,10 +523,10 @@ class Chain:
         run: list[Block] = []
         for block in blocks:
             if run and block.ts_ms - run[0].ts_ms > MAX_CLUSTER_MS:
-                out += mkv.encode_cluster(run, {mkv.TRACK_VIDEO: 1, mkv.TRACK_AUDIO: 2})
+                out += mkv.encode_cluster(run, TRACK_MAP)
                 run = []
             run.append(block)
-        return out + mkv.encode_cluster(run, {mkv.TRACK_VIDEO: 1, mkv.TRACK_AUDIO: 2})
+        return out + mkv.encode_cluster(run, TRACK_MAP)
 
     # -- state ----------------------------------------------------------------------------------------------
 

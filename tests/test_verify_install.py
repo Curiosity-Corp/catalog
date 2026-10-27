@@ -83,6 +83,18 @@ def test_signature_instructions_name_the_release_files_and_the_commands() -> Non
     assert "streamstack-0.0.8-py3-none-any.whl" in text
 
 
+def test_signature_instructions_take_the_host_from_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CI_SERVER_HOST", raising=False)
+    monkeypatch.delenv("STREAMSTACK_GITLAB_HOST", raising=False)
+    unset = verify_install.signature_instructions("0.0.8")
+    assert "https://$STREAMSTACK_GITLAB_HOST/api/v4/projects/2122/packages/generic/streamstack-release/0.0.8/" in unset
+    assert "export STREAMSTACK_GITLAB_HOST=" in unset
+    monkeypatch.setenv("STREAMSTACK_GITLAB_HOST", "gitlab.example")
+    configured = verify_install.signature_instructions("0.0.8")
+    assert "https://gitlab.example/api/v4/projects/2122/packages/generic/streamstack-release/0.0.8/" in configured
+    assert "export STREAMSTACK_GITLAB_HOST" not in configured
+
+
 def test_command_exit_codes(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(verify_install, "installed_version", lambda: None)
     assert cli.main(["verify-install"]) == 0

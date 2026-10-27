@@ -9,6 +9,8 @@ title, detail, hint) and every row that is not `ok` names the fix. The rows, in 
 * `hw-audio-*`    the interface at its rate and format, the call microphone, the monitor output; `hw-audio-duplex`
                   fails when the interface is attached but its sound card has no input profile (duplex guard)
 * `hw-capture`    the capture card's modes; `hw-loopback-*` the two v4l2loopback devices by label
+* `hw-scarlett`   a Focusrite Scarlett that is on USB or expected: no sound card, MSD mode, firmware too old, or healthy
+                  (scarlett_doctor, #130; the live rows only, the Console's cached rows carry it too)
 * `hw-source-*`   a probe source that was denied or failed, with the fix; `hw-notice-*` any other Plan warning
 
 An audio interface the rig expects that is not enumerating on USB (the Scarlett 2i2 on the deck studio) is a **warning**
@@ -23,7 +25,7 @@ from typing import Any
 
 from streamstack.audiochain import graph
 
-from . import duplex
+from . import duplex, scarlett_doctor
 from .found import Found
 from .model import Snapshot
 from .plan import DUMMY_SINK, DeviceRow, GpuRole, Plan
@@ -465,8 +467,16 @@ def default_engine() -> str:
     return graph.pick_engine("deepfilternet", graph.available_engines())
 
 
-def checks(plan: Plan, snapshot: Snapshot, catalogue: Catalogue, engine: str | None = None) -> list[dict[str, str]]:
-    """Every hardware row for this Plan and snapshot."""
+def checks(
+    plan: Plan,
+    snapshot: Snapshot,
+    catalogue: Catalogue,
+    engine: str | None = None,
+    scarlett: scarlett_doctor.Evidence | None = None,
+) -> list[dict[str, str]]:
+    """Every hardware row for this Plan and snapshot. `scarlett` is what `scarlett_doctor.collect` read (the card's
+    mixer controls and the kernel log); without it the pure rows are the same as before and there is no
+    `hw-scarlett` row."""
     target = voice_target(plan, engine or default_engine())
     rig = catalogue.rig(plan.rig.id)
     rig_label = rig.label if rig else plan.rig.id
@@ -475,6 +485,7 @@ def checks(plan: Plan, snapshot: Snapshot, catalogue: Catalogue, engine: str | N
     rows += [_role_row(role, plan.gpu(role), plan, catalogue) for role in GPU_ROLES]
     rows.append(_encoder_row(plan))
     rows += _audio_rows(plan, snapshot, target)
+    rows += scarlett_doctor.checks(snapshot, catalogue, plan.rig.id, scarlett)
     if capture := _capture_row(plan):
         rows.append(capture)
     rows += _loopback_rows(plan, snapshot)
@@ -497,4 +508,8 @@ def report(found: Found | None, engine: str | None = None) -> dict[str, Any]:
     """The `hardware` section of `streamstack doctor --json`: the rig header and the rows."""
     if found is None:
         return {"rig": None, "checks": [failed_row()]}
-    return {"rig": rig_header(found.plan), "checks": checks(found.plan, found.snapshot, found.catalogue, engine)}
+    evidence = scarlett_doctor.collect(found.snapshot, found.catalogue, found.plan.rig.id)
+    return {
+        "rig": rig_header(found.plan),
+        "checks": checks(found.plan, found.snapshot, found.catalogue, engine, evidence),
+    }

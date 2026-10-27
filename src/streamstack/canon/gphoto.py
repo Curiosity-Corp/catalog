@@ -157,6 +157,7 @@ class Session(Protocol):
     def open(self) -> None: ...
     def close(self) -> None: ...
     def next_frame(self, timeout: float) -> bytes | None: ...
+    def rest(self, on: bool) -> None: ...
     def read(self, keys: list[str]) -> dict[str, Reading]: ...
     def write(self, items: list[tuple[str, str]]) -> None: ...
     def stderr_tail(self) -> str: ...
@@ -169,6 +170,9 @@ def load_gphoto2() -> Any | None:
         return importlib.import_module("gphoto2")
     except ImportError:
         return None
+
+
+VIEWFINDER_KEY = "viewfinder"  # the Canon EOS live-view switch: 1 raises the mirror, 0 lowers it
 
 
 class LibSession:
@@ -212,6 +216,14 @@ class LibSession:
         except self._errors() as exc:
             raise self._wrap(exc) from exc
         return bytes(data)
+
+    def rest(self, on: bool) -> None:
+        """End live view (`on`): the body's mirror goes down and the sensor stops. Resuming needs nothing: the next
+        `capture_preview` raises the mirror again. A body without the `viewfinder` switch raises CameraError, and the
+        bridge then simply stops asking for frames."""
+        if not on:
+            return
+        self.write([(VIEWFINDER_KEY, "0")])
 
     def read(self, keys: list[str]) -> dict[str, Reading]:
         if self.camera is None:
@@ -304,13 +316,26 @@ class CliSession:
         self.frames: queue.Queue[bytes] = queue.Queue(maxsize=2)
         self.err: deque[str] = deque(maxlen=12)
         self.paused = False
+        self.resting = False  # live view is deliberately off (the engine is idle): nothing restarts the capture
         self._threads: list[threading.Thread] = []
         self.exit_code: int | None = None
 
     def open(self) -> None:
         self._start_capture()
 
+    def rest(self, on: bool) -> None:
+        """End live view by ending `gphoto2 --capture-movie` (the body leaves live view when the process exits);
+        resuming starts it again."""
+        self.resting = on
+        if on:
+            self._stop_capture()
+        elif self.proc is None:
+            self.sleep(self.USB_SETTLE)
+            self._start_capture()
+
     def _start_capture(self) -> None:
+        if self.resting:
+            return
         try:
             self.proc = self.popen(
                 [self.gphoto2, "--stdout", "--capture-movie"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
