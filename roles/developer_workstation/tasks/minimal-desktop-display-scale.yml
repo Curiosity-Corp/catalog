@@ -7,14 +7,24 @@
 # cursors scale with the panel; tasks/minimal-desktop-tint2.yml scales the tint2
 # panel. At 1 nothing is written, so an existing hand-made ~/.Xresources stays.
 # The Openbox autostart merges the file with xrdb at login.
+#
+# The scale is a number from 1 to 4 in steps of 0.25 (1, 1.25, 1.5, ... 2.25,
+# ... 4), so 96 * scale (Xft.dpi) and 24 * scale (Xcursor.size) are always whole
+# numbers; they still pass through round | int so the file never holds a
+# fraction. Whole-number scales render exactly what they always did (2 ->
+# Xft.dpi 192, Xcursor.size 48).
 
 - name: Validate the display scale
   ansible.builtin.assert:
     that:
-      - minimal_desktop_display_scale | int in [1, 2, 3, 4]
+      - minimal_desktop_display_scale | string is match('^[0-9]+([.][0-9]+)?$')
+      - minimal_desktop_display_scale | float >= 1
+      - minimal_desktop_display_scale | float <= 4
+      - (minimal_desktop_display_scale | float * 4) == (minimal_desktop_display_scale | float * 4) | round
     fail_msg: >-
-      minimal_desktop_display_scale must be a whole number from 1 to 4
-      (hardware profile key display_scale).
+      minimal_desktop_display_scale (hardware profile key display_scale) is
+      '{{ minimal_desktop_display_scale }}'; it must be a number from 1 to 4 in
+      steps of 0.25 (for example 1, 1.5, 2 or 2.25).
 
 - name: Render X resources for the display scale
   ansible.builtin.copy:
@@ -23,12 +33,12 @@
     group: "{{ dw_user.name }}"
     mode: "0644"
     content: |
-      ! Managed by Ansible: {{ minimal_desktop_display_scale | int }}x UI scale (hardware profile display_scale).
-      Xft.dpi: {{ 96 * (minimal_desktop_display_scale | int) }}
-      Xcursor.size: {{ 24 * (minimal_desktop_display_scale | int) }}
+      ! Managed by Ansible: {{ '%g' | format(minimal_desktop_display_scale | float) }}x UI scale (hardware profile display_scale).
+      Xft.dpi: {{ (96 * (minimal_desktop_display_scale | float)) | round | int }}
+      Xcursor.size: {{ (24 * (minimal_desktop_display_scale | float)) | round | int }}
       Xft.antialias: 1
       Xft.hinting: 1
       Xft.hintstyle: hintslight
       Xft.rgba: none
       Xft.lcdfilter: lcddefault
-  when: minimal_desktop_display_scale | int > 1
+  when: minimal_desktop_display_scale | float > 1

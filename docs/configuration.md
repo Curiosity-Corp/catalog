@@ -101,21 +101,26 @@ double-click (`deskmeet-b760` uses `200`, because its G604 switch chatters; a
 shorter interval does not filter chatter, so replacing the switch is the real
 fix).
 
-A profile may also set `display_scale` (an integer, default `1`) and
+A profile may also set `display_scale` (a number from `1` to `4` in steps of
+`0.25`, such as `1.5`, `2` or `2.25`; default `1`) and
 `broadcast_rgb` (`Full`, `Limited 16:235` or `Automatic`, default unset), which
 feed `minimal_desktop_display_scale` and `minimal_desktop_display_broadcast_rgb`.
 At a scale above 1 the role renders each managed user's `~/.Xresources`
 (`Xft.dpi` of 96 times the scale, `Xcursor.size` of 24 times the scale, plus
-the font rendering keys), the Openbox autostart merges it with `xrdb`, and the
-tint2 panel height and launcher icon size are multiplied by the scale (for
-example the `top` layout becomes a 72px bar with 50px icons at 2x). At 1 an
+the font rendering keys; the 0.25 steps keep both whole numbers), the Openbox
+autostart merges it with `xrdb`, and the tint2 panel height and launcher icon
+size are multiplied by the scale and rounded to whole pixels (for example the
+`top` layout becomes a 72px bar with 50px icons at 2x and an 81px bar with
+56px icons at 2.25x). Whole-number scales render the same files as before
+fractional scales were allowed. Any other value fails the run. At 1 an
 existing hand-made `~/.Xresources` and tint2 config are not touched.
 `broadcast_rgb` is written to `/etc/curiosity/display-broadcast-rgb` and
 applied by `curiosity-display-setup` to its chosen output through
 `xrandr --set "Broadcast RGB"`, only when that output has the property (Intel
 i915). i915 chooses limited range for HDMI/CEA modes by default, which washes
 out a PC desktop on a TV; `Full` fixes that. `deskmeet-b760` sets
-`display_scale: 2` and `broadcast_rgb: Full`.
+`display_scale: 2.25` (`Xft.dpi: 216`, `Xcursor.size: 54`) and
+`broadcast_rgb: Full`.
 
 ### Samsung TV remote control
 
