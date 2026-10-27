@@ -447,3 +447,14 @@ def test_the_repro_tool_classifies_a_capture(monkeypatch: pytest.MonkeyPatch) ->
     assert tool.classify(bytes(second - 4) + bytes([0, 0, 0x80, 0x3F]), 1.0) == "signal"
     assert tool.classify(bytes(100), 1.0) == "short"
     assert tool.summarize(["zeros", "signal", "signal", "short"]) == "4 cycles: 1 all-zero, 2 with signal, 1 short"
+
+
+def test_every_shipped_wireplumber_drop_in_parses_as_spa_json() -> None:
+    """WirePlumber 0.5 rejects a drop-in whose quoted string has a backslash escape ("section ... has no value") and
+    ignores it, so the rule never applies. Regex dots are written `[.]`, as the workstation role's own drop-in does."""
+    drop_ins = sorted((ROOT / "packaging/wireplumber/wireplumber.conf.d").glob("*.conf"))
+    assert drop_ins
+    for path in drop_ins:
+        body = "\n".join(line for line in path.read_text().splitlines() if not line.lstrip().startswith("#"))
+        assert "\\" not in body, f"{path.name}: a backslash is not valid in a WirePlumber (SPA JSON) string; use [.]"
+        assert body.count("[") == body.count("]") and body.count("{") == body.count("}"), path.name

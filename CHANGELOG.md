@@ -5,6 +5,19 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-10-27
+
+### Fixed
+- The shipped Wave XLR drop-in (`52-streamstack-wave-xlr-capture-hold.conf`) never applied: WirePlumber rejected it
+  ("section 'monitor.alsa.rules' has no value") because the node-name pattern used a `\.` escape, which is not valid in
+  its string syntax. The pattern uses `[.]`, and a test now refuses a backslash in any shipped drop-in.
+
+### Fixed
+- `test_pinning_an_encoder_chooses_its_codec` failed once on main (pipeline 96014, `KeyError: 'gen'`): the test harness
+  fed the fake audio encoder's header as soon as the service registered the child, before the service had attached the
+  child to its generation and started it. A real process cannot produce output before `start()`, so the harness now
+  waits for `start()` too. Product code is unchanged (it sets the generation before starting the child).
+
 ## [0.0.11] - 2026-10-27
 
 ### Fixed
