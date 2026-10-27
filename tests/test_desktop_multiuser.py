@@ -656,3 +656,33 @@ def test_lightdm_takes_display_manager_from_gdm3() -> None:
     assert names.index(select["name"]) < names.index("Set LightDM as default display manager")
     assert names.index("Point display-manager.service at LightDM") < enable
     assert tasks[enable]["ansible.builtin.systemd_service"]["daemon_reload"] is True
+
+
+def test_compositor_is_a_profile_flag_default_on_and_off_for_deskmeet() -> None:
+    from ansible.plugins.filter.core import FilterModule
+    from ansible.plugins.test.core import TestModule
+
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    env = jinja2.Environment()
+    env.filters.update(FilterModule().filters())
+    env.tests.update(TestModule().tests())
+
+    def derived(profile: str) -> str:
+        return env.from_string(defaults["minimal_desktop_compositor_enabled"]).render(
+            hardware_profiles=defaults["hardware_profiles"], hardware_profile=profile
+        ).strip()
+
+    assert defaults["hardware_profiles"]["deskmeet-b760"]["compositor_enabled"] is False
+    assert derived("deskmeet-b760") == "False"
+    for name in set(defaults["hardware_profiles"]) - {"deskmeet-b760"} | {"no-such-profile"}:
+        assert derived(name) == "True", name
+
+
+def test_autostart_skips_picom_when_the_role_marks_the_compositor_disabled() -> None:
+    autostart = (ROLE / "files/minimal-desktop/autostart").read_text()
+    guard = 'if [ ! -e "$HOME/.config/picom/compositor-disabled" ]; then'
+    assert guard in autostart
+    assert autostart.index(guard) < autostart.index("picom --config") < autostart.index("\nfi\n", autostart.index(guard))
+    tasks = (ROLE / "tasks/minimal-desktop-picom.yml").read_text()
+    assert "compositor-disabled" in tasks
+    assert "minimal_desktop_compositor_enabled" in tasks

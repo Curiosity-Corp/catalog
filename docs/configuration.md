@@ -122,6 +122,26 @@ out a PC desktop on a TV; `Full` fixes that. `deskmeet-b760` sets
 `display_scale: 2.25` (`Xft.dpi: 216`, `Xcursor.size: 54`) and
 `broadcast_rgb: Full`.
 
+A profile may set `compositor_enabled: false` (derived
+`minimal_desktop_compositor_enabled`, default `true`, so every other machine
+keeps picom). The role then leaves the marker
+`~/.config/picom/compositor-disabled` for each managed user, the Openbox
+autostart checks it before the `picom --config ...` line, and the session runs
+uncomposited with no picom process; with the flag back on the marker is removed.
+The role stops nothing in a live session, so a picom that is already running
+ends at the next login (or stop it by hand). `deskmeet-b760` sets it to
+`false`: picom composites the full 7680x4320 frame with vsync and
+fading/opacity, which made the pointer and dense-text areas laggy on the Arc
+A380 (stopping picom fixed it).
+
+A profile may also set `pointer_accel_speed` (a number from `-1` to `1`, default
+unset; derived `logitech_g604_accel_speed`). It is written to
+`/etc/curiosity/g604.env` and `curiosity-g604` applies it to the Logitech G604
+with `xinput set-prop "Logitech G604" "libinput Accel Speed" <value>` once each
+time the mouse appears on the X display (a replugged mouse gets it again),
+so it needs `logitech_g604`. Unset leaves the pointer speed alone.
+`deskmeet-b760` sets `0.6`, which suits the 8K desktop at 2.25x.
+
 ### Samsung TV remote control
 
 A profile that sets `samsung_tv_cli: true` (`deskmeet-b760`; derived variable

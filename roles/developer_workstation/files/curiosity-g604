@@ -27,7 +27,8 @@
 # CURIOSITY_G604_MIC_KEYCODE (13), CURIOSITY_G604_ZONE_KEYCODE (14), CURIOSITY_G604_SCREENSHOT_KEYCODE (11) and their
 # _COMMAND counterparts,
 # and for tests CURIOSITY_G604_CONF, CURIOSITY_G604_NAME,
-# CURIOSITY_G604_INTERVAL, CURIOSITY_G604_LOCK, CURIOSITY_G604_DESKTOP_COMMAND. The
+# CURIOSITY_G604_INTERVAL, CURIOSITY_G604_ACCEL_SPEED (libinput `Accel Speed`,
+# -1 to 1; unset or empty leaves the pointer speed alone), CURIOSITY_G604_LOCK, CURIOSITY_G604_DESKTOP_COMMAND. The
 # role writes the keycodes and the lightbar command to
 # /etc/curiosity/g604.env (override the path with CURIOSITY_G604_ENV).
 
@@ -48,6 +49,7 @@ shot_keycode=${CURIOSITY_G604_SCREENSHOT_KEYCODE:-11}
 shot_command=${CURIOSITY_G604_SCREENSHOT_COMMAND:-flameshot gui}
 mic_command=${CURIOSITY_G604_MIC_COMMAND:-curiosity-mic-mute}
 zone_command=${CURIOSITY_G604_ZONE_COMMAND:-openbox-zone toggle browser}
+accel_speed=${CURIOSITY_G604_ACCEL_SPEED:-}
 conf=${CURIOSITY_G604_CONF:-/etc/curiosity/g604-xbindkeys.rc}
 device_name=${CURIOSITY_G604_NAME:-Logitech G604}
 interval=${CURIOSITY_G604_INTERVAL:-5}
@@ -70,6 +72,7 @@ flock -n 9 || exit 0
 
 bindings_pid=
 keys_pid=
+accel_applied=
 
 mouse_present() {
     xinput list --name-only 2>/dev/null | grep -Fxq "$device_name"
@@ -118,11 +121,24 @@ stop_bindings() {
     keys_pid=
 }
 
+# Set the pointer speed once per attach (a replugged mouse resets to the
+# driver default); a failure is reported but never stops the button profile.
+apply_accel_speed() {
+    [ -n "$accel_speed" ] || return 0
+    [ -z "$accel_applied" ] || return 0
+    if xinput set-prop "$device_name" "libinput Accel Speed" "$accel_speed" 2>/dev/null; then
+        accel_applied=1
+    else
+        echo "curiosity-g604: could not set libinput Accel Speed to $accel_speed" >&2
+    fi
+}
+
 trap 'stop_bindings; exit 0' INT TERM HUP
 trap stop_bindings EXIT
 
 while :; do
     if mouse_present; then
+        apply_accel_speed
         if [ -z "$bindings_pid" ] || ! kill -0 "$bindings_pid" 2>/dev/null; then
             bindings_pid=
             xbindkeys -n -f "$conf" 9>&- &
@@ -135,6 +151,7 @@ while :; do
         fi
     else
         stop_bindings
+        accel_applied=
     fi
     sleep "$interval" 9>&- &
     wait $!
