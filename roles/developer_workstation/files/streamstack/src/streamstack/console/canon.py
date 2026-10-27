@@ -23,13 +23,16 @@ Notify = Callable[[str, str], None]
 Request = Callable[..., dict[str, Any]]
 
 POLL = 1.0
+REST_MESSAGE = "Live view is off while no app uses the camera; it returns when one opens StreamStack Camera"
+REST_LEASE = 15.0  # seconds the bridge keeps live view off after one `rest` request; the Console renews it
+REST_RENEW = 5.0
 
 
 def empty_canon(state: str = "disabled", message: str | None = None) -> dict[str, Any]:
     """The `video.canon` snapshot with every key present (docs/console.md)."""
     return {
         "available": False,
-        "state": state,  # disabled | offline | starting | running | paused | stalled | stopped
+        "state": state,  # disabled | offline | starting | running | paused | idle | stalled | stopped
         "message": message,
         "session": None,  # shared | pause
         "usb": [],
@@ -77,6 +80,42 @@ class CanonLink:
             cfg.get("STREAMSTACK_CAMERA_EXTERNAL", "false")
         ).lower() not in ("1", "true", "yes", "on")
         self._state = empty_canon("offline" if self.enabled else "disabled")
+        self._rest = False  # the Console wants live view off (the engine is idle, #128)
+        self._rest_sent: bool | None = None  # what the bridge was last told
+        self._rest_at = 0.0
+
+    def rest(self, on: bool) -> None:
+        """Ask the bridge to end live view (the camera's mirror and sensor stay active only while it runs) or to resume.
+
+        A lease, not a switch: the bridge resumes by itself REST_LEASE seconds after the last renewal, so a Console
+        that dies while the engine is idle never leaves the body dark. The request goes out on the poll thread."""
+        if not self.enabled:
+            return
+        with self._lock:
+            changed = on != self._rest
+            self._rest = on
+        if changed:
+            self._wake.set()
+
+    def _sync_rest(self) -> None:
+        with self._lock:
+            want, sent, at = self._rest, self._rest_sent, self._rest_at
+        now = time.monotonic()
+        if want and (sent is not True or now - at >= REST_RENEW):
+            seconds = REST_LEASE
+        elif not want and sent is True:
+            seconds = 0.0
+        else:
+            return
+        try:
+            answer = self._request({"op": "rest", "seconds": seconds}, timeout=3.0)
+        except ipc.BridgeUnavailable:
+            return  # the next poll asks again; a bridge that is down has no live view to rest
+        if not answer.get("ok"):
+            log.warning("the Canon bridge refused to rest live view: %s", answer.get("error"))
+            return
+        with self._lock:
+            self._rest_sent, self._rest_at = want, now
 
     def start(self) -> None:
         if not self.enabled or (self._thread and self._thread.is_alive()):
@@ -97,6 +136,7 @@ class CanonLink:
 
     def _poll(self) -> None:
         while not self._stop.is_set():
+            self._sync_rest()
             self.refresh()
             self._wake.wait(POLL)
             self._wake.clear()
@@ -192,6 +232,7 @@ class DemoCanon:
         self.values = dict(DEMO_VALUES)
         self.focus = 0
         self.af_runs = 0
+        self.resting = False
         self.started = time.monotonic()
 
     def start(self) -> None:
@@ -199,6 +240,10 @@ class DemoCanon:
 
     def stop(self) -> None:
         """Nothing to stop."""
+
+    def rest(self, on: bool) -> None:
+        with self.lock:
+            self.resting = on
 
     def _view(self) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
@@ -230,7 +275,7 @@ class DemoCanon:
 
     def state(self) -> dict[str, Any]:
         with self.lock:
-            out = empty_canon("running")
+            out = empty_canon("idle" if self.resting else "running", REST_MESSAGE if self.resting else None)
             out.update(
                 available=True,
                 session="shared",
@@ -244,8 +289,8 @@ class DemoCanon:
                 },
                 input={"width": 1056, "height": 704, "subsampling": "4:2:2"},
                 output={"width": 1056, "height": 704, "mode": "native"},
-                fps_in=29.9,
-                fps_out=29.9,
+                fps_in=0.0 if self.resting else 29.9,
+                fps_out=5.0 if self.resting else 29.9,
                 grab_ms=31.0,
                 pipe_ms=0.4,
                 cpu={"bridge": 6.1, "ffmpeg": 3.2, "gphoto2": None, "total": 9.3},

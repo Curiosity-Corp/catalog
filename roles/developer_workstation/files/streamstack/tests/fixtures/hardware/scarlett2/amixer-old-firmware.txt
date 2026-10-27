@@ -1,0 +1,7 @@
+# SYNTHESIZED from the format strings in Linux sound/usb/mixer_scarlett2.c and the usbcore messages; not captured from a device (#130 asks for a capture once the 2i2 enumerates on deskmeet1).
+numid=1,iface=CARD,name='Firmware Version'
+  ; type=INTEGER,access=r-------,values=1,min=0,max=0,step=1
+  : values=2000
+numid=2,iface=CARD,name='Minimum Firmware Version'
+  ; type=INTEGER,access=r-------,values=1,min=0,max=0,step=1
+  : values=2115

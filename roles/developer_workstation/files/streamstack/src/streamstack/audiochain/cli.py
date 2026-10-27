@@ -146,10 +146,11 @@ def claim_default(cfg: dict[str, str], *, wait: float = START_WAIT_S) -> int:
 
 
 def release_default(cfg: dict[str, str]) -> int:
-    """Give the default microphone back (the raw one comes back when the chain stops)."""
-    result = defaults.release(config.state_dir())
+    """Give the default microphone back to the Plan's microphone (the one the chain reads), as the chain stops."""
+    microphone = _runtime(cfg, autostart=False, manage_default=False).microphone
+    result = defaults.release(config.state_dir(), microphone)
     if result == "released":
-        print("The default microphone is back to what it was before the voice chain.")
+        print(f"The default microphone is back to {redact(microphone) if microphone else 'the best available source'}.")
     elif result in ("unavailable", "failed"):
         print(f"streamstack: the default microphone was not restored ({result}); run this again", file=sys.stderr)
         return 1

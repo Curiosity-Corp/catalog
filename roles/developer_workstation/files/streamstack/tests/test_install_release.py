@@ -64,7 +64,14 @@ def _run(stub_path: str, *args: str) -> subprocess.CompletedProcess[str]:
     """Run the script hermetically: stub curl first on PATH, no inherited stdin, and temp files and HOME kept in the
     stub's own directory (stub_path starts with it), so no real config, token helper or shared /tmp can interfere."""
     sandbox = Path(stub_path.split(os.pathsep, 1)[0]).parent
-    env = dict(os.environ, PATH=stub_path, GITLAB_TOKEN="secret-token", HOME=str(sandbox), TMPDIR=str(sandbox))
+    env = dict(
+        os.environ,
+        PATH=stub_path,
+        GITLAB_TOKEN="secret-token",
+        HOME=str(sandbox),
+        TMPDIR=str(sandbox),
+        STREAMSTACK_GITLAB_HOST="gitlab.example",
+    )
     env.pop("STREAMSTACK_SIGNING_CERT", None)
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
@@ -112,7 +119,7 @@ def test_require_signature_fails_without_notation_and_a_certificate(stub_path: s
 def test_a_version_is_required_and_a_token_too(stub_path: str) -> None:
     assert _run(stub_path, "--verify-only").returncode != 0
     assert _run(stub_path, "--verify-only", "latest").returncode != 0
-    env = dict(os.environ, PATH=stub_path)
+    env = dict(os.environ, PATH=stub_path, STREAMSTACK_GITLAB_HOST="gitlab.example")
     env.pop("GITLAB_TOKEN", None)
     no_glab = subprocess.run(
         ["bash", str(SCRIPT), "--verify-only", VERSION],
@@ -124,3 +131,36 @@ def test_a_version_is_required_and_a_token_too(stub_path: str) -> None:
     if shutil.which("glab", path="/usr/bin:/bin") is None:
         assert no_glab.returncode != 0
         assert "no GitLab token" in no_glab.stderr
+
+
+def test_the_release_host_is_configuration_only(stub_path: str, tmp_path: Path) -> None:
+    """No host in the script: with none configured (and no git checkout to infer one from) it says what to set."""
+    lonely = tmp_path / "lonely"
+    lonely.mkdir()
+    copy = lonely / "install-release.sh"
+    copy.write_text(SCRIPT.read_text())
+    sandbox = Path(stub_path.split(os.pathsep, 1)[0]).parent
+    env = {k: v for k, v in os.environ.items() if k not in ("STREAMSTACK_GITLAB_HOST", "CI_SERVER_HOST")}
+    env.update(PATH=stub_path, GITLAB_TOKEN="secret-token", HOME=str(sandbox), GIT_CEILING_DIRECTORIES=str(tmp_path))
+    result = subprocess.run(
+        ["bash", str(copy), "--verify-only", VERSION],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        timeout=SCRIPT_DEADLINE_S,
+    )
+    assert result.returncode != 0
+    assert "STREAMSTACK_GITLAB_HOST" in result.stderr
+    env["CI_SERVER_HOST"] = "gitlab.example"  # GitLab CI configures it
+    ok = subprocess.run(
+        ["bash", str(copy), "--verify-only", VERSION],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        stdin=subprocess.DEVNULL,
+        timeout=SCRIPT_DEADLINE_S,
+    )
+    assert ok.returncode == 0, ok.stderr

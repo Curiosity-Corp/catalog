@@ -323,6 +323,11 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 | `STREAMSTACK_CAMLINK_MODE` | `auto` | `auto`: the best mode the HDMI source offers, and the program camera follows it; `off`: keep the three settings above; `1920x1080@60 YUYV`: pin one mode (falls back to `auto` when the source does not offer it) |
 | `STREAMSTACK_CAMLINK_4K` | `false` | let `auto` pick 4K |
 | `STREAMSTACK_CAMERA_EXTERNAL` | `false` | another tool feeds the camera node |
+| `STREAMSTACK_CAMERA_LOSS` | `slate` | when the camera loses its picture: `slate` keeps StreamStack Camera fed with a "camera reconnecting" card, `hold` shows the last frame darkened, `off` writes nothing; see [docs/camera-delivery.md](docs/camera-delivery.md) |
+| `STREAMSTACK_CAMERA_FALLBACK` | `auto` | `auto` moves the program camera to another camera that delivers (the Cam Link) after `_AFTER` seconds (6) without a picture, and back after `_BACK` seconds (5) of a steady one; `off` keeps the picked camera |
+| `STREAMSTACK_ENGINE_IDLE` | `auto` | `auto` rests the engine, the GPU and the Canon live view while no app reads StreamStack Camera (the camera stays listed); `off` never idles; see [docs/camera-delivery.md](docs/camera-delivery.md) |
+| `STREAMSTACK_ENGINE_IDLE_AFTER` | `10` | seconds without a reader before the engine rests |
+| `STREAMSTACK_ENGINE_IDLE_IGNORE` | | comma-separated process names that do not count as readers |
 | `STREAMSTACK_ENGINE_SIZE` | `source` | the program camera's size: the camera's own, or `WIDTHxHEIGHT` |
 | `STREAMSTACK_ENGINE_BACKEND` | `auto` | `auto` (the GPU path when it works, else the CPU), `vulkan` or `cpu` |
 | `STREAMSTACK_ENGINE_RENDER_NODE` | | GPU render node for the engine (grade, blur); empty lets the hardware profile choose by PCI id |

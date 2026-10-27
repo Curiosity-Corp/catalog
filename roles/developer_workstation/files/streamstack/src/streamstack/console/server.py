@@ -292,6 +292,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._director_sheet()
         if path.startswith("/api/deck/"):
             return self._deck(path[len("/api/deck/") :], query)
+        if path == "/api/slots/profiles.json":
+            slots = self.server.rig.slots
+            if slots is None:
+                return self._error(404, "This rig has no time-of-day profiles.")
+            return self._json(200, slots.export())
+        if path == "/api/hotkeys/bindings.json":
+            hotkeys = self.server.rig.hotkeys
+            if hotkeys is None:
+                return self._error(404, "This rig has no hotkeys.")
+            return self._json(200, hotkeys.export())
         if path.startswith("/api/crashes/") and path.endswith(".json"):
             return self._crash_report(unquote(path[len("/api/crashes/") : -len(".json")]))
         if path.startswith("/api/clips/") and path.endswith(".wav"):

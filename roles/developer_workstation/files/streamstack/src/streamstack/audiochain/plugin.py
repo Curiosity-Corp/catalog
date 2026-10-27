@@ -24,7 +24,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
-from .. import system
+from .. import registry, system
 from . import graph
 
 # The pin. `images/dfn-ladspa/Dockerfile` carries the same version and revision as build arguments and
@@ -38,9 +38,6 @@ SUMS_FILE = "SHA256SUMS"
 # sha256 of the published plugin, once a CI build has been accepted and pinned here (None: the published SHA256SUMS
 # is trusted alone). When set, a download that differs is refused even if the published sums agree with it.
 PINNED_SHA256: str | None = "327bca072d05f79ee74a4b88c1df51169b1ce4c2b5f7f94684d6ddccf473276e"
-
-DEFAULT_HOST = "git.developerdojo.org"
-DEFAULT_PROJECT_ID = "2122"
 
 Fetcher = Callable[[str, tuple[str, str] | None], bytes]
 
@@ -112,8 +109,11 @@ def install_deepfilternet(
     project_id: str | None = None,
 ) -> Path:
     """Download, verify and install the plugin. Returns the installed path; raises PluginError with the fix."""
-    host = host or os.environ.get("STREAMSTACK_GITLAB_HOST", DEFAULT_HOST)
-    project_id = project_id or os.environ.get("STREAMSTACK_PROJECT_ID", DEFAULT_PROJECT_ID)
+    try:
+        host = host or registry.require_gitlab_host()
+    except registry.RegistryNotConfigured as exc:
+        raise PluginError(str(exc)) from exc
+    project_id = project_id or registry.project_id()
     token = _token(host)
     if token is None and fetch is http_fetch:
         raise PluginError(

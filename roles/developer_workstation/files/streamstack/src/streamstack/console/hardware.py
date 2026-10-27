@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from streamstack.console.errors import ActionError
-from streamstack.hardware import camera, doctor, inventory, probe, roles, schema
+from streamstack.hardware import camera, doctor, inventory, probe, roles, scarlett_doctor, schema
 from streamstack.hardware.hotplug import Change, Monitor
 from streamstack.hardware.model import Snapshot
 from streamstack.hardware.plan import Plan, resolve
@@ -29,6 +29,7 @@ from streamstack.hardware.redact import redact, redact_text
 log = logging.getLogger("streamstack.console.hardware")
 
 Notify = Callable[[str, str], None]
+ScarlettCollector = Callable[[Snapshot, schema.Catalogue, str], scarlett_doctor.Evidence | None]
 
 OVERRIDE_KEYS = (
     "STREAMSTACK_RIG",
@@ -43,6 +44,7 @@ OVERRIDE_KEYS = (
     "STREAMSTACK_PROGRAM_LABEL",
 )
 HISTORY = 8
+SCARLETT_TTL = 30.0  # seconds a Scarlett evidence read is reused by the System page
 DEFAULT_DEMO_HOST = "dm313red"
 
 
@@ -261,6 +263,7 @@ class HardwareController:
         env: Mapping[str, str] | None = None,
         watch: bool = True,
         debounce: float = 1.0,
+        scarlett: ScarlettCollector | None = None,
     ) -> None:
         self.cfg = dict(cfg or {})
         self.notify: Notify = lambda level, text: None
@@ -279,6 +282,11 @@ class HardwareController:
         self._stop = threading.Event()
         self._first = threading.Event()  # set when the first probe has finished, well or badly
         self._gave_up = False
+        # The Scarlett rows read amixer and the kernel log, so only the live probe collects them by default (a test
+        # or a replay that injects `take` supplies its own collector or gets none), and at most once per TTL.
+        live = scarlett_doctor.collect if take is probe.snapshot else None
+        self._scarlett: ScarlettCollector | None = scarlett or live
+        self._scarlett_cache: tuple[float, Snapshot, scarlett_doctor.Evidence | None] | None = None
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -402,7 +410,30 @@ class HardwareController:
             plan, snapshot = self._plan, self._snapshot
         if plan is None or snapshot is None:
             return []
-        return doctor.checks(plan, snapshot, self._catalogue_now())
+        catalogue = self._catalogue_now()
+        return doctor.checks(plan, snapshot, catalogue, scarlett=self._scarlett_evidence(plan, snapshot, catalogue))
+
+    def _scarlett_evidence(
+        self, plan: Plan, snapshot: Snapshot, catalogue: schema.Catalogue
+    ) -> scarlett_doctor.Evidence | None:
+        """The Scarlett evidence for this probe, re-read after SCARLETT_TTL seconds or when the snapshot changes: the
+        user may switch MSD off or update the firmware without the USB bus changing."""
+        collect = self._scarlett
+        if collect is None:
+            return None
+        now = time.monotonic()
+        with self._lock:
+            cached = self._scarlett_cache
+        if cached is not None and cached[1] is snapshot and now - cached[0] < SCARLETT_TTL:
+            return cached[2]
+        try:
+            evidence = collect(snapshot, catalogue, plan.rig.id)
+        except Exception as exc:  # reading amixer or the journal must never take the System page down
+            log.warning("the Scarlett check failed: %s: %s", type(exc).__name__, exc)
+            evidence = None
+        with self._lock:
+            self._scarlett_cache = (now, snapshot, evidence)
+        return evidence
 
     # -- actions --------------------------------------------------------------
 

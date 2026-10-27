@@ -1,0 +1,28 @@
+#!/bin/sh
+# Installed as /etc/kernel/postinst.d/zz-streamstack-v4l2loopback by `make install` (docs/camera-delivery.md).
+# After a kernel is installed, make sure it has the v4l2loopback module StreamStack Camera needs, so the next reboot
+# does not come up with no virtual camera. Never fails the kernel install; says what it did on stderr (apt shows it).
+# $1 is the kernel release being installed (Debian kernel-package hook convention).
+release="$1"
+[ -n "$release" ] || exit 0
+modules="/lib/modules/$release"
+[ -d "$modules" ] || exit 0
+if grep -q '/v4l2loopback\.ko' "$modules/modules.dep" 2>/dev/null; then
+    exit 0
+fi
+if ! command -v dkms >/dev/null 2>&1; then
+    echo "streamstack: kernel $release has no v4l2loopback module and dkms is not installed;" \
+        "install v4l2loopback-dkms or StreamStack Camera will be missing after the reboot" >&2
+    exit 0
+fi
+if [ ! -e "$modules/build" ]; then
+    echo "streamstack: kernel $release has no headers (linux-headers-$release); the v4l2loopback module cannot be" \
+        "built for it yet" >&2
+    exit 0
+fi
+if dkms autoinstall -k "$release" >/dev/null 2>&1; then
+    echo "streamstack: built the v4l2loopback module for $release" >&2
+else
+    echo "streamstack: could not build v4l2loopback for $release; run: sudo dkms autoinstall -k $release" >&2
+fi
+exit 0

@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
+import shutil
 import threading
 import time
 from collections import deque
@@ -32,10 +33,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from streamstack import store
+from streamstack import store, system
 from streamstack.hardware import camera as hwcamera
 from streamstack.hardware import roles
-from streamstack.stream import ffcmd, mkv
+from streamstack.stream import ffcmd, mkv, recover
 from streamstack.stream.ffcmd import AudioSource, EncoderChoice, Source
 from streamstack.stream.model import (
     AssignError,
@@ -75,6 +76,9 @@ Spawn = Callable[..., Child]
 TICK_SECONDS = 0.25
 SWAP_LEAD_S = {"hardware": 1.0, "software": 1.6}  # how far ahead of now the new encoder's keyframe is planned
 AUDIO_HEADER_WAIT_S = 4.0
+DEFAULT_MIN_FREE_MB = 1024
+DISK_WARN_FACTOR = 3  # a warning at this many times the minimum, a refusal to start at twice it, a stop at it
+DISK_START_FACTOR = 2
 RESTART_BACKOFF = (1.0, 2.0, 4.0, 8.0)
 ENCODER_FAILURES = 3  # fast failures of one encoder before the next one for the codec is tried
 FAST_FAIL_S = 20.0
@@ -151,6 +155,14 @@ class Active:
     moved: bool = False  # already fell back from Enhanced RTMP
 
 
+def free_bytes(directory: Path) -> int:
+    """Free space on the volume that holds (or would hold) `directory`; the nearest existing parent is measured."""
+    probe = directory
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    return shutil.disk_usage(probe).free
+
+
 def slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-")[:60] or "recording"
 
@@ -168,6 +180,8 @@ class StreamService:
         source_override: Source | None = None,
         audio_override: AudioSource | None = None,
         plan: roles.PlanSource | None = None,
+        raw_override: AudioSource | None = None,
+        disk_free: Callable[[Path], int] | None = None,
     ) -> None:
         self.cfg = dict(cfg)
         self.notify: Notify = notify or (lambda level, text: None)
@@ -178,6 +192,8 @@ class StreamService:
         self._state_path = state_path
         self._source_override = source_override
         self._audio_override = audio_override
+        self._raw_override = raw_override
+        self._disk_free = disk_free or free_bytes
         self._lock = threading.RLock()
         self._settings = EncoderSettings()
         self._destinations: list[Destination] = []
@@ -190,6 +206,12 @@ class StreamService:
         self._audio_failures = 0
         self._audio_next_restart = 0.0
         self._audio_failed = ""
+        self._raw: Gen | None = None  # the unprocessed microphone, captured only while a recording runs
+        self._raw_track: mkv.Track | None = None
+        self._raw_failed = ""
+        self._disk_warned = False
+        self._disk_stopped = ""
+        self._recovery: threading.Thread | None = None
         self._gen_ids = 0
         self._epoch = 0.0
         self._source: Source | None = None
@@ -259,6 +281,28 @@ class StreamService:
         offset = int(self.cfg.get("STREAMSTACK_STREAM_AUDIO_OFFSET_MS") or 0)
         return AudioSource("pulse", name, offset)
 
+    def raw_source(self) -> AudioSource | None:
+        """The raw microphone a recording keeps as its own track; None when that is off or there is nothing separate
+        from the processed source to keep."""
+        if self.cfg.get("STREAMSTACK_RECORD_RAW_MIC", "true").strip().lower() in ("0", "false", "no", "off"):
+            return None
+        processed = self._audio_source or self.audio_source()
+        if self._raw_override is not None:
+            return dataclasses.replace(self._raw_override, offset_ms=processed.offset_ms)
+        if self._audio_override is not None:
+            return None  # a test rig with its own audio never reaches for the machine's real microphone
+        name = system.microphone(self.cfg)
+        if not name or name == processed.name:
+            return None
+        return AudioSource("pulse", name, processed.offset_ms)
+
+    def min_free_bytes(self) -> int:
+        try:
+            megabytes = int(self.cfg.get("STREAMSTACK_RECORD_MIN_FREE_MB") or DEFAULT_MIN_FREE_MB)
+        except ValueError:
+            megabytes = DEFAULT_MIN_FREE_MB
+        return max(0, megabytes) * 1024 * 1024
+
     def record_dir(self) -> Path:
         configured = self.cfg.get("STREAMSTACK_RECORD_DIR") or "~/Videos/StreamStack"
         return Path(configured).expanduser()
@@ -289,6 +333,26 @@ class StreamService:
 
     def start(self) -> None:
         self.warm_probe()
+        self._recover_in_background()
+
+    def _recover_in_background(self) -> None:
+        """Repair recordings an earlier run left unfinished (killed, out of memory, power cut), once per service."""
+        if self._recovery is not None:
+            return
+        self._recovery = threading.Thread(target=self._recover_orphans, name="stream-recover", daemon=True)
+        self._recovery.start()
+
+    def _recover_orphans(self) -> None:
+        directory = self.record_dir()
+        if not recover.orphans(directory):
+            return
+        ffmpeg = self.host().ffmpeg
+        if not ffmpeg:
+            self._event("warn", "Unfinished recordings were found but ffmpeg is missing, so they were not repaired.")
+            return
+        with self._lock:
+            writing = {a.path for a in self._active.values() if a.path is not None}
+        recover.recover_orphans(directory, ffmpeg, self._event, skip=lambda path: path in writing)
 
     @property
     def running(self) -> bool:
@@ -345,6 +409,7 @@ class StreamService:
         with self._lock:
             if "record" in self._active:
                 return "Already recording."
+            self._check_disk_to_start()
             stamp = datetime.fromtimestamp(self._wall()).strftime("%Y%m%d-%H%M%S")
             path = self.record_dir() / f"{slug(name or 'StreamStack')}-{stamp}.{fmt}"
             dest = Destination("record", "record", "Recording", options={"format": fmt})
@@ -546,6 +611,7 @@ class StreamService:
                 gen.dead = True
                 gen.child.stop(grace=1.0)
         self._audio = self._audio_pending = None
+        self._stop_raw()
         self._source = None
 
     def _stop_run(self, run: Run) -> None:
@@ -560,9 +626,16 @@ class StreamService:
     def _attach(self, dest: Destination, codec: str, path: Path | None = None) -> None:
         run = self._runs.get(codec) or self._start_run(codec)
         sink, target = self._make_sink(dest, codec, path)
+        recording = dest.kind == "record"
+        if recording:
+            self._disk_warned, self._disk_stopped = False, ""
+            if self._raw is None:
+                self._start_raw(self.host())
+            if target is not None:
+                self._mark_recording(target, dest)
         self._active[dest.id] = Active(dest, codec, sink, self._wall(), target)
         # a WHIP session takes a new picture size in-band (new parameter sets at the keyframe) and stays connected
-        run.chain.attach(sink, restart_on_geometry=dest.kind != "whip")
+        run.chain.attach(sink, restart_on_geometry=dest.kind != "whip", wants_raw=recording)
         self._event("info", f"{dest.label()} is starting ({codec.upper()}).")
 
     def _deactivate(self, dest_id: str) -> None:
@@ -573,6 +646,8 @@ class StreamService:
         if run is not None:
             run.chain.detach(dest_id)
         active.sink.shutdown()
+        if active.dest.kind == "record":
+            self._finish_recording(active)
         self._event("info", f"{active.dest.label()} stopped.")
 
     def _make_sink(
@@ -667,6 +742,7 @@ class StreamService:
             chain.set_audio(self._audio_track)
         elif self._audio_failed:
             chain.set_audio(None)
+        chain.set_raw(self._raw_track)
         gen = self._spawn_video(run, choice, settings, None)
         chain.begin_swap(gen.id, 0)  # nothing active yet: this generation becomes the source
         return run
@@ -792,6 +868,127 @@ class StreamService:
             block = dataclasses.replace(event, track=mkv.TRACK_AUDIO)
             for run in list(self._runs.values()):
                 run.chain.audio_block(block)
+
+    # -- the raw microphone (recordings only) ---------------------------------------------------------------
+
+    def _start_raw(self, host: HostProbe) -> None:
+        """Capture the unprocessed microphone for a recording's third track. A recording never fails for it: if the
+        capture cannot start, the recording carries on with the processed sound and says so."""
+        source = self.raw_source()
+        if source is None:
+            return
+        self._raw_failed = ""
+        gen = self._spawn_raw(host, source)
+        self._raw = gen
+        if not gen.header_seen.wait(AUDIO_HEADER_WAIT_S):
+            reason = gen.child.last_error() or "no audio arrived"
+            self._raw_failed = f"No raw microphone track ({source.name}): {reason}"
+            self._event("warn", f"{self._raw_failed}. Recording with the processed sound only.")
+            self._stop_raw()
+
+    def _spawn_raw(self, host: HostProbe, source: AudioSource) -> Gen:
+        argv = ffcmd.audio_generation_argv(host.ffmpeg, source, self._settings, self._epoch)
+        gen_id = self._next_gen()
+        holder: dict[str, Gen] = {}
+        child = self._spawn_child(
+            f"raw-{gen_id}",
+            argv,
+            on_stdout=lambda data: self._raw_bytes(holder["gen"], data),
+            on_line=lambda line: self._gen_line(holder["gen"], line),
+            on_exit=lambda code: self._raw_exited(holder["gen"], code),
+        )
+        gen = Gen(gen_id, "audio", child, self._wall(), settings=self._settings)
+        holder["gen"] = gen
+        child.start()
+        return gen
+
+    def _raw_bytes(self, gen: Gen, data: bytes) -> None:
+        if gen.dead:
+            return
+        for event in gen.demux.feed(data):
+            if isinstance(event, mkv.Header):
+                track = event.track("audio")
+                if track is not None and self._raw_track is None:
+                    self._raw_track = track
+                    for run in list(self._runs.values()):
+                        run.chain.set_raw(track)
+                gen.header_seen.set()
+                continue
+            block = dataclasses.replace(event, track=mkv.TRACK_RAW)
+            for run in list(self._runs.values()):
+                run.chain.raw_block(block)
+
+    def _raw_exited(self, gen: Gen, code: int) -> None:
+        if gen.child.stopping or gen.dead:
+            return
+        gen.dead = True
+        with self._lock:
+            if gen is self._raw:
+                self._raw_failed = gen.child.last_error() or f"ffmpeg exited with status {code}"
+                self._event("warn", f"The raw microphone capture stopped: {self._raw_failed}. Recording goes on.")
+
+    def _stop_raw(self) -> None:
+        gen, self._raw = self._raw, None
+        self._raw_track = None
+        for run in self._runs.values():
+            run.chain.set_raw(None)
+        if gen is not None:
+            gen.dead = True
+            gen.child.stop(grace=1.0)
+
+    # -- recordings: markers and the disk -------------------------------------------------------------------
+
+    def _mark_recording(self, target: Path, dest: Destination) -> None:
+        """Leave a marker so a crash is found and repaired at the next start."""
+        try:
+            recover.write_marker(target, dest.options.get("format", "mkv"), 3 if self._raw is not None else 2)
+        except OSError as exc:
+            self._event("warn", f"Could not mark the recording for crash recovery: {exc.strerror or exc}.")
+
+    def _finish_recording(self, active: Active) -> None:
+        """The recording ended cleanly: its marker goes, and the raw capture with it."""
+        if active.path is not None:
+            try:
+                recover.clear_marker(active.path)
+            except OSError as exc:
+                self._event("warn", f"Could not remove the recovery marker: {exc.strerror or exc}.")
+        self._stop_raw()
+
+    def _check_disk_to_start(self) -> None:
+        free, floor = self._disk_free(self.record_dir()), self.min_free_bytes()
+        if floor and free < floor * DISK_START_FACTOR:
+            raise StreamError(
+                f"Not enough free disk space to record: {free // 2**20} MB free in {self.record_dir()}, "
+                f"and a recording needs at least {floor * DISK_START_FACTOR // 2**20} MB "
+                f"(STREAMSTACK_RECORD_MIN_FREE_MB is {floor // 2**20}). Free some space and try again.",
+                507,
+            )
+
+    def _guard_disk(self) -> None:
+        """While recording: warn once when space runs low, and end the recording cleanly before the disk is full."""
+        active = self._active.get("record")
+        if active is None or self._disk_stopped:
+            return
+        floor = self.min_free_bytes()
+        if not floor:
+            return
+        free = self._disk_free(self.record_dir())
+        if free < floor:
+            path = active.path
+            self._disk_stopped = f"disk space ran out ({free // 2**20} MB free)"
+            self._deactivate("record")
+            self._after_change()
+            self._event(
+                "error",
+                f"Recording stopped: only {free // 2**20} MB of disk space is left. "
+                f"Everything recorded so far is saved{f' in {path}' if path else ''}.",
+            )
+        elif free < floor * DISK_WARN_FACTOR and not self._disk_warned:
+            self._disk_warned = True
+            self._event(
+                "warn",
+                f"Disk space is getting low ({free // 2**20} MB free); the recording ends at {floor // 2**20} MB.",
+            )
 
     def _audio_take_over(self, new: Gen) -> None:
         with self._lock:
@@ -924,6 +1121,7 @@ class StreamService:
                 self._reconcile(run)
                 self._revive(run, now)
             self._enhanced_fallback()
+            self._guard_disk()
 
     def _reconcile(self, run: Run) -> None:
         """Commit or report a swap once the relay has decided it."""
@@ -1079,6 +1277,18 @@ class StreamService:
             base["bytes"] = status["net_bytes"]
         return base
 
+    def _add_disk(self, recording: dict[str, Any], active: Active, size: int) -> None:
+        """How much room is left and, from the rate so far, how long the recording can still run."""
+        try:
+            free = self._disk_free(self.record_dir())
+        except OSError:
+            return
+        recording["free_mb"] = free // 2**20
+        seconds = max(self._wall() - active.started_at, 1.0)
+        rate = size / seconds  # bytes per second so far
+        spare = max(0, free - self.min_free_bytes())
+        recording["minutes_left"] = round(spare / rate / 60, 1) if size and rate > 0 else None
+
     def _state_locked(self) -> dict[str, Any]:
         host = self._probe.peek()
         destinations = [self._destination_state(d, self._active.get(d.id)) for d in self._destinations]
@@ -1094,7 +1304,12 @@ class StreamService:
                 "format": record_active.dest.options.get("format", "mkv"),
                 "state": info["state"],
                 "last_error": info["last_error"],
+                "raw_mic": self._raw is not None and not self._raw_failed,
+                "raw_error": self._raw_failed,
             }
+            self._add_disk(recording, record_active, info.get("bytes", 0))
+        elif self._disk_stopped:
+            recording["stopped"] = self._disk_stopped
         live = [d for d in destinations if d["active"]]
         states = {d["state"] for d in live}
         if not self._active:

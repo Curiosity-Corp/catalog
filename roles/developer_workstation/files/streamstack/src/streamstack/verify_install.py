@@ -17,12 +17,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from streamstack import __version__
+from streamstack import __version__, registry
 from streamstack.config import data_dir
 
 DIST_NAME = "streamstack"
-PROJECT_URL = "https://git.developerdojo.org/Curiosity-Corp/streamstack"
-PROJECT_ID = 2122
 GENERIC_PACKAGE = "streamstack-release"
 
 #: console command -> "module:function" it must resolve to
@@ -180,7 +178,8 @@ def check_entry_points(importer: Callable[[str], object] = importlib.import_modu
 
 def signature_instructions(version: str = __version__) -> str:
     """How to prove these files are the signed release (the long form is docs/release.md)."""
-    base = f"https://git.developerdojo.org/api/v4/projects/{PROJECT_ID}/packages/generic/{GENERIC_PACKAGE}/{version}"
+    base = registry.package_base(GENERIC_PACKAGE, version)
+    unconfigured = registry.gitlab_host() is None
     return "\n".join(
         [
             f"Verify that {version} is the signed release (details: docs/release.md, section Verify a release):",
@@ -190,6 +189,11 @@ def signature_instructions(version: str = __version__) -> str:
             "  2. notation blob verify --signature RELEASE-SHA256SUMS.cose.sig RELEASE-SHA256SUMS",
             "       (needs notation >= 2.0.0-alpha.1 and the CI signing certificate in a trust store)",
             "  3. sha256sum --check --ignore-missing RELEASE-SHA256SUMS",
+            *(
+                [f"  (the release host comes from configuration: export {registry.HOST_ENV}=<the GitLab host>)"]
+                if unconfigured
+                else []
+            ),
             f"  or, from a checkout, one command: scripts/install-release.sh --verify-only {version}",
         ]
     )

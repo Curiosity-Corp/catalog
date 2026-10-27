@@ -1,0 +1,47 @@
+/* slots.css — the time-of-day profiles popover (pages/slots.js). Scoped to the Camera page: page stylesheets stay loaded after navigation. */
+@scope ([data-page="camera"]) {
+  .sl-pop { width: min(44rem, calc(100% - 2 * var(--s-3))); top: var(--s-3); bottom: 6.8rem; overflow: auto; }
+  @media (max-width: 860px) { .sl-pop { position: fixed; inset: 3.5rem var(--s-3) 4.8rem; width: auto; z-index: 40; } }
+  .sl-pop-head { display: flex; align-items: center; justify-content: space-between; }
+  .sl-close { padding: 0.2rem 0.7rem; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); border: 1px solid var(--line-strong); background: var(--surface-2); }
+  .sl-close:hover { color: var(--text); background: var(--surface-3); }
+  .sl { display: grid; gap: var(--s-3); min-width: 0; }
+  .sl-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); min-width: 0; }
+  .sl-seg { display: inline-flex; padding: 0.18rem; gap: 0.18rem; border-radius: var(--r-pill); background: var(--surface-inset); border: 1px solid var(--line); }
+  .sl-seg button { padding: 0.35rem 0.8rem; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); }
+  .sl-seg button:hover { color: var(--text); background: var(--surface-3); }
+  .sl-seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .sl-status { margin: 0; flex: 1 1 14rem; min-width: 0; font-size: var(--fs-sm); color: var(--text-2); overflow-wrap: anywhere; }
+  .sl-status[data-state="applied"] { color: var(--green); }
+  .sl-status[data-state="held"], .sl-status[data-state="suggested"] { color: var(--amber); }
+  .sl-strip-wrap { position: relative; }
+  .sl-strip { display: flex; height: 0.7rem; border-radius: var(--r-pill); overflow: hidden; border: 1px solid var(--line-strong); background: var(--surface-inset); }
+  .sl-seg-part { flex: var(--w, 1) 1 0; min-width: 0; background: var(--surface-3); border-right: 1px solid var(--surface-1); }
+  .sl-seg-part[data-slot="night"] { background: color-mix(in srgb, var(--accent) 22%, var(--surface-3)); }
+  .sl-seg-part[data-slot="dawn"] { background: color-mix(in srgb, var(--amber) 38%, var(--surface-3)); }
+  .sl-seg-part[data-slot="morning"] { background: color-mix(in srgb, var(--amber) 22%, var(--surface-3)); }
+  .sl-seg-part[data-slot="midday"] { background: color-mix(in srgb, var(--green) 25%, var(--surface-3)); }
+  .sl-seg-part[data-slot="afternoon"] { background: color-mix(in srgb, var(--amber) 30%, var(--surface-3)); }
+  .sl-seg-part[data-slot="evening"] { background: color-mix(in srgb, var(--accent) 40%, var(--surface-3)); }
+  .sl-now { position: absolute; top: -0.2rem; bottom: -0.2rem; left: calc(var(--at, 0) * 100%); width: 2px; background: var(--text); border-radius: 1px; }
+  .sl-rows { display: grid; gap: var(--s-2); }
+  .sl-row { display: grid; gap: var(--s-2); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface-2); min-width: 0; }
+  .sl-row[data-current] { border-color: var(--accent); }
+  .sl-name { font-weight: 700; font-size: var(--fs-sm); }
+  .sl-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: var(--s-2); min-width: 0; }
+  .sl-fields select { min-width: 0; width: 100%; font-size: var(--fs-sm); }
+  .sl-row-acts { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+  .sl-btn, .sl-mini { padding: 0.35rem 0.8rem; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); border: 1px solid var(--line-strong); background: var(--surface-2); }
+  .sl-mini { padding: 0.2rem 0.6rem; font-size: var(--fs-xs); }
+  .sl-btn:hover:not(:disabled), .sl-mini:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
+  .sl-btn:disabled, .sl-mini:disabled { opacity: 0.45; cursor: not-allowed; }
+  .sl-btn[hidden], .sl-note[hidden] { display: none; }
+  .sl-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+  .sl-fade { margin-left: auto; font-size: var(--fs-sm); color: var(--text-2); display: inline-flex; align-items: center; gap: var(--s-1); }
+  .sl-fade input { width: 4rem; }
+  .sl-note { margin: 0; font-size: var(--fs-xs); color: var(--text-3); }
+  .sl-events { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.2rem; font-size: var(--fs-xs); color: var(--text-3); }
+  .sl-events li[data-level="warn"] { color: var(--amber); }
+  .sl-events li[data-level="ok"] { color: var(--green); }
+  .sl-events time { font-variant-numeric: tabular-nums; }
+}

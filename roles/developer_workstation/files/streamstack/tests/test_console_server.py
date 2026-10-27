@@ -296,7 +296,8 @@ def test_state_snapshot_has_every_section(server: ConsoleServer) -> None:
     assert status == 200 and headers["content-type"] == "application/json"
     assert set(state) == {
         "version", "demo", "studio", "video", "audio", "auto", "framing", "health", "system", "lighting",
-        "interface", "virtual", "presets", "hardware", "stream", "storage", "deck", "diagnostics", "call",
+        "interface", "virtual", "presets", "hardware", "stream", "storage", "deck", "diagnostics", "call", "slots",
+        "hotkeys",
     }  # fmt: skip
     assert state["audio"]["mic"]["gain_db"] == 0.0
     assert state["studio"]["running"] is True
@@ -671,3 +672,14 @@ def test_frontend_ships_the_revive_controls() -> None:
         assert "mountReviveBanner" in js
     assert "registerReviveControls(ctx)" in (root / "app.js").read_text(encoding="utf-8")
     assert "shift+r" in (root / "core" / "revive.js").read_text(encoding="utf-8")
+
+
+def test_the_slot_profiles_export_is_served_when_the_rig_has_them(server: ConsoleServer, rig: Rig) -> None:
+    from streamstack.console.slots import DemoSlots
+
+    status, _, _ = request(server, "GET", "/api/slots/profiles.json")
+    assert status == 404  # this rig has none
+    rig.slots = DemoSlots(lambda action, params: None)
+    status, headers, body = request(server, "GET", "/api/slots/profiles.json")
+    assert status == 200 and headers["content-type"].startswith("application/json")
+    assert json.loads(body)["document"] == "streamstack.slot-profiles/1"

@@ -86,15 +86,19 @@ Decision gates this table settles (the thresholds are the ones fixed above, befo
 
 | Gate | Passes when | Status |
 | --- | --- | --- |
-| Blur stays on the CPU (#24) | `mediapipe-meet` on `ort-cpu` is PASS on both rigs | OPEN: no recorded numbers yet |
-| Arc build of the blur is worth carrying (#26) | `ov-gpu` is PASS where `ort-cpu` is FAIL, or cuts CPU % at equal p95 | OPEN: no recorded numbers yet |
-| Auto-framing detector runs on Arc (#23) | `ov-gpu` p95 beats `ov-cpu` and is PASS; else `ov-cpu` stays | OPEN: no recorded numbers yet |
-| DG2/A380 is usable through OpenVINO | `ov-gpu` rows are not skipped and `GPU.0` is the Arc, not the iGPU | OPEN: needs a run on the rig |
+| Blur stays on the CPU (#24) | `mediapipe-meet` on `ort-cpu` is PASS on both rigs | NOT MET on `ort-cpu` at Canon size (p95 3.3 to 3.7 ms but 33 % of one core = 1.2 % of 28 CPUs; Cam Link PASS at 12 %); `ov-cpu` PASS on both rigs (6.6 %). The shipped blur runs on the Arc (see below). Measured 2026-10-27, dm313red |
+| Arc build of the blur is worth carrying (#26) | `ov-gpu` is PASS where `ort-cpu` is FAIL, or cuts CPU % at equal p95 | MET: `ov-gpu` PASS on both rigs where `ort-cpu` FAILs at Canon size; CPU 33 % to 3.5 % of one core at equal-or-better p95 (2.5 to 3.0 ms). Measured 2026-10-27, dm313red |
+| Auto-framing detector runs on Arc (#23) | `ov-gpu` p95 beats `ov-cpu` and is PASS; else `ov-cpu` stays | MET with a caveat: YuNet `ov-gpu` p95 5.4 to 6.4 ms against `ov-cpu` 8.4 to 9.0 ms (FAIL) in five of six rows, CPU 15 % against 47 % of one core. The sixth (Cam Link, run 3) failed at 10.8 ms p95 from one slow-frame burst on a busy desk. Shipped in !53. Measured 2026-10-27, dm313red |
+| DG2/A380 is usable through OpenVINO | `ov-gpu` rows are not skipped and `GPU.0` is the Arc, not the iGPU | MET on dm313red: every `ov-gpu` row ran on `GPU (Intel(R) Arc(TM) A380 Graphics (dGPU))`; OpenVINO lists a lone `GPU` there. The deskmeet1 layout (iGPU as `GPU.0`, Arc as `GPU.1`) is covered by the harness's discrete-first choice and unit tests but was not measured. Measured 2026-10-27 |
 
 ### Running it on a quiet host
 
-The numbers below are SYNTHETIC PLACEHOLDERS until these steps are done. Do them with no call in progress and the compositor
-stopped, because the recorder opens the camera and the GPU runs must not compete with a live encode:
+The numbers below are from the real Arc A380 on dm313red, run at nice 19 on generated frames at each rig's real size
+(`--synthetic --measured`), so no camera, loopback device or microphone was opened and no call was in progress (checked
+with `fuser /dev/video42 /dev/video43` and `pactl list source-outputs` first). Latency and load do not depend on the
+picture; mask and face quality are not measured here. To replace them with numbers from recorded clips (a recorded
+block always replaces a rig-size one, never the other way round), record the clips with no call in progress and
+the compositor stopped, because the recorder opens the camera:
 
 ```sh
 tools/record_clip.sh --confirm-no-call /dev/video42 canon.mkv                 # Canon, 1056x704, 20 s
@@ -103,37 +107,93 @@ python tools/bench_ai.py --fetch --clip canon=canon.mkv --clip camlink=camlink.m
     --json bench-ai.json --update-doc docs/hardware-ai-evaluation.md
 ```
 
-Check `openvino_devices` in the JSON first: with the i7-14700's iGPU as well as the Arc, `GPU.0` may be the iGPU
-(pass `--gpu-device GPU.1` and `--gpu-top-device drm:/dev/dri/cardN` for the Arc). `intel_gpu_top` needs root or
-`CAP_PERFMON`. A GPU run saturates the device back to back, so its busy percent is an upper bound for 30 fps.
-Then set the gate statuses above from the table and commit the result. Issue #22 closes only when it has real
-numbers.
+`ov-gpu` picks the discrete Intel GPU by device type (the same choice auto-framing makes), so an iGPU listed as `GPU.0`
+does not matter; `--gpu-device GPU.1` overrides it. `intel_gpu_top` needs `CAP_PERFMON`: pass `--gpu-top-sudo` on a
+host with passwordless sudo. It is pointed at the PCI id of the GPU OpenVINO ran on. A GPU run saturates the device
+back to back, so its busy percent is an upper bound for 30 fps.
 
 <!-- bench-ai:begin -->
-<!-- bench-ai:kind=synthetic -->
-> **SYNTHETIC PLACEHOLDER. These are not measurements of the rigs.** They come from generated frames on
-> the CPU of whatever machine ran the harness (`--synthetic`), only prove the harness works, and decide
-> nothing. The gate column is `n/a` on purpose. Replace them by running the quiet-host steps below.
+<!-- bench-ai:kind=rig-size -->
+Measured 2026-10-27 on dm313red, on the hardware, with generated frames at each rig's real size (no live device was opened). This is latency and load only: the models' run time does not depend on the picture, but nothing here says how good a mask or a face box is. Re-run with `--clip` once clips are recorded; recorded numbers replace these.
 
-Host: Intel(R) Core(TM) i7-14700, 28 logical CPUs; OpenVINO 2026.4.1, ONNX Runtime 1.31.0; OpenVINO devices: CPU, GPU. 20 timed frames after 3 warm-up, 2 CPU threads, CPU cost scaled to 30 fps.
+Host: Intel(R) Core(TM) i7-14700, 28 logical CPUs; OpenVINO 2026.4.1, ONNX Runtime 1.31.1; OpenVINO devices: CPU, GPU. 300 timed frames after 10 warm-up, 2 CPU threads, CPU cost scaled to 30 fps.
 
-**synthetic** (640x360, generated)
+**canon** (1056x704, generated)
 
 | Model | Backend | p50 ms | p95 ms | Infer p50 ms | CPU % of 1 core | GPU busy % | Compile cold / cached ms | First frame ms | Gate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| mediapipe-meet | ort-cpu | 3.35 | 3.64 | 2.92 | 254.9 | - | 10 (no cache) | 14.7 | n/a |
-| mediapipe-meet | ov-cpu | 1.16 | 1.25 | 0.94 | 6.4 | - | 132 / 35 | 5.6 | n/a |
-| pphumanseg | ort-cpu | 6.76 | 6.99 | 6.49 | 40.7 | - | 12 (no cache) | 8.2 | n/a |
-| pphumanseg | ov-cpu | 6.42 | 6.80 | 6.13 | 37.5 | - | 102 / 28 | 7.5 | n/a |
-| sinet | ort-cpu | 15.68 | 16.35 | 14.98 | 96.4 | - | 9 (no cache) | 18.6 | n/a |
-| sinet | ov-cpu | 8.25 | 8.52 | 7.58 | 48.1 | - | 124 / 36 | 10.9 | n/a |
-| yunet-2023mar | ort-cpu | 6.02 | 7.26 | 4.85 | 43.8 | - | 6 (no cache) | 8.7 | n/a |
-| yunet-2023mar | ov-cpu | 7.38 | 7.84 | 6.15 | 44.6 | - | 80 / 18 | 9.9 | n/a |
-| blazeface | ort-cpu | 0.94 | 1.00 | 0.80 | 5.7 | - | 7 (no cache) | 1.8 | n/a |
+| mediapipe-meet | ort-cpu | 1.93 | 3.67 | 1.69 | 32.6 | - | 11 (no cache) | 15.8 | FAIL |
+| mediapipe-meet | ov-cpu | 1.21 | 1.37 | 0.98 | 6.6 | - | 128 / 33 | 3.0 | PASS |
+| mediapipe-meet | ov-gpu | 1.65 | 2.97 | 1.41 | 3.5 | 41 | 317 / 135 | 5.7 | PASS |
+| pphumanseg | ort-cpu | 7.10 | 8.05 | 6.75 | 43.0 | - | 16 (no cache) | 8.3 | FAIL |
+| pphumanseg | ov-cpu | 6.37 | 6.98 | 6.05 | 37.0 | - | 110 / 26 | 6.8 | FAIL |
+| pphumanseg | ov-gpu | 1.92 | 2.89 | 1.65 | 3.3 | 49 | 243 / 162 | 5.5 | PASS |
+| sinet | ort-cpu | 15.24 | 17.41 | 14.52 | 94.7 | - | 9 (no cache) | 16.8 | FAIL |
+| sinet | ov-cpu | 7.68 | 8.63 | 7.03 | 46.0 | - | 117 / 33 | 9.0 | FAIL |
+| sinet | ov-gpu | 3.23 | 5.62 | 2.65 | 7.9 | 45 | 314 / 128 | 9.8 | PASS |
+| yunet-2023mar | ort-cpu | 5.93 | 7.56 | 4.73 | 44.5 | - | 6 (no cache) | 10.3 | FAIL |
+| yunet-2023mar | ov-cpu | 7.32 | 8.53 | 6.04 | 46.0 | - | 82 / 17 | 10.0 | FAIL |
+| yunet-2023mar | ov-gpu | 3.62 | 5.68 | 2.64 | 14.7 | 40 | 207 / 100 | 9.5 | PASS |
+| blazeface | ort-cpu | 1.04 | 1.22 | 0.88 | 6.3 | - | 8 (no cache) | 2.0 | PASS |
 | blazeface | ov-cpu | - | - | - | - | - | - | - | skipped: OpenVINO could not compile blazeface_garavv_a16bb9a.onnx for CPU: Exception from src/inference/src/cpp/core.cpp:117: ... Unexpected: CPU plug-in doesn't support Squeeze operation with dynamic rank.... |
+| blazeface | ov-gpu | - | - | - | - | - | - | - | skipped: OpenVINO could not compile blazeface_garavv_a16bb9a.onnx for GPU: Exception from src/inference/src/cpp/core.cpp:117: ... Check 'rank().is_static()' failed at src/core/include/openvino/core/partial_... |
 
-Gate: p95 under 8 ms, under 1 percent total CPU (CPU % of one core divided by the logical CPUs), slowest frame under one frame period. `ov-gpu` runs on the configured OpenVINO GPU device; check the device name in the JSON, because on a host with an iGPU as well as the Arc the Arc may be `GPU.1`.
+**camlink** (1920x1080, generated)
+
+| Model | Backend | p50 ms | p95 ms | Infer p50 ms | CPU % of 1 core | GPU busy % | Compile cold / cached ms | First frame ms | Gate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mediapipe-meet | ort-cpu | 1.96 | 2.38 | 1.70 | 12.0 | - | 10 (no cache) | 2.4 | PASS |
+| mediapipe-meet | ov-cpu | 1.24 | 1.62 | 0.99 | 6.8 | - | 90 / 31 | 3.1 | PASS |
+| mediapipe-meet | ov-gpu | 1.72 | 2.94 | 1.44 | 3.8 | 38 | 134 / 39 | 3.9 | PASS |
+| pphumanseg | ort-cpu | 7.48 | 8.78 | 7.06 | 45.3 | - | 17 (no cache) | 7.9 | FAIL |
+| pphumanseg | ov-cpu | 6.35 | 6.98 | 5.98 | 36.7 | - | 95 / 30 | 8.5 | FAIL |
+| pphumanseg | ov-gpu | 1.95 | 3.28 | 1.64 | 3.3 | 49 | 150 / 43 | 5.3 | PASS |
+| sinet | ort-cpu | 14.94 | 16.62 | 14.21 | 93.1 | - | 10 (no cache) | 14.8 | FAIL |
+| sinet | ov-cpu | 7.98 | 8.70 | 7.23 | 47.3 | - | 126 / 35 | 10.8 | FAIL |
+| sinet | ov-gpu | 3.21 | 4.99 | 2.60 | 7.6 | 46 | 175 / 42 | 6.5 | PASS |
+| yunet-2023mar | ort-cpu | 6.08 | 7.66 | 4.72 | 47.3 | - | 12 (no cache) | 11.4 | FAIL |
+| yunet-2023mar | ov-cpu | 7.36 | 8.44 | 5.99 | 47.5 | - | 71 / 18 | 9.2 | FAIL |
+| yunet-2023mar | ov-gpu | 5.09 | 10.77 | 3.42 | 20.3 | 26 | 123 / 31 | 6.6 | FAIL |
+| blazeface | ort-cpu | 1.03 | 1.30 | 0.85 | 6.4 | - | 8 (no cache) | 1.3 | PASS |
+| blazeface | ov-cpu | - | - | - | - | - | - | - | skipped: OpenVINO could not compile blazeface_garavv_a16bb9a.onnx for CPU: Exception from src/inference/src/cpp/core.cpp:117: ... Unexpected: CPU plug-in doesn't support Squeeze operation with dynamic rank.... |
+| blazeface | ov-gpu | - | - | - | - | - | - | - | skipped: OpenVINO could not compile blazeface_garavv_a16bb9a.onnx for GPU: Exception from src/inference/src/cpp/core.cpp:117: ... Check 'rank().is_static()' failed at src/core/include/openvino/core/partial_... |
+
+Gate: p95 under 8 ms, under 1 percent total CPU (CPU % of one core divided by the logical CPUs), slowest frame under one frame period. `ov-gpu` runs on the discrete Intel GPU by default (the same choice auto-framing makes), so the Arc is picked whether OpenVINO calls it `GPU.0` or `GPU.1`. `ov-gpu` ran on: GPU (Intel(R) Arc(TM) A380 Graphics (dGPU)).
 <!-- bench-ai:end -->
+
+### Three runs of the same matrix (2026-10-27, dm313red)
+
+The block above is the third run. The same matrix three times in a row, 300 timed frames each, to show the spread: a row's verdict is stable except where a single slow frame decides it.
+
+| Rig | Model | Backend | p95 ms (3 runs) | CPU % of 1 core (3 runs) | Arc busy % (3 runs) | Gate (3 runs) |
+| --- | --- | --- | --- | --- | --- | --- |
+| canon | mediapipe-meet | ort-cpu | 3.54 / 3.33 / 3.67 | 33.3 / 33.2 / 32.6 | - | FAIL / FAIL / FAIL |
+| camlink | mediapipe-meet | ort-cpu | 2.14 / 2.29 / 2.38 | 11.3 / 11.6 / 12.0 | - | PASS / PASS / PASS |
+| canon | mediapipe-meet | ov-cpu | 1.45 / 1.42 / 1.37 | 6.6 / 6.6 / 6.6 | - | PASS / PASS / PASS |
+| camlink | mediapipe-meet | ov-cpu | 1.58 / 1.58 / 1.62 | 6.9 / 7.1 / 6.8 | - | PASS / PASS / PASS |
+| canon | mediapipe-meet | ov-gpu | 2.53 / 3.29 / 2.97 | 3.1 / 4.0 / 3.5 | 43 / 35 / 41 | PASS / PASS / PASS |
+| camlink | mediapipe-meet | ov-gpu | 2.58 / 2.49 / 2.94 | 3.3 / 3.2 / 3.8 | 41 / 41 / 38 | PASS / PASS / PASS |
+| canon | pphumanseg | ort-cpu | 7.26 / 7.14 / 8.05 | 39.9 / 39.1 / 43.0 | - | FAIL / FAIL / FAIL |
+| camlink | pphumanseg | ort-cpu | 6.99 / 7.67 / 8.78 | 39.2 / 39.7 / 45.3 | - | FAIL / FAIL / FAIL |
+| canon | pphumanseg | ov-cpu | 7.04 / 6.84 / 6.98 | 37.0 / 36.4 / 37.0 | - | FAIL / FAIL / FAIL |
+| camlink | pphumanseg | ov-cpu | 7.59 / 7.10 / 6.98 | 39.4 / 38.3 / 36.7 | - | FAIL / FAIL / FAIL |
+| canon | pphumanseg | ov-gpu | 2.93 / 3.59 / 2.89 | 3.3 / 3.6 / 3.3 | 49 / 47 / 49 | PASS / PASS / PASS |
+| camlink | pphumanseg | ov-gpu | 3.35 / 3.16 / 3.28 | 3.6 / 3.5 / 3.3 | 47 / 48 / 49 | PASS / PASS / PASS |
+| canon | sinet | ort-cpu | 16.56 / 16.48 / 17.41 | 92.8 / 92.3 / 94.7 | - | FAIL / FAIL / FAIL |
+| camlink | sinet | ort-cpu | 17.24 / 16.01 / 16.62 | 94.3 / 91.1 / 93.1 | - | FAIL / FAIL / FAIL |
+| canon | sinet | ov-cpu | 8.68 / 8.68 / 8.63 | 45.9 / 46.5 / 46.0 | - | FAIL / FAIL / FAIL |
+| camlink | sinet | ov-cpu | 8.41 / 8.72 / 8.70 | 45.9 / 46.3 / 47.3 | - | FAIL / FAIL / FAIL |
+| canon | sinet | ov-gpu | 4.65 / 5.41 / 5.62 | 7.5 / 7.5 / 7.9 | 46 / 45 / 45 | PASS / PASS / PASS |
+| camlink | sinet | ov-gpu | 5.84 / 5.52 / 4.99 | 9.2 / 8.7 / 7.6 | 41 / 42 / 46 | PASS / PASS / PASS |
+| canon | yunet-2023mar | ort-cpu | 6.57 / 8.37 / 7.56 | 41.9 / 47.5 / 44.5 | - | FAIL / FAIL / FAIL |
+| camlink | yunet-2023mar | ort-cpu | 7.35 / 7.67 / 7.66 | 46.1 / 48.6 / 47.3 | - | FAIL / FAIL / FAIL |
+| canon | yunet-2023mar | ov-cpu | 8.39 / 8.95 / 8.53 | 45.7 / 49.6 / 46.0 | - | FAIL / FAIL / FAIL |
+| camlink | yunet-2023mar | ov-cpu | 8.66 / 8.46 / 8.44 | 47.1 / 48.0 / 47.5 | - | FAIL / FAIL / FAIL |
+| canon | yunet-2023mar | ov-gpu | 5.47 / 6.26 / 5.68 | 14.3 / 15.5 / 14.7 | 39 / 37 / 40 | PASS / PASS / PASS |
+| camlink | yunet-2023mar | ov-gpu | 5.41 / 6.40 / 10.77 | 15.3 / 16.6 / 20.3 | 39 / 36 / 26 | PASS / PASS / FAIL |
+| canon | blazeface | ort-cpu | 0.99 / 1.17 / 1.22 | 5.2 / 5.7 / 6.3 | - | PASS / PASS / PASS |
+| camlink | blazeface | ort-cpu | 1.06 / 1.04 / 1.30 | 5.5 / 5.5 / 6.4 | - | PASS / PASS / PASS |
+
 
 ## Ranking (RICE)
 

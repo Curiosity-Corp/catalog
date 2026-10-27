@@ -1,0 +1,5 @@
+# SYNTHESIZED from the format strings in Linux sound/usb/mixer_scarlett2.c and the usbcore messages; not captured from a device (#130 asks for a capture once the 2i2 enumerates on deskmeet1).
+[    5.101] deskmeet1 kernel: usb 1-3: new high-speed USB device number 4 using xhci_hcd
+[    5.230] deskmeet1 kernel: usb 1-3: New USB device found, idVendor=1235, idProduct=8219, bcdDevice= 6.89
+[    5.231] deskmeet1 kernel: usb 1-3: Product: Scarlett 2i2 4th Gen
+[    5.400] deskmeet1 kernel: usb 1-3: Focusrite Scarlett Gen 4 Mixer Driver enabled (pid=0x8219); report any issues to https://github.com/geoffreybennett/scarlett-gen2/issues

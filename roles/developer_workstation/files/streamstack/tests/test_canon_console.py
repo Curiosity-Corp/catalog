@@ -117,6 +117,55 @@ def test_actions_need_their_parameters() -> None:
         link.act("video.canon_nope", {})
 
 
+def test_console_link_leases_a_rest_and_renews_it_until_released(sock: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[dict[str, Any]] = []
+
+    def bridge(payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+        sent.append(payload)
+        return {"ok": True}
+
+    from streamstack.console import canon as canon_mod
+
+    clock = {"now": 100.0}
+    monkeypatch.setattr(canon_mod.time, "monotonic", lambda: clock["now"])
+    link = CanonLink({"STREAMSTACK_CANON_BRIDGE": "gphoto2"}, request=bridge)
+    link.rest(True)
+    link._sync_rest()
+    assert sent == [{"op": "rest", "seconds": canon_mod.REST_LEASE}]
+    link._sync_rest()
+    assert len(sent) == 1  # not renewed before it is due
+    clock["now"] += canon_mod.REST_RENEW + 0.1
+    link._sync_rest()
+    assert len(sent) == 2 and sent[-1]["seconds"] == canon_mod.REST_LEASE
+    link.rest(False)
+    link._sync_rest()
+    assert sent[-1] == {"op": "rest", "seconds": 0.0}
+    link._sync_rest()
+    assert len(sent) == 3  # released once, then quiet
+
+
+def test_a_rest_that_could_not_be_sent_is_asked_again(sock: Path) -> None:
+    calls: list[int] = []
+
+    def flaky(payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+        calls.append(1)
+        if len(calls) == 1:
+            raise ipc.BridgeUnavailable("no socket")
+        return {"ok": True}
+
+    link = CanonLink({"STREAMSTACK_CANON_BRIDGE": "gphoto2"}, request=flaky)
+    link.rest(True)
+    link._sync_rest()
+    link._sync_rest()
+    assert len(calls) == 2 and link._rest_sent is True
+
+
+def test_a_disabled_link_ignores_rest() -> None:
+    link = CanonLink({"STREAMSTACK_CANON_BRIDGE": "none"})
+    link.rest(True)
+    link._sync_rest()  # nothing to send to, nothing raised
+
+
 # ---------- the simulated Canon, through the real Rig ----------
 @pytest.fixture
 def rig() -> Iterator[Rig]:
@@ -159,6 +208,14 @@ def test_demo_readonly_aperture_in_shutter_priority(rig: Rig) -> None:
     assert ap["readonly"] and "mode dial" in ap["reason"]
     with pytest.raises(ActionError, match="mode dial"):
         rig.act("video.canon_set", {"id": "aperture", "value": "4"})
+
+
+def test_demo_canon_rests_with_the_engine_and_says_so(rig: Rig) -> None:
+    rig.video.canon.rest(True)
+    state = canon(rig)
+    assert state["state"] == "idle" and "no app" in state["message"]
+    rig.video.canon.rest(False)
+    assert canon(rig)["state"] == "running"
 
 
 def test_demo_actions(rig: Rig) -> None:

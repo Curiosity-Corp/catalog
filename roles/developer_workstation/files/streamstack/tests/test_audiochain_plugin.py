@@ -28,6 +28,8 @@ def serve(files: dict[str, bytes]) -> plugin.Fetcher:
 @pytest.fixture(autouse=True)
 def token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITLAB_TOKEN", "tok")
+    monkeypatch.setenv("STREAMSTACK_GITLAB_HOST", "gitlab.example")
+    monkeypatch.delenv("CI_SERVER_HOST", raising=False)
     monkeypatch.delenv("LADSPA_PATH", raising=False)
     monkeypatch.setattr(graph, "LADSPA_DIRS", ())  # the machine running the tests may have the plugin installed
 
@@ -100,6 +102,25 @@ def test_no_token_says_how_to_get_one(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(plugin.system, "run", lambda argv, timeout=10: None)
     with pytest.raises(plugin.PluginError, match="GITLAB_TOKEN"):
         plugin.install_deepfilternet()
+
+
+def test_an_unconfigured_host_says_which_variable_to_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STREAMSTACK_GITLAB_HOST")
+    with pytest.raises(plugin.PluginError, match="STREAMSTACK_GITLAB_HOST"):
+        plugin.install_deepfilternet(serve({}))
+
+
+def test_the_host_and_project_come_from_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STREAMSTACK_GITLAB_HOST", "https://registry.example/")
+    monkeypatch.setenv("STREAMSTACK_PROJECT_ID", "77")
+    urls: list[str] = []
+
+    def fetch(url: str, token: tuple[str, str] | None) -> bytes:
+        urls.append(url)
+        return SUMS.encode() if url.endswith("SHA256SUMS") else GOOD
+
+    plugin.install_deepfilternet(fetch, dest=tmp_path / "ladspa")
+    assert urls[0].startswith("https://registry.example/api/v4/projects/77/packages/generic/streamstack-ladspa/")
 
 
 def test_the_plugin_is_searched_in_the_user_directory_before_the_system_ones(monkeypatch: pytest.MonkeyPatch) -> None:

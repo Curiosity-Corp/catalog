@@ -133,6 +133,11 @@ class AutomationPanel:
 
     # -- state ------------------------------------------------------------------
 
+    def camera_in_use(self) -> bool:
+        """Whether an app has the camera open right now (the demo's pretend camera, or the lights service's view)."""
+        status, _ = self._status()
+        return bool((status.get("camera") or {}).get("in_use"))
+
     def _status(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """(status, service): the engine's own in the demo rig, the service's status file otherwise."""
         if self.engine is not None:

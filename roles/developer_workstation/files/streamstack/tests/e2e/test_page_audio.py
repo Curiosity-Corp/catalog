@@ -184,15 +184,20 @@ def wait_clip_loaded(page: Page, label: str) -> str:
 
 
 def test_mic_check_runs_to_done_and_both_clips_load(au: App, page: Page, rig: Rig) -> None:
-    # two takes of 5 s; the UI follows. Each step must outlast the event stream's lag on a busy CI runner,
-    # or the page can skip straight past "Step 2 of 2" before the check below looks for it.
+    # The demo's takes are wall-clock timed and the page learns of each step on the hub's next push, so on a
+    # starved CI runner a 5 s "Step 2 of 2" can come and go before the page renders it (pipeline 96315: the page
+    # showed Done and never Step 2). Hold the timeline and end each take explicitly: the page is shown every step
+    # for as long as it needs, whatever the runner's speed.
+    rig.act("audio.demo_check_hold", on=True)
     rig.act("audio.mic_check", seconds=5)
     record = page.locator("button.rec")
-    expect(record).to_have_attribute("aria-pressed", "true")
-    expect(page.get_by_text("Step 1 of 2")).to_be_visible()
-    assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "recording-processed", timeout=15)
-    expect(page.get_by_text("Step 2 of 2")).to_be_visible()
-    assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "done", timeout=30)
+    expect(record).to_have_attribute("aria-pressed", "true", timeout=LOADED)
+    expect(page.get_by_text("Step 1 of 2")).to_be_visible(timeout=LOADED)
+    rig.act("audio.demo_check_step")
+    expect(page.get_by_text("Step 2 of 2")).to_be_visible(timeout=LOADED)
+    assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "recording-processed")
+    rig.act("audio.demo_check_step")
+    assert poll(rig, lambda s: s["audio"]["mic_check"]["state"] == "done")
     expect(page.get_by_text("Done. Switch between A and B")).to_be_visible(timeout=LOADED)
     expect(record).to_contain_text("Again")
     raw_src = wait_clip_loaded(page, "Raw microphone recording")

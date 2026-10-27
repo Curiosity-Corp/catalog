@@ -700,7 +700,7 @@ class ChainRuntime:
         """Give the default source back to the raw microphone (the chain stopped, or has nothing to read)."""
         if not self._manage_default:
             return "none"
-        self.default_result = defaults.release(self.state_dir, self._runner)
+        self.default_result = defaults.release(self.state_dir, self.microphone, self._runner)
         return self.default_result
 
     def push(self) -> None:

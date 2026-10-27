@@ -100,6 +100,29 @@ node goes, and `packaging/modprobe.d/streamstack-v4l2loopback.conf` is pinned by
 `apply` is idempotent and never changes a node that exists; reloading the module needs its users stopped and is left to
 the person.
 
+## Scarlett: no controls, and why (#130)
+
+The in-kernel `scarlett2` mixer driver creates no controls when the interface is in Mass Storage Device ("Easy Start",
+MSD) mode, and none when its firmware is older than the first configuration set it knows (2115 for the 2i2 Gen 4;
+firmware 2417 moved the direct-monitor gain). It still creates `Firmware Version`, `Minimum Firmware Version` and, while
+MSD is on, `MSD Mode Switch`, and it logs `Focusrite <series> firmware version N is too old; need M` and
+`Focusrite <series> Mixer Driver enabled (pid=0x...)` / `disabled by modprobe options`. `streamstack doctor` reads those
+(`amixer contents` of the Scarlett's card, then `journalctl -k`, then `dmesg`; read-only, the log only when the controls
+are not already healthy) and the `hw-scarlett` row names the state and the fix:
+
+| State | Row | Fix printed |
+|---|---|---|
+| not on USB | covered by `hw-audio-interface`; `hw-scarlett` warns only when the kernel log has USB errors, and quotes them | re-seat in a direct rear port |
+| on USB, no sound card | fail, quotes the kernel's USB error lines | another rear USB 3 port and cable, `journalctl -k` |
+| card, no scarlett2 controls | fail: MSD on, firmware too old, driver switched off by `device_setup`, or unknown; quotes the kernel line | hold 48V for five seconds at power-on or `amixer ... 'MSD Mode Switch' off` and power-cycle; the `scarlett2 update` command; remove `device_setup=1` |
+| healthy | ok: firmware, driver minimum and MSD state | none |
+
+StreamStack never flashes, resets or power-cycles the interface and links nothing GPL-3.0: the update tool
+(geoffreybennett/scarlett2) is only named in the printed command, and the firmware files are not bundled. The kernel log
+needs the `systemd-journal` group; without it the row says so and judges from the controls alone. The Console's System
+page re-reads the evidence at most every 30 s. `tests/fixtures/hardware/scarlett2/` holds the synthesized listings and
+log lines (derived from the driver's format strings); the capture from the real 2i2 is posted on #130 once it enumerates.
+
 ## Not part of this layer
 
 The audio chain (#118) and `doctor` (#122) read the Plan; the engine, the stream and the camera setup read it as
