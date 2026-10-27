@@ -1,0 +1,15 @@
+# gitleaks configuration (the sast job loads it with --config).
+#
+# Keep the default ruleset and waive only tests/, where the suite uses obviously fake credentials as
+# fixtures (stream keys, link tokens, WHIP bearer tokens). Nothing outside tests/ is waived, so a real
+# token in src/, scripts/, docs/ or packaging/ still fails the tag pipeline. This uses the global
+# [allowlist] table because the runner's gitleaks predates the [[allowlists]] / targetRules syntax
+# (it silently ignored it and the v0.0.9 tag pipeline failed sast).
+title = "streamstack gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials used as test fixtures"
+paths = ['''^tests/''']

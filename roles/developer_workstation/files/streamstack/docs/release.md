@@ -30,14 +30,18 @@ than `0.0.8`, so installing a `0.0.x` release over one of them needs `--force` (
    It checks the working tree (clean, on `main`, not behind `origin/main`, tag not taken), moves "Unreleased" to
    `## [X.Y.Z] - date` with a fresh empty "Unreleased" above it, sets `streamstack.__version__`, and prints the
    remaining commands.
-3. Commit (`chore(release): X.Y.Z`), merge that commit to `main` through its merge request, then tag the merged
+3. Before tagging, run `gitleaks detect --source . --no-git --redact --config .gitleaks.toml` (the unit tests do it
+   when `gitleaks` is installed). Secret scanning only blocks on tags, and tags are immutable (the server refuses to
+   delete or move one), so a finding found on the tag pipeline costs a version number: v0.0.8 and v0.0.9 were
+   burned this way.
+4. Commit (`chore(release): X.Y.Z`), merge that commit to `main` through its merge request, then tag the merged
    commit and push the tag:
 
    ```bash
    git tag -a vX.Y.Z -m "StreamStack X.Y.Z"
    git push origin vX.Y.Z
    ```
-4. Watch the tag pipeline (`glab ci view`). On success the release is on the Releases page and
+5. Watch the tag pipeline (`glab ci view`). On success the release is on the Releases page and
    `scripts/install-release.sh X.Y.Z` installs it.
 
 The `v*` tag pattern must be a **protected tag** in the project (Settings, Repository). `python-sign` and
