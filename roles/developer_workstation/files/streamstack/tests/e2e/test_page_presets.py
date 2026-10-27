@@ -67,8 +67,14 @@ def test_uncertain_platform_lists_what_is_uncertain(pr: App) -> None:
 
 def test_arrow_keys_move_the_tier(pr: App, rig: Rig) -> None:
     page = pr.page
-    tap(page, page.get_by_role("radio", name="Balanced"))
-    page.get_by_role("radio", name="Balanced").focus()
+    balanced = page.get_by_role("radio", name="Balanced")
+    if rig.state()["presets"]["tier"] != "balanced":
+        tap(page, balanced)
+    # Both the click and the arrow key post `presets.tier` on their own connection and the threaded server may run
+    # them out of order, so the first must have landed (and the page shown it) before the second is sent.
+    poll(rig, lambda s: s["presets"]["tier"] == "balanced")
+    expect(balanced).to_have_attribute("aria-checked", "true", timeout=LOADED)
+    balanced.focus()
     page.keyboard.press("ArrowRight")
     assert poll(rig, lambda s: s["presets"]["tier"] == "constrained")
 

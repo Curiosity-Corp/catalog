@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Request, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 ROUTES = ("live", "camera", "audio", "auto", "system", "lighting", "interface", "presets", "stream", "deck", "mini")
 # What proves each route has mounted (placeholders count until their real page lands).
@@ -83,6 +84,35 @@ class Rig:
         status, body = self.request("GET", "api/state", token=self.token)
         assert status == 200, body
         return body
+
+    def wait_for_state(self, path: str, expected: Any, *, tol: float = 0.0, timeout: float | None = None) -> Any:
+        """Wait until the server's state at ``path`` ("audio.mic.gain_db"; integers index lists) equals ``expected``.
+
+        Use it, not a direct ``state()`` read, whenever a UI action has just been made and the test compares the server
+        with what the page shows: the page posts on its own connection and a fader drag posts a throttled stream, so
+        the server lags the page by a few requests. ``tol`` allows for the page rounding to its step. Returns the value.
+        """
+
+        def read(state: dict[str, Any]) -> Any:
+            node: Any = state
+            for key in path.split("."):
+                node = node[int(key)] if isinstance(node, list) else node[key]
+            return node
+
+        def matches(value: Any) -> bool:
+            if tol and isinstance(value, (int, float)) and isinstance(expected, (int, float)):
+                return abs(value - expected) <= tol
+            return bool(value == expected)
+
+        def probe(state: dict[str, Any]) -> list[Any] | None:
+            value = read(state)
+            return [value] if matches(value) else None  # a list, so a matching 0 or False still counts as found
+
+        try:
+            found = poll(self, probe) if timeout is None else poll(self, probe, timeout)
+        except AssertionError as err:
+            raise AssertionError(f"server state {path!r} never became {expected!r}: {err}") from None
+        return found[0]
 
     def act(self, action: str, **params: Any) -> dict[str, Any]:
         status, body = self.request("POST", "api/action", {"action": action, **params}, token=self.token)
@@ -226,13 +256,36 @@ class App:
     def __init__(self, page: Page, rig: Rig) -> None:
         self.page = page
         self.rig = rig
+        self._in_flight: dict[Request, float] = {}
+        page.on("request", lambda request: self._in_flight.__setitem__(request, time.monotonic()))
+        page.on("requestfinished", lambda request: self._in_flight.pop(request, None))
+        page.on("requestfailed", lambda request: self._in_flight.pop(request, None))
 
     # ---- navigation ----
     def goto(self, route: str = "live", *, wait_ready: bool = True) -> App:
-        self.page.goto(f"{self.rig.url}#/{route}")
-        if wait_ready:
-            self.wait_ready(route)
+        """Open a route. Navigation is done at "commit" and the page proves it is up through ``wait_ready``.
+
+        The default ``load`` wait needs every subresource of the module graph, so one slow or stuck request surfaced as
+        an anonymous 60 s ``Page.goto`` timeout (issue #124, Firefox on a CPU-starved runner). Waiting for the page's
+        own readiness marks says what is missing, and a failure lists the requests still in flight, so the next
+        recurrence names the stuck resource instead of only a timeout.
+        """
+        try:
+            self.page.goto(f"{self.rig.url}#/{route}", wait_until="commit")
+            if wait_ready:
+                self.wait_ready(route)
+        except (PlaywrightTimeout, AssertionError) as err:
+            raise AssertionError(f"opening #{route} failed: {err}\n{self.describe_in_flight()}") from err
         return self
+
+    def describe_in_flight(self) -> str:
+        now = time.monotonic()
+        stuck = [
+            f"  {now - began:5.1f}s  {request.method} {request.url.split('?')[0]}"
+            for request, began in self._in_flight.items()
+        ]
+        engine = self.page.context.browser.browser_type.name if self.page.context.browser else "?"
+        return f"{engine}: {len(stuck)} request(s) still in flight" + ("".join("\n" + line for line in stuck))
 
     def wait_ready(self, route: str) -> None:
         expect(self.page.locator("body")).to_have_attribute("data-conn", "online", timeout=LOADED)

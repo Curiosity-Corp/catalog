@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -11,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from streamstack import camlink, cli, config, micwatch, system, virtualdevices
-from streamstack.console import studio
+from streamstack.console import lightauto, studio
 from streamstack.console.errors import ActionError
 from streamstack.console.studio import DemoStudio, StudioController
 
@@ -133,6 +134,48 @@ def healthy_rig(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(cli, "hardware_report", lambda found: {"rig": None, "checks": []})  # tests/test_hw_doctor.py
     monkeypatch.setattr(cli, "_watch_microphone", lambda mic: micwatch.StallProbe(False, "healthy", "scheduled"))
+    monkeypatch.setattr(cli, "_voice_chain_silence_row", lambda: None)
+    chain_dump = _chain_dump("alsa_input.wave")
+    monkeypatch.setattr(
+        system,
+        "run",
+        lambda argv, timeout=10, **kw: (
+            subprocess.CompletedProcess(argv, 0, json.dumps(chain_dump), "") if argv[0] == "pw-dump" else None
+        ),
+    )
+
+
+def _chain_dump(linked: str) -> list[dict[str, object]]:
+    def node(i: int, name: str, cls: str) -> dict[str, object]:
+        return {"id": i, "type": "PipeWire:Interface:Node", "info": {"props": {"node.name": name, "media.class": cls}}}
+
+    return [
+        node(1, "alsa_input.wave", "Audio/Source"),
+        node(2, "alsa_input.cam", "Audio/Source"),
+        node(3, "streamstack_mic", "Audio/Source"),
+        node(4, "streamstack_mic.capture", "Stream/Input/Audio"),
+        {
+            "id": 9,
+            "type": "PipeWire:Interface:Link",
+            "info": {"output-node-id": 1 if linked == "alsa_input.wave" else 2, "input-node-id": 4},
+        },
+    ]
+
+
+def test_doctor_fails_when_the_voice_chain_reads_another_source(
+    healthy_rig: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    by_id = {c["id"]: c for c in cli.run_checks()}
+    assert by_id["voice-chain-source"]["state"] == "ok"
+    wrong = _chain_dump("alsa_input.cam")
+    monkeypatch.setattr(
+        system, "run", lambda argv, timeout=10, **kw: subprocess.CompletedProcess(argv, 0, json.dumps(wrong), "")
+    )
+    checks = cli.run_checks()
+    by_id = {c["id"]: c for c in checks}
+    assert by_id["voice-chain-source"]["state"] == "fail"
+    assert "alsa_input.cam" in by_id["voice-chain-source"]["detail"]
+    assert cli.summarize(checks) == "fail"
 
 
 def test_run_checks_returns_structured_results(healthy_rig: None) -> None:
@@ -472,9 +515,13 @@ def test_console_health_leaves_the_stall_probe_to_the_audio_controller(
     assert "mic-stall" not in {c["id"] for c in studio.console_checks(config.load_settings())}
 
 
-def test_demo_studio_state_is_a_pure_function_of_its_clock() -> None:
+def test_demo_studio_state_is_a_pure_function_of_its_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     """The root cause of a flaky 'state is pushed only on change': the demo CPU figure follows the wall
-    clock and moves by 0.1 every few milliseconds, so two snapshots a moment apart could differ."""
+    clock and moves by 0.1 every few milliseconds, so two snapshots a moment apart could differ.
+
+    The lighting schedule in the same state shows the time of day (``now.minute``, the sun clock), so the real
+    clock must be pinned too or a minute boundary between the two snapshots fails the test (pipeline 96238)."""
+    monkeypatch.setenv(lightauto.DEMO_CLOCK_ENV, "2026-06-21T12:00:00-04:00")
     now = [0.0]
     demo = DemoStudio(delay=0, clock=lambda: now[0])
     first = demo.state()

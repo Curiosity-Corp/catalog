@@ -888,6 +888,11 @@ class AudioController:
                 "outputs": self._outputs.state(),
             }
 
+    def mic_muted(self) -> bool | None:
+        """The Console's own mute of the microphone (None while no microphone is known)."""
+        with self._lock:
+            return self._muted
+
     def meters(self) -> dict[str, Any]:
         with self._lock:
             mic, voice = self._readers["mic"], self._readers["voice"]
@@ -1363,6 +1368,10 @@ class DemoAudio:
                 "state": "running",
             },
         }
+
+    def mic_muted(self) -> bool | None:
+        with self._lock:
+            return self._muted
 
     def meters(self) -> dict[str, Any]:
         self._advance_revive()

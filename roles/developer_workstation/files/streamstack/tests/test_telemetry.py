@@ -5,6 +5,8 @@ from __future__ import annotations
 import http.client
 import json
 import re
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -178,6 +180,39 @@ def test_rotating_the_token_locks_out_the_old_one(served: ConsoleServer) -> None
     act(served, "telemetry.set", on=True)
     old = re.search(r"credentials: (\S+)", act(served, "telemetry.scrape_config")["message"])[1]
     act(served, "telemetry.rotate_token")
+    assert get(served, "/metrics", {"Authorization": f"Bearer {old}"})[0] == 401
+
+
+def test_a_scrape_is_not_held_up_by_a_token_write_in_flight(
+    served: ConsoleServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pipeline 95914: /metrics queued behind the fsync of a token write on a starved node. It must answer at once."""
+    from streamstack.console import diagnostics
+
+    act(served, "telemetry.set", on=True)
+    old = re.search(r"credentials: (\S+)", act(served, "telemetry.scrape_config")["message"])[1]
+    writing, release = threading.Event(), threading.Event()
+    real = diagnostics.store.update_env_file
+
+    def slow_write(path: Path | str, updates: dict[str, str | None], *, mode: int | None = None) -> None:
+        writing.set()
+        release.wait(30)
+        real(path, updates, mode=mode)
+
+    monkeypatch.setattr(diagnostics.store, "update_env_file", slow_write)
+    rotation = threading.Thread(target=act, args=(served, "telemetry.rotate_token"))
+    rotation.start()
+    try:
+        assert writing.wait(HTTP_TIMEOUT), "the rotation never reached its write"
+        began = time.monotonic()
+        wrong = get(served, "/metrics", {"Authorization": "Bearer not-the-token-at-all"})[0]
+        right = get(served, "/metrics", {"Authorization": f"Bearer {old}"})[0]
+        elapsed = time.monotonic() - began
+    finally:
+        release.set()
+        rotation.join(HTTP_TIMEOUT)
+    assert (wrong, right) == (401, 200)
+    assert elapsed < 5, f"two scrapes waited {elapsed:.1f}s behind a token write"
     assert get(served, "/metrics", {"Authorization": f"Bearer {old}"})[0] == 401
 
 

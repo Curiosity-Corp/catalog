@@ -145,11 +145,13 @@ def test_mic_fader_drag_changes_gain(live: App, rig: Rig) -> None:
     assert rig.state()["audio"]["mic"]["gain_db"] == 0
     live.drag_fader(gain, 0.9)
     seen = poll(rig, lambda s: s["audio"]["mic"]["gain_db"] > 3 and s["audio"]["mic"]["gain_db"])
+    # state-read: the fader's range, which no action changes
     assert seen <= rig.state()["audio"]["gain_range"][1]
-    # the control and the server agree once the drag settled
+    # the control and the server agree once the drag settled: `seen` may be a value from mid-drag, and the last
+    # throttled post (the value the control ends on) can still be on its way, so wait for it rather than sampling once
     expect(gain).to_have_attribute("aria-valuenow", re.compile(r"^\d"))
-    final = rig.state()["audio"]["mic"]["gain_db"]
-    assert float(gain.get_attribute("aria-valuenow")) == pytest.approx(final, abs=0.51)
+    shown = float(gain.get_attribute("aria-valuenow"))
+    rig.wait_for_state("audio.mic.gain_db", shown, tol=0.51)
 
 
 def test_mic_fader_arrow_keys_change_gain(live: App, rig: Rig) -> None:
@@ -184,6 +186,7 @@ def test_look_fader_drag_changes_video_look(live: App, rig: Rig) -> None:
     assert rig.state()["video"]["look"]["brightness"] == 0
     live.drag_fader(brightness, 0.85)
     value = poll(rig, lambda s: s["video"]["look"]["brightness"] > 0.1 and s["video"]["look"]["brightness"])
+    # state-read: the fader's limits, which no action changes
     lo, hi = rig.state()["video"]["limits"]["brightness"]
     assert lo <= value <= hi
 

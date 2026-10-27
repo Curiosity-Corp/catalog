@@ -56,6 +56,7 @@ from streamstack import (
 from streamstack.audiochain import cli as chain_cli
 from streamstack.audiochain import control as voicechain
 from streamstack.audiochain import graph as voice_graph
+from streamstack.audiochain import links as voice_links
 from streamstack.audiochain import migrate
 from streamstack.audiochain import plugin as voice_plugin
 from streamstack.canon import run as canon_run
@@ -300,13 +301,16 @@ def run_checks(
                 hint="plug in a USB microphone; the Wave XLR also needs +48V for condenser mics",
             )
         )
+    raw_silent = False
     if mic and stall_probe:
         probe = _watch_microphone(mic)
         if stall_item := micwatch.check_item(probe.stalled, probe.detail, probe.kind):
             checks.append(stall_item)
+            raw_silent = stall_item["id"] == micwatch.SILENCE_CHECK_ID and stall_item["state"] == "fail"
+    dump = system.run(["pw-dump"], timeout=10) if have("pw-dump") else None
+    dump_text = dump.stdout if dump is not None and dump.returncode == 0 else None
     if capturehold.is_wave_xlr(mic) and have("pw-dump"):
-        dump = system.run(["pw-dump"], timeout=10)
-        effective = capturehold.always_process(dump.stdout, mic) if dump and dump.returncode == 0 else None
+        effective = capturehold.always_process(dump_text, mic) if dump_text is not None else None
         if hold_row := capturehold.check_row(mic, effective):
             checks.append(hold_row)
     if have("amixer"):
@@ -327,6 +331,12 @@ def run_checks(
         checks.append(default_row)
     if VOICE_SOURCE in sources:
         checks.append(check("audio", "voice-chain", "ok", "StreamStack Mic (processed voice) is available"))
+        # green is not enough: the chain must read the Plan's microphone, not whatever WirePlumber picked
+        links = voice_links.parse_text(dump_text) if dump_text is not None else None
+        if source_row := voice_links.check_row(mic or None, links, True):
+            checks.append(source_row)
+        if mic and stall_probe and not raw_silent and (silence_row := _voice_chain_silence_row()):
+            checks.append(silence_row)
     elif missing := voice_graph.missing_required():
         checks.append(
             check(
@@ -737,6 +747,22 @@ def _watch_microphone(mic: str) -> micwatch.StallProbe:
     if sample is not None and sample.digital_silence() is True:
         probe = micwatch.silence_verdict(probe, sample.seconds)
     return probe
+
+
+def _voice_chain_silence_row() -> dict[str, str] | None:
+    """A fail row when StreamStack Mic itself is digital silence (a short capture of exact zeros), None when it carries
+    signal or cannot be judged. The caller skips this while the raw microphone is silent: that is its own check."""
+    sample = micwatch.capture_signal(VOICE_SOURCE, micwatch.VERIFY_SIGNAL_S) if have("parec") else None
+    if sample is None or sample.digital_silence(micwatch.VERIFY_MIN_S) is not True:
+        return None
+    return check(
+        "audio",
+        "voice-chain-silence",
+        "fail",
+        "StreamStack Mic delivers digital silence - nobody can hear you",
+        "exact zeros while the microphone has signal: the chain is not reading it",
+        "streamstack chain stop && streamstack chain start",
+    )
 
 
 def _still_silent(mic: str) -> bool | None:

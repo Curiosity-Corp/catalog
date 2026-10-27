@@ -296,7 +296,7 @@ def test_state_snapshot_has_every_section(server: ConsoleServer) -> None:
     assert status == 200 and headers["content-type"] == "application/json"
     assert set(state) == {
         "version", "demo", "studio", "video", "audio", "auto", "framing", "health", "system", "lighting",
-        "interface", "virtual", "presets", "hardware", "stream", "storage", "deck", "diagnostics",
+        "interface", "virtual", "presets", "hardware", "stream", "storage", "deck", "diagnostics", "call",
     }  # fmt: skip
     assert state["audio"]["mic"]["gain_db"] == 0.0
     assert state["studio"]["running"] is True

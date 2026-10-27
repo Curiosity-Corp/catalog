@@ -167,6 +167,7 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
         if s["audio"]["mic"].get("stalled"):
             rig.act("audio.demo_stall", on=False)
         rig.act("audio.clip_clear")
+        rig.act("call.demo_reset")  # no call, the warning at its defaults
         rig.act("audio.demo_output_reset")  # outputs plugged, first the default
         rig.act("audio.mute", on=False)
         rig.act("audio.bypass", on=False)

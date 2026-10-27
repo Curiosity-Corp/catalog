@@ -13,6 +13,7 @@ import { relTime } from '../core/time.js';
 import { mountBridgePanel } from './system-bridge.js';
 import { mountStoragePanel } from './system-storage.js';
 import { mountDiagnosticsPanel } from './system-diagnostics.js';
+import { mountCallPanel } from './system-call.js';
 import { mountHardwarePanel } from './system-hardware.js';
 
 const GROUPS = [
@@ -363,6 +364,10 @@ export async function mount(host, ctx) {
   mountDiagnosticsPanel(host.querySelector('.sys'), ctx).then(
     (unmount) => { if (gone) unmount(); else off.push(unmount); },
     (err) => { console.error('Diagnostics panel failed to mount', err); },
+  );
+  mountCallPanel(host.querySelector('.sys'), ctx).then(
+    (unmount) => { if (gone) unmount(); else off.push(unmount); },
+    (err) => { console.error('Call awareness panel failed to mount', err); },
   );
   mountHardwarePanel(host.querySelector('.sys'), ctx).then(
     (unmount) => { if (gone) unmount(); else off.push(unmount); },
