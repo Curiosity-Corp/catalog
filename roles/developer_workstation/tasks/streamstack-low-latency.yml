@@ -24,6 +24,8 @@
       - streamstack_audio_headroom | int >= 0
       - streamstack_realtime_rtprio | int >= 1
       - streamstack_realtime_rtprio | int <= 99
+      - (streamstack_audio_node_patterns + streamstack_audio_card_patterns) | reject('match', '^[]A-Za-z0-9_.()|*+?^$[-]+$') | list | length == 0
+      - streamstack_audio_owner_users is iterable
       - streamstack_realtime_group is match('^[a-z_][a-z0-9_-]*$')
       - streamstack_usb_no_autosuspend_ids | select('match', '^[0-9a-f]{4}:([0-9a-f]{4}|[*])$') | list | length == streamstack_usb_no_autosuspend_ids | length
       - streamstack_media_package_state in ['latest', 'present']
@@ -32,7 +34,8 @@
       Invalid StreamStack low-latency setting: quantums must satisfy
       32 <= min <= default <= max <= 8192, USB ids are lowercase
       vendor:product (product may be *), kernel arguments are single
-      shell-safe words.
+      shell-safe words, and the WirePlumber patterns contain no backslash
+      or double quote (write a dot as [.]).
 
 # --- PipeWire / WirePlumber -------------------------------------------------
 
@@ -92,7 +95,7 @@
       {% for pattern in streamstack_audio_node_patterns %}
         {
           matches = [
-            { node.name = "~{{ pattern | replace('\\', '\\\\') }}" }
+            { node.name = "~{{ pattern }}" }
           ]
           actions = {
             update-props = {
@@ -146,6 +149,136 @@
   loop_control:
     label: "{{ item.item.name }}"
   when: item.ansible_facts.getent_passwd[item.item.name] | default(none) is not none
+
+# --- One WirePlumber per studio card ----------------------------------------
+# Two users' WirePlumber probing the same USB audio card at once makes the ACP
+# duplex probe fail (no microphone). WirePlumber 0.5 has no seat switch for the
+# ALSA monitor, so every managed account that does not own StreamStack gets a
+# per-user rule that disables the studio cards. See streamstack_audio_exclusive.
+# Applies at that user's next WirePlumber start; nothing is restarted here.
+
+- name: Decide which users must not manage the studio audio cards
+  ansible.builtin.set_fact:
+    _streamstack_audio_present: >-
+      {%- set ns = namespace(names=[]) -%}
+      {%- for r in _streamstack_rt_users.results -%}
+      {%- if r.ansible_facts.getent_passwd[r.item.name] | default(none) is not none -%}
+      {%- set ns.names = ns.names + [r.item.name] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.names }}
+
+- name: Choose the accounts that get the studio audio exclusion
+  ansible.builtin.set_fact:
+    _streamstack_audio_excluded: >-
+      {{ (_streamstack_audio_present | difference(streamstack_audio_owner_users))
+         if (streamstack_audio_exclusive | bool and _streamstack_audio_present | intersect(streamstack_audio_owner_users) | length > 0)
+         else [] }}
+
+- name: Ensure the excluded users' WirePlumber drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ item.0.ansible_facts.getent_passwd[item.0.item.name][4] }}/{{ item.1 }}"
+    state: directory
+    owner: "{{ item.0.item.name }}"
+    group: "{{ item.0.ansible_facts.getent_passwd[item.0.item.name][2] }}"
+    mode: "0755"
+  loop: "{{ _streamstack_rt_users.results | product(['.config', '.config/wireplumber', '.config/wireplumber/wireplumber.conf.d']) | list }}"
+  loop_control:
+    label: "{{ item.0.item.name }}:{{ item.1 }}"
+  when: item.0.item.name in _streamstack_audio_excluded
+
+- name: Keep the studio audio cards out of the other users' WirePlumber
+  ansible.builtin.copy:
+    dest: "{{ item.ansible_facts.getent_passwd[item.item.name][4] }}/.config/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-exclusive-audio.conf"
+    owner: "{{ item.item.name }}"
+    group: "{{ item.ansible_facts.getent_passwd[item.item.name][2] }}"
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack-low-latency task group).
+      # StreamStack's studio audio cards belong to {{ streamstack_audio_owner_users | join(', ') }}'s
+      # WirePlumber only: two sessions probing one USB card at once make the
+      # duplex (microphone) profile probe fail. Disable them here.
+      monitor.alsa.rules = [
+      {% for pattern in streamstack_audio_card_patterns %}
+        {
+          matches = [
+            { device.name = "~{{ pattern }}" }
+          ]
+          actions = {
+            update-props = {
+              device.disabled = true
+            }
+          }
+        }
+      {% endfor %}
+      ]
+  loop: "{{ _streamstack_rt_users.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.item.name in _streamstack_audio_excluded
+
+- name: Remove the studio audio exclusion from owners and when it is switched off
+  ansible.builtin.file:
+    path: "{{ item.ansible_facts.getent_passwd[item.item.name][4] }}/.config/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-exclusive-audio.conf"
+    state: absent
+  loop: "{{ _streamstack_rt_users.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.ansible_facts.getent_passwd[item.item.name] | default(none) is not none
+    - item.item.name not in _streamstack_audio_excluded
+
+# --- Canon bridge: never give up on a boot race -----------------------------
+# A user's canonctl-ptp-webcam.service (canonctl repo, fleet/systemd) that failed
+# three times inside StartLimitIntervalSec=120 right after boot stayed dead for
+# 2.5 days (2026-10-24). Where a user has that unit, a drop-in removes the start
+# limit and backs off up to RestartMaxDelaySec instead. Restart=on-failure stays:
+# an intentionally stopped or SIGINT-ed bridge is not restarted, and an unplugged
+# camera costs one process start per minute at most. Takes effect at the next
+# `systemctl --user daemon-reload` or login; a running bridge is not restarted.
+
+- name: Look for each user's Canon bridge unit
+  ansible.builtin.stat:
+    path: "{{ item.ansible_facts.getent_passwd[item.item.name][4] }}/.config/systemd/user/{{ streamstack_canonctl_webcam_unit }}"
+  loop: "{{ _streamstack_rt_users.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.ansible_facts.getent_passwd[item.item.name] | default(none) is not none
+  register: _streamstack_canonctl_units
+
+- name: Make the Canon bridge unit resilient to boot races
+  when: streamstack_canonctl_webcam_resilience | bool
+  block:
+    - name: Ensure the Canon bridge drop-in directory exists
+      ansible.builtin.file:
+        path: "{{ item.item.ansible_facts.getent_passwd[item.item.item.name][4] }}/.config/systemd/user/{{ streamstack_canonctl_webcam_unit }}.d"
+        state: directory
+        owner: "{{ item.item.item.name }}"
+        group: "{{ item.item.ansible_facts.getent_passwd[item.item.item.name][2] }}"
+        mode: "0755"
+      loop: "{{ _streamstack_canonctl_units.results | selectattr('stat', 'defined') | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item.item.name }}"
+
+    - name: Write the Canon bridge restart policy drop-in
+      ansible.builtin.copy:
+        dest: "{{ item.item.ansible_facts.getent_passwd[item.item.item.name][4] }}/.config/systemd/user/{{ streamstack_canonctl_webcam_unit }}.d/10-curiosity-resilience.conf"
+        owner: "{{ item.item.item.name }}"
+        group: "{{ item.item.ansible_facts.getent_passwd[item.item.item.name][2] }}"
+        mode: "0644"
+        content: |
+          # Managed by the curiosity workstation role (streamstack-low-latency task group).
+          [Unit]
+          StartLimitIntervalSec=0
+
+          [Service]
+          Restart=on-failure
+          RestartSec=5
+          RestartSteps=5
+          RestartMaxDelaySec=60
+      loop: "{{ _streamstack_canonctl_units.results | selectattr('stat', 'defined') | selectattr('stat.exists') | list }}"
+      loop_control:
+        label: "{{ item.item.item.name }}"
 
 # --- USB: no autosuspend for the studio devices -----------------------------
 
