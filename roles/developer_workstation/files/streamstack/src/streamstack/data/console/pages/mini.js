@@ -67,17 +67,14 @@ export async function mount(host, ctx) {
   R.lightsFader.addEventListener('input', (e) => actStream('lighting.brightness', { id: 'all', percent: e.detail.value }));
   R.lightsFader.addEventListener('change', () => flushStream('lighting.brightness'));
 
-  sub((s) => [s.video.privacy, s.video.privacy_scene, s.video.obs], ([on, scene, obs]) => {
+  sub((s) => [s.video.privacy, s.video.privacy_scene], ([on, scene]) => {
     R.privacy.toggleAttribute('active', on);
     R.privacy.setAttribute('label', on ? 'PRIVACY ON' : 'Privacy');
     R.privacy.setAttribute('sub', on ? `${scene} is on air. Press P` : `Cut camera to ${scene}`);
-    R.privacy.toggleAttribute('disabled', obs !== 'connected');
   });
   R.privacy.addEventListener('click', () => togglePrivacy());
 
-  sub((s) => [s.video.scenes, s.video.program_scene, s.video.obs], ([scenes, program, obs]) => {
-    if (obs !== 'connected') R.scenesCard.setAttribute('reason', obs === 'offline' ? 'OBS is not running' : 'OBS is unavailable');
-    else R.scenesCard.removeAttribute('reason');
+  sub((s) => [s.video.scenes, s.video.program_scene], ([scenes, program]) => {
     renderList(R.scenes, scenes, (sc) => sc.name, () => {
       const pad = h('ss-pad', { compact: true });
       pad.addEventListener('click', () => selectScene(pad.dataset.key));
@@ -105,7 +102,7 @@ export async function mount(host, ctx) {
     });
   });
 
-  sub((s) => [s.video.streaming.active, s.video.recording.active, s.video.virtualcam, s.audio.chain.bypass, s.video.obs, s.studio.camera_for_calls], ([stream, rec, vcam, bypass, obs, cam]) => {
+  sub((s) => [s.video.streaming.active, s.video.recording.active, s.video.virtualcam, s.audio.chain.bypass, s.studio.camera_for_calls, s.video.engine], ([stream, rec, vcam, bypass, cam, engine]) => {
     const chips = [];
     if (stream || vcam) chips.push({ id: 'air', state: 'live', label: 'ON AIR', icon: 'broadcast', pulse: true });
     if (rec) chips.push({ id: 'rec', state: 'live', label: 'REC', icon: 'record', pulse: true });
@@ -113,8 +110,8 @@ export async function mount(host, ctx) {
       el.setAttribute('state', c.state); el.setAttribute('label', c.label); el.setAttribute('icon', c.icon); el.toggleAttribute('pulse', !!c.pulse);
     });
     const items = [
-      { id: 'obs', label: 'OBS', value: obs === 'connected' ? 'on' : 'off', state: obs === 'connected' ? 'ok' : 'fail', icon: 'scenes' },
-      { id: 'cam', label: 'Cam', value: { graded: 'graded', raw: 'raw', 'obs-idle': 'idle', off: 'off' }[cam] || cam, state: cam === 'graded' ? 'ok' : cam === 'raw' ? 'info' : cam === 'off' ? 'off' : 'warn', icon: 'camera' },
+      { id: 'engine', label: 'Engine', value: engine?.state === 'running' ? 'on' : engine?.state === 'off' ? 'off' : 'wait', state: engine?.state === 'running' ? 'ok' : engine?.state === 'off' ? 'fail' : 'warn', icon: 'scenes' },
+      { id: 'cam', label: 'Cam', value: { graded: 'graded', raw: 'raw', idle: 'idle', off: 'off' }[cam] || cam, state: cam === 'graded' ? 'ok' : cam === 'raw' ? 'info' : cam === 'off' ? 'off' : 'warn', icon: 'camera' },
       { id: 'fx', label: 'Voice', value: bypass ? 'bypass' : 'fx', state: bypass ? 'warn' : 'ok', icon: 'wave' },
     ];
     renderList(R.status, items, (i) => i.id, () => h('ss-status-chip', { size: 'sm' }), (el, i) => {

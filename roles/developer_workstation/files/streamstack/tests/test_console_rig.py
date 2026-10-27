@@ -7,11 +7,19 @@ from collections.abc import Iterator
 
 import pytest
 
+from streamstack import store
 from streamstack.console.errors import ActionError
 from streamstack.console.rig import Rig
 
 TOP_LEVEL = {
     "version", "demo", "studio", "video", "audio", "auto", "health", "system", "lighting", "interface", "framing",
+    "virtual",
+    "presets",
+    "hardware",
+    "stream",
+    "storage",
+    "deck",
+    "diagnostics",
 }  # fmt: skip
 
 
@@ -37,7 +45,8 @@ def test_meters_frame_shape(rig: Rig) -> None:
     assert {"t", "mic", "voice"} <= set(frame)
     assert -90.0 <= frame["mic"]["peak_db"] <= 0.0
     for source in ("mic", "voice"):
-        assert {"peak_db", "sample_db", "rms_db", "clip", "latched", "lufs_m", "lufs_s"} == set(frame[source])
+        assert {"peak_db", "sample_db", "rms_db", "clip", "latched", "lufs_m", "lufs_s"} <= set(frame[source])
+    assert "gr_db" in frame["voice"] and "gr_db" not in frame["mic"]
 
 
 @pytest.mark.parametrize(
@@ -116,6 +125,7 @@ def test_health_is_untouched_when_the_audio_controller_has_no_checks(rig: Rig) -
     rig.audio = Plain()
     rig.lighting = None
     rig.video = Plain()
+    rig.hardware = None
     health = {"updated": None, "summary": "ok", "checks": [{"id": "x", "state": "ok"}]}
     assert rig._health(health) is health
 
@@ -148,3 +158,25 @@ def test_demo_plugin_removal_hides_nothing_and_explains_the_install(rig: Rig) ->
     assert caught.value.status == 409
     rig.act("video.blur.plugin", {"installed": True})
     assert rig.snapshot()["video"]["blur"]["plugin"]["installed"] is True
+
+
+def test_a_repaired_file_is_in_the_snapshot_toasts_once_and_can_be_dismissed(rig: Rig, tmp_path) -> None:
+    toasts: list[tuple[str, str]] = []
+    rig.on_toast = lambda level, text: toasts.append((level, text))
+    damaged = tmp_path / "looks.json"
+    damaged.write_text("{")
+    store.read_json(damaged, {})
+    store.read_json(damaged, {})  # gone now: nothing more to report
+    (warning,) = rig.snapshot()["storage"]["warnings"]
+    assert warning["action"] == "defaults"
+    assert [level for level, _ in toasts] == ["warn"]
+    assert "set aside" in toasts[0][1] and "System page" in toasts[0][1]
+    rig.act("storage.dismiss", {"id": warning["id"]})
+    assert rig.snapshot()["storage"]["warnings"] == []
+
+
+def test_storage_actions_validate_their_input(rig: Rig) -> None:
+    with pytest.raises(ActionError):
+        rig.act("storage.dismiss", {"id": 5})
+    with pytest.raises(ActionError):
+        rig.act("storage.explode", {})

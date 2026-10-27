@@ -7,11 +7,10 @@ the Auto page's "Now: Dawn, daylight rising" is always current even between pass
 
 from __future__ import annotations
 
-import shutil
 from datetime import datetime
 from pathlib import Path
 
-from streamstack import config
+from streamstack import config, store
 from streamstack.director import daylight, personas, settings
 
 VERSION = 1
@@ -38,7 +37,7 @@ def read() -> dict:
 
 
 def write(payload: dict) -> None:
-    settings.write_json(settings.status_path(), {**payload, "version": VERSION})
+    settings.write_json(settings.status_path(), {**payload, "version": VERSION}, ephemeral=True)
 
 
 def publish_sheet(sheet: Path) -> Path:
@@ -46,10 +45,7 @@ def publish_sheet(sheet: Path) -> Path:
     target = settings.sheet_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.parent.chmod(0o700)
-    tmp = target.with_suffix(".tmp")
-    shutil.copyfile(sheet, tmp)
-    tmp.chmod(0o600)
-    tmp.replace(target)
+    store.atomic_write_bytes(target, sheet.read_bytes(), mode=0o600, durable=False)
     return target
 
 

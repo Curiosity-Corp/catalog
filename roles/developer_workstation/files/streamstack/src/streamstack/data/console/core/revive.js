@@ -14,19 +14,20 @@ import { reviveMic } from './ops.js';
 
 const TITLES = {
   stalled: 'Microphone stalled — nobody can hear you',
+  silent: 'Microphone delivers digital silence — nobody can hear you',
   reviving: 'Reviving the microphone…',
   ok: 'Microphone is back',
   failed: 'Could not revive the microphone',
 };
-const ICONS = { stalled: 'alert', reviving: 'refresh', ok: 'check', failed: 'alert' };
-const BUTTONS = { stalled: 'Revive mic', reviving: 'Reviving…', failed: 'Try again' };
+const ICONS = { stalled: 'alert', silent: 'alert', reviving: 'refresh', ok: 'check', failed: 'alert' };
+const BUTTONS = { stalled: 'Revive mic', silent: 'Revive mic', reviving: 'Reviving…', failed: 'Try again' };
 
-/** One of 'stalled' | 'reviving' | 'ok' | 'failed' | '' (healthy). */
+/** One of 'stalled' | 'silent' (digital silence) | 'reviving' | 'ok' | 'failed' | '' (healthy). */
 export function reviveView(mic) {
   const r = (mic && mic.revive) || {};
   if (r.state === 'reviving') return 'reviving';
   if (r.state === 'failed') return 'failed';
-  if (mic && mic.stalled) return 'stalled';
+  if (mic && mic.stalled) return mic.stall_kind === 'silence' ? 'silent' : 'stalled';
   if (r.state === 'ok') return 'ok';
   return '';
 }
@@ -58,7 +59,11 @@ export function mountReviveBanner(host, ctx, { compact = false } = {}) {
       shown = view;
     }
     const m = (mic.revive && mic.revive.message) || '';
-    msg.textContent = view === 'stalled' && !m ? 'Audio stopped flowing. One press restarts the microphone, nothing else is touched.' : m;
+    const idle = {
+      stalled: 'Audio stopped flowing. One press restarts the microphone, nothing else is touched.',
+      silent: 'The microphone runs but every sample is zero. One press re-writes its capture switch and volume so the device receives them again.',
+    };
+    msg.textContent = !m && idle[view] ? idle[view] : m;
     btn.hidden = view === 'ok';
     if (BUTTONS[view]) btn.textContent = BUTTONS[view];
     btn.toggleAttribute('busy', view === 'reviving');
@@ -71,7 +76,7 @@ export function registerReviveControls(ctx) {
   // Only offered while the watchdog says the mic is stalled (or a revive just failed): never mid-call on a healthy mic.
   const needed = () => {
     const view = reviveView(ctx.store.state.audio.mic);
-    return view === 'stalled' || view === 'failed';
+    return view === 'stalled' || view === 'silent' || view === 'failed';
   };
   const offKeys = ctx.registerKeys([
     { key: 'shift+r', desc: 'Revive the microphone (restart a stalled mic)', group: 'Live', label: 'Shift R', run: () => reviveMic(), when: needed },

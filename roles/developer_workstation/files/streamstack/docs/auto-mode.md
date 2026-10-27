@@ -5,7 +5,7 @@ It is off until you turn it on, from the panel menu (**Auto-cinematographer
 and auto-audio (Claude)**) or a terminal:
 
 ```bash
-streamstack auto check            # OBS websocket, Claude and microphone ready?
+streamstack auto check            # Console, Claude and microphone ready?
 streamstack auto on               # start it (the streamstack-auto user service)
 streamstack auto once             # one Claude pass now, applied
 streamstack auto once --dry-run   # what Claude would change, nothing applied
@@ -14,15 +14,15 @@ streamstack auto off              # stop; the current look and levels stay
 streamstack auto reset            # ramp back to the look, mic gain and preset from before
 ```
 
-It works on the graded studio camera, so start the studio first.
+It works on the graded studio camera, so start the studio (and the Console) first.
 
 ## The two loops
 
 **Local, every `STREAMSTACK_AUTO_INTERVAL` seconds (15).** Nothing leaves the host.
 
-- *Picture.* A small screenshot of each camera source through obs-websocket is
-  measured with ffmpeg `signalstats`. Gamma, then brightness, of the **Lighting
-  & Color** filter move towards a good exposure without clipping highlights.
+- *Picture.* A small screenshot of the graded program picture, fetched from the
+  Console, is measured with ffmpeg `signalstats`. Gamma, then brightness, of the
+  native engine's live look move towards a good exposure without clipping highlights.
   Once Claude has located the face, only that box is metered (spot metering),
   towards the face luma Claude chose for that skin tone, ±15. Black or flat
   frames (camera off, lens cap, no HDMI signal) are skipped, never "fixed".
@@ -40,7 +40,7 @@ returns a proposal that must match a JSON schema:
 | --- | --- |
 | `video.contrast`, `saturation`, `warmth`, `gamma`, `brightness` | absolute targets, clamped to the limits and to one step per pass |
 | `video.lut_enabled`, `lut_amount`, `sharpen_enabled` | the Cinematic LUT and Sharpen filters |
-| `audio.voice_preset` | switch Easy Effects preset (confidence ≥ 0.7, at most every 10 minutes) |
+| `audio.voice_preset` | switch the voice chain preset (confidence ≥ 0.7, at most every 10 minutes) |
 | `subject.box`, `subject.target_luma` | the face, for the local loop's spot metering |
 | `confidence`, `notes` | below 0.5 nothing is applied; the note appears as a notification |
 
@@ -141,7 +141,7 @@ changed by hand count more than ones left alone) are remembered in
 point next time.
 
 **Actuators and safety.** Everything the director can move sits behind one
-registry (`streamstack.director.actuators`): OBS look filters, mic gain, the
+registry (`streamstack.director.actuators`): the program picture look, mic gain, the
 voice preset and, when the device is there, the Canon, the Litra lights and the
 audio interface's preamp. Each declares its parameters, limits, step size and
 minimum interval. A change is a small step towards the target, at most once per
@@ -166,13 +166,13 @@ setting (`STREAMSTACK_AUTO_CANON`, `STREAMSTACK_AUTO_LIGHTS`,
 
 * **Exposure** goes to the Canon first: when the metered picture is outside
   the persona's band the director steps the camera's exposure compensation (the
-  exposure knob that leaves the body's own metering in charge). OBS's
+  exposure knob that leaves the body's own metering in charge). The engine's
   brightness and gamma take over when the camera is at its limit, locked (the
   mode dial is on M), held because you moved it, or refuses the change. This
-  assumes the first camera in the OBS program scene is the Canon.
+  assumes the camera on air is the Canon.
 * **White balance** is a closed loop on the measured warm index: once per Claude
   pass (also with the `local` backend) the camera's Kelvin steps one notch
-  towards the persona's colour temperature. While the camera does it, OBS's
+  towards the persona's colour temperature. While the camera does it, the engine's
   warmth easing steps aside. Only used when the white balance is Auto or Color
   Temperature; a preset (Daylight, Tungsten) is yours and is left alone.
 * **The Canon bridge must share the camera.** The gphoto2 command backend
@@ -208,9 +208,50 @@ heuristics are linear maps checked against synthetic signals, not tuned on
 recorded voices or the Canon and Cam Link. Treat them as relative, and
 adjust the persona bands after watching a few passes.
 
-## OBS websocket
+### Picture calibration (issue #32, colour half)
 
-Auto mode drives OBS through its built-in obs-websocket server on
-127.0.0.1. `streamstack auto check` (also run by `auto on`) enables it with a
-random per-user password stored in OBS's own config (mode 600). OBS rewrites
-its settings when it exits, so the first time it asks you to restart OBS once.
+Measured on 2026-10-22 between 23:47 and 23:58 UTC on the real rig, read-only: stills from the program output
+(`/dev/video43`, 1920x1080), four moments about three minutes apart, 8 to 20 frames each, run through the shipped
+extractors at the shipped 320 px decode. The Canon loopback (`/dev/video42`, 1280x720 YUYV, upscaled and cropped
+from the 1056x704 live view by `canonctl`) could not be opened by a second reader because the video compositor of the time held it, so the
+program output stands in for it. The room was dark at every moment and nobody was in frame. No photo is kept in the
+repository; only these numbers and synthetic frames in the tests.
+
+| Moment (UTC) | luma mean | p99 luma | pixels with luma >= 40 | cast read (before) | warm index | saturation | sharpness |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 23:47 | 0.1 | 0 | 0 of 57,600 | none | none | none | 0.3 to 0.9 |
+| 23:51 | 0.0 | 0 | 0 of 57,600 | none | none | none | 0.1 to 0.2 |
+| 23:54 | 0.0 | 0 | 1 of 57,600 | cool, green tint | -0.95 to -1.26 | 0.74 to 0.96 | 0.7 to 0.9 |
+| 23:58 | 0.0 | 0 | 3 of 57,600 | neutral, with or without a green tint | -0.09 to +0.09 | 0.10 to 0.24 | 2.6 to 6.0 |
+
+What was miscalibrated, and the verdict before and after for the 23:54 burst under the Late-night calm persona:
+
+* **The cast came from a handful of pixels.** The grey-world estimate averages the pixels between luma 40 and 215.
+  In a dark room one to three glints (a status LED, a screen edge) were the whole sample, so a black frame read
+  "cool, green tint", warm index -1.02 (wanted +0.18), saturation 0.81 and a "screen glow" note. It is now read only
+  when at least 5% of the frame is in the mid-tones (`MIN_MIDTONE_SHARE`); otherwise cast, warm, tint and
+  saturation are None.
+* **A black frame was called soft.** Laplacian variance of a black frame is 0.1 to 6, below the soft limit of 15, so
+  every dark pass raised "The picture looks soft". The judge now says "too dark to judge" instead and skips white
+  balance, tint, saturation, contrast, focus and screen glow whenever the 99th-percentile luma is below 40
+  (`DARK_P99`). The exposure and crushed-shadow findings still fire. A dim but real picture (p99 of 60) is still
+  judged for focus.
+* **Relative checks fired on noise.** `blurred_frames` marks frames below half the burst's best sharpness, and
+  flicker is a luma swing relative to the mean; with a mean of 0.1 to 3 and sharpness of 0.1 to 6 both are noise.
+  They now need a mean luma of 10 (`MIN_FLICKER_LUMA`) and a best sharpness of 15 (`MIN_BLUR_REFERENCE`).
+
+Not changed, because the dark room gave no evidence: the persona exposure and colour bands, the skin box, the
+backlight margin, the noise limit of 3.0 (noise sigma read 0.01 to 0.02 in the black frames) and the sharpness
+limit for lit pictures. The 1280x720 feed is area-downscaled 4x to 320 px, so the 1.21x upscale from the Canon's
+1056 px live view does not move the sharpness scale. These still need a pass with the lights on and the person in
+frame; the audio half of #32 also remains.
+
+## The Console link
+
+Auto mode is its own process, and the native video engine lives inside the Console, so the director changes the
+picture through the Console's local API: `POST /api/action` (`video.look`) for a look change, `GET /api/state` for
+what is in place and `GET /api/preview.jpg?source=program` for the graded picture it measures. The port and the
+token come from the Console's runtime file (mode 600), so there is nothing to configure and nothing listens
+beyond 127.0.0.1. A look change is a few bytes on the engine's stdin and lands between two frames. `streamstack auto
+check` (also run by `auto on`) reports whether the Console is reachable; with no Console running the picture
+actuator is listed as *Unavailable* ("the Console is not running") and the voice and hardware actuators carry on.

@@ -1,13 +1,13 @@
 # Auto-framing
 
-A face detector runs beside OBS and moves a smooth crop and zoom on the camera, so you stay framed without a
-camera operator. It adds no video latency: detection works on a small, low-rate copy of the picture and never
-sits in the video path. OBS keeps rendering the full-rate camera; only the scene item's crop changes.
+A face detector runs beside the native video engine and moves a smooth crop and zoom on the camera, so you stay
+framed without a camera operator. It adds no video latency: detection works on a small, low-rate copy of the picture
+and never sits in the video path. The engine keeps rendering the full-rate camera; only its crop window changes.
 
 ```
-OBS (camera source) --GetSourceScreenshot, 320 px, ~8 Hz--> detector (YuNet, OpenVINO: Arc GPU or CPU)
-                                                               |
-        SetSceneItemTransform (crop only, 20 Hz while moving) <-- framing engine (dead zone, smoothing, composition)
+engine (uncropped frame, 320 px, ~8 Hz) --> detector (YuNet, OpenVINO: Arc GPU or CPU)
+                                                |
+        set_window (crop only, 20 Hz while moving) <-- framing engine (dead zone, smoothing, composition)
 ```
 
 ## Modes
@@ -60,18 +60,18 @@ The model is not shipped in the wheel. `streamstack framing --fetch` downloads i
 URL (size-capped), checks the SHA-256 and moves it into `$XDG_DATA_HOME/streamstack/models/` atomically; a file
 that fails the check is refused and never used. The file is checked again before it is loaded.
 
-## How the crop reaches OBS
+## How the crop reaches the engine
 
-For every scene that shows a camera source, StreamStack changes only the crop fields of that scene item with
-`SetSceneItemTransform`, keeping the frame's aspect ratio, so a scene whose item is drawn with a "scale to inner
-bounds" box (the shipped scenes) shows a zoom. Items without bounds, or with an unsupported bounds type, are
-left alone and listed under `framing.skipped` in the state. Detection reads the uncropped source through
-`GetSourceScreenshot`, so the crop never feeds back into the detector. A camera that is off air keeps its crop
-and is not detected, so a scene change resumes without a jump.
+The engine reads one camera, so there is one picture to crop. StreamStack sends the window to the engine child as a
+`set_window` command (margins in source pixels, keeping the frame's aspect ratio, so the picture is zoomed and not
+distorted). libplacebo evaluates the crop between two frames: the window moves without a restart and the crop and
+the rescale happen on the GPU as part of the frame the engine was drawing anyway. Detection reads the engine's own
+uncropped frame, so the crop never feeds back into the detector. While the engine is off air (camera absent, no
+signal, privacy blackout) nothing is cropped or detected, and the window resumes without a jump.
 
-Safety: the original crop of every item is written to `framing-restore.json` in the state directory before the
-first change. Turning framing off, stopping the Console, or starting after a crash puts those crops back.
-StreamStack never changes a crop it did not make.
+Nothing is persisted: a new engine child always starts from the full frame, so turning framing off, stopping the
+Console or a crash cannot leave the picture cropped. The Console state lists anything it could not crop under
+`framing.skipped`.
 
 ## The director's face finder
 

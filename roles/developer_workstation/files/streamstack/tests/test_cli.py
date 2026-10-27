@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -34,27 +33,16 @@ def test_call_settings_name_the_configured_devices(tmp_path: Path) -> None:
     result = _run("call-settings", env_text="STREAMSTACK_PROGRAM_LABEL='Studio Cam'\n", tmp=tmp_path)
     assert result.returncode == 0, result.stderr
     assert "Studio Cam" in result.stdout
-    assert "Easy Effects Source" in result.stdout
+    assert "StreamStack Mic" in result.stdout
 
 
 def test_setup_seeds_once_and_keeps_user_changes(tmp_path: Path, isolated_home: Path) -> None:
     env_text = "STREAMSTACK_WIDTH=1280\nSTREAMSTACK_HEIGHT=720\nSTREAMSTACK_CAMLINK_MODE=off\n"
     assert _run("setup", env_text=env_text, tmp=tmp_path).returncode == 0
-    scenes = isolated_home / ".config/obs-studio/basic/scenes/StreamStack.json"
-    profile = isolated_home / ".config/obs-studio/basic/profiles/StreamStack/basic.ini"
-    voice = isolated_home / ".local/share/easyeffects/input/StreamStack Voice.json"
-    doc = json.loads(scenes.read_text())
-    assert "@" not in scenes.read_text()
-    side = next(s for s in doc["sources"] if s["name"] == "Side by Side")
-    assert side["settings"]["items"][1]["pos"] == {"x": 640, "y": 180}
-    assert "OutputCX=1280" in profile.read_text()
-    assert "FPSNum=30\nFPSDen=1" in profile.read_text()
-    assert f"FilePath={isolated_home}/Videos/StreamStack" in profile.read_text()
-    voice.write_text("{}")
+    assert (isolated_home / "Videos/StreamStack").is_dir()
     assert _run("setup", "--quiet", env_text=env_text, tmp=tmp_path).returncode == 0
-    assert voice.read_text() == "{}"
     assert _run("setup", "--force", "--quiet", env_text=env_text, tmp=tmp_path).returncode == 0
-    assert json.loads(voice.read_text())["input"]["plugins_order"]
+    assert not (isolated_home / ".local/share/easyeffects").exists()  # Easy Effects is no longer seeded
 
 
 def test_canon_bridge_stays_off_an_external_camera(tmp_path: Path) -> None:
@@ -130,7 +118,7 @@ SOURCES = {
     "alsa_input.usb-Elgato_Cam_Link_4K-03.analog-stereo": "Cam Link 4K Analog Stereo",
     "alsa_input.pci-0000_00_1f.3.analog-stereo": "Built-in Audio Analog Stereo",
     "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor": "Monitor of Built-in Audio",
-    "easyeffects_source": "Easy Effects Source",
+    "streamstack_mic": "StreamStack Mic",
 }
 
 
@@ -148,14 +136,14 @@ def test_microphone_never_guesses_or_picks_a_capture_card_or_monitor() -> None:
     # A configured microphone that is unplugged is not silently replaced.
     assert system.pick_microphone(SOURCES, "Yeti") == ""
     unusable = {k: v for k, v in SOURCES.items() if k != wave and "pci" not in k}
-    assert system.pick_microphone(unusable, "", "easyeffects_source") == ""
+    assert system.pick_microphone(unusable, "", "streamstack_mic") == ""
     assert system.pick_microphone(unusable, "", "alsa_input.usb-Elgato_Cam_Link_4K-03.analog-stereo") == ""
 
 
 def test_status_icon_prints_an_icon_path_and_a_tooltip(monkeypatch, capsys) -> None:
     monkeypatch.setattr(system, "running", lambda name: False)
     monkeypatch.setattr(cli, "loopback_has_producer", lambda device: False)
-    monkeypatch.setattr(cli, "audio_sources", lambda: {"easyeffects_source": "Easy Effects Source"})
+    monkeypatch.setattr(cli, "audio_sources", lambda: {"streamstack_mic": "StreamStack Mic"})
     monkeypatch.setattr(cli, "auto_running", lambda: True)
     assert cli.main(["status", "--icon"]) == 0
     out, err = capsys.readouterr()
@@ -226,10 +214,13 @@ class ReviveRig:
         monkeypatch.setattr(cli, "audio_sources", lambda: {"alsa_input.wave": "Wave:3"})
         monkeypatch.setattr(system, "default_device", lambda kind: "")
         monkeypatch.setattr(cli, "_watch_microphone", lambda mic: probe)
+        monkeypatch.setattr(cli, "probe_now", lambda cfg: None)  # never the real machine's hardware
         monkeypatch.setattr(micwatch, "revive_mic", self.revive)
+        self.kwargs: dict[str, object] = {}
 
     def revive(self, mic: str, **kwargs: object) -> micwatch.ReviveResult:
         self.revived.append(mic)
+        self.kwargs = kwargs
         return self.result
 
 
@@ -283,10 +274,53 @@ def test_mic_revive_without_a_microphone_or_pactl(monkeypatch: pytest.MonkeyPatc
     assert "pactl is missing" in capsys.readouterr().err
 
 
+def test_mic_revive_of_digital_silence_passes_the_kind_and_a_resync(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    silence = micwatch.StallProbe(True, "digital-silence", micwatch.SILENCE_DETAIL, micwatch.KIND_SILENCE)
+    rig = ReviveRig(monkeypatch, silence)
+    monkeypatch.setattr(cli, "_alsa_card_for", lambda found, mic: 3)
+    assert cli.main(["mic-revive"]) == 0
+    assert rig.kwargs["kind"] == micwatch.KIND_SILENCE and callable(rig.kwargs["resync"])
+    assert "every sample is exactly zero" in capsys.readouterr().out
+
+
+def test_mic_revive_of_a_plain_stall_has_no_resync_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(True, "stalled", "x", micwatch.KIND_STALL))
+    monkeypatch.setattr(cli, "_alsa_card_for", lambda found, mic: None)
+    cli.main(["mic-revive"])
+    assert rig.kwargs["kind"] == micwatch.KIND_STALL and rig.kwargs["resync"] is None
+
+
+def test_mic_revive_reprobe_is_only_the_last_resort(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = ReviveRig(monkeypatch, micwatch.StallProbe(True, "stalled", "x"))
+    rig.result = micwatch.ReviveResult(False, micwatch.REPLUG_HINT, ["manual help needed"])
+    monkeypatch.setattr(cli, "_alsa_card_for", lambda found, mic: None)
+    reprobed: list[bool] = []
+    monkeypatch.setattr(
+        cli, "_reprobe", lambda found: reprobed.append(True) or micwatch.ReviveResult(True, "input is back", [])
+    )
+    assert cli.main(["mic-revive"]) == 1 and reprobed == []  # never without the explicit flag
+    assert cli.main(["mic-revive", "--reprobe"]) == 0 and reprobed == [True]
+
+
+def test_default_source_command_sets_the_voice_chain(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    ReviveRig(monkeypatch, micwatch.StallProbe(False))
+    monkeypatch.setattr(
+        cli, "audio_sources", lambda: {"alsa_input.wave": "Wave:3", "streamstack_mic": "StreamStack Mic"}
+    )
+    monkeypatch.setattr(system, "default_device", lambda kind: "alsa_input.cam_link")
+    set_to: list[str] = []
+    monkeypatch.setattr(cli.hw_voice, "set_default_source", lambda source, runner=None: set_to.append(source) or True)
+    assert cli.main(["default-source"]) == 0
+    assert set_to == ["streamstack_mic"] and "StreamStack Mic" in capsys.readouterr().out
+    monkeypatch.setattr(system, "default_device", lambda kind: "streamstack_mic")
+    set_to.clear()
+    assert cli.main(["default-source"]) == 0 and set_to == []
+
+
 def test_mic_check_playback_has_a_deadline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     played: list[tuple[list[str], float]] = []
     monkeypatch.setattr(cli, "have", lambda tool: True)
-    monkeypatch.setattr(cli, "audio_sources", lambda: {system.EE_SOURCE: "EE"})
+    monkeypatch.setattr(cli, "audio_sources", lambda: {system.VOICE_SOURCE: "StreamStack Mic"})
     monkeypatch.setattr(system, "record", lambda source, seconds, path: True)
     monkeypatch.setattr(system, "run", lambda argv, timeout=10: played.append((argv, timeout)) or None)
     assert cli.main(["mic-check", "3"]) == 0
@@ -306,7 +340,7 @@ def test_app_checks_never_warn_about_a_missing_zoom_client(monkeypatch: pytest.M
 
 
 def test_app_checks_fail_when_a_required_app_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "have", lambda tool: tool != "obs")
+    monkeypatch.setattr(cli, "have", lambda tool: tool != "gphoto2")
     checks = {c["id"]: c for c in cli.app_checks()}
-    assert checks["app-obs"]["state"] == "fail"
+    assert checks["app-gphoto2"]["state"] == "fail"
     assert cli.summarize(list(checks.values())) == "fail"

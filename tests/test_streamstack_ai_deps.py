@@ -1,5 +1,4 @@
-"""StreamStack AI helper dependencies: background-removal plugin, OpenVINO, face model,
-DeepFilterNet LADSPA library.
+"""StreamStack AI helper dependencies: OpenVINO, face model, DeepFilterNet LADSPA library.
 
 Static checks of the pinned artifacts and of the hardware gating; nothing is
 downloaded or installed (catalog#100, catalog#101, catalog#102).
@@ -17,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/developer_workstation"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 MAIN = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
-BLUR = yaml.safe_load((ROLE / "tasks/streamstack-background-removal.yml").read_text())
 FRAMING = yaml.safe_load((ROLE / "tasks/streamstack-framing.yml").read_text())
 DEEPFILTER = yaml.safe_load((ROLE / "tasks/streamstack-deepfilter.yml").read_text())
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -40,7 +38,6 @@ def _named(tasks: list[dict], prefix: str) -> dict:
 
 def test_every_pinned_artifact_carries_a_sha256() -> None:
     for key in (
-        "streamstack_backgroundremoval_sha256",
         "streamstack_openvino_wheel_sha256",
         "streamstack_openvino_telemetry_wheel_sha256",
         "streamstack_framing_model_sha256",
@@ -50,11 +47,6 @@ def test_every_pinned_artifact_carries_a_sha256() -> None:
 
 
 def test_pinned_urls_name_the_pinned_files() -> None:
-    deb = _render(DEFAULTS["streamstack_backgroundremoval_url"])
-    assert deb.endswith(f"/{DEFAULTS['streamstack_backgroundremoval_release']}/"
-                        f"obs-backgroundremoval_{DEFAULTS['streamstack_backgroundremoval_release']}.forky_amd64.deb")
-    assert deb.startswith("https://github.com/royshil/obs-backgroundremoval/releases/download/")
-    assert DEFAULTS["streamstack_backgroundremoval_deb_release"].startswith(DEFAULTS["streamstack_backgroundremoval_release"])
     for wheel, url in (("streamstack_openvino_wheel", "streamstack_openvino_wheel_url"),
                        ("streamstack_openvino_telemetry_wheel", "streamstack_openvino_telemetry_wheel_url")):
         assert _render(DEFAULTS[url]).startswith("https://files.pythonhosted.org/packages/")
@@ -71,7 +63,7 @@ def test_pinned_urls_name_the_pinned_files() -> None:
 
 
 def test_every_download_is_checksummed_and_never_forced() -> None:
-    for tasks in (BLUR, FRAMING, DEEPFILTER):
+    for tasks in (FRAMING, DEEPFILTER):
         for task in _walk(tasks):
             module = task.get("ansible.builtin.get_url")
             if module:
@@ -79,30 +71,13 @@ def test_every_download_is_checksummed_and_never_forced() -> None:
                 assert module["force"] is False, task["name"]
 
 
-def test_the_plugin_install_skips_when_the_pinned_version_is_present() -> None:
-    install = _named(BLUR, "Download and install the pinned")
-    assert "_streamstack_bgremoval_older.rc" in install["when"]
-    compare = _named(BLUR, "Compare the installed")["ansible.builtin.command"]["argv"]
-    assert "streamstack_backgroundremoval_deb_release" in compare[-1] and compare[-2] == "lt"
-    apt = _named(BLUR, "Install obs-backgroundremoval {{")["ansible.builtin.apt"]
-    assert apt["deb"].endswith("{{ streamstack_backgroundremoval_sha256 }}.deb")
-    assert not any("systemd" in str(t) or "obs-studio" in str(t.get("ansible.builtin.command", "")) for t in _walk(BLUR))
-
-
-def test_the_plugin_is_linked_where_ubuntus_obs_searches() -> None:
-    # Ubuntu's libobs only searches its compiled-in system paths, never /usr/local (catalog#103).
-    assert DEFAULTS["streamstack_obs_module_dir"] == "/usr/lib/x86_64-linux-gnu/obs-plugins"
-    assert DEFAULTS["streamstack_obs_data_dir"] == "/usr/share/obs/obs-plugins"
-    module = _named(BLUR, "Link the obs-backgroundremoval module")["ansible.builtin.file"]
-    data = _named(BLUR, "Link the obs-backgroundremoval data")["ansible.builtin.file"]
-    assert module["state"] == data["state"] == "link"
-    assert _render(module["src"]) == "/usr/local/lib/obs-plugins/obs-backgroundremoval.so"
-    assert _render(module["dest"]) == "/usr/lib/x86_64-linux-gnu/obs-plugins/obs-backgroundremoval.so"
-    assert _render(data["src"]) == "/usr/local/share/obs/obs-plugins/obs-backgroundremoval"
-    # libobs resolves a module's data as <data dir>/%module%, and %module% is the .so name without .so
-    assert _render(data["dest"]) == "/usr/share/obs/obs-plugins/obs-backgroundremoval"
-    install = _named(BLUR, "Install obs-backgroundremoval")
-    assert any(t["name"].startswith("Link the obs-backgroundremoval module") for t in install["block"])
+def test_the_obs_background_plugin_is_gone() -> None:
+    # Background blur runs inside the native engine through OpenVINO; the OBS plugin is retired (streamstack#75).
+    assert not (ROLE / "tasks/streamstack-background-removal.yml").exists()
+    assert not any(key.startswith(("streamstack_backgroundremoval", "streamstack_obs_")) for key in DEFAULTS)
+    assert "streamstack_background_removal_enabled" not in DEFAULTS
+    assert "obs-backgroundremoval" in DEFAULTS["streamstack_retired_packages"]
+    assert "streamstack-background-removal" not in str(MAIN)
 
 
 def test_openvino_goes_where_the_isolated_launcher_looks() -> None:
@@ -140,7 +115,6 @@ def test_the_model_lands_where_streamstack_looks_for_it() -> None:
 
 def test_main_includes_both_groups_for_streamstack_desktops_only() -> None:
     for file, tag, flag in (
-        ("streamstack-background-removal.yml", "streamstack-background-removal", "streamstack_background_removal_enabled"),
         ("streamstack-framing.yml", "streamstack-framing", "streamstack_framing_enabled"),
         ("streamstack-deepfilter.yml", "streamstack-deepfilter", "streamstack_deepfilter_enabled"),
     ):
@@ -159,8 +133,8 @@ def test_deepfilter_pin_names_the_x86_64_release_asset() -> None:
         f"libdeep_filter_ladspa-{release}-x86_64-unknown-linux-gnu.so")
 
 
-def test_deepfilter_lands_where_easy_effects_searches() -> None:
-    # Easy Effects 8.1.2 searches LADSPA_PATH, /usr/local/lib/ladspa,
+def test_deepfilter_lands_where_the_voice_chain_searches() -> None:
+    # the voice chain searches LADSPA_PATH, /usr/local/lib/ladspa,
     # /usr/lib/x86_64-linux-gnu/ladspa, /usr/lib/ladspa and /usr/lib64/ladspa
     # for exactly this file name (streamstack docs/voice-denoise.md).
     assert DEFAULTS["streamstack_deepfilter_dest"] == "/usr/local/lib/ladspa/libdeep_filter_ladspa.so"
@@ -199,8 +173,8 @@ def test_deepfilter_install_is_idempotent_and_never_downgrades() -> None:
         assert (got == "True") is want, (exists, installed)
 
 
-def test_deepfilter_never_restarts_audio_or_obs() -> None:
+def test_deepfilter_never_restarts_audio_or_the_console() -> None:
     text = str(DEEPFILTER)
-    for word in ("systemd", "service", "easyeffects", "pipewire", "wireplumber", "obs-studio", "notify"):
+    for word in ("systemd", "service", "pipewire", "wireplumber", "notify"):
         assert word not in text.lower().replace("streamstack", ""), word
     assert _named(DEEPFILTER, "Install the DeepFilterNet LADSPA")["when"] == "ansible_facts['architecture'] == 'x86_64'"

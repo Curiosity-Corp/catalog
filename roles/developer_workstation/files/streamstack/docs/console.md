@@ -17,7 +17,7 @@ Change it first, then the code.
   pictures; text explains, it never is the interface.
 - **Safe live.** Slider drags ramp smoothly, every action answers within
   100 ms (optimistic UI, then the real state), nothing destructive without an
-  undo, and a failing helper (OBS closed, mic unplugged) degrades one card,
+  undo, and a failing helper (camera unplugged, mic unplugged) degrades one card,
   never the page.
 - **No new runtime dependencies.** The backend is standard-library Python like
   the rest of StreamStack; the frontend is plain ES modules, Web Components and
@@ -32,9 +32,11 @@ Change it first, then the code.
  │ components/*.js, pages/*.js, *.css   │  SSE      │ console/hub.py     state, push │
  └──────────────────────────────────────┘  MJPEG    │ console/rig.py     Rig facade  │
                                                     │   ├ console/audio.py  meters,  │
-                                                    │   │   gain, mute, Easy Effects │
-                                                    │   ├ console/video.py  OBS:     │
-                                                    │   │   scenes, look, outputs    │
+                                                    │   │   gain, mute, voice    │
+                                                    │   │   chain (audiochain/),     │
+                                                    │   │   outputs (outputs.py)     │
+                                                    │   ├ console/native.py engine:  │
+                                                    │   │   look, crop, privacy      │
                                                     │   └ console/studio.py studio,  │
                                                     │       auto, health, apps       │
                                                     └───────────────────────────────┘
@@ -85,37 +87,38 @@ page URL as `?token=…`; `app.js` keeps it in memory.
 | GET | `/api/state` | the full state snapshot (below) |
 | GET | `/api/events` | Server-Sent Events: `state` (full snapshot, on every change, at most 4/s), `meters` (~30/s), `toast` (`{level, text}`), and a `: ping` comment every 15 s |
 | POST | `/api/action` | `{"action": "<name>", ...params}` → `{"ok": true, "message"?: str}` or HTTP 400/409/500 `{"ok": false, "error": str}` |
-| GET | `/api/preview.mjpg?source=program\|<obs source>\|camera&fps=1..15&width=160..1280` | `multipart/x-mixed-replace` JPEG stream |
+| GET | `/api/preview.mjpg?source=program\|<camera>\|camera&fps=1..15&width=160..1280` | `multipart/x-mixed-replace` JPEG stream |
 | GET | `/api/preview.jpg?source=…&width=…` | one JPEG (look thumbnails) |
+| GET | `/api/deck/palette` | the options a key can be given (`{"palette": [...]}`), built from the live rig |
+| GET | `/api/deck/profile.json` | the deck profile, for export |
+| GET | `/api/deck/key.png?page=&key=&size=` | the picture of one key (empty `page`: the page the deck is on); needs Pillow |
 | GET | `/api/clips/<id>.wav` | a mic-check recording (kept for 10 minutes, at most 4) |
 
 ## State snapshot
 
 Every key is always present (use `null` for unknown) so the frontend never
 guards against missing keys. Times are ISO-8601 local; levels in dBFS; look
-values in OBS's own units.
+values in the engine's units.
 
 ```jsonc
 {
   "version": "0.2.0",
   "demo": false,
   "studio": {
-    "running": true,                 // OBS is running
+    "running": true,                 // the program camera is on
     "busy": false,                   // a start/stop is in progress
-    "camera_for_calls": "graded",    // graded | raw | obs-idle | off
+    "camera_for_calls": "graded",    // graded | raw | idle | off
     "program_label": "StreamStack Camera",
     "camera_label": "Canon EOS 50D",
     "bridge": true,                  // Canon bridge unit active (or external producer live)
-    "voice_chain": true              // Easy Effects Source exists
+    "voice_chain": true              // StreamStack Mic exists (the voice chain is running)
   },
   "video": {
-    "obs": "connected",              // connected | offline | no-websocket | error
-    "obs_error": null,
-    "scenes": [{"name": "Canon", "active": true}],
-    "program_scene": "Canon",
-    "privacy": false,                // "Be Right Back" is on air because of the privacy button
-    "privacy_scene": "Be Right Back",
-    "sources": ["Canon EOS 50D", "Cam Link 4K"],   // sources carrying the Lighting & Color filter
+    "scenes": [{"name": "Program", "active": true}],   // the native engine has the one scene
+    "program_scene": "Program",
+    "privacy": false,                // the picture is blacked out because of the privacy button
+    "privacy_scene": "Blackout",
+    "sources": ["Canon EOS 50D", "Cam Link 4K"],   // the cameras found; the engine reads one at a time
     "selected_source": "Canon EOS 50D",
     "look": {"brightness": 0.0, "contrast": 0.0, "gamma": 0.0, "saturation": 0.0,
              "warmth": 0.0, "sharpen_enabled": false, "sharpen_amount": 0.08,
@@ -123,8 +126,8 @@ values in OBS's own units.
     "limits": {"brightness": [-0.5, 0.5], "contrast": [-1, 1], "gamma": [-1, 1],
                "saturation": [-1, 1], "warmth": [-1, 1], "sharpen_amount": [0, 1], "lut_amount": [0, 1]},
     "looks": [{"name": "Natural", "builtin": true, "values": {…look…}}],
-    "blur": {                         // background blur (obs-backgroundremoval), see "Background blur notes"
-      "available": true,              // the filter kind is registered in the running OBS; null while OBS is down
+    "blur": {                         // background blur; the native engine adds `native: true` and `arc`, see below
+      "available": true,              // false while the Arc blur is unavailable
       "plugin": {"installed": true, "version": "1.4.1", "models_ok": true, "loaded": true,
                  "devices": ["cpu"], "device_labels": ["CPU"], "device": "cpu", "hint": ""},
       "sources": {"Canon EOS 50D": {"present": true, "enabled": false, "strength": 8, "rate": 2}},
@@ -167,19 +170,49 @@ values in OBS's own units.
             "revive": {"state": "idle", "message": null}},
                                      // state: idle | reviving | ok (shown ~8 s) | failed
     "gain_range": [-30.0, 12.0],
-    "chain": {"running": true, "available": true, "preset": "StreamStack Voice",
-              "presets": [{"name": "StreamStack Voice", "label": "Voice", "blurb": "default broadcast voice"}],
-              "bypass": false},
-    "tone": {"bass_db": 2.0, "presence_db": 2.5, "treble_db": 1.5, "pitch_semitones": 0.0,
-             "supported": true},       // false when Easy Effects cannot be driven live
-    "tone_ranges": {"bass_db": [-12, 12], "presence_db": [-12, 12], "treble_db": [-12, 12], "pitch_semitones": [-6, 6]},
-    "denoise": {"engine": "rnnoise", "atten_limit_db": 100.0, "atten_range": [0, 100], "supported": true, "custom": false,
-                "engines": [{"id": "rnnoise", "label": "RNNoise", "effect": "Noise reduction", "delay_ms": 10,
-                             "available": true, "reason": null},
-                            {"id": "deepfilternet", "label": "DeepFilterNet", "effect": "Deep noise remover",
-                             "delay_ms": 40, "available": false, "reason": "DeepFilterNet needs the …"}]},
+    "chain": {                         // the voice chain, docs/audio-chain.md
+      "running": true, "available": true, "missing": [], "error": null,
+      "source": "streamstack_mic", "description": "StreamStack Mic", "rate": 48000,
+      "contract": {"name": "streamstack_mic", "media_class": "Audio/Source", "rate": 48000, "channels": 1,
+                   "state": "running", "description": "StreamStack Mic"},   // what pw-dump says; null while not running
+      "preset": "StreamStack Voice", "custom": false, "bypass": false,
+      "presets": [{"name": "StreamStack Voice", "label": "Voice", "blurb": "default broadcast voice",
+                   "engine": "deepfilternet", "user": false, "unavailable": null}],
+      "engine": "deepfilternet", "engine_active": "deepfilternet",
+      "engines": [{"id": "deepfilternet", "label": "DeepFilterNet", "delay_ms": 30, "available": true, "reason": null},
+                  {"id": "rnnoise", "label": "RNNoise", "delay_ms": 12, "available": false, "reason": "RNNoise needs …"}],
+      "stages": [{"id": "comp", "label": "Compressor", "blurb": "…", "on": true,
+                  "params": [{"key": "comp_threshold_db", "label": "Threshold", "unit": "dB", "low": -50, "high": 0,
+                              "default": -18, "step": 0.5, "hint": "…", "value": -18}]}],
+                                       // stages in signal order: hp, gate, denoise, deess, eq, comp, gain, limiter
+      "loudness": {"on": false, "target_lufs": -16.0, "targets": [-14, -16, -23], "auto_db": 0.0,
+                   "level_lufs": null, "window_db": 12, "true_peak_db": -1.0,
+                   "state": "off"}     // off | riding | holding | silence | muted | no-signal | at-limit | capped
+    },
+    "tone": {"bass_db": 2.0, "presence_db": 2.5, "treble_db": 1.5, "supported": true},   // shortcuts onto the EQ stage
+    "tone_ranges": {"bass_db": [-12, 12], "presence_db": [-12, 12], "treble_db": [-12, 12]},
+    "denoise": {"engine": "deepfilternet", "atten_limit_db": 100.0, "atten_range": [0, 100], "supported": true,
+                "custom": false, "engines": []},      // the same engines as chain.engines
     "mic_check": {"state": "idle", "seconds": 6, "clips": [{"id": "…", "label": "raw microphone", "url": "api/clips/….wav"}]}
                                        // state: idle | recording-raw | recording-processed | done | error
+    "outputs": {                       // every PipeWire output, console/outputs.py
+      "available": true, "problem": null,          // problem: why there is no list (pw-dump missing, no sinks)
+      "default": "alsa_output.usb-Elgato…", "default_label": "Elgato Wave XLR", "volume_range": [0, 100],
+      "devices": [{"name": "alsa_output.usb-Elgato…", "label": "Elgato Wave XLR", "detail": "Analog Stereo",
+                   "kind": "headphones",       // hdmi | headphones | headset | speaker | interface | other
+                   "bus": "usb", "state": "running", "volume": 55, "muted": false, "default": true,
+                   "playing": false,           // the sound test is on this output right now
+                   "result": {"at": "2026-10-23T09:12:40", "result": "heard", "error": null}}],
+                                       // result: null (never tested) | pending (played, waiting for the person)
+                                       //         | heard | not-heard | failed (error says why); kept across restarts
+      "routes": [{"name": "streamstack_virtual", "label": "A virtual sink", "detail": "…", "default": false}],
+                                       // virtual sinks: shown as routes, never as devices, never tested
+      "warning": null,                 // {"kind": "default-lost", "name", "label", "message"} until dismissed
+      "test": {"state": "idle", "name": null, "index": 0, "total": 0, "all": false,
+               "seconds": 2.8, "elapsed": null,
+               "phases": [{"id": "left", "start": 0.05, "end": 0.45}, {"id": "right", "start": 0.65, "end": 1.15},
+                          {"id": "chime", "start": 1.5, "end": 2.7}]}   // state: idle | playing
+    }
   },
   "auto": {
     "running": false, "backend": "claude-cli", "can_undo": true, "busy": false,
@@ -234,9 +267,38 @@ values in OBS's own units.
     "devices": [{"usb": "1235:8219", "name": "Scarlett 2i2 4th Gen", "profile": "scarlett-2i2-gen4"}],
     "software_gain": true,           // the Audio page's PipeWire gain is always the fallback
     "demo_profiles": []              // demo only: [{"id", "label"}] the page offers to simulate
+  },
+  "storage": {                       // files the crash-safe store repaired (src/streamstack/store.py)
+    "warnings": [{"id": "1f2e3d4c", "path": "~/.config/streamstack/looks.json", "problem": "is damaged (…)",
+                  "action": "restored-backup",   // restored-backup | defaults | ignored-lines | unreadable
+                  "quarantined_to": "looks.json.corrupt-20261023T101500", "at": 1729678500.0}]
+  },
+  "deck": {                          // the Stream Deck; see docs/deck.md
+    "render": true,                  // Pillow is installed here: api/deck/key.png works
+    "device": {"connected": true, "source": "usb", "model": "xl", "name": "Stream Deck XL", "serial": "…",
+               "rows": 4, "cols": 8, "size": 96},  // source: usb | demo; "error" when the service cannot open one
+    "profile": {"layout": {"rows": 4, "cols": 4}, "model": "virtual-4x4", "home": "main", "pristine": true,
+                "mismatch": false,   // the saved profile's grid differs from the connected deck's
+                "settings": {"brightness": 70, "sleep_minutes": 15},
+                "pages": [{"id": "main", "name": "Live", "keys": [KEY, ...]}]},
+    "surface": {"rows": 4, "cols": 4, "page": {"id": "main", "name": "Live"}, "can_back": false, "fitted": false,
+                "keys": [KEY, ...]},  // what the deck itself shows (the profile re-flowed to its grid)
+    "models": [{"id": "xl", "name": "Stream Deck XL", "rows": 4, "cols": 8, "size": 96}],
+    "palette_rev": "1a2b3c4d"        // changes when the options list does (api/deck/palette)
+  },
+  "diagnostics": {                   // opt-in telemetry and crash reports (docs/telemetry.md)
+    "telemetry": {"enabled": false, "path": "/metrics", "url": null,   // url: where a scraper reads it, no token
+                  "scrapes": 0, "last_scrape": null, "token_set": false},
+    "crashes": {"dir": "~/.local/state/streamstack/crashes",
+                "reports": [{"id": "20261023T101500-tray-4242-exception", "time": 1729678500.0, "component": "tray",
+                             "kind": "exception",   // exception | handled | unraisable | native
+                             "type": "RuntimeError", "message": "…", "version": "0.0.8"}]}
   }
 }
 ```
+
+A deck `KEY` is `{"i", "empty", "label", "icon", "lit", "tone", "value", "armed", "dim", "rev", "raw"?}`: `rev` changes
+exactly when the key's picture would, and `raw` (profile pages only) is the saved `{action, params, label?, icon?}`.
 
 `meters` events (and nothing else) carry live audio levels:
 
@@ -245,7 +307,8 @@ values in OBS's own units.
  "mic":   {"peak_db": -18.2, "sample_db": -18.9, "rms_db": -27.5, "clip": false, "latched": false,
            "lufs_m": -26.1, "lufs_s": -27.0},                       // the raw microphone
  "voice": {"peak_db": -14.0, "sample_db": -14.3, "rms_db": -22.1, "clip": false, "latched": false,
-           "lufs_m": -22.4, "lufs_s": -23.0}}                       // Easy Effects Source; null when absent
+           "lufs_m": -22.4, "lufs_s": -23.0,
+           "gr_db": 3.5}}                                           // StreamStack Mic; null when absent
 ```
 
 The tap is the source's own 48 kHz, 32 bit float, in 20 ms frames (`console/loudness.py`, pure Python, about 1-3 % of
@@ -261,7 +324,7 @@ so the stream costs about 8 kB/s.
 
 `POST /api/action` with `{"action": name, ...}`. Unknown names, bad types and
 out-of-range values are HTTP 400. A helper that is not running is 409 with a
-human message ("OBS is not running — start the studio first."). Actions that
+human message ("The program camera is off — turn on Camera first."). Actions that
 take seconds (studio start, mic check, auto once) return at once with
 `{"ok": true, "message": "Starting…"}` and report through `state` and `toast`.
 
@@ -270,7 +333,7 @@ take seconds (studio start, mic check, auto once) return at once with
 | `studio.start` | | `streamstack studio` |
 | `studio.stop` | | `streamstack stop` |
 | `video.scene` | `name` | switch the program scene |
-| `video.privacy` | `on: bool` | on: remember the scene, cut to the privacy scene; off: back to the remembered scene |
+| `video.privacy` | `on: bool` | on: black out the program picture (an engine command, no restart); off: the picture returns |
 | `video.source` | `name` | choose which camera source the look controls edit |
 | `video.look` | `values: {key: number\|bool}` (partial), `source?` | set look values now (no ramp; the UI throttles drags to ≤ 15/s) |
 | `video.look.reset` | `source?` | ramp back to the neutral look |
@@ -279,7 +342,8 @@ take seconds (studio start, mic check, auto once) return at once with
 | `video.looks.delete` | `name` | delete a saved (non-builtin) look |
 | `video.blur` | `on?`, `strength?` (1–20), `rate?` (1–6), `source?` (omitted: every camera) | background blur: creates the `Background Blur` filter on the camera if it is missing, then sets its enabled flag and settings; 409 when the plugin is missing or not loaded (turning it off always works) |
 | `video.blur.plugin` | `installed: bool` | demo only: pretend the plugin is (not) installed, to see the install hint |
-| `video.virtualcam` | `on` | start/stop the OBS virtual camera |
+| `video.blur.arc` | `mode` | demo only: put the native blur path in a state (`off` keeps the plain demo blur, `running`, `downloading`, `unavailable`, `failed`, `stalled`) |
+| `video.virtualcam` | `on` | start/stop the program camera (the native engine) |
 | `video.record` | `on` | start/stop recording |
 | `video.stream` | `on` | start/stop streaming |
 | `video.canon_set` | `id`, `value` | set a Canon setting (`iso`, `shutter`, `aperture`, `exposure_comp`, `whitebalance`, `kelvin`, `picturestyle`, `focusmode`, `liveviewsize`); 409 with the camera's own reason when it refuses (for example the mode dial). The answer message says when the camera kept a different value |
@@ -288,14 +352,33 @@ take seconds (studio start, mic check, auto once) return at once with
 | `audio.gain` | `db` | microphone input gain, clamped to `gain_range` |
 | `audio.mute` | `on` | mute/unmute the microphone (the raw source, so every app is muted) |
 | `audio.preset` | `name` | load a voice preset |
-| `audio.bypass` | `on` | Easy Effects global bypass |
-| `audio.tone` | any of `bass_db`, `presence_db`, `treble_db`, `pitch_semitones` | voice tone, live |
-| `audio.denoise` | `engine` (`rnnoise` or `deepfilternet`) and/or `atten_limit_db` (0 to 100) | noise removal engine and DeepFilterNet's Attenuation Limit, live; 409 for DeepFilterNet without its library |
+| `audio.bypass` | `on` | A/B: `on` plays the raw microphone (time-aligned, crossfaded) instead of the chain |
+| `audio.tone` | any of `bass_db`, `presence_db`, `treble_db` | the EQ stage's shelves and presence band, live |
+| `audio.chain` | `params`: stage settings by key (`comp_ratio`, `hp_hz`, `gate_on`, ...; the keys are in `chain.stages`) | live-adjust any stage; values are checked against their ranges (400) |
+| `audio.chain_reset` | | back to the chosen preset's own values |
+| `audio.preset_save` | `name`, `blurb?` | keep the current sound as your own preset |
+| `audio.loudness` | `on?`, `target_lufs?` (-14, -16 or -23) | the loudness leveller (issue #38), see `docs/audio-chain.md` |
+| `audio.denoise` | `engine` (`rnnoise` or `deepfilternet`) and/or `atten_limit_db` (0 to 100) | noise removal engine and DeepFilterNet's attenuation limit, live; 409 for an engine whose LADSPA plugin is missing |
 | `audio.revive` | | restart a stalled microphone: suspend/resume the source, then cycle the card profile; 409 while one is running |
 | `audio.demo_stall` | `on` | demo only: put the demo microphone into (or out of) the stalled state |
 | `audio.clip_clear` | | clear the clip latch (every window shows it cleared) |
 | `audio.demo_clip` | | demo only: trip the clip latch |
 | `audio.mic_check` | `seconds?` (2–15, default 6) | record raw then processed; clips appear in state |
+| `audio.output_volume` | `name`, `percent` (0 to 100) | volume of one output (`wpctl set-volume`) |
+| `audio.output_mute` | `name`, `on` | mute or unmute one output |
+| `audio.output_default` | `name` | make an output the default; clears the lost-default warning |
+| `audio.output_test` | `name` | play the test sound on that output only, the default stays; 409 for a route, a muted output, volume 0, a missing player or a test already running |
+| `audio.output_test_all` | | the same, one output after the other |
+| `audio.output_test_stop` | | end a running test |
+| `audio.output_result` | `name`, `heard` | the person's verdict on the test that just played; 409 before a test has played |
+| `audio.output_dismiss` | | dismiss the default-output-lost warning |
+| `audio.demo_output_plug` | `name`, `plugged` | demo only: unplug or plug one of the four simulated outputs |
+| `audio.demo_output_reset` | | demo only: stop any test, plug everything back, forget volumes and results |
+| `storage.dismiss` | `id?` | forget one repaired-file notice (all of them without `id`) |
+| `telemetry.set` | `on: bool` | switch the opt-in `/metrics` endpoint on or off (saved in the user env file) |
+| `telemetry.scrape_config` | | message: a Prometheus `scrape_configs` block with the scrape token; 409 while telemetry is off |
+| `telemetry.rotate_token` | | create a new scrape token; the old one stops working |
+| `crash.clear` | | remove all crash reports |
 | `interface.set` | `id`, `value`, `confirm?: bool` | change one control of the detected interface (`id` and `value` as the widget reports them: bool for a switch or Autogain, option index for a choice, number for a slider). Switching 48V on needs `confirm: true`, else 400 |
 | `interface.rescan` | | look for the interface again now |
 | `interface.demo_profile` | `profile`: `scarlett-2i2-gen4` \| `scarlett-2i2-gen3` \| `wave-xlr` \| `none` | demo only: simulate another interface |
@@ -316,8 +399,52 @@ take seconds (studio start, mic check, auto once) return at once with
 | `auto.persona_save` | `persona` | save an edited or new persona (the full document, validated) |
 | `auto.persona_reset` | `id` | drop your edits of a shipped persona, or delete a custom one |
 | `auto.location` | `name`, `latitude`, `longitude` or `clear` | the property location for sunrise and sunset |
+| `deck.press` | `key` | press a key of the page the deck is on |
+| `deck.page` / `deck.goto` / `deck.back` / `deck.home` | `page` | navigate the deck's pages |
+| `deck.key_set` / `deck.key_clear` / `deck.key_move` | `page`, `key`, `spec` / `to`, `to_page` | edit the profile (saves it) |
+| `deck.page_add` / `deck.page_rename` / `deck.page_delete` / `deck.page_move` | `name`, `page`, `to` | edit the pages |
+| `deck.settings` | `brightness` 5..100, `sleep_minutes`, or `step` | the deck's brightness and sleep timer |
+| `deck.layout` / `deck.import` / `deck.reset` | `model` or `rows`+`cols` / `profile` | lay out for another deck, import, reset to the default |
+| `deck.attach` / `deck.detach` | `name`, `serial`, `rows`, `cols`, `size` or `error` | the deck service reporting its device (demo: `model`) |
 | `health.refresh` | | re-run the checks now |
-| `open.app` | `name`: `obs` \| `easyeffects` \| `qpwgraph` \| `pavucontrol` \| `qv4l2` | open the full tool |
+| `open.app` | `name`: `qpwgraph` \| `pavucontrol` \| `qv4l2` | open the full tool |
+
+## Presets
+
+The `presets` snapshot block, the `presets.*` actions and `GET /api/presets/catalog` are described in
+[presets.md](presets.md). The Presets page is `#/presets` (Alt+8).
+
+## Stream
+
+The `stream` snapshot block (status, uptime, bitrate, dropped frames, latency, `cpu_percent`, `gpu_percent`, encoders,
+destinations with per-destination health, recording, settings, output, last swap, events, probe) and the actions
+`stream.start`, `stream.stop`, `stream.set`, `stream.probe`, `record.start` and `record.stop` are described in
+[stream.md](stream.md). They answer 501 on a rig without a stream backend (`stream.status` is then `unavailable`).
+The Stream page is `#/stream` (Alt+0).
+
+- **Go live / Stop stream** and **Record / Stop recording** with a clear state word (Offline, Connecting, On air,
+  Degraded, Encoder failed). Stop is a hold-to-confirm button. The top bar shows ON AIR and REC while they run.
+- **Meters**: encoder fps, bitrate, dropped frames, latency, CPU and GPU, each with a one-minute sparkline built in
+  the page from the pushed state ("n/a" where the host reports nothing).
+- **Destinations**: SRT, RTMP (classic, Enhanced, Enhanced only) and WHIP (StreamStack's own client; shown unavailable with the probe's
+  reason and the install line when the `whip` extra is missing; RTT and loss are shown next to the bitrate), with the
+  local recording pinned on top. Add, edit, remove, include or leave out of Go
+  live, start or stop one alone. Each shows its health (Live, Connecting, Reconnecting, Failed), codec, bitrate,
+  latency, drops, reconnect count and last error. The key is typed into a password field and sent once as `key` (or as
+  a reference such as `env:NAME` as `key_ref`); the state shows only `"key": "set"`, so the page can never display it,
+  and editing a destination keeps the stored key unless a new one is typed or "Remove the stored key" is ticked.
+- **Live controls**: rate control, video bitrate, keyframe interval, quality (QP) and audio bitrate change the running
+  stream through the hot-swap path, with no reconnect. A swap takes about a second and the server refuses a second one
+  while it runs (409), so the page sends one change at a time, at least 1.3 s apart, and merges what was moved in
+  between into the next send. Not streaming: changes are saved and apply at the next start.
+- **Encoder**: the codec buttons and the encoder list come from `stream.probe`; an encoder that failed its trial is
+  disabled with the reason, and the transports (WHIP included) say why one is unavailable.
+- **Picture and codec** (resolution, frame rate, codec) reconnect every destination once, so they are staged and
+  applied with one button that says so ("Apply and reconnect once").
+
+Push: the page has no channel of its own. The console's Server-Sent Events stream (`api/events`) already pushes the
+whole snapshot, `stream` included, whenever it changes (checked every second, and about 0.25 s after any action), so
+the page re-renders from `store` on those pushes and does not poll.
 
 ## Backend modules
 
@@ -371,7 +498,7 @@ The USB protocol itself lives in `streamstack/lighting.py` (see
 actions by prefix and assembles the snapshot. `console/hub.py` polls
 `Rig.snapshot()` (every 1 s, and right after each action), pushes `state`
 only when it changed, and pushes `meters` at 30 Hz to every SSE client.
-Controllers cache slow probes (v4l2-ctl, pactl, OBS) in their own threads so
+Controllers cache slow probes (v4l2-ctl, pactl) in their own threads so
 `state()` and `meters()` return in well under 10 ms.
 
 ### Audio notes
@@ -382,47 +509,71 @@ Controllers cache slow probes (v4l2-ctl, pactl, OBS) in their own threads so
   when its source appears or disappears; never more than two readers.
 - Gain and mute: `pactl set-source-volume` / `set-source-mute` on the raw mic
   chosen by `system.microphone(cfg)`.
-- Easy Effects 8 is a Qt app with a local socket server; tone control uses
-  whatever Easy Effects 8 supports live (research its local server commands
-  first). If no live parameter path exists, tone changes are written to a
-  managed `StreamStack Live` preset and loaded with `easyeffects -l`,
-  debounced to at most one load per 400 ms.
+- The voice chain (`audiochain/`, docs/audio-chain.md) is a PipeWire filter-chain StreamStack generates and hosts
+  itself; tone, denoise and every stage fader write straight to its live controls (`pw-cli set-param`), at most
+  20 times a second and only the controls that changed.
+
+- Outputs (`console/outputs.py`, zero dependencies, PipeWire's own tools only): one `pw-dump` gives the Audio/Sink
+  nodes, their volume and mute (Props) and the default (the "default" metadata); it is polled every 5 s and
+  refreshed at once when `pw-dump --monitor` reports a change to a sink, a device or the default, so a plugged or
+  unplugged device shows within a second; the watch restarts itself if it dies. Volume, mute and default go through
+  `wpctl` by node id. Sinks with `node.virtual` become routes. The test sound is generated
+  with `wave`/`struct` into a temp file (stereo: one low beep on the left, two higher beeps on the right, then a
+  two-note chime on both), played with `pw-play --target <sink>` under a deadline (`system.play`), so the default sink
+  is never touched. The verdict (heard or not) and the time are kept in `console-outputs.json` under the state dir.
+  Losing the default output raises one warning and a toast; a missing `pw-dump`, `wpctl` or `pw-play`, a dead audio
+  server or a failed play each come back as a plain sentence, never a traceback.
+  The demo rig's `DemoOutputs` runs the same code over four simulated sinks and plays nothing.
 
 ### Video notes
 
-- One long-lived `OBS` connection in a thread with reconnect/backoff
-  (1, 2, 5, 10 s); `obs: "offline"` while OBS is not running.
-- Preview frames come from `GetSourceScreenshot` of the program scene (or a
-  named source) at the requested width; with OBS offline, `camera` falls back
-  to one ffmpeg frame grab from the raw camera node every `1/fps` s. The demo
-  serves a generated test-card JPEG shipped in `data/console/demo/`.
+- The native engine (`console/native.py`, `engine/process.py`) is one supervised ffmpeg child. A look change, a
+  crop window and the privacy blackout are commands on its stdin and land between two frames; only a camera
+  change restarts it. `video.record`, `video.stream` and `video.blur` answer 409 on the real rig until their
+  engine paths land (recording and streaming through the engine's encode tap, blur with the OpenVINO mask).
+- Preview frames come from the engine's graded output (`source=program`), or one ffmpeg frame grab from the camera
+  node (cached for a moment, so the Console, framing and the director share one grab). The demo serves a
+  generated test-card JPEG shipped in `data/console/demo/`.
+- Out-of-process callers (the auto director, `streamstack auto reset`) use these same routes through
+  `streamstack.consolelink`; the port and token come from the runtime file.
 - Built-in looks: Natural (neutral), Warm Studio, Cool Daylight, Cinematic
   (LUT on), Punchy, Soft Skin. User looks live in
   `~/.config/streamstack/looks.json`.
 
+### Background blur on the native engine
+
+With the native video engine (the default) the blur is computed on the Arc through OpenVINO, not by a plugin; see
+`docs/native-video-engine.md`. `video.blur` keeps the same keys (`on`, `strength` 1 to 20, `rate` 1 to 6, `limits`,
+`presets`) and adds:
+
+```jsonc
+"native": true,
+"available": true,               // false while unavailable or failed
+"arc": {
+  "state": "checking|unavailable|idle|downloading|loading|running|stalled|failed",
+  "reason": null,                // one sentence when unavailable or failed, e.g. "the openvino package is not installed (pip install 'streamstack[blur]')"
+  "device": "Intel Arc A380",
+  "fps": 30.0,                   // masks computed per second, measured
+  "infer_ms": 9.2, "infer_p50_ms": 8.3,   // GPU inference time, measured over the last 90 masks
+  "age_ms": 0.0                  // age of the mask when it is applied
+}
+```
+
+`cost` says whether the Arc keeps up (`ok`), is still measuring, or is `over` (a mask takes longer than the frames
+between two masks, or went stale). `video.blur` answers 409 `Background blur is unavailable: <reason>` when there is no
+OpenVINO, no model or no GPU (turning it off always works); `on`, `strength` and `rate` are applied to the running
+engine without a restart and saved. The first switch-on downloads the 6 MB model (`arc.state` is `downloading`).
+`video.blur.arc` (`mode`: off, running, downloading, unavailable, failed, stalled) exists on the demo rig only and puts
+the page in one of these states. Settings: `STREAMSTACK_ENGINE_BLUR` (`auto` or `off`) and
+`STREAMSTACK_ENGINE_BLUR_DEVICE`.
+
 ### Background blur notes
 
-- Plugin: [obs-backgroundremoval](https://github.com/royshil/obs-backgroundremoval) 1.4.1. Detection
-  (`streamstack.blur.detect`) reads files only: `obs-backgroundremoval.so` in OBS's plugin folders (including
-  `/usr/local/lib/obs-plugins`), the models next to it, the version from dpkg (or the OBS log), and the
-  inference providers the binary imports. It is CPU only: upstream has no OpenVINO value for `useGPU`, so an
-  Arc GPU path is a carried build (issue #26) and shows up as an extra device once it exists.
-- The filter is `Background Blur` (kind `background_removal`), disabled in `scenes.json` on both cameras after
-  the colour chain. Existing OBS profiles that predate it get it created on the first enable, with the same
-  low-latency settings (`streamstack.blur.LOW_LATENCY`). Strength is the plugin's `blur_background` (Kawase
-  blur passes, 1–20; 0 would remove the background, so it is never written); smoothness is
-  `mask_every_x_frames` (Light 3, Balanced 2, Smooth 1). The plugin has no resolution or fps key: the network
-  input size is fixed by the model file and the effective mask rate is the camera fps divided by
-  `mask_every_x_frames`.
-- obs-websocket requests: `GetSourceFilterKindList`, `GetSourceFilter`, `CreateSourceFilter`,
-  `SetSourceFilterSettings` (overlay), `SetSourceFilterEnabled`, `GetStats`.
-- Cost guard: while the blur is on, once a second `GetStats` gives OBS's mean frame render time and CPU use.
-  Against the numbers from just before it was switched on, the verdict is `over` when the added p95 frame time is
-  8 ms or more, the added CPU is 1 percentage point or more, or any frame was skipped since. OBS reports a
-  smoothed mean, not a per-frame distribution, so the p95 here is over one-second readings; the benchmark
-  (issue #22) measures the real distribution. `over` raises one toast and a `background-blur` health warning.
-- Health: the static `background-blur` check (doctor and System page) warns with an install hint when the plugin
-  or its models are missing; the live check replaces it when OBS is connected.
+- What does not depend on how the mask is made lives in `streamstack.blur`: strength is the number of blur passes
+  (1-20; 0 would remove the background, so it is never written), smoothness is the mask rate (Light 3, Balanced
+  2, Smooth 1: recompute every Nth frame), and the per-frame cost gate decided before measuring
+  (`docs/hardware-ai-evaluation.md`): added p95 frame time under 8 ms and added CPU under 1 percentage point.
+- Health: the `background-blur` check (System page) reports the Arc blur state.
 
 ## Frontend
 
@@ -440,13 +591,22 @@ and `pages/*.js`. Hash routing: `#/live` (default), `#/camera`, `#/audio`,
   a live histogram and RGB parade computed in the browser from the preview,
   full grading controls, LUT and sharpen, the looks library with thumbnails,
   source picker, virtual cam / record / stream.
-- **Audio**: a channel strip: raw vs processed meters with peak hold, gain
-  fader, mute, tone knobs (bass, presence, treble, pitch), preset pads with
-  their character, bypass A/B, in-app mic check with playback, and a 60 s
-  loudness history.
+- **Audio**: two sections (keys I and O). Input is a channel strip: raw vs
+  processed meters with peak hold, gain fader, mute, tone knobs (bass,
+  presence, treble), the Chain tab (a fader per stage, meters, loudness), preset pads with their character, bypass A/B,
+  in-app mic check with playback, and a 60 s loudness history. Output is one
+  mixer strip per PipeWire output (kind, bus, volume fader, mute, default
+  marker, set as default) with a sound test: left, right, then a chime on that
+  output only, lamps that follow it, and a Heard / Didn't hear verdict that is
+  remembered. Test all runs every output in turn; virtual sinks are
+  shown as routes; the list follows hot-plug and warns when the default output
+  goes away. The Live page's microphone card carries a compact output picker
+  with a Test button.
 - **Lighting**: Litra lights as big power pads and brightness / warm-to-cool
   temperature faders, an All lights master, preset pads and saved presets. A
   small lights control also sits in the Live status rail and the Mini window.
+- **Deck**: a Stream Deck as a control surface: a live picture of the keys, drag-and-drop from the options list,
+  key inspector, pages, brightness and sleep, model picker, export and import (`docs/deck.md`). Alt+9.
 - **Auto**: the AI director: on/off, ask now, undo, Claude's notes and a
   timeline of every change.
 - **System**: health checks as cards, the services, the full tools, and the
@@ -454,7 +614,7 @@ and `pages/*.js`. Hash routing: `#/live` (default), `#/camera`, `#/audio`,
 - **Mini**: a compact strip (mute, meter, privacy, scenes) for a small window
   next to the call.
 - Keyboard: `M` mute, `P` privacy, `1`–`9` scenes, `B` bypass, `G` grid,
-  `Ctrl+K` command palette, `?` shortcuts, `Alt+1…5` pages.
+  `Ctrl+K` command palette, `?` shortcuts, `Alt+1…9` and `Alt+0` pages (Alt+9 is Deck, Alt+0 is Stream).
 - Dark broadcast-console theme by default, light theme available, works from
   360 px (phone as a remote) to 4K, `prefers-reduced-motion` respected,
   everything reachable by keyboard and labelled for screen readers.
@@ -488,12 +648,47 @@ device), or `hw_ptr` advances but `appl_ptr` does not (PipeWire is not reading).
 named in the check detail), never a trigger. Non-ALSA sources (Bluetooth, virtual) are not judged:
 `stalled` stays `false` and there is no `mic-stall` check.
 
-Revive escalation (`streamstack mic-revive`, the Console button, Shift+R, palette "Revive mic"), each step
-re-verified with the same PCM signal:
+Digital silence. The pointers can advance perfectly while every sample is exactly 0 (2026-10-27, Wave XLR
+at 75 dB gain: the device's internal UAC feature-unit mute/volume was out of sync with ALSA's cached values, and
+`arecord -D hw:XLR` read zeros too). A live preamp always has a noise floor (about -43 dBFS there), so a whole window
+(4 s) of exact zeros is never a quiet room. The Console's meter reader tracks the unbroken run of exact-zero frames;
+`doctor` and `mic-revive` capture a few seconds with `parec` alongside the PCM sampling. It is reported as its own
+fault (`mic-digital-silence` check, `mic.stall_kind: "silence"`, a different banner title) with its own fix, never as a
+stall. A muted source is not judged, and a stall always wins over silence. The Console state carries `stall_kind`
+(`""`, `"stall"` or `"silence"`).
 
+Revive escalation (`streamstack mic-revive`, the Console button, Shift+R, palette "Revive mic"), each step
+re-verified with the same PCM signal (for digital silence also that a short capture is no longer all zeros):
+
+0. digital silence only: re-write the capture switch (off, then its old value) and the capture volume (one step
+   away, then its old value) of the interface the hardware Plan resolved (else the microphone's own card), through
+   `amixer` (package **alsa-utils**; `doctor` checks that it is installed). Every control ends where it started, so a
+   muted microphone stays muted, and each control's cached value is logged with the step (the kernel caches these
+   values and never reads them back from the device);
 1. suspend the source, resume it;
 2. cycle the card profile off and back to the previous one, restore the default source;
 3. otherwise report: replug the USB cable, or `systemctl --user restart wireplumber` (never run for you).
+   `streamstack mic-revive --reprobe` is the explicit opt-in that runs it as the last step: restarting WirePlumber
+   briefly drops every audio stream of the user, so it is never part of the watchdog or the Console button.
+
+Lost duplex profile. After a reboot or a replug the Wave XLR's card can come up with output profiles only
+(`output:analog-stereo`), so PipeWire has no microphone for it; a second local user's WirePlumber probing the card at
+the same moment is the suspected cause. `doctor` fails with `hw-audio-duplex` when the Plan's interface is attached,
+its card is not `off`, and its profile has no `input:` part (`hardware/duplex.py`). With no microphone there is nothing
+to revive, so `streamstack mic-revive` explains this and `--reprobe` restarts WirePlumber and waits for the input
+profile to return.
+
+Default source. `doctor` warns (`default-source`) when PipeWire's default source is not StreamStack Mic (voice chain
+running) or the resolved microphone (chain stopped), for example the Cam Link's HDMI audio after a replug.
+`streamstack default-source` sets it (`pactl set-default-source`); the watchdog and `doctor` never change it. Making the
+voice chain's source the default while it runs is the voice chain's job (`audiochain`), not the watchdog's.
+
+Capture-hold (Wave XLR). The XLR shares one full-speed USB link between capture and playback; a reported Linux
+ordering bug returns bit-exact zeros for the life of a capture stream opened after a playback stream. StreamStack ships
+`packaging/wireplumber/wireplumber.conf.d/52-streamstack-wave-xlr-capture-hold.conf` (installed to
+`/etc/wireplumber/wireplumber.conf.d` by `make install`), which sets `node.always-process` on the XLR capture node, and
+`doctor` reads the effective property from `pw-dump` (`wave-xlr-capture-hold`). `tools/xlr_capture_order.py` reproduces
+the ordering (playback first, then capture, N cycles, counts all-zero captures); see docs/hardware/dm313red.md.
 
 `audio.revive` and `streamstack mic-revive` refuse (409 / exit 0) while the PCM shows audio flowing or
 cannot be judged; `--force` (CLI) or `{"force": true}` (action) cycles it anyway. The Shift+R key and the

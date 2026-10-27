@@ -1,0 +1,200 @@
+##### v4l2loopback
+filename:       /lib/modules/7.0.0-38-generic/ubuntu/dkms/v4l2loopback/v4l2loopback.ko.zst
+version:        0.15.3
+v4l2loopback           65536  1
+videodev              376832  5 videobuf2_v4l2,v4l2loopback,uvcvideo
+/dev/video0
+/dev/video1
+/dev/video42
+/dev/video43
+
+##### pactl-cards
+48	alsa_card.pci-0000_04_00.0	alsa
+49	alsa_card.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00	alsa
+50	alsa_card.usb-Elgato_Cam_Link_4K_<serial>-03	alsa
+51	alsa_card.pci-0000_00_1f.3	alsa
+
+##### wpctl
+ └─ Clients:
+        33. WirePlumber                         [1.6.2, pid:N]
+        38. WirePlumber [export]                [1.6.2, pid:N]
+        39. pipewire                            [1.6.2, pid:N]
+        60. pipewire                            [1.6.2, pid:N]
+        67. Chromium input                      [1.6.2, pid:N]
+        74. wpctl                               [1.6.2, pid:N]
+
+Audio
+ ├─ Devices:
+ │      48. DG2 Audio Controller                [alsa]
+ │      49. Elgato Wave XLR                     [alsa]
+ │      50. Cam Link 4K                         [alsa]
+ │      51. Built-in Audio                      [alsa]
+ │  
+ ├─ Sinks:
+ │  *   55. Elgato Wave XLR Analog Stereo       [vol: 0.40]
+ │  
+ ├─ Sources:
+ │      40. Cam Link 4K Analog Stereo           [vol: 1.00]
+ │  *   56. Elgato Wave XLR Mono                [vol: 1.00]
+ │  
+ ├─ Filters:
+ │    - filter-chain-3474204-8                                      
+ │      61. streamstack_mic.capture                                      [Stream/Input/Audio]
+ │      62. streamstack_mic                                              [Audio/Source]
+ │  
+ └─ Streams:
+        72. Chromium input                                              
+             73. input_MONO      < Elgato Wave XLR:capture_MONO	[active]
+             75. monitor_MONO   
+
+Video
+ ├─ Devices:
+ │  
+ ├─ Sinks:
+ │  
+ ├─ Sources:
+ │  
+ ├─ Filters:
+ │  
+ └─ Streams:
+
+Settings
+ └─ Default Configured Devices:
+         0. Audio/Sink    bluez_output.<mac>
+         1. Audio/Source  alsa_input.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00.mono-fallback
+
+##### lsusb
+Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub
+Bus 001 Device 002: ID 2109:2822 VIA Labs, Inc. USB2.0 Hub             
+Bus 001 Device 003: ID 046d:c901 Logitech, Inc. Litra Beam
+Bus 001 Device 004: ID 04a9:319b Canon, Inc. EOS 50D
+Bus 001 Device 005: ID 0fd9:0067 Elgato Systems GmbH Cam Link 4K
+Bus 001 Device 006: ID 2109:2822 VIA Labs, Inc. USB2.0 Hub             
+Bus 001 Device 007: ID 13d3:3601 IMC Networks Bluetooth Radio
+Bus 001 Device 008: ID 2109:2822 VIA Labs, Inc. USB2.0 Hub             
+Bus 001 Device 010: ID 0fd9:007d Elgato Systems GmbH Elgato Wave XLR
+Bus 001 Device 011: ID 2109:2822 VIA Labs, Inc. USB2.0 Hub             
+Bus 001 Device 012: ID 046d:c539 Logitech, Inc. Lightspeed Receiver
+Bus 001 Device 013: ID 248a:8367 Maxxter Telink Wireless Receiver
+Bus 002 Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub
+Bus 002 Device 002: ID 2109:0822 VIA Labs, Inc. USB3.1 Hub             
+Bus 002 Device 003: ID 2109:0822 VIA Labs, Inc. USB3.1 Hub             
+Bus 002 Device 004: ID 2109:0822 VIA Labs, Inc. USB3.1 Hub             
+Bus 002 Device 005: ID 2109:0822 VIA Labs, Inc. USB3.1 Hub             
+
+##### asound-streams
+== /proc/asound/card2/stream0
+Elgato Cam Link 4K at usb-0000:00:14.0-6, high speed : USB Audio
+
+Capture:
+  Status: Stop
+  Interface 4
+    Altset 1
+    Format: S16_LE
+    Channels: 2
+    Endpoint: 0x81 (1 IN) (ASYNC)
+    Rates: 48000
+    Data packet interval: 1000 us
+    Bits: 16
+    Channel map: FL FR
+== /proc/asound/card3/stream0
+Elgato Systems Elgato Wave XLR at usb-0000:00:14.0-2.4.1, full speed : USB Audio
+
+Playback:
+  Status: Stop
+  Interface 1
+    Altset 1
+    Format: S24_3LE
+    Channels: 2
+    Endpoint: 0x01 (1 OUT) (ASYNC)
+    Rates: 48000, 96000
+    Bits: 24
+    Channel map: FL FR
+    Sync Endpoint: 0x81 (1 IN)
+    Sync EP Interface: 1
+    Sync EP Altset: 1
+    Implicit Feedback Mode: No
+
+Capture:
+  Status: Running
+    Interface = 2
+    Altset = 1
+    Packet Size = 216
+    Momentary freq = 48000 Hz (0x30.0000)
+  Interface 2
+    Altset 1
+    Format: S24_3LE
+    Channels: 1
+    Endpoint: 0x82 (2 IN) (ASYNC)
+    Rates: 48000, 96000
+    Bits: 24
+    Channel map: MONO
+
+##### v4l2
+== /dev/video0
+== /dev/video1
+== /dev/video42
+== /dev/video43
+
+##### lspci-gpu
+00:1f.3 Audio device [0403]: Intel Corporation Raptor Lake High Definition Audio Controller [8086:7a50] (rev 11)
+03:00.0 VGA compatible controller [0300]: Intel Corporation DG2 [Arc A380] [8086:56a5] (rev 05)
+04:00.0 Audio device [0403]: Intel Corporation DG2 Audio Controller [8086:4f92]
+
+##### vulkan
+bash: line 18: vulkaninfo: command not found
+
+##### ffmpeg-encoders
+ V....D libaom-av1           libaom AV1 (codec av1)
+ V....D librav1e             librav1e AV1 (codec av1)
+ V..... libsvtav1            SVT-AV1(Scalable Video Technology for AV1) encoder (codec av1)
+ V....D av1_nvenc            NVIDIA NVENC av1 encoder (codec av1)
+ V..... av1_qsv              AV1 (Intel Quick Sync Video acceleration) (codec av1)
+ V....D av1_vaapi            AV1 (VAAPI) (codec av1)
+ V....D av1_vulkan           AV1 (Vulkan) (codec av1)
+ V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
+ V....D libx264rgb           libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 RGB (codec h264)
+ V....D h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)
+ V..... h264_qsv             H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (Intel Quick Sync Video acceleration) (codec h264)
+ V..... h264_v4l2m2m         V4L2 mem2mem H.264 encoder wrapper (codec h264)
+ V....D h264_vaapi           H.264/AVC (VAAPI) (codec h264)
+ V....D h264_vulkan          H.264/AVC (Vulkan) (codec h264)
+ V....D hevc_nvenc           NVIDIA NVENC hevc encoder (codec hevc)
+ V..... hevc_qsv             HEVC (Intel Quick Sync Video acceleration) (codec hevc)
+ V....D hevc_vaapi           H.265/HEVC (VAAPI) (codec hevc)
+ V..... mjpeg_qsv            MJPEG (Intel Quick Sync Video acceleration) (codec mjpeg)
+ V....D mjpeg_vaapi          MJPEG (VAAPI) (codec mjpeg)
+ V..... mpeg2_qsv            MPEG-2 video (Intel Quick Sync Video acceleration) (codec mpeg2video)
+
+##### drm
+renderD128 0000:03:00.0 driver=i915 dev=0x56a5
+
+##### va-per-node
+== /dev/dri/renderD128
+vainfo: Driver version: Intel iHD driver for Intel(R) Gen Graphics - 26.1.2 ()
+      VAProfileH264High               :	VAEntrypointEncSliceLP
+      VAProfileHEVCMain               :	VAEntrypointVLD
+      VAProfileHEVCMain               :	VAEntrypointEncSliceLP
+      VAProfileHEVCMain10             :	VAEntrypointEncSliceLP
+      VAProfileAV1Profile0            :	VAEntrypointEncSliceLP
+
+##### camlink-formats
+Failed to open /dev/video0: Permission denied
+
+##### loopback
+== /dev/video42
+== /dev/video43
+options v4l2loopback devices=2 video_nr=42,43 card_label="Canon EOS 50D,StreamStack Camera" exclusive_caps=1,1 max_buffers=2
+cat: '/etc/modules-load.d/*loop*': No such file or directory
+
+##### audio-detail
+55	alsa_output.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00.analog-stereo	PipeWire	s24le 2ch 48000Hz	SUSPENDED
+55	alsa_output.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00.analog-stereo.monitor	PipeWire	s24le 2ch 48000Hz	SUSPENDED
+56	alsa_input.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00.mono-fallback	PipeWire	s24le 1ch 48000Hz	SUSPENDED
+57	alsa_input.usb-Elgato_Cam_Link_4K_<serial>-03.analog-stereo	PipeWire	s16le 2ch 48000Hz	SUSPENDED
+313	streamstack_mic	PipeWire	float32le 1ch 48000Hz	SUSPENDED
+/proc/asound/card0/id:PCH
+/proc/asound/card1/id:PCH_1
+/proc/asound/card2/id:C4K
+/proc/asound/card3/id:XLR
+

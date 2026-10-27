@@ -1,0 +1,20 @@
+# The StreamStack voice chain: a PipeWire filter-chain that exposes "StreamStack Mic" (48 kHz mono).
+# The Console starts the same host by itself; enable this unit only to have the voice chain without the Console:
+#   systemctl --user enable --now streamstack-audio-chain.service
+[Unit]
+Description=StreamStack voice chain (StreamStack Mic)
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+
+[Service]
+ExecStart=streamstack chain run
+# StreamStack Mic becomes the default microphone once the host is up, and the raw one comes back when it stops.
+ExecStartPost=-streamstack chain claim-default
+ExecStopPost=-streamstack chain release-default
+Restart=on-failure
+RestartSec=3
+Nice=-5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

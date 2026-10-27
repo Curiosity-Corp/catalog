@@ -1,60 +1,19 @@
-"""Console audio: meters, microphone gain and mute, voice presets, live tone and the in-app mic check.
+"""Console audio: meters, microphone gain and mute, the voice chain (presets, stage faders, loudness), mic check.
 
-`AudioController` drives the real rig (PipeWire through pactl/parec, Easy Effects through its local
-socket); `DemoAudio` is a simulated twin with the same methods for ``--demo``, tests and e2e runs.
+`AudioController` drives the real rig: PipeWire through pactl/parec for the microphone and the meters, and the
+StreamStack voice chain (`streamstack.audiochain`, a PipeWire filter-chain that StreamStack generates and hosts)
+through its `ChainModel` and `ChainRuntime`. `DemoAudio` is a simulated twin with the same methods for ``--demo``,
+tests and e2e runs; it shares the same `ChainModel`, so it reports exactly the state the real one does.
 
-Easy Effects 8.1.2 research (source: wwmm/easyeffects tag v8.1.2, checked against the running 8.1.2 here)
--------------------------------------------------------------------------------------------------------
-* Easy Effects 8 is a Qt app. In service mode it listens on a QLocalServer at
-  ``$XDG_RUNTIME_DIR/EasyEffectsServer`` (an AF_UNIX stream socket; ``src/local_server.cpp``). The
-  protocol is newline terminated text, several commands per connection, answers in order:
-
-  - ``load_preset:<input|output>:<name>``   load a preset file (no answer)
-  - ``global_bypass:<0|1>``                 1 = bypass on (no answer)
-  - ``set_property:<input|output>:<plugin>:<instance>:<property>:<value>``   set one plugin parameter now
-  - ``get_property:<input|output>:<plugin>:<instance>:<property>``           answers the value, or
-    ``error_plugin_not_found`` / ``error_property_not_found``
-  - ``get_last_loaded_preset:<input|output>``   answers the preset name (empty line when none)
-
-  ``<plugin>`` is the bare plugin name ("pitch") and ``<instance>`` its number, so ``pitch:0`` is the
-  ``pitch#0`` of the shipped presets; property names are the KConfig entry names (``semitones``,
-  ``bypass``, ...). The ``-l`` / ``-b`` / ``-a`` command line options are thin clients of these same
-  messages (a second process hands them to the running one), but they spawn a whole Qt process each time.
-* Pitch is therefore live: ``set_property:input:pitch:0:semitones:<v>`` plus ``...:bypass:<true|false>``.
-* Equalizer band gains are NOT reachable live. The bands live in separate per-channel settings objects
-  (``equalizer#0#left`` / ``#right``) and the key the server looks up is ``<plugin>#<instance>`` with a
-  digits-only instance, which can never name them. Only the equalizer's own gains and ``pitch-left`` /
-  ``pitch-right`` can be set. There is no D-Bus interface either (D-Bus is only used for the global
-  shortcuts portal), and plugin settings are not file-watched: they are written to
-  ``~/.config/easyeffects/db`` only on shutdown, never read back while running.
-* Bass, presence and treble therefore go through a managed preset ``StreamStack Live`` written next to
-  the user's presets and loaded over the socket (``load_preset`` followed by ``get_last_loaded_preset`` on
-  the same connection confirms it took), coalesced to at most one load per 400 ms with the newest
-  tone winning. ``easyeffects -l`` is the fallback when the socket is missing.
-* Loading a preset leaves "StreamStack Live" as the last loaded preset, so the base preset the user
-  chose is remembered here and in ``<state>/console-live.json``.
-* Global bypass cannot be read from a running Easy Effects (no ``get_property`` for it and the settings
-  file is stale until shutdown). The state is tracked from our own changes, seeded from the settings
-  file at start. ``-b 1`` enables bypass and ``-b 2`` disables it; the socket takes ``global_bypass:1|0``.
-* Noise removal is one plugin slot with two engines: ``rnnoise#0`` ("Noise reduction", about 10 ms) or
-  ``deepfilternet#0`` ("Deep noise remover", DeepFilterNet, about 40 ms algorithmic delay). The DeepFilterNet
-  effect is compiled into the 8.1.2 binary (``strings`` shows ``DeepFilterNet`` and its keys) but it loads
-  ``libdeep_filter_ladspa.so`` from the LADSPA path at run time, and the Ubuntu ``easyeffects`` package does not
-  ship that library ("libdeep_filter_ladspa is not installed" is the effect's own message). So choosing it is
-  refused here until the library is found. Preset keys (``src/contents/kcfg/easyeffects_db_deepfilternet.kcfg``):
-  ``attenuation-limit`` (0 to 100 dB, default 100), ``min-processing-threshold``, ``max-erb-processing-threshold``,
-  ``max-df-processing-threshold``, ``min-processing-buffer`` and ``post-filter-beta``. The Attenuation Limit is
-  the "how much noise may be removed" knob: lower leaves more of the room in and sounds more natural.
-* The mapping to the shipped presets: equalizer band0 (Lo-shelf 120 Hz) is bass, band2 (Bell 3.5 kHz)
-  is presence, band3 (Hi-shelf 9 kHz) is treble, both channels; pitch semitones, with the plugin
-  bypassed while it is 0.
+The chain's output is the virtual source "StreamStack Mic" (`streamstack_mic`, 48 kHz mono). Its loudness is
+metered here (the "voice" reader) and drives the loudness leveller, which adds a slow gain on top of the chain's
+makeup gain (see `audiochain.leveller`; one owner of gain, never the microphone's own gain, never 48 V).
 """
 
 from __future__ import annotations
 
 import array
 import contextlib
-import copy
 import json
 import logging
 import math
@@ -63,7 +22,6 @@ import random
 import re
 import secrets
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -75,8 +33,15 @@ from pathlib import Path
 from typing import Any
 
 from .. import config, micwatch, system
+from ..audiochain import chain as chainlib
+from ..audiochain import graph as chaingraph
+from ..audiochain import migrate, stages
+from ..hardware import voice
+from ..hardware.plan import Plan
+from ..hardware.redact import redact
 from . import loudness
 from .errors import ActionError
+from .outputs import DemoOutputs, Outputs
 
 log = logging.getLogger(__name__)
 
@@ -90,17 +55,15 @@ STALE_S = 0.5  # a reader that sent nothing for this long is silent, whatever it
 
 GAIN_RANGE = (-30.0, 12.0)
 TONE_RANGES: dict[str, tuple[float, float]] = {
-    "bass_db": (-12.0, 12.0),
-    "presence_db": (-12.0, 12.0),
-    "treble_db": (-12.0, 12.0),
-    "pitch_semitones": (-6.0, 6.0),
+    key: (stages.PARAM_BY_KEY[key].low, stages.PARAM_BY_KEY[key].high)
+    for key in ("bass_db", "presence_db", "treble_db")
 }
-BAND_KEYS = ("bass_db", "presence_db", "treble_db")
-BAND_INDEX = {"bass_db": 0, "presence_db": 2, "treble_db": 3}
+BAND_KEYS = tuple(TONE_RANGES)
+ATTEN_RANGE = (stages.PARAM_BY_KEY["denoise_atten_db"].low, stages.PARAM_BY_KEY["denoise_atten_db"].high)
 
-LIVE_PRESET = "StreamStack Live"
-LOAD_INTERVAL = 0.4
 PROBE_INTERVAL = 1.0
+PLAN_REFRESH_S = 5.0  # at most one hardware re-probe this often when the Plan and PipeWire disagree
+CARD_RETRY_S = 30.0  # at most one card-profile switch this often for the same card
 RESTART_INTERVAL = 2.0
 READER_SILENT_S = 4.0  # our own parec heard nothing this long: corroboration only, never a trigger
 READER_IDLE_RESTART = 15.0  # a parec that has produced nothing for this long is killed and started afresh
@@ -109,57 +72,10 @@ CLIP_TTL = 600.0
 MAX_CLIPS = 4
 CHECK_SECONDS = (2.0, 15.0)
 CHECK_DEFAULT = 6.0
-EE_PIPELINE = "input"
-EE_SOURCE_NAME = system.EE_SOURCE
+VOICE_SOURCE_NAME = chaingraph.NODE_NAME
+LEVEL_INTERVAL = 0.1  # how often the leveller looks at the loudness and moves the gain
+DEFAULT_ENGINE = "deepfilternet"
 
-BLURBS = {
-    "StreamStack Voice": "default broadcast voice",
-    "StreamStack Voice Warm": "more low end for thin rooms or mics",
-    "StreamStack Voice Bright": "more presence and air for dark mics",
-    "StreamStack Voice Deep": "pitch down 2 semitones, extra body",
-    "StreamStack Voice Minimal": "only high-pass, gentle compression and the limiter",
-    "StreamStack Voice DeepFilterNet": "the default voice with DeepFilterNet noise removal (about 30 ms more delay)",
-}
-# The noise removal engines: the plugin's name in a preset, what the Console calls it and its algorithmic delay.
-DENOISE_ENGINES: dict[str, dict[str, Any]] = {
-    "rnnoise": {"label": "RNNoise", "effect": "Noise reduction", "delay_ms": 10},
-    "deepfilternet": {"label": "DeepFilterNet", "effect": "Deep noise remover", "delay_ms": 40},
-}
-# Each engine's settings as the shipped presets carry them (the two shipped StreamStack Voice presets).
-_ENGINE_DEFAULTS: dict[str, dict[str, Any]] = {
-    "rnnoise": {
-        "bypass": False,
-        "input-gain": 0.0,
-        "output-gain": 0.0,
-        "use-standard-model": True,
-        "model-name": "",
-        "enable-vad": True,
-        "vad-thres": 50.0,
-        "wet": 0.0,
-        "release": 20.0,
-    },
-    "deepfilternet": {
-        "bypass": False,
-        "input-gain": 0.0,
-        "output-gain": 0.0,
-        "attenuation-limit": 100.0,
-        "min-processing-threshold": -10.0,
-        "max-erb-processing-threshold": 30.0,
-        "max-df-processing-threshold": 20.0,
-        "min-processing-buffer": 0,
-        "post-filter-beta": 0.02,
-    },
-}
-DEFAULT_ENGINE = "rnnoise"  # lowest latency, so it stays the default
-ATTEN_RANGE = (0.0, 100.0)  # DeepFilterNet's Attenuation Limit in dB; 100 is "no limit" (the plugin's own default)
-DEEPFILTERNET_LIB = "libdeep_filter_ladspa.so"
-LADSPA_DIRS = ("/usr/local/lib/ladspa", "/usr/lib/x86_64-linux-gnu/ladspa", "/usr/lib/ladspa", "/usr/lib64/ladspa")
-DEEPFILTERNET_MISSING = (
-    f"DeepFilterNet needs the {DEEPFILTERNET_LIB} LADSPA plugin, which the Easy Effects package does not ship. "
-    "Install it (see docs/voice-denoise.md), then restart Easy Effects."
-)
-DENOISE_KEYS = ("engine", "atten_limit_db")
-LABEL_PREFIX = "StreamStack "
 CLIP_ID = re.compile(r"^[0-9a-f]{16}$")
 
 
@@ -232,219 +148,6 @@ def bool_param(params: dict[str, Any], key: str = "on") -> bool:
     if not isinstance(value, bool):
         raise ActionError(f"{key} must be true or false", 400)
     return value
-
-
-def preset_label(name: str) -> str:
-    return name.removeprefix(LABEL_PREFIX) or name
-
-
-def preset_entry(name: str, engine: str | None = None, installed: bool | None = None) -> dict[str, Any]:
-    """A preset for the Console; `unavailable` says why it cannot load here (DeepFilterNet without its library)."""
-    have = deepfilternet_installed() if installed is None else installed
-    missing = engine == "deepfilternet" and not have
-    return {
-        "name": name,
-        "label": preset_label(name),
-        "blurb": BLURBS.get(name, ""),
-        "engine": engine,
-        "unavailable": DEEPFILTERNET_MISSING if missing else None,
-    }
-
-
-def _plugin(doc: dict[str, Any], prefix: str) -> dict[str, Any] | None:
-    section = doc.get("input")
-    if not isinstance(section, dict):
-        return None
-    for key, value in section.items():
-        if key.startswith(prefix + "#") and isinstance(value, dict):
-            return value
-    return None
-
-
-def read_tone(doc: dict[str, Any]) -> dict[str, float] | None:
-    """The four tone values of an Easy Effects preset document (None when it has no equalizer)."""
-    eq = _plugin(doc, "equalizer")
-    left = eq.get("left") if eq else None
-    if not isinstance(left, dict):
-        return None
-    tone: dict[str, float] = {}
-    for key, band in BAND_INDEX.items():
-        gain = left.get(f"band{band}", {}).get("gain") if isinstance(left.get(f"band{band}"), dict) else None
-        if not isinstance(gain, (int, float)):
-            return None
-        tone[key] = float(gain)
-    pitch = _plugin(doc, "pitch")
-    semitones = pitch.get("semitones", 0.0) if pitch else 0.0
-    tone["pitch_semitones"] = float(semitones) if isinstance(semitones, (int, float)) else 0.0
-    return tone
-
-
-def apply_tone(doc: dict[str, Any], tone: dict[str, float]) -> dict[str, Any]:
-    """A copy of a preset document with the tone written in; the pitch plugin is bypassed at 0."""
-    out = copy.deepcopy(doc)
-    eq = _plugin(out, "equalizer")
-    if eq is None:
-        raise ValueError("the preset has no equalizer")
-    for channel in ("left", "right"):
-        bands = eq.get(channel)
-        if not isinstance(bands, dict):
-            continue
-        for key, band in BAND_INDEX.items():
-            if isinstance(bands.get(f"band{band}"), dict):
-                bands[f"band{band}"]["gain"] = float(tone[key])
-    pitch = _plugin(out, "pitch")
-    if pitch is not None:
-        pitch["semitones"] = float(tone["pitch_semitones"])
-        pitch["bypass"] = tone["pitch_semitones"] == 0
-    return out
-
-
-def _denoise_slot(doc: dict[str, Any]) -> tuple[str, str, dict[str, Any]] | None:
-    """(engine, instance key, settings) of the noise removal plugin in a preset document."""
-    section = doc.get("input")
-    if not isinstance(section, dict):
-        return None
-    for key, value in section.items():
-        engine = key.split("#")[0]
-        if engine in DENOISE_ENGINES and isinstance(value, dict):
-            return engine, key, value
-    return None
-
-
-def read_denoise(doc: dict[str, Any]) -> dict[str, Any] | None:
-    """The noise removal engine and Attenuation Limit of a preset (None when it has neither plugin)."""
-    slot = _denoise_slot(doc)
-    if slot is None:
-        return None
-    engine, _, settings = slot
-    atten = settings.get("attenuation-limit", ATTEN_RANGE[1]) if engine == "deepfilternet" else ATTEN_RANGE[1]
-    value = float(atten) if isinstance(atten, (int, float)) and not isinstance(atten, bool) else ATTEN_RANGE[1]
-    return {"engine": engine, "atten_limit_db": value}
-
-
-def apply_denoise(doc: dict[str, Any], engine: str, atten_limit_db: float) -> dict[str, Any]:
-    """A copy of a preset with the noise removal slot switched to `engine`, in the same place in the chain.
-
-    The other engine's settings are not kept (a preset holds one of them); a DeepFilterNet slot starts from the
-    shipped defaults and takes `atten_limit_db`.
-    """
-    if engine not in DENOISE_ENGINES:
-        raise ValueError(f"unknown noise removal engine {engine!r}")
-    out = copy.deepcopy(doc)
-    slot = _denoise_slot(out)
-    if slot is None:
-        raise ValueError("the preset has no noise removal plugin")
-    current, key, settings = slot
-    if current == engine:
-        if engine == "deepfilternet":
-            settings["attenuation-limit"] = float(atten_limit_db)
-        return out
-    new_key = f"{engine}#{key.split('#')[1]}"
-    section = out["input"]
-    fresh = copy.deepcopy(_ENGINE_DEFAULTS[engine])
-    for gain in ("bypass", "input-gain", "output-gain"):
-        if gain in settings:
-            fresh[gain] = settings[gain]
-    if engine == "deepfilternet":
-        fresh["attenuation-limit"] = float(atten_limit_db)
-    rebuilt = {(new_key if k == key else k): (fresh if k == key else v) for k, v in section.items()}
-    section.clear()
-    section.update(rebuilt)
-    order = section.get("plugins_order")
-    if isinstance(order, list):
-        section["plugins_order"] = [new_key if item == key else item for item in order]
-    return out
-
-
-def deepfilternet_installed() -> bool:
-    """Whether Easy Effects can find the DeepFilterNet LADSPA library (it searches LADSPA_PATH, then these)."""
-    folders = [p for p in os.environ.get("LADSPA_PATH", "").split(":") if p] + list(LADSPA_DIRS)
-    return any((Path(folder) / DEEPFILTERNET_LIB).is_file() for folder in folders)
-
-
-def ee_socket_path() -> Path:
-    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    return Path(runtime) / "EasyEffectsServer"
-
-
-def ee_request(lines: list[str], replies: int = 0, timeout: float = 1.0) -> list[str] | None:
-    """Send commands to the Easy Effects local server and read `replies` answer lines.
-
-    None means the socket is unavailable (Easy Effects not running, or an older release without it).
-    """
-    if any("\n" in line for line in lines):
-        raise ValueError("a socket command is a single line")
-    out: list[str] = []
-    barrier = replies == 0  # a harmless read after the commands proves the server got through them
-    if barrier:
-        lines = [*lines, f"get_last_loaded_preset:{EE_PIPELINE}"]
-        replies = 1
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-            conn.settimeout(timeout)
-            conn.connect(str(ee_socket_path()))
-            conn.sendall("".join(f"{line}\n" for line in lines).encode())
-            buffer = b""
-            while len(out) < replies:
-                chunk = conn.recv(4096)
-                if not chunk:
-                    break
-                buffer += chunk
-                *done, buffer = buffer.split(b"\n")
-                out.extend(part.decode(errors="replace") for part in done)
-    except TimeoutError:
-        return out  # connected, but it did not answer in time
-    except OSError:
-        return None
-    return [] if barrier else out
-
-
-def ee_user_dir() -> Path:
-    return Path.home() / ".local/share/easyeffects" / EE_PIPELINE
-
-
-def load_preset_json(name: str) -> dict[str, Any] | None:
-    """A preset document: the user's copy first, else the one shipped with the package."""
-    for folder in (ee_user_dir(), config.data_dir() / "easyeffects" / EE_PIPELINE):
-        try:
-            doc = json.loads((folder / f"{name}.json").read_text())
-        except (OSError, ValueError):
-            continue
-        if isinstance(doc, dict):
-            return doc
-    return None
-
-
-def engine_of_preset(name: str) -> str | None:
-    """The noise removal engine a stored preset uses (None when unreadable or it has none)."""
-    doc = load_preset_json(name)
-    denoise = read_denoise(doc) if doc else None
-    return denoise["engine"] if denoise else None
-
-
-def list_presets() -> list[str]:
-    """Input presets in Easy Effects' folder, shipped ones first in README order; the managed one is hidden."""
-    found = {p.stem for p in ee_user_dir().glob("*.json")} - {LIVE_PRESET}
-    shipped = [name for name in BLURBS if name in found]
-    return shipped + sorted(found - set(shipped))
-
-
-def stored_bypass() -> bool:
-    """Global bypass as last saved by Easy Effects (only a starting guess; it saves on shutdown)."""
-    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    path = base / "easyeffects/db/easyeffectsrc"
-    try:
-        lines = path.read_text().splitlines()
-    except OSError:
-        return False
-    group = ""
-    for line in lines:
-        line = line.strip()
-        if line.startswith("["):
-            group = line
-        elif group == "[EffectsPipelines]" and line.replace(" ", "").lower() == "bypass=true":
-            return True
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +230,7 @@ class LevelReader:
         self._clock = clock
         self._origin = self.started if idle_since is None else idle_since
         self._last_bytes: float | None = None
+        self._zero_since: float | None = None  # when the current unbroken run of exact-zero frames began
         self._spawn = spawn or subprocess.Popen
         self._lock = threading.Lock()
         self._buffer = b""
@@ -582,6 +286,11 @@ class LevelReader:
         self._buffer += data
         while len(self._buffer) >= FRAME_BYTES:
             frame, self._buffer = self._buffer[:FRAME_BYTES], self._buffer[FRAME_BYTES:]
+            if frame.count(0) == len(frame):  # +0.0 in float32 is four zero bytes: no decoding needed
+                if self._zero_since is None:
+                    self._zero_since = self._clock()
+            else:
+                self._zero_since = None
             samples = array.array("f")
             samples.frombytes(frame)
             if sys.byteorder == "big":
@@ -617,6 +326,13 @@ class LevelReader:
         """Seconds without a single byte from the source."""
         return max(0.0, self._clock() - self.idle_since())
 
+    def zero_for(self) -> float | None:
+        """Seconds of unbroken exact zeros up to the latest frame (digital silence); None while the source delivers
+        nothing at all (that is a stall, not digital silence) or the latest frame had signal."""
+        if self._zero_since is None or self._clock() - self._stamp > STALE_S:
+            return None
+        return max(0.0, self._clock() - self._zero_since)
+
     def take(self) -> dict[str, Any]:
         """Levels since the last call: the loudest peaks (no frame is missed between polls), the latest RMS and LUFS."""
         with self._lock:
@@ -627,6 +343,15 @@ class LevelReader:
                 peak, sample, clipped = self._acc_peak, self._acc_sample, self._acc_clip
                 self._fresh = False
             return meter_frame(peak, sample, rms, clipped, lufs_m, lufs_s, self.latch)
+
+    def latest(self) -> tuple[float, float, float, float] | None:
+        """(momentary LUFS, short-term LUFS, true peak dB, RMS dB) of the latest frame without consuming anything
+        (the leveller reads this while the Console's meter poll uses `take`); None when the source is stale."""
+        with self._lock:
+            if self._clock() - self._stamp > STALE_S:
+                return None
+            peak, _sample, rms, _clipped, lufs_m, lufs_s = self._last
+            return lufs_m, lufs_s, peak, rms
 
     def stop(self) -> None:
         proc = self._proc
@@ -724,8 +449,8 @@ def _emit(notify: Notify | None, level: str, text: str) -> None:
         log.exception("toast callback failed")
 
 
-def _tone_state(tone: dict[str, float], supported: bool, custom: bool) -> dict[str, Any]:
-    return {**{k: round(v, 2) for k, v in tone.items()}, "supported": supported, "custom": custom}
+def _tone_state(params: dict[str, Any], supported: bool, custom: bool) -> dict[str, Any]:
+    return {**{k: round(float(params[k]), 2) for k in BAND_KEYS}, "supported": supported, "custom": custom}
 
 
 def _ranges() -> dict[str, list[float]]:
@@ -743,16 +468,16 @@ def _check_seconds(params: dict[str, Any]) -> float:
 
 
 def _validate_denoise(params: dict[str, Any]) -> dict[str, Any]:
-    unknown = sorted(set(params) - set(DENOISE_KEYS))
+    unknown = sorted(set(params) - {"engine", "atten_limit_db"})
     if unknown:
         raise ActionError(f"unknown noise removal setting: {', '.join(unknown)}", 400)
     if not params:
-        raise ActionError("give at least one of " + ", ".join(DENOISE_KEYS), 400)
+        raise ActionError("give at least one of engine, atten_limit_db", 400)
     out: dict[str, Any] = {}
     if "engine" in params:
         engine = params["engine"]
-        if not isinstance(engine, str) or engine not in DENOISE_ENGINES:
-            raise ActionError("engine must be one of " + ", ".join(DENOISE_ENGINES), 400)
+        if not isinstance(engine, str) or engine not in stages.DENOISE_ENGINES:
+            raise ActionError("engine must be one of " + ", ".join(stages.DENOISE_ENGINES), 400)
         out["engine"] = engine
     if "atten_limit_db" in params:
         out["atten_limit_db"] = round(
@@ -761,33 +486,24 @@ def _validate_denoise(params: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _denoise_key(denoise: dict[str, Any]) -> tuple[str, float | None]:
-    """What makes two noise removal settings differ: the Attenuation Limit only counts for DeepFilterNet."""
-    engine = denoise["engine"]
-    return engine, denoise["atten_limit_db"] if engine == "deepfilternet" else None
-
-
-def _denoise_state(
-    denoise: dict[str, Any], supported: bool, custom: bool, installed: bool | None = None
-) -> dict[str, Any]:
-    if installed is None:
-        installed = deepfilternet_installed()
+def _denoise_state(view: dict[str, Any], params: dict[str, Any], supported: bool) -> dict[str, Any]:
+    """The Console's noise removal object, from a chain view (engines) and the parameters (strength)."""
     return {
-        "engine": denoise["engine"],
-        "atten_limit_db": denoise["atten_limit_db"],
+        "engine": view["engine_active"] if view["engine_active"] != "off" else view["engine"],
+        "atten_limit_db": params["denoise_atten_db"],
         "atten_range": list(ATTEN_RANGE),
         "supported": supported,
-        "custom": custom,
+        "custom": view["custom"],
         "engines": [
             {
-                "id": engine_id,
-                "label": info["label"],
-                "effect": info["effect"],
-                "delay_ms": info["delay_ms"],
-                "available": engine_id != "deepfilternet" or installed,
-                "reason": None if engine_id != "deepfilternet" or installed else DEEPFILTERNET_MISSING,
+                "id": e["id"],
+                "label": e["label"],
+                "effect": e["label"],
+                "delay_ms": e["delay_ms"],
+                "available": e["available"],
+                "reason": e["reason"],
             }
-            for engine_id, info in DENOISE_ENGINES.items()
+            for e in view["engines"]
         ],
     }
 
@@ -805,13 +521,41 @@ def _validate_tone(params: dict[str, Any]) -> dict[str, float]:
     }
 
 
+def _chain_call(fn: Callable[..., None], *args: Any, **kwargs: Any) -> None:
+    """Run a ChainModel change, turning its ChainError into the Console's ActionError."""
+    try:
+        fn(*args, **kwargs)
+    except chainlib.ChainError as exc:
+        raise ActionError(str(exc), exc.status) from exc
+
+
+def _chain_changes(params: dict[str, Any]) -> dict[str, Any]:
+    """The `audio.chain` payload: {"params": {key: value}}; ChainModel validates the keys and ranges."""
+    values = params.get("params")
+    if not isinstance(values, dict) or not values:
+        raise ActionError("params must be an object of chain settings", 400)
+    return values
+
+
+def _loudness_args(params: dict[str, Any]) -> tuple[bool | None, float | None]:
+    on = params.get("on")
+    target = params.get("target_lufs")
+    if on is not None and not isinstance(on, bool):
+        raise ActionError("on must be true or false", 400)
+    if target is not None and (isinstance(target, bool) or not isinstance(target, (int, float))):
+        raise ActionError("target_lufs must be a number", 400)
+    if on is None and target is None:
+        raise ActionError("give on and/or target_lufs", 400)
+    return on, None if target is None else float(target)
+
+
 # ---------------------------------------------------------------------------
 # The real controller
 # ---------------------------------------------------------------------------
 
 
 class AudioController:
-    """Meters, gain/mute, voice presets, tone and mic check for the real rig."""
+    """Meters, gain/mute, the voice chain, loudness and mic check for the real rig."""
 
     def __init__(
         self,
@@ -823,6 +567,8 @@ class AudioController:
         stall_probe: Callable[[str, str, bool], micwatch.StallProbe] | None = None,
         verify: Callable[[str], bool | None] | None = None,
         sleep: Callable[[float], object] | None = None,
+        signal: Callable[[str, float], micwatch.SignalSample | None] | None = None,
+        resync: Callable[[int], Callable[[], str]] | None = None,
     ) -> None:
         self._cfg = cfg
         self.notify = notify
@@ -835,6 +581,8 @@ class AudioController:
         self._monitor = micwatch.StallMonitor(clock)
         self._stall_probe = stall_probe or self._monitor.probe
         self._verify = verify or self._monitor.verify
+        self._signal = signal or (lambda mic, seconds: micwatch.capture_signal(mic, seconds, self._sleep))
+        self._resync = resync or (lambda card: micwatch.feature_unit_resync(card, sleep=self._sleep))
         self._threads: list[threading.Thread] = []
         self._readers: dict[str, LevelReader | None] = {"mic": None, "voice": None}
         # the clip latches outlive the readers: a restarted parec must not forget that the mic clipped
@@ -846,24 +594,18 @@ class AudioController:
         self._mic_desc = ""
         self._gain: float | None = None
         self._muted: bool | None = None
-        self._ee_running = False
-        self._ee_available = system.have("easyeffects")
-        self._presets: list[str] = []
-        self._base: str | None = None
-        self._base_tone: dict[str, float] = {k: 0.0 for k in TONE_RANGES}
-        self._tone = dict(self._base_tone)
-        self._tone_ok = False
-        self._custom = False
-        self._base_denoise: dict[str, Any] = {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
-        self._denoise = dict(self._base_denoise)
-        self._denoise_ok = False
-        self._engines: dict[str, str | None] = {}  # preset name -> its noise removal engine
-        self._ee_current: str | None = None
-        self._hold_until = -math.inf
         self._gain_hold = -math.inf
-        self._cli_poll = -math.inf
-        self._bypass = stored_bypass()
-        self._throttle = Throttle(LOAD_INTERVAL, clock)
+        self._chain = chainlib.ChainModel(store=config.state_dir() / "audio-chain" / "state.json")
+        self._host = chainlib.ChainRuntime(self._chain, config.state_dir())
+        self._voice_present = False
+        # The hardware Plan (set by the rig): when present it, not a name rule, picks the call microphone.
+        self.plan_source: Callable[[], Plan | None] | None = None
+        self.plan_refresh: Callable[[], object] | None = None
+        self._card_tried: dict[str, float] = {}
+        self._refresh_at = -math.inf
+        self._level_t = clock()
+        self._mic_rms = SILENCE_DB
+        self._mic_peak = SILENCE_DB
 
         self._clips = ClipStore(clock)
         self._check = _empty_check()
@@ -871,10 +613,28 @@ class AudioController:
 
         self._detector = micwatch.StallDetector(clock)
         self._graph: micwatch.StallProbe | None = None
+        self._kind = micwatch.KIND_STALL  # what the current fault is: a stall, or digital silence
         self._revive = {"state": "idle", "message": None, "at": -math.inf}
         self._revive_thread: threading.Thread | None = None
 
-        self._set_base(cfg.get("STREAMSTACK_VOICE_PRESET") or "StreamStack Voice")
+        self._outputs = Outputs(
+            lambda level, text: _emit(self.notify, level, text),
+            store=config.state_dir() / "console-outputs.json",
+            clock=clock,
+        )
+
+        self._adopt_start_preset(cfg.get("STREAMSTACK_VOICE_PRESET"))
+
+    def _adopt_start_preset(self, configured: str | None) -> None:
+        """First run on this rig: import the Easy Effects presets once and start from what was chosen there."""
+        imported = migrate.migrate()
+        first = not (config.state_dir() / "audio-chain" / "state.json").exists()
+        wanted = configured or (migrate.previous_choice() if (imported or first) else None)
+        if wanted and first:
+            with contextlib.suppress(chainlib.ChainError):
+                self._chain.load_preset(wanted)
+        elif imported:
+            self._chain.revision += 1
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -884,7 +644,9 @@ class AudioController:
         self._parec = system.have("parec")
         self._stop.clear()
         self._probe()
-        for target, name in ((self._supervise, "audio-supervisor"), (self._tone_loop, "audio-tone")):
+        self._outputs.start()
+        self._host.start()
+        for target, name in ((self._supervise, "audio-supervisor"), (self._level_loop, "audio-level")):
             thread = threading.Thread(target=target, name=name, daemon=True)
             thread.start()
             self._threads.append(thread)
@@ -904,7 +666,9 @@ class AudioController:
             self._readers = {"mic": None, "voice": None}
         for reader in readers:
             reader.stop()
+        self._host.stop()  # the host process keeps running: a call survives a Console restart
         self._clips.close()
+        self._outputs.stop()
 
     # -- background ---------------------------------------------------------
 
@@ -916,17 +680,18 @@ class AudioController:
                 log.exception("audio probe failed")
 
     def _probe(self) -> None:
-        """Refresh everything slow (pactl, pgrep, the Easy Effects socket) and (re)start meter readers."""
+        """Refresh everything slow (pactl, the chain's nodes) and (re)start meter readers."""
         listing = system.run(["pactl", "-f", "json", "list", "sources"])
         infos = parse_sources(listing.stdout) if listing and listing.returncode == 0 else []
         sources = {i["name"]: i["description"] for i in infos}
         wanted = self._cfg.get("STREAMSTACK_MICROPHONE", "")
-        mic = system.pick_microphone(sources, wanted, system.default_device("source")) if sources else ""
+        pickable = {n: d for n, d in sources.items() if n != VOICE_SOURCE_NAME}
+        plan = self.plan_source() if self.plan_source is not None else None
+        if plan is not None:
+            mic = self._follow_plan(plan, pickable)
+        else:
+            mic = system.pick_microphone(pickable, wanted, system.default_device("source")) if pickable else ""
         info = next((i for i in infos if i["name"] == mic), None)
-        running = system.easyeffects_running()
-        presets = list_presets()
-        engines = {name: engine_of_preset(name) for name in presets}
-        current = self._read_current_preset() if running else None
         with self._lock:
             self._sources = sources
             self._mic, self._mic_desc = mic, sources.get(mic, "")
@@ -934,49 +699,48 @@ class AudioController:
                 self._gain, self._muted = info["gain_db"], info["muted"]
             elif info is None:
                 self._gain = self._muted = None
-            self._ee_running = running
-            self._presets = presets
-            self._engines = engines
-            self._adopt_current(current)
-            self._sync_readers(mic, EE_SOURCE_NAME in sources)
+            self._voice_present = VOICE_SOURCE_NAME in sources
+            self._sync_readers(mic, self._voice_present)
             muted = self._muted
+        if mic:
+            self._chain.set_rig(mic)
+        if self._chain.sync_external():
+            self._host.poke()
+        if plan is None:
+            self._host.set_microphone(mic or None)
         self._watch(mic, muted, listing.stdout if listing and listing.returncode == 0 else "")
         self._clips.expire()
+        self._outputs.poll()
+
+    def _follow_plan(self, plan: Plan, pickable: dict[str, str]) -> str:
+        """The call microphone the Plan names, handed to the chain with the Plan's rate and quantum. A Plan that is
+        out of date (its node is gone, or its interface's card was just switched on) asks the hardware controller
+        for a fresh probe, at most every few seconds."""
+        self._host.set_plan(plan)
+        target = self._host.target()
+        if target is None:
+            return ""
+        now = self._clock()
+        if target.activate is not None and now - self._card_tried.get(target.activate[0], -math.inf) >= CARD_RETRY_S:
+            self._card_tried[target.activate[0]] = now
+            if voice.activate_card(*target.activate):
+                log.info("switched %s to %s", redact(target.activate[0]), target.activate[1])
+                self._refresh_at = now + 1.0
+        stale = target.microphone is not None and target.microphone not in pickable
+        if (stale or (target.microphone is None and target.interface)) and now >= self._refresh_at:
+            self._refresh_at = now + PLAN_REFRESH_S
+            if self.plan_refresh is not None:
+                try:
+                    self.plan_refresh()
+                except Exception:  # a failed probe leaves the old Plan; the next round tries again
+                    log.exception("hardware re-probe failed")
+        return target.microphone if target.microphone in pickable else ""
 
     def _gain_settled(self) -> bool:
         return self._clock() >= self._gain_hold
 
-    def _read_current_preset(self) -> str | None:
-        answer = ee_request([f"get_last_loaded_preset:{EE_PIPELINE}"], replies=1)
-        if answer:
-            name = answer[0].strip()
-            return None if name in ("", "None") else name
-        if answer is None and self._clock() - self._cli_poll > 15:  # no socket: the slow CLI, rarely
-            self._cli_poll = self._clock()
-            name = system.easyeffects_preset()
-            return None if name in ("", "None") else name
-        return self._ee_current
-
-    def _adopt_current(self, current: str | None) -> None:
-        """Follow what Easy Effects reports, unless it is the echo of something we just did."""
-        if current is None or self._clock() < self._hold_until or self._throttle.ready_in() is not None:
-            return
-        self._ee_current = current
-        if current == LIVE_PRESET:
-            stored = self._read_sidecar()
-            if stored and self._base != stored["base"]:
-                self._set_base(stored["base"])
-            doc = load_preset_json(LIVE_PRESET)
-            tone = read_tone(doc) if doc else None
-            if tone and self._base is not None:
-                self._tone = tone
-                self._denoise = (read_denoise(doc) if doc else None) or dict(self._base_denoise)
-                self._custom = self._is_custom()
-        elif current != self._base:
-            self._set_base(current)  # changed from Easy Effects itself, or another tool
-
     def _sync_readers(self, mic: str, voice_present: bool) -> None:
-        wants = {"mic": mic or None, "voice": EE_SOURCE_NAME if voice_present else None}
+        wants = {"mic": mic or None, "voice": VOICE_SOURCE_NAME if voice_present else None}
         for slot, source in wants.items():
             reader = self._readers[slot]
             idle_since: float | None = None
@@ -1000,7 +764,7 @@ class AudioController:
         for reader in old:
             reader.stop()
         with self._lock:
-            self._sync_readers(self._mic, EE_SOURCE_NAME in self._sources)
+            self._sync_readers(self._mic, VOICE_SOURCE_NAME in self._sources)
 
     # -- the watchdog ---------------------------------------------------------
 
@@ -1011,21 +775,27 @@ class AudioController:
                 return  # the revive decides, and a half-resumed node must not count
             reader = self._readers["mic"]
             silent = reader is not None and reader.idle_for() >= READER_SILENT_S
+            zero_for = reader.zero_for() if reader is not None else None
         probe: micwatch.StallProbe | None = None
         if mic and listing:
             try:
                 probe = self._stall_probe(mic, listing, silent)
+                # pointers that move are not proof of audio: a whole window of exact zeros is digital silence
+                probe = micwatch.silence_verdict(probe, zero_for)
             except Exception:  # a probe bug must not take the supervisor down
                 log.exception("stall probe failed")
         with self._lock:
             self._graph = probe
+            if probe is not None and probe.stalled is True:
+                self._kind = probe.kind or micwatch.KIND_STALL
             condition = bool(mic) and muted is not True and probe is not None and probe.stalled is True
             event = self._detector.update(condition)
             if event == "started" or (event == "cleared" and self._revive["state"] == "failed"):
                 self._revive.update(state="idle", message=None)  # a new stall, or the old failure resolved itself
             cleared_quietly = event == "cleared" and self._revive["state"] != "ok"
         if event == "started":
-            _emit(self.notify, "warn", f"{micwatch.STALL_TITLE}. Press Revive mic.")
+            title = micwatch.SILENCE_TITLE if self._kind == micwatch.KIND_SILENCE else micwatch.STALL_TITLE
+            _emit(self.notify, "warn", f"{title}. Press Revive mic.")
         elif cleared_quietly:
             _emit(self.notify, "ok", "Microphone is delivering audio again")
 
@@ -1059,77 +829,44 @@ class AudioController:
             stalled = self._detector.stalled
             graph = self._graph
             known = graph is not None and graph.stalled is not None
-        item = micwatch.check_item(stalled if (stalled or known) else None, graph.detail if graph else "")
+            kind = self._kind
+        item = micwatch.check_item(stalled if (stalled or known) else None, graph.detail if graph else "", kind)
         return [item] if item else []
 
     def _due_restart(self, reader: LevelReader) -> bool:
         return self._clock() - reader.started >= RESTART_INTERVAL
 
-    def _tone_loop(self) -> None:
-        while True:
-            with self._cond:
-                if self._stop.is_set():
-                    return
-                wait = self._throttle.ready_in()
-                if wait is None:
-                    self._cond.wait(1.0)
-                    continue
-                if wait > 0:
-                    self._cond.wait(wait)
-                    continue
-                tone = self._throttle.take()
-            if tone is not None:
-                try:
-                    self._load_live(tone)
-                except Exception:
-                    log.exception("loading the live tone failed")
-                    _emit(self.notify, "error", "Could not apply the tone change")
+    def _level_loop(self) -> None:
+        """The loudness leveller: look at the chain output ten times a second and ride the gain."""
+        while not self._stop.wait(LEVEL_INTERVAL):
+            try:
+                self._level_tick()
+            except Exception:  # the leveller must outlive any one bad round
+                log.exception("loudness leveller failed")
 
-    # -- sidecar and base preset -------------------------------------------
-
-    def _sidecar(self) -> Path:
-        return config.state_dir() / "console-live.json"
-
-    def _read_sidecar(self) -> dict[str, Any] | None:
-        try:
-            data = json.loads(self._sidecar().read_text())
-        except (OSError, ValueError):
-            return None
-        return data if isinstance(data, dict) and isinstance(data.get("base"), str) else None
-
-    def _write_sidecar(self, base: str) -> None:
-        path = self._sidecar()
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"base": base}))
-        except OSError as exc:
-            log.warning("cannot remember the base preset: %s", exc)
-
-    def _set_base(self, name: str) -> None:
-        """Make `name` the chosen voice preset and take its tone as the starting point (lock held or init)."""
-        if name == LIVE_PRESET:
-            return
-        doc = load_preset_json(name)
-        tone = read_tone(doc) if doc else None
-        self._base = name
-        self._tone_ok = tone is not None
-        self._base_tone = tone or {k: 0.0 for k in TONE_RANGES}
-        self._tone = dict(self._base_tone)
-        denoise = read_denoise(doc) if doc else None
-        self._denoise_ok = denoise is not None
-        self._base_denoise = denoise or {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
-        self._denoise = dict(self._base_denoise)
-        self._custom = False
-
-    def _is_custom(self) -> bool:
-        """Whether tone or noise removal differ from the chosen preset's own (lock held)."""
-        return self._tone != self._base_tone or _denoise_key(self._denoise) != _denoise_key(self._base_denoise)
+    def _level_tick(self) -> None:
+        now = self._clock()
+        dt, self._level_t = now - self._level_t, now
+        with self._lock:
+            voice, mic = self._readers["voice"], self._readers["mic"]
+            muted = self._muted is True
+        latest = voice.latest() if voice else None
+        heard = mic.latest() if mic else None
+        if heard is not None:
+            self._mic_rms, self._mic_peak = heard[3], heard[2]
+        else:
+            self._mic_rms = self._mic_peak = SILENCE_DB
+        self._chain.level_step(min(dt, 1.0), latest[0] if latest else None, muted, heard[0] if heard else None)
+        self._host.poke()
 
     # -- state --------------------------------------------------------------
 
     def state(self) -> dict[str, Any]:
+        view = self._chain.view()
+        status = self._host.status()
+        params = self._chain.params
+        ready = bool(status["running"])
         with self._lock:
-            running = self._ee_running
             return {
                 "mic": {
                     "name": self._mic or None,
@@ -1139,29 +876,29 @@ class AudioController:
                     "muted": self._muted,
                     "stalled": self._detector.stalled,
                     "stalled_since": self._detector.since,
+                    "stall_kind": self._kind if self._detector.stalled else "",
                     "revive": self._revive_view(),
                 },
                 "gain_range": list(GAIN_RANGE),
-                "chain": {
-                    "running": running,
-                    "available": self._ee_available,
-                    "preset": self._base if running else None,
-                    "presets": [preset_entry(n, self._engines.get(n)) for n in self._presets],
-                    "bypass": self._bypass,
-                },
-                "tone": _tone_state(self._tone, running and self._ee_available and self._tone_ok, self._custom),
+                "chain": {**view, **status},
+                "tone": _tone_state(params, True, view["custom"]),
                 "tone_ranges": _ranges(),
-                "denoise": _denoise_state(
-                    self._denoise, running and self._ee_available and self._denoise_ok, self._custom
-                ),
+                "denoise": _denoise_state(view, params, ready or status["available"]),
                 "mic_check": {**self._check, "clips": self._clips.listing()},
+                "outputs": self._outputs.state(),
             }
 
     def meters(self) -> dict[str, Any]:
         with self._lock:
             mic, voice = self._readers["mic"], self._readers["voice"]
         silent = meter_frame(latch=self._latches["mic"])
-        return {"t": time.time(), "mic": mic.take() if mic else silent, "voice": voice.take() if voice else None}
+        mic_frame = mic.take() if mic else silent
+        voice_frame = voice.take() if voice else None
+        if voice_frame is not None:
+            voice_frame["gr_db"] = chainlib.estimate_reduction(
+                self._chain.params, mic_frame["rms_db"], mic_frame["peak_db"], self._chain.auto_db
+            )
+        return {"t": time.time(), "mic": mic_frame, "voice": voice_frame}
 
     def clip_path(self, clip_id: str) -> Path | None:
         return self._clips.path(clip_id)
@@ -1176,11 +913,17 @@ class AudioController:
             "audio.bypass": self._act_bypass,
             "audio.tone": self._act_tone,
             "audio.denoise": self._act_denoise,
+            "audio.chain": self._act_chain,
+            "audio.chain_reset": self._act_chain_reset,
+            "audio.preset_save": self._act_preset_save,
+            "audio.loudness": self._act_loudness,
             "audio.mic_check": self._act_mic_check,
             "audio.revive": self._act_revive,
             "audio.clip_clear": self._act_clip_clear,
         }
         handler = handlers.get(action)
+        if handler is None and action.startswith("audio.output_"):
+            return self._outputs.act(action, params)
         if handler is None:
             raise ActionError(f"unknown audio action {action!r}", 400)
         return handler(params)
@@ -1196,12 +939,6 @@ class AudioController:
         if not mic:
             raise ActionError("No microphone found - plug it in or set STREAMSTACK_MICROPHONE.", 409)
         return mic
-
-    def _need_ee(self) -> None:
-        with self._lock:
-            ok = self._ee_running and self._ee_available
-        if not ok:
-            raise ActionError("Easy Effects is not running - start the studio first.", 409)
 
     def _pactl(self, args: list[str]) -> None:
         if not system.have("pactl"):
@@ -1232,118 +969,59 @@ class AudioController:
         name = params.get("name")
         if not isinstance(name, str):
             raise ActionError("name must be a preset name", 400)
-        with self._lock:
-            known = name in self._presets
-        if not known:
-            raise ActionError(f"Unknown voice preset {name!r}.", 400)
-        self._need_ee()
-        if self._engines.get(name) == "deepfilternet" and not deepfilternet_installed():
-            raise ActionError(DEEPFILTERNET_MISSING, 409)
-        if not self._ee_load(name):
-            raise ActionError("Easy Effects did not accept the preset.", 409)
-        with self._lock:
-            self._set_base(name)
-            self._ee_current = name
-            self._hold_until = self._clock() + 1.5
-            self._throttle.cancel()
-        return f"Voice preset: {preset_label(name)}"
+        _chain_call(self._chain.load_preset, name)
+        self._host.poke()
+        return f"Voice preset: {self._chain.preset.removeprefix('StreamStack ') or self._chain.preset}"
+
+    def _act_preset_save(self, params: dict[str, Any]) -> str | None:
+        name = params.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ActionError("name must be a preset name", 400)
+        blurb = params.get("blurb", "")
+        if not isinstance(blurb, str):
+            raise ActionError("blurb must be text", 400)
+        _chain_call(self._chain.save_as_preset, name.strip(), blurb)
+        return f"Saved voice preset: {name.strip()}"
 
     def _act_bypass(self, params: dict[str, Any]) -> str | None:
         on = bool_param(params)
-        self._need_ee()
-        if ee_request([f"global_bypass:{1 if on else 0}"]) is None:
-            result = system.run(["easyeffects", "-b", "1" if on else "2"], timeout=15)
-            if result is None or result.returncode != 0:
-                raise ActionError("Easy Effects did not accept the bypass change.", 409)
-        with self._lock:
-            self._bypass = on
+        self._chain.set_bypass(on)
+        self._host.poke()
         return "Voice effects bypassed" if on else "Voice effects on"
 
     def _act_tone(self, params: dict[str, Any]) -> str | None:
-        changes = _validate_tone(params)
-        with self._lock:
-            supported = self._ee_running and self._ee_available and self._tone_ok
-        if not supported:
-            raise ActionError("Tone control needs Easy Effects running with a StreamStack voice preset.", 409)
-        with self._cond:
-            before = self._tone
-            self._tone = {**before, **changes}
-            self._custom = self._is_custom()
-            bands = any(changes.get(k, before[k]) != before[k] for k in BAND_KEYS)
-            pitch = changes.get("pitch_semitones", before["pitch_semitones"]) != before["pitch_semitones"]
-            if bands:
-                self._throttle.submit(dict(self._tone))
-                self._cond.notify_all()
-            tone = dict(self._tone)
-        if pitch and not self._set_pitch_live(tone["pitch_semitones"]) and not bands:
-            with self._cond:  # no socket: the preset path carries the pitch too
-                self._throttle.submit(tone)
-                self._cond.notify_all()
+        _chain_call(self._chain.set_params, _validate_tone(params))
+        self._host.poke()
         return None
 
     def _act_denoise(self, params: dict[str, Any]) -> str | None:
-        """Switch the noise removal engine (RNNoise or DeepFilterNet) or set the Attenuation Limit.
-
-        Goes through the managed live preset like the bands (coalesced, newest wins); the base preset stays chosen.
-        """
+        """Switch the noise removal engine (RNNoise or DeepFilterNet) or set its strength (the attenuation limit)."""
         changes = _validate_denoise(params)
-        with self._lock:
-            supported = self._ee_running and self._ee_available and self._denoise_ok
-        if not supported:
-            raise ActionError("Noise removal control needs Easy Effects running with a StreamStack voice preset.", 409)
-        if changes.get("engine") == "deepfilternet" and not deepfilternet_installed():
-            raise ActionError(DEEPFILTERNET_MISSING, 409)
-        with self._cond:
-            self._denoise = {**self._denoise, **changes}
-            self._custom = self._is_custom()
-            self._throttle.submit(dict(self._tone))
-            self._cond.notify_all()
-            engine = self._denoise["engine"]
-        return f"Noise removal: {DENOISE_ENGINES[engine]['label']}" if "engine" in changes else None
+        if "engine" in changes:
+            _chain_call(self._chain.set_engine, changes["engine"])
+        if "atten_limit_db" in changes:
+            _chain_call(self._chain.set_params, {"denoise_atten_db": changes["atten_limit_db"]})
+        self._host.poke()
+        return f"Noise removal: {chaingraph.PLUGINS[changes['engine']]['name']}" if "engine" in changes else None
 
-    def _set_pitch_live(self, semitones: float) -> bool:
-        prefix = f"set_property:{EE_PIPELINE}:pitch:0"
-        reply = ee_request(
-            [f"{prefix}:semitones:{semitones}", f"{prefix}:bypass:{'true' if semitones == 0 else 'false'}"]
-        )
-        return reply is not None
+    def _act_chain(self, params: dict[str, Any]) -> str | None:
+        """Set any chain stage parameters or switches live: ``{"params": {"comp_ratio": 4, "gate_on": false}}``."""
+        _chain_call(self._chain.set_params, _chain_changes(params))
+        self._host.poke()
+        return None
 
-    def _ee_load(self, name: str) -> bool:
-        """Load an input preset: the socket (confirmed by reading the last loaded name back), else the CLI."""
-        answer = ee_request([f"load_preset:{EE_PIPELINE}:{name}", f"get_last_loaded_preset:{EE_PIPELINE}"], replies=1)
-        if answer is not None:
-            return bool(answer) and answer[0].strip() == name
-        result = system.run(["easyeffects", "-l", name], timeout=15)
-        return bool(result and result.returncode == 0)
+    def _act_chain_reset(self, params: dict[str, Any]) -> str | None:
+        self._chain.reset()
+        self._host.poke()
+        return "Voice chain reset to the preset"
 
-    def _load_live(self, tone: dict[str, float]) -> None:
-        """Write the managed preset from the chosen base plus `tone`, and load it."""
-        with self._lock:
-            base = self._base
-        doc = load_preset_json(base) if base else None
-        if base is None or doc is None:
-            raise ActionError("The base voice preset cannot be read.", 409)
-        out = apply_tone(doc, tone)
-        with self._lock:
-            denoise = dict(self._denoise)
-            has_slot = self._denoise_ok
-        if has_slot:  # a custom preset without a noise removal plugin keeps whatever it has
-            out = apply_denoise(out, denoise["engine"], denoise["atten_limit_db"])
-        target = ee_user_dir() / f"{LIVE_PRESET}.json"
-        tmp = target.with_suffix(".json.tmp")
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(json.dumps(out, indent=2))
-            tmp.replace(target)
-        except OSError as exc:
-            raise ActionError(f"Cannot write the live preset: {exc}", 409) from exc
-        self._write_sidecar(base)
-        if not self._ee_load(LIVE_PRESET):
-            _emit(self.notify, "error", "Easy Effects did not accept the tone change")
-            return
-        with self._lock:
-            self._ee_current = LIVE_PRESET
-            self._hold_until = self._clock() + 1.5
+    def _act_loudness(self, params: dict[str, Any]) -> str | None:
+        on, target = _loudness_args(params)
+        _chain_call(self._chain.set_loudness, on, target)
+        self._host.poke()
+        if on is None:
+            return f"Loudness target: {self._chain.target:g} LUFS"
+        return "Loudness leveller on" if on else "Loudness leveller off"
 
     # -- revive ---------------------------------------------------------------
 
@@ -1356,13 +1034,36 @@ class AudioController:
                 raise ActionError("The microphone is already being revived.", 409)
             if not (self._detector.stalled or self._revive["state"] == "failed" or params.get("force") is True):
                 raise ActionError("The microphone is delivering audio; there is nothing to revive.", 409)
-            self._set_revive("reviving", "Suspending and resuming the microphone...")
-        thread = threading.Thread(target=self._run_revive, args=(mic,), name="mic-revive", daemon=True)
+            kind = self._kind if self._detector.stalled else micwatch.KIND_STALL
+            first = (
+                "Re-writing the device's capture controls..."
+                if kind == micwatch.KIND_SILENCE
+                else "Suspending and resuming the microphone..."
+            )
+            self._set_revive("reviving", first)
+        thread = threading.Thread(target=self._run_revive, args=(mic, kind), name="mic-revive", daemon=True)
         self._revive_thread = thread
         thread.start()
         return "Reviving the microphone..."
 
-    def _run_revive(self, mic: str) -> None:
+    def _resync_for(self, mic: str) -> Callable[[], str] | None:
+        """The capture-control resync of the mic's ALSA card: the hardware Plan's interface, else the card the
+        source itself reports. None when no card can be named."""
+        plan = self.plan_source() if self.plan_source is not None else None
+        interface = plan.audio_interface() if plan is not None else None
+        card = interface.alsa_card if interface is not None else None
+        if card is None:
+            listing = system.run(["pactl", "-f", "json", "list", "sources"], timeout=micwatch.PACTL_TIMEOUT)
+            info = micwatch.parse_source(listing.stdout, mic) if listing and listing.returncode == 0 else None
+            card = info.pcm.card if info is not None and info.pcm is not None else None
+        return self._resync(card) if card is not None else None
+
+    def _still_silent(self, mic: str) -> bool | None:
+        """After a revive step: True when a short capture is still all zeros, False when audio arrives."""
+        sample = self._signal(mic, micwatch.VERIFY_SIGNAL_S)
+        return None if sample is None else sample.digital_silence(micwatch.VERIFY_MIN_S)
+
+    def _run_revive(self, mic: str, kind: str = micwatch.KIND_STALL) -> None:
         """The worker: escalate until the node is scheduled again, report through state and a toast."""
         try:
             result = micwatch.revive_mic(
@@ -1371,6 +1072,9 @@ class AudioController:
                 sleep=self._sleep,
                 stalled=lambda: self._recheck(mic),
                 say=lambda text: self._set_revive("reviving", text),
+                kind=kind,
+                resync=self._resync_for(mic) if kind == micwatch.KIND_SILENCE else None,
+                silent=lambda: self._still_silent(mic),
             )
         except Exception as exc:  # the state must leave "reviving" whatever went wrong
             log.exception("reviving the microphone failed")
@@ -1400,8 +1104,8 @@ class AudioController:
             takes = []
             if self._mic:
                 takes.append(("recording-raw", "raw microphone", self._mic))
-            if EE_SOURCE_NAME in self._sources:
-                takes.append(("recording-processed", "processed voice", EE_SOURCE_NAME))
+            if VOICE_SOURCE_NAME in self._sources:
+                takes.append(("recording-processed", "processed voice", VOICE_SOURCE_NAME))
             if not takes:
                 raise ActionError("No microphone found to record from.", 409)
             self._check = {"state": takes[0][0], "seconds": seconds, "error": None}
@@ -1462,11 +1166,14 @@ def speech_peak_db(t: float) -> float | None:
     return level
 
 
-def demo_levels(t: float, gain_db: float, muted: bool, bypass: bool) -> tuple[dict[str, Any], dict[str, Any]]:
+def demo_levels(
+    t: float, gain_db: float, muted: bool, bypass: bool, trim_db: float = 0.0
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """(mic, voice) meter dicts: the voice is a few dB hotter than the mic and more compressed.
 
     Loudness is a pure function of time too: momentary averages the last 400 ms, short-term the last 3 s, of the
     same RMS the meter shows (less 3 dB: a K-weighted mono signal reads about that far under its RMS).
+    `trim_db` is the loudness leveller's gain, added to the voice only.
     """
     if muted:
         return meter_frame(), meter_frame()
@@ -1478,9 +1185,9 @@ def demo_levels(t: float, gain_db: float, muted: bool, bypass: bool) -> tuple[di
         if bypass:
             return (mic_peak, 10), (mic_peak, 10)
         if speech is None:
-            return (mic_peak, 10), (noise - 12, 4)
+            return (mic_peak, 10), (noise - 12 + trim_db, 4)
         return (mic_peak, 10), (
-            -13 + 0.45 * (speech + gain_db + 20) + 3,
+            -13 + 0.45 * (speech + gain_db + 20) + 3 + trim_db,
             6,
         )  # compressed towards a steady level, then lifted
 
@@ -1536,13 +1243,11 @@ class DemoAudio:
         self._gain = 0.0
         self._muted = False
         self._bypass = False
-        self._presets = [n for n in BLURBS]
-        self._base = "StreamStack Voice"
-        self._base_tone = self._shipped_tone(self._base)
-        self._tone = dict(self._base_tone)
-        self._base_denoise = self._shipped_denoise(self._base)
-        self._denoise = dict(self._base_denoise)
         self._df_installed = True  # the demo rig has the library; audio.demo_deepfilternet takes it away
+        self._chain = chainlib.ChainModel(store=None, engines=self._engines)
+        self._level_t = clock()
+        self._last_lufs_m: float | None = None
+        self._last_mic_lufs: float | None = None
         self._clips = ClipStore(clock)
         self._check = _empty_check()
         self._check_start = 0.0
@@ -1550,27 +1255,16 @@ class DemoAudio:
         self._stalled_since: str | None = None
         self._revive = {"state": "idle", "message": None, "at": 0.0}
         self._latches = {"mic": loudness.ClipLatch(), "voice": loudness.ClipLatch()}
+        self._outputs = DemoOutputs(lambda level, text: _emit(self.notify, level, text), clock=clock)
 
-    @staticmethod
-    def _shipped_tone(name: str) -> dict[str, float]:
-        try:
-            doc = json.loads((config.data_dir() / "easyeffects" / EE_PIPELINE / f"{name}.json").read_text())
-        except (OSError, ValueError):
-            return {k: 0.0 for k in TONE_RANGES}
-        return read_tone(doc) or {k: 0.0 for k in TONE_RANGES}
-
-    @staticmethod
-    def _shipped_denoise(name: str) -> dict[str, Any]:
-        try:
-            doc = json.loads((config.data_dir() / "easyeffects" / EE_PIPELINE / f"{name}.json").read_text())
-        except (OSError, ValueError):
-            return {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
-        return read_denoise(doc) or {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
+    def _engines(self) -> list[str]:
+        return list(stages.DENOISE_ENGINES) if self._df_installed else ["rnnoise"]
 
     def start(self) -> None:
         return None
 
     def stop(self) -> None:
+        self._outputs.stop()
         self._clips.close()
 
     # The mic check and the revive are timelines from their start, advanced whenever they are looked at
@@ -1589,9 +1283,6 @@ class DemoAudio:
                     self._revive["message"] = "Waiting for the microphone to come back..."
             elif state == "ok" and elapsed > REVIVE_SHOW_S:
                 self._revive.update(state="idle", message=None)
-
-    def _denoise_custom(self) -> bool:
-        return _denoise_key(self._denoise) != _denoise_key(self._base_denoise)
 
     def _advance(self) -> None:
         self._advance_revive()
@@ -1625,31 +1316,68 @@ class DemoAudio:
                     "muted": self._muted,
                     "stalled": self._stalled,
                     "stalled_since": self._stalled_since,
+                    "stall_kind": micwatch.KIND_STALL if self._stalled else "",
                     "revive": {"state": self._revive["state"], "message": self._revive["message"]},
                 },
                 "gain_range": list(GAIN_RANGE),
-                "chain": {
-                    "running": True,
-                    "available": True,
-                    "preset": self._base,
-                    "presets": [
-                        preset_entry(n, self._shipped_denoise(n)["engine"], self._df_installed) for n in self._presets
-                    ],
-                    "bypass": self._bypass,
-                },
-                "tone": _tone_state(self._tone, True, self._tone != self._base_tone or self._denoise_custom()),
+                "chain": {**self._chain.view(), **self._demo_status()},
+                "tone": _tone_state(self._chain.params, True, self._chain.custom()),
                 "tone_ranges": _ranges(),
-                "denoise": _denoise_state(
-                    self._denoise, True, self._tone != self._base_tone or self._denoise_custom(), self._df_installed
-                ),
+                "denoise": _denoise_state(self._chain.view(), self._chain.params, True),
                 "mic_check": {**self._check, "clips": self._clips.listing()},
+                "outputs": self._outputs.state(),
             }
+
+    @staticmethod
+    def _demo_status() -> dict[str, Any]:
+        return {
+            "running": True,
+            "available": True,
+            "missing": [],
+            "error": None,
+            "source": chaingraph.NODE_NAME,
+            "description": chaingraph.DESCRIPTION,
+            "rate": chaingraph.RATE,
+            "graph_rate": chaingraph.RATE,
+            "graph_rate_reason": "the conferencing rate, which the interface offers",
+            "quantum": 256,
+            "target": {
+                "state": "interface",
+                "microphone": "alsa_input.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00.mono-fallback",
+                "monitor": "alsa_output.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00.analog-stereo",
+                "interface": "wave-xlr",
+                "rate": chaingraph.RATE,
+                "rate_reason": "the conferencing rate, which the interface offers",
+                "native_rate": chaingraph.RATE,
+                "format": "s24le",
+                "quantum": 256,
+                "activate": None,
+                "reason": "Elgato Wave XLR (USB 0fd9:007d)",
+            },
+            "contract": {
+                "name": chaingraph.NODE_NAME,
+                "description": chaingraph.DESCRIPTION,
+                "media_class": "Audio/Source",
+                "rate": chaingraph.RATE,
+                "channels": 1,
+                "state": "running",
+            },
+        }
 
     def meters(self) -> dict[str, Any]:
         self._advance_revive()
         with self._lock:
+            now = self._clock()
+            dt, self._level_t = min(1.0, now - self._level_t), now
+            stalled = self._muted or self._stalled
+            self._chain.level_step(dt, self._last_lufs_m, stalled, self._last_mic_lufs)
             # a stalled microphone delivers nothing, and neither does the voice chain behind it
-            mic, voice = demo_levels(self._clock() - self._t0, self._gain, self._muted or self._stalled, self._bypass)
+            mic, voice = demo_levels(now - self._t0, self._gain, stalled, self._chain.bypass, self._chain.auto_db)
+            self._last_lufs_m = voice["lufs_m"]
+            self._last_mic_lufs = mic["lufs_m"]
+            voice["gr_db"] = chainlib.estimate_reduction(
+                self._chain.params, mic["rms_db"], mic["peak_db"], self._chain.auto_db
+            )
             for frame, latch in ((mic, self._latches["mic"]), (voice, self._latches["voice"])):
                 latch.trip(frame["sample_db"], frame["peak_db"])
                 frame["latched"] = latch.latched
@@ -1679,6 +1407,8 @@ class DemoAudio:
         return "Demo: the microphone is stalled" if on else "Demo: the microphone is healthy"
 
     def act(self, action: str, params: dict[str, Any]) -> str | None:
+        if action.startswith(("audio.output_", "audio.demo_output_")):
+            return self._outputs.act(action, params)
         if action == "audio.gain":
             db = round(number_param(params, "db", low=GAIN_RANGE[0], high=GAIN_RANGE[1], clamped=True), 2)
             with self._lock:
@@ -1691,39 +1421,47 @@ class DemoAudio:
             return None
         if action == "audio.preset":
             name = params.get("name")
-            if not isinstance(name, str) or name not in self._presets:
-                raise ActionError(f"Unknown voice preset {name!r}.", 400)
-            with self._lock:
-                if not self._df_installed and self._shipped_denoise(name)["engine"] == "deepfilternet":
-                    raise ActionError(DEEPFILTERNET_MISSING, 409)
-                self._base, self._base_tone = name, self._shipped_tone(name)
-                self._tone = dict(self._base_tone)
-                self._base_denoise = self._shipped_denoise(name)
-                self._denoise = dict(self._base_denoise)
-            return f"Voice preset: {preset_label(name)}"
+            if not isinstance(name, str):
+                raise ActionError("name must be a preset name", 400)
+            _chain_call(self._chain.load_preset, name)
+            return f"Voice preset: {self._chain.preset.removeprefix('StreamStack ') or self._chain.preset}"
+        if action == "audio.preset_save":
+            name = params.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ActionError("name must be a preset name", 400)
+            _chain_call(self._chain.save_as_preset, name.strip(), str(params.get("blurb", "")))
+            return f"Saved voice preset: {name.strip()}"
         if action == "audio.bypass":
-            on = bool_param(params)
-            with self._lock:
-                self._bypass = on
-            return "Voice effects bypassed" if on else "Voice effects on"
+            self._chain.set_bypass(bool_param(params))
+            return "Voice effects bypassed" if self._chain.bypass else "Voice effects on"
         if action == "audio.tone":
-            changes = _validate_tone(params)
-            with self._lock:
-                self._tone.update(changes)
+            _chain_call(self._chain.set_params, _validate_tone(params))
             return None
         if action == "audio.denoise":
             changes = _validate_denoise(params)
-            with self._lock:
-                if changes.get("engine") == "deepfilternet" and not self._df_installed:
-                    raise ActionError(DEEPFILTERNET_MISSING, 409)
-                self._denoise.update(changes)
-                engine = self._denoise["engine"]
-            return f"Noise removal: {DENOISE_ENGINES[engine]['label']}" if "engine" in changes else None
+            if "engine" in changes:
+                _chain_call(self._chain.set_engine, changes["engine"])
+            if "atten_limit_db" in changes:
+                _chain_call(self._chain.set_params, {"denoise_atten_db": changes["atten_limit_db"]})
+            return f"Noise removal: {chaingraph.PLUGINS[changes['engine']]['name']}" if "engine" in changes else None
+        if action == "audio.chain":
+            _chain_call(self._chain.set_params, _chain_changes(params))
+            return None
+        if action == "audio.chain_reset":
+            self._chain.reset()
+            return "Voice chain reset to the preset"
+        if action == "audio.loudness":
+            on, target = _loudness_args(params)
+            _chain_call(self._chain.set_loudness, on, target)
+            if on is None:
+                return f"Loudness target: {self._chain.target:g} LUFS"
+            return "Loudness leveller on" if on else "Loudness leveller off"
         if action == "audio.demo_deepfilternet":  # demo only: take the DeepFilterNet library away, for the e2e suite
             with self._lock:
                 self._df_installed = bool_param(params)
-                if not self._df_installed and self._denoise["engine"] == "deepfilternet":
-                    self._denoise = {"engine": DEFAULT_ENGINE, "atten_limit_db": ATTEN_RANGE[1]}
+                if not self._df_installed and self._chain.engine == "deepfilternet":
+                    self._chain.engine = "rnnoise"
+                self._chain.revision += 1
             return None
         if action == "audio.clip_clear":
             for latch in self._latches.values():

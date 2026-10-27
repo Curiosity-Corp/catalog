@@ -11,8 +11,12 @@ import { icon } from '../components/icons.js';
 import { startStudio, stopStudio } from '../core/ops.js';
 import { relTime } from '../core/time.js';
 import { mountBridgePanel } from './system-bridge.js';
+import { mountStoragePanel } from './system-storage.js';
+import { mountDiagnosticsPanel } from './system-diagnostics.js';
+import { mountHardwarePanel } from './system-hardware.js';
 
 const GROUPS = [
+  { id: 'hardware', title: 'Hardware', icon: 'system' },
   { id: 'video', title: 'Video', icon: 'camera' },
   { id: 'audio', title: 'Audio', icon: 'audio' },
   { id: 'apps', title: 'Apps', icon: 'system' },
@@ -23,14 +27,12 @@ const STATE = {
   fail: { icon: 'x', word: 'Fix' },
 };
 const TOOLS = [
-  { name: 'obs', title: 'OBS Studio', blurb: 'Scenes, filters, recording', icon: 'scenes' },
-  { name: 'easyeffects', title: 'Easy Effects', blurb: 'The voice chain', icon: 'wave' },
   { name: 'qpwgraph', title: 'qpwgraph', blurb: 'Audio patchbay', icon: 'patch' },
   { name: 'pavucontrol', title: 'pavucontrol', blurb: 'Volume and devices', icon: 'speaker' },
   { name: 'qv4l2', title: 'qv4l2', blurb: 'Camera controls', icon: 'camera' },
 ];
 
-const MIC_NAME = 'Easy Effects Source';
+const MIC_NAME = 'StreamStack Mic';
 const callSteps = (cam) => ({
   teams: {
     label: 'Microsoft Teams',
@@ -40,7 +42,7 @@ const callSteps = (cam) => ({
       { k: 'Camera', v: cam, copy: cam },
       { k: 'Microphone', v: MIC_NAME, copy: MIC_NAME },
       { k: 'Speaker', v: 'Headphones' },
-      { k: 'Noise suppression', v: 'Low', note: 'Easy Effects already removes noise; High or Auto fights it.' },
+      { k: 'Noise suppression', v: 'Low', note: 'StreamStack already removes noise; High or Auto fights it.' },
       { k: 'Background effects', v: 'None, no blur', note: 'Do framing and grading here, not in Teams.' },
     ],
     test: 'Teams: "Make a test call"',
@@ -54,7 +56,7 @@ const callSteps = (cam) => ({
       { k: 'Microphone', v: MIC_NAME, copy: MIC_NAME },
       { k: 'HD', v: 'On' },
       { k: 'Mirror my video', v: 'Off when text or signs are in shot' },
-      { k: 'Adjust for low light, Touch up appearance', v: 'Off', note: 'OBS handles it.' },
+      { k: 'Adjust for low light, Touch up appearance', v: 'Off', note: 'The video engine handles it.' },
       { k: 'Automatically adjust microphone volume', v: 'Off', note: 'StreamStack auto mode levels the mic.' },
       { k: 'Suppress background noise', v: 'Low' },
       { k: 'Original sound for musicians', v: 'On, with echo cancellation', note: 'Echo cancellation can stay off if you wear headphones.' },
@@ -83,6 +85,11 @@ const TEMPLATE = `
   <section aria-labelledby="hServices">
     <h2 class="sec" id="hServices">Services</h2>
     <div class="tiles" data-ref="services"></div>
+  </section>
+
+  <section aria-labelledby="hSeen">
+    <h2 class="sec" id="hSeen">Seen by apps <span class="sec-note" data-ref="seenNote"></span></h2>
+    <div class="seen" data-ref="seen"></div>
   </section>
 
   <section aria-labelledby="hChecks">
@@ -239,7 +246,7 @@ export async function mount(host, ctx) {
     setTile('studio', {
       name: 'Studio', on: st.running, busy: st.busy,
       state: st.busy ? (st.running ? 'Stopping…' : 'Starting…') : st.running ? 'Running' : 'Stopped',
-      note: st.running ? `Program camera "${st.program_label || 'StreamStack Camera'}" is ready for calls.` : 'OBS, the camera bridge and the voice chain are off.',
+      note: st.running ? `Program camera "${st.program_label || 'StreamStack Camera'}" is ready for calls.` : 'The video engine, the camera bridge and the voice chain are off.',
       action: st.running ? { kind: 'stop', label: 'Stop studio', icon: 'stop', variant: 'danger', hold: 900, run: stopStudio } : { kind: 'start', label: 'Start studio', icon: 'power', variant: 'primary', run: startStudio },
     });
     setTile('voice', {
@@ -249,7 +256,7 @@ export async function mount(host, ctx) {
     });
     setTile('bridge', {
       name: `${st.camera_label || 'Camera'} bridge`, on: !!st.bridge, state: st.bridge ? 'Running' : 'Off',
-      note: st.bridge ? 'The camera feeds OBS through a loopback device.' : 'Starts with the studio.',
+      note: st.bridge ? 'The camera feeds the video engine through a loopback device.' : 'Starts with the studio.',
       action: { kind: 'go-camera', label: 'Open Camera', icon: 'camera', run: () => navigate('camera') },
     });
     setTile('auto', {
@@ -257,6 +264,28 @@ export async function mount(host, ctx) {
       note: autoOn ? 'Watching picture and voice, adjusting gently.' : 'Nothing changes by itself.',
       action: { kind: 'go-auto', label: 'Open Auto', icon: 'auto', run: () => navigate('auto') },
     });
+  });
+
+  // ---------- seen by apps: who has the virtual camera and microphone open ----------
+  const seenCard = (kind, title, dev, apps) => {
+    const listed = !!dev && dev.present !== false;
+    const state = !listed ? 'fail' : apps.length ? 'ok' : 'idle';
+    const word = !listed ? 'Not available' : apps.length ? apps.map((a) => a.app).filter((a, i, all) => all.indexOf(a) === i).join(', ') : 'No app has it open';
+    return h('div', { class: 'seen-card', role: 'group', 'data-kind': kind, 'data-state': state, 'aria-label': `${title}: ${word}` },
+      h('div', { class: 'seen-head' }, icon(kind === 'camera' ? 'camera' : 'audio'), h('b', {}, dev?.label || title)),
+      h('div', { class: 'seen-state' }, word),
+      h('small', { class: 'seen-note' }, !listed ? 'Apps cannot list it.'
+        : kind === 'camera' && dev.access === false ? 'This user cannot open the camera node; see the Video checks.'
+        : kind === 'camera' && !dev.producer ? 'Apps list it once the engine feeds it a picture.'
+        : kind === 'mic' && dev.default ? 'The default microphone.' : 'Pick it in the app.'));
+  };
+  sub((s) => s.virtual, (v) => {
+    const seen = v?.seen || [];
+    R.seenNote.textContent = v?.error ? 'unavailable' : seen.length ? `${seen.length} open` : 'none open';
+    R.seen.replaceChildren(
+      seenCard('camera', 'StreamStack Camera', v?.camera, seen.filter((a) => a.kind === 'camera')),
+      seenCard('mic', MIC_NAME, v?.mic, seen.filter((a) => a.kind === 'mic')),
+    );
   });
 
   // ---------- tools ----------
@@ -326,6 +355,18 @@ export async function mount(host, ctx) {
   mountBridgePanel(host.querySelector('.sys'), ctx).then(
     (unmount) => { if (gone) unmount(); else off.push(unmount); },
     (err) => { console.error('Canon bridge panel failed to mount', err); },
+  );
+  mountStoragePanel(host.querySelector('.sys'), ctx).then(
+    (unmount) => { if (gone) unmount(); else off.push(unmount); },
+    (err) => { console.error('Repaired files panel failed to mount', err); },
+  );
+  mountDiagnosticsPanel(host.querySelector('.sys'), ctx).then(
+    (unmount) => { if (gone) unmount(); else off.push(unmount); },
+    (err) => { console.error('Diagnostics panel failed to mount', err); },
+  );
+  mountHardwarePanel(host.querySelector('.sys'), ctx).then(
+    (unmount) => { if (gone) unmount(); else off.push(unmount); },
+    (err) => { console.error('Hardware panel failed to mount', err); },
   );
   return () => { gone = true; off.forEach((fn) => fn()); };
 }

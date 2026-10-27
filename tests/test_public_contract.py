@@ -68,14 +68,28 @@ def test_private_material_is_not_in_the_public_surface() -> None:
         "omlab-secrets",
         "harbor-internal-ca",
     )
+    # The vendored StreamStack project (files/streamstack, a squashed subtree of its
+    # release) is upstream CI, build and install code that names its own GitLab and
+    # registry hosts. Those two host markers are allowed only inside that tree, until
+    # StreamStack makes them configuration-only (tracked in the StreamStack project).
+    # Every other file, every other marker, and every credential-like marker inside
+    # the tree stays under the gate.
+    vendored = ROLE / "files/streamstack"
+    host_markers = {"developerdojo.org", "focuscell.org"}
     text = "\n".join(
         path.read_text(errors="replace")
         for root in source_paths
         for path in (root.rglob("*") if root.is_dir() else [root])
-        if path.is_file()
+        if path.is_file() and vendored not in path.parents
     ).lower()
     for marker in old_private_markers:
         assert marker not in text
+    vendored_text = "\n".join(
+        path.read_text(errors="replace") for path in vendored.rglob("*") if path.is_file()
+    ).lower()
+    for marker in old_private_markers:
+        if marker not in host_markers:
+            assert marker not in vendored_text, f"{marker} in the vendored StreamStack tree"
     assert not list((ROLE / "files").rglob("*.crt"))
     assert 'CLIENT_ID = ""' in (ROLE / "files/teams.py").read_text()
 

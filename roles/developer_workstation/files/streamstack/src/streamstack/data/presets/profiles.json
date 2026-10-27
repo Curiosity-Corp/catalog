@@ -1,0 +1,13 @@
+{
+  "schema": "streamstack.profiles/1",
+  "profiles": [
+    {"id": "meeting", "name": "Meeting", "blurb": "Clean, neutral picture for Teams, Zoom or Meet.", "icon": "camera", "look": "Clean Corporate", "platform": "calls", "tier": "balanced", "lighting": "Key light", "voice": "StreamStack Voice", "framing": "gentle"},
+    {"id": "podcast", "name": "Podcast", "blurb": "Warm room, warm voice, long-take friendly. Streams to YouTube.", "icon": "mic", "look": "Podcast Studio", "platform": "youtube", "tier": "high", "lighting": "Soft", "voice": "StreamStack Voice Warm", "framing": "off"},
+    {"id": "gaming", "name": "Livestream Gaming", "blurb": "Neon colour, bright voice, Twitch at 1080p60.", "icon": "play", "look": "Gaming Neon", "platform": "twitch", "tier": "high", "lighting": "Soft", "voice": "StreamStack Voice Bright", "framing": "off"},
+    {"id": "webinar", "name": "Webinar", "blurb": "Crisp and authoritative for LinkedIn Live.", "icon": "broadcast", "look": "News Desk", "platform": "linkedin", "tier": "balanced", "lighting": "Key light", "voice": "StreamStack Voice", "framing": "gentle"},
+    {"id": "interview", "name": "Interview", "blurb": "Natural skin tones, a warm voice and gentle framing.", "icon": "headphones", "look": "Portra Portrait", "platform": "youtube", "tier": "high", "lighting": "Soft", "voice": "StreamStack Voice Warm", "framing": "gentle"},
+    {"id": "late-night", "name": "Late Night", "blurb": "Low-key and moody with a deep voice, in 4K for YouTube.", "icon": "moon", "look": "Low-Key Moody", "platform": "youtube", "tier": "ultra", "lighting": "Warm evening", "voice": "StreamStack Voice Deep", "framing": "tight"},
+    {"id": "vertical-live", "name": "Vertical Live", "blurb": "Portrait 9:16 for TikTok Live, soft and close.", "icon": "live", "look": "Talking Head Soft", "platform": "tiktok", "tier": "balanced", "lighting": "Key light", "voice": "StreamStack Voice Bright", "framing": "follow"},
+    {"id": "archive-session", "name": "Archive Session", "blurb": "Film-like colour recorded locally at the best quality.", "icon": "record", "look": "Classic Chrome", "platform": "archive", "tier": "ultra", "lighting": "Daylight", "voice": "StreamStack Voice", "framing": "off"}
+  ]
+}

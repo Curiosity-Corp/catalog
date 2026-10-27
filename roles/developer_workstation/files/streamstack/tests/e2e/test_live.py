@@ -221,6 +221,22 @@ def test_preset_pad_loads_preset(live: App, rig: Rig) -> None:
     expect(live.page.locator(".preset-note")).to_contain_text(target["label"])
 
 
+@pytest.mark.parametrize("width", [1280, 1920])
+def test_preset_pads_show_whole_names(live: App, width: int) -> None:
+    # Six presets share one row; "Minimal" and "DeepFilterNet" were cut to "Minima" and "DeepFil".
+    live.page.set_viewport_size({"width": width, "height": 1000})
+    pads = live.region("Voice presets").get_by_role("button")
+    expect(pads.first).to_be_visible()
+    clipped = live.page.eval_on_selector_all(
+        "ss-pad[fit]",
+        """(els) => els.filter((e) => {
+            const l = e.shadowRoot.querySelector('.label');
+            return l.scrollWidth > l.clientWidth + 1 || l.scrollHeight > l.clientHeight + 1;
+        }).map((e) => e.getAttribute('label'))""",
+    )
+    assert clipped == [], f"preset labels cut off at {width}px: {clipped}"
+
+
 def test_auto_director_toggle(live: App, rig: Rig) -> None:
     director = live.switch("Director")
     expect(director).to_have_attribute("aria-checked", "false")
@@ -246,8 +262,8 @@ def test_program_picture_streams_frames(live: App, page: Page) -> None:
 
 def test_status_rail_reflects_the_rig(live: App, page: Page) -> None:
     status = page.get_by_role("navigation", name="Status")
-    expect(status).to_contain_text("OBS")
-    expect(status).to_contain_text("Connected")
+    expect(status).to_contain_text("Video engine")
+    expect(status).to_contain_text("Running")
     expect(status).to_contain_text("StreamStack")
 
 
@@ -307,3 +323,14 @@ def test_blur_pad_is_hidden_while_the_plugin_is_missing(live: App, rig: Rig) -> 
     expect(pad).to_be_hidden(timeout=LOADED)
     rig.act("video.blur.plugin", installed=True)
     expect(pad).to_be_visible(timeout=LOADED)
+
+
+def test_native_blur_pad_follows_the_arc_state(live: App, rig: Rig) -> None:
+    pad = live.page.get_by_role("button", name=re.compile(r"^Blur\b"))
+    rig.act("video.blur.arc", mode="unavailable")
+    expect(pad).to_be_hidden(timeout=LOADED)  # mid-stream is the wrong time to read why it cannot run
+    rig.act("video.blur.arc", mode="running")
+    expect(pad).to_be_visible(timeout=LOADED)
+    pad.click()
+    expect(pad).to_have_attribute("aria-pressed", "true")
+    assert poll(rig, lambda s: s["video"]["blur"]["on"] and s["video"]["blur"]["native"])

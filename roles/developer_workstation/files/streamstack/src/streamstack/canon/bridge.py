@@ -24,6 +24,8 @@ from streamstack.canon import controls as ctl
 from streamstack.canon import encode
 from streamstack.canon.gphoto import CameraError, Reading, Session
 from streamstack.canon.jpeg import JpegInfo, jpeg_info
+from streamstack.hardware import camera as hwcamera
+from streamstack.hardware.plan import Plan
 
 SOURCE_STALL = 4.0  # seconds without a camera frame before the source is restarted
 ENCODER_STALL = 3.0  # seconds without ffmpeg output while frames go in
@@ -66,7 +68,7 @@ class Settings:
     render_node: str = ""
 
     @classmethod
-    def from_config(cls, cfg: dict[str, str]) -> Settings:
+    def from_config(cls, cfg: dict[str, str], plan: Plan | None = None) -> Settings:
         def number(key: str, fallback: int) -> int:
             try:
                 return max(2, int(cfg.get(key, fallback)))
@@ -76,7 +78,7 @@ class Settings:
         output = cfg.get("STREAMSTACK_CANON_OUTPUT", "native").strip().lower()
         decode = cfg.get("STREAMSTACK_CANON_DECODE", "auto").strip().lower()
         return cls(
-            device=cfg["STREAMSTACK_CAMERA_DEVICE"],
+            device=hwcamera.device_for("camera", cfg, plan),
             canvas=(number("STREAMSTACK_WIDTH", 1920), number("STREAMSTACK_HEIGHT", 1080)),
             output=output if output in ("native", "fill") else "native",
             decode=decode if decode in ("auto", "qsv", "vaapi", "cpu") else "auto",
@@ -97,8 +99,10 @@ class Bridge:
         nodes: Callable[[], list[tuple[str, str]]] = encode.render_nodes,
         version: Callable[[], tuple[int, int]] = encode.ffmpeg_version,
         usb: Callable[[], list[str]] | None = None,
+        plan: Callable[[], Plan | None] | None = None,
     ) -> None:
         self.s = settings
+        self.hardware_plan = plan or (lambda: None)  # the hardware Plan, read each time the decoder starts (hot-plug)
         self.make_session = make_session
         self.make_encoder = make_encoder
         self.probe = probe
@@ -107,7 +111,7 @@ class Bridge:
         self.clock = clock
         self.nodes = nodes
         self.version = version
-        self.usb = usb or (lambda: system.usb_products(system.CANON_USB_VENDOR))
+        self.usb = usb or (lambda: system.canon_products())
         self.stop_event = threading.Event()
         self.commands: queue.Queue[Command] = queue.Queue()
         self.lock = threading.Lock()
@@ -285,6 +289,10 @@ class Bridge:
         if self.s.render_node:
             vendor = next((v for n, v in self.nodes() if n == self.s.render_node), "")
             return self.s.render_node, vendor
+        plan = self.hardware_plan()
+        gpu = plan.gpu("decode") if plan is not None else None
+        if gpu is not None:  # the profile's decode role, found by PCI id: the iGPU on deskmeet1, the Arc on dm313red
+            return gpu.node_path, "0x" + gpu.pci_id.split(":")[0]
         nodes = self.nodes()
         return nodes[0] if nodes else ("", "")
 

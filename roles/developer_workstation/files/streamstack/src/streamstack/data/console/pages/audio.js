@@ -1,18 +1,27 @@
-// pages/audio.js — THE CHANNEL STRIP.
+// pages/audio.js — THE CHANNEL STRIP, and the outputs.
 //
-// Left: the strip: raw microphone and processed voice meters side by side (peak hold, target band),
-// the gain fader and a giant mute. Middle: tone knobs (bass, presence, treble, pitch) and the A/B bypass.
+// Two sections behind a switch at the top: Input (the strip below) and Output (pages/audio-outputs.js: every output
+// with its volume, mute, default and a sound test).
+//
+// Input, left: the strip: raw microphone and processed voice meters side by side (peak hold, target band),
+// the gain fader and a giant mute. Middle: tone knobs (bass, presence, treble, noise strength), the noise engine and the A/B bypass.
 // Right: voice presets with an EQ-curve glyph. Below: the 60 second loudness history and the mic check
 // (record raw then processed, listen back with an A/B switch).
 //
-// Keys on this page: R mic check, A switch the A/B listen clip. M (mute) and B (bypass) are global.
-// Tone needs Easy Effects to be drivable live; when it is not, the knobs say so and stay off.
+// A third section, Chain (pages/audio-chain.js), holds every stage of the voice chain as live faders, the
+// loudness leveller and the preset library.
+//
+// Keys on this page: R mic check, A switch the A/B listen clip, I, C and O the Input, Chain and Output sections.
+// M (mute) and B (bypass) are global.
+// The tone knobs are live while the chain runs; when it is not available, the knobs say so and stay off.
 
 import { h, renderList, clamp } from '../core/util.js';
-import { icon } from '../components/icons.js';
+import { icon, iconHTML } from '../components/icons.js';
 import { apiUrl } from '../core/api.js';
 import { toggleMute, selectPreset, startStudio } from '../core/ops.js';
 import { mmss } from '../core/time.js';
+import { mountOutputs, outputBadge } from './audio-outputs.js';
+import { mountChain } from './audio-chain.js';
 
 const TARGET = [-24, -12];
 const HISTORY_S = 60;
@@ -25,7 +34,6 @@ const TONE = [
   { key: 'bass_db', label: 'Bass', unit: 'dB', hint: 'Warmth and body' },
   { key: 'presence_db', label: 'Presence', unit: 'dB', hint: 'Clarity, how forward you sound' },
   { key: 'treble_db', label: 'Treble', unit: 'dB', hint: 'Air and sparkle' },
-  { key: 'pitch_semitones', label: 'Pitch', unit: 'st', hint: 'Semitones up or down' },
 ];
 
 // The server does not send a preset's curve, so the glyph of an inactive preset is a sketch of its character
@@ -41,6 +49,15 @@ const DEFAULT_PROFILE = { bass_db: 2, presence_db: 2.5, treble_db: 1.5 };
 const profileFor = (name) => (PROFILES.find(([re]) => re.test(name))?.[1]) || DEFAULT_PROFILE;
 
 const TEMPLATE = `
+<div class="au-page">
+<div class="au-tabs">
+  <div class="seg" role="group" aria-label="Audio section" data-ref="sections">
+    <button type="button" data-section="input" aria-pressed="true">${iconHTML('mic')}Input</button>
+    <button type="button" data-section="chain" aria-pressed="false">${iconHTML('sliders')}Chain</button>
+    <button type="button" data-section="output" aria-pressed="false">${iconHTML('volume')}Output<span class="au-badge" data-ref="badge" hidden></span></button>
+  </div>
+</div>
+<section class="au-sec" data-section="input" aria-label="Input">
 <div class="au">
   <ss-card class="au-strip" heading="Channel" icon="mic" data-ref="micCard">
     <span slot="actions" class="dev" data-ref="micName"></span>
@@ -117,6 +134,10 @@ const TEMPLATE = `
       </div>
     </div>
   </ss-card>
+</div>
+</section>
+<section class="au-sec" data-section="chain" aria-label="Chain" data-ref="chainSec" hidden></section>
+<section class="au-sec" data-section="output" aria-label="Output" data-ref="outSec" hidden></section>
 </div>`;
 
 /** A smooth EQ-curve glyph for three band gains (dB), as an SVG string. */
@@ -139,12 +160,33 @@ export async function mount(host, ctx) {
   const { store, act, actStream, flushStream, registerKeys, registerCommands } = ctx;
   await ctx.ensureCss(new URL('./common.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./audio.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./audio-outputs.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./audio-chain.css', import.meta.url).href);
   document.title = 'Audio · StreamStack';
   host.innerHTML = TEMPLATE;
   const R = {};
   host.querySelectorAll('[data-ref]').forEach((el) => { R[el.dataset.ref] = el; });
   const off = [];
   const sub = (selector, cb) => off.push(store.subscribe(selector, cb));
+
+  // ---------- sections: Input (the strip) or Output ----------
+  const showSection = (which) => {
+    for (const b of R.sections.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.section === which));
+    for (const el of host.querySelectorAll('.au-sec')) el.hidden = el.dataset.section !== which;
+    if (which === 'input') window.dispatchEvent(new Event('resize'));
+  };
+  R.sections.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-section]');
+    if (b) showSection(b.dataset.section);
+  });
+  off.push(mountChain(R.chainSec, ctx));
+  off.push(mountOutputs(R.outSec, ctx));
+  sub((s) => s.audio.outputs, (o) => {
+    const badge = outputBadge(o);
+    R.badge.hidden = !badge;
+    if (badge) { R.badge.textContent = badge.text; R.badge.dataset.tone = badge.tone; R.badge.title = badge.label; }
+    R.sections.querySelector('[data-section="output"]').setAttribute('aria-label', badge ? `Output, ${badge.label}` : 'Output');
+  });
 
   // ---------- strip: gain, mute, mic presence ----------
   sub((s) => s.audio.gain_range, ([lo, hi]) => {
@@ -171,18 +213,18 @@ export async function mount(host, ctx) {
   // ---------- tone knobs ----------
   const knobs = {};
   for (const t of TONE) {
-    const k = h('ss-knob', { label: t.label, unit: t.unit, step: t.key === 'pitch_semitones' ? '0.5' : '0.5', default: '0', signed: true, bipolar: true, decimals: '1', size: 'lg', title: t.hint, 'data-tone': t.key });
+    const k = h('ss-knob', { label: t.label, unit: t.unit, step: '0.5', default: '0', signed: true, bipolar: true, decimals: '1', size: 'lg', title: t.hint, 'data-tone': t.key });
     k.addEventListener('input', (e) => actStream('audio.tone', { [t.key]: e.detail.value }));
     k.addEventListener('change', () => flushStream('audio.tone'));
     knobs[t.key] = k;
     R.knobs.append(k);
   }
-  // Attenuation Limit is DeepFilterNet's tone knob: how much of the noise it may take out (lower = more natural)
-  R.atten = h('ss-knob', { label: 'Attenuation limit', unit: 'dB', step: '1', default: '100', decimals: '0', size: 'lg', title: 'How much noise DeepFilterNet may remove. Lower leaves more of the room in and sounds more natural.', 'data-denoise': 'atten_limit_db' });
+  // Strength is the noise engine's tone knob: how much of the noise it may take out (lower = more natural)
+  R.atten = h('ss-knob', { label: 'Attenuation limit', unit: 'dB', step: '1', default: '100', decimals: '0', size: 'lg', title: 'How much noise the denoiser may remove. Lower leaves more of the room in and sounds more natural.', 'data-denoise': 'atten_limit_db' });
   R.knobs.append(R.atten);
   sub((s) => s.audio.tone_ranges, (ranges) => {
     for (const t of TONE) {
-      const [lo, hi] = ranges?.[t.key] || (t.key === 'pitch_semitones' ? [-6, 6] : [-12, 12]);
+      const [lo, hi] = ranges?.[t.key] || [-12, 12];
       knobs[t.key].setAttribute('min', lo);
       knobs[t.key].setAttribute('max', hi);
     }
@@ -193,7 +235,7 @@ export async function mount(host, ctx) {
     R.toneReset.toggleAttribute('disabled', !tone.custom || !tone.supported);
     for (const t of TONE) knobs[t.key].toggleAttribute('disabled', !tone.supported);
     R.toneNote.textContent = !tone.supported
-      ? 'Live tone is not available right now (Easy Effects is not running, or cannot be driven live). The presets still work.'
+      ? 'Live tone is not available right now (the voice chain is not available). The presets still work.'
       : (tone.custom ? 'You changed the tone. Pick a preset or reset to go back to its own sound.' : 'Drag a knob, double-click to reset it. Shift for fine steps.');
     R.toneNote.dataset.state = tone.supported ? '' : 'warn';
     R.toneCard.toggleAttribute('data-custom', !!tone.custom);
@@ -272,7 +314,7 @@ export async function mount(host, ctx) {
       const sig = [values.bass_db, values.presence_db, values.treble_db].map((v) => Number(v).toFixed(1)).join();
       if (glyphKey.get(b) !== sig) { glyphKey.set(b, sig); b.querySelector('.p-glyph').innerHTML = eqGlyph(values); }
     });
-    if (!chain.available) { R.voiceCard.setAttribute('reason', 'Easy Effects is not installed'); R.voiceCard.removeAttribute('fix'); }
+    if (!chain.available) { R.voiceCard.setAttribute('reason', 'The voice chain plugins are not installed'); R.voiceCard.removeAttribute('fix'); }
     else if (!chain.running) { R.voiceCard.setAttribute('reason', 'The voice chain is not running'); R.voiceCard.setAttribute('fix', 'Start studio'); }
     else { R.voiceCard.removeAttribute('reason'); R.voiceCard.removeAttribute('fix'); }
   });
@@ -465,7 +507,7 @@ export async function mount(host, ctx) {
       done: 'Done. Switch between A and B to hear what the effects do.',
       error: `The mic check failed: ${mc.error || 'unknown error'}`,
     })[mc.state] || '';
-    R.recHint.textContent = !present ? 'No microphone found.' : !available ? 'Easy Effects is not installed.' : !running ? 'Start the studio first so the voice chain runs.' : 'Speak naturally. Key R.';
+    R.recHint.textContent = !present ? 'No microphone found.' : !available ? 'The voice chain plugins are not installed.' : !running ? 'Start the studio first so the voice chain runs.' : 'Speak naturally. Key R.';
     R.recHint.dataset.state = (!present || !available || !running) ? 'warn' : '';
     const raw = findClip(mc.clips || [], 'raw');
     const proc = findClip(mc.clips || [], 'processed');
@@ -488,10 +530,16 @@ export async function mount(host, ctx) {
   off.push(registerKeys([
     { key: 'r', desc: 'Mic check: record, then listen raw and processed', group: 'Audio', run: startCheck },
     { key: 'a', desc: 'Mic check: switch between raw and processed playback', group: 'Audio', run: flipClip },
+    { key: 'i', desc: 'Audio: input section', group: 'Audio', run: () => showSection('input') },
+    { key: 'c', desc: 'Audio: voice chain section', group: 'Audio', run: () => showSection('chain') },
+    { key: 'o', desc: 'Audio: output section', group: 'Audio', run: () => showSection('output') },
   ]));
   off.push(registerCommands(() => [
+    { id: 'au:input', group: 'Audio', title: 'Audio: input section', icon: 'mic', hint: 'I', keywords: 'audio input microphone section', run: () => showSection('input') },
+    { id: 'au:chain', group: 'Audio', title: 'Audio: voice chain section', icon: 'sliders', hint: 'C', keywords: 'audio chain stages faders compressor gate eq loudness section', run: () => showSection('chain') },
+    { id: 'au:output', group: 'Audio', title: 'Audio: output section', icon: 'volume', hint: 'O', keywords: 'audio output speakers headphones section', run: () => showSection('output') },
     { id: 'au:check', group: 'Audio', title: 'Start mic check', icon: 'headphones', hint: 'R', keywords: 'mic check record listen test microphone', run: startCheck },
-    { id: 'au:reset-tone', group: 'Audio', title: 'Reset tone to the preset', icon: 'undo', keywords: 'tone reset preset bass treble presence pitch', run: () => act('audio.preset', { name: store.state.audio.chain.preset }) },
+    { id: 'au:reset-tone', group: 'Audio', title: 'Reset tone to the preset', icon: 'undo', keywords: 'tone reset preset bass treble presence', run: () => act('audio.preset', { name: store.state.audio.chain.preset }) },
     { id: 'au:dn-rnnoise', group: 'Audio', title: 'Noise removal: RNNoise (lowest delay)', icon: 'wave', keywords: 'denoise noise removal rnnoise noise reduction latency', run: () => act('audio.denoise', { engine: 'rnnoise' }) },
     { id: 'au:dn-deepfilternet', group: 'Audio', title: 'Noise removal: DeepFilterNet (deep noise remover)', icon: 'wave', keywords: 'denoise noise removal deepfilternet deep noise remover', run: () => act('audio.denoise', { engine: 'deepfilternet' }) },
     { id: 'au:gain0', group: 'Audio', title: 'Mic gain to 0 dB', icon: 'sliders', keywords: 'gain reset zero microphone level', run: () => act('audio.gain', { db: 0 }) },

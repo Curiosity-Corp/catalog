@@ -296,7 +296,7 @@ def demo_report(persona: dict, slot: str) -> dict:
         },
         "changes": [
             {
-                "actuator": "obs-look",
+                "actuator": "program-look",
                 "target": "Canon EOS 50D",
                 "key": "warmth",
                 "before": 0.0,
@@ -327,7 +327,7 @@ def demo_report(persona: dict, slot: str) -> dict:
             },
         ],
         "actuators": [
-            {"id": "obs-look", "label": "OBS picture look", "kind": "video", "available": True, "reason": ""},
+            {"id": "program-look", "label": "Program picture look", "kind": "video", "available": True, "reason": ""},
             {"id": "mic-gain", "label": "Microphone gain", "kind": "audio", "available": True, "reason": ""},
             {"id": "voice-preset", "label": "Voice preset", "kind": "audio", "available": True, "reason": ""},
             {

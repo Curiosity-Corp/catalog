@@ -7,8 +7,8 @@ import array
 import cmath
 import math
 import random
-import sys
 import time
+from collections.abc import Sequence
 
 import pytest
 
@@ -274,24 +274,67 @@ def test_latch_ignores_a_loud_but_clean_signal() -> None:
 # ---------------------------------------------------------------------------
 
 
-def instrumented() -> bool:
-    """True under a tracer or coverage (CI runs the suite with --cov), which slows pure Python loops several times."""
-    if sys.gettrace() is not None:
-        return True
-    monitoring = getattr(sys, "monitoring", None)
-    return monitoring is not None and any(monitoring.get_tool(tool) for tool in range(6))
+def baseline_loop(signal: array.array) -> float:
+    """A fixed pure-Python yardstick: one biquad per sample, the same kind of work as the analyser's inner loop."""
+    s1 = s2 = total = 0.0
+    for x in signal:
+        y = 0.5 * x + s1
+        s1 = 0.3 * x - 0.2 * y + s2
+        s2 = 0.1 * x - 0.4 * y
+        total += y * y
+    return total
 
 
-def test_the_analyser_is_cheap_enough_to_run_per_source_in_pure_python() -> None:
-    """Both sources (mic and voice) run an analyser. Speech-like and loud noise must cost far less than a core:
-    12 % of real time per source (about six times what a modern CPU needs; 70 % when coverage traces every line)."""
-    bound = 0.7 if instrumented() else 0.12
+def test_the_analyser_is_cheap_enough_to_run_per_source_in_pure_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both sources (mic and voice) run an analyser, so its cost per sample must stay small and bounded.
+
+    Two guards, neither depends on how fast or busy the machine is:
+
+    * work: the true-peak interpolator may only touch a bounded share of positions (counted, not timed), and the
+      K-weighting loop must run once per loud frame;
+    * cost: analyser CPU time relative to a fixed pure-Python loop timed in the same process, best of seven
+      interleaved runs. Load and tracing (coverage) slow both sides alike. It measures about 4.5 here; the bound is
+      15, so a tenfold regression (about 45) fails while a loaded runner cannot.
+    """
     rng = random.Random(3)  # noqa: S311 - a reproducible test signal
     speech = array.array("f", (rng.gauss(0, 0.05) * (0.2 + abs(math.sin(i / 9000))) for i in range(RATE * 5)))
     loud = array.array("f", (max(-1.0, min(1.0, rng.gauss(0, 0.3))) for _ in range(RATE * 5)))
+
+    real_sumprod = loudness._sumprod
+    real_weighted = Analyzer._weighted_power
+
     for name, signal in (("speech", speech), ("loud", loud)):
-        analyzer = Analyzer()
-        started = time.process_time()
-        run(signal, analyzer)
-        share = (time.process_time() - started) / (len(signal) / RATE)
-        assert share < bound, f"{name}: {share:.1%} of real time"
+        windows = 0
+        weighted_frames = 0
+
+        def counting_sumprod(a: Sequence[float], b: Sequence[float]) -> float:
+            nonlocal windows
+            if len(a) == len(loudness.TP_PHASES[0]):
+                windows += 1
+            return real_sumprod(a, b)
+
+        def counting_weighted(self: Analyzer, samples: array.array) -> float:
+            nonlocal weighted_frames
+            weighted_frames += 1
+            return real_weighted(self, samples)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(loudness, "_sumprod", counting_sumprod)
+            patch.setattr(Analyzer, "_weighted_power", counting_weighted)
+            run(signal, Analyzer())
+        frames = len(signal) // FRAME
+        # at most 3 interpolated phases per sample even for a full-scale square wave; noise at 0.3 sigma needs ~0.6
+        assert windows <= 1.0 * len(signal), f"{name}: {windows / len(signal):.2f} interpolations per sample"
+        assert weighted_frames == frames, f"{name}: {weighted_frames} K-weighted frames for {frames} frames"
+
+        # CPU time, not wall-clock, and a ratio to a yardstick measured alongside: a busy runner scales both.
+        analyser_costs, baseline_costs = [], []
+        for _ in range(7):
+            started = time.process_time()
+            baseline_loop(signal)
+            baseline_costs.append(time.process_time() - started)
+            started = time.process_time()
+            run(signal, Analyzer())
+            analyser_costs.append(time.process_time() - started)
+        ratio = min(analyser_costs) / min(baseline_costs)
+        assert ratio < 15, f"{name}: analyser costs {ratio:.1f}x a bare biquad loop"

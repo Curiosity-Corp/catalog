@@ -175,7 +175,7 @@ def test_loopback_script_adds_only_the_program_node_in_external_mode(tmp_path: P
 
 
 def test_user_defaults_are_seeded_not_overwritten() -> None:
-    task = _task("Seed StreamStack OBS and Easy Effects defaults for each user")
+    task = _task("Seed StreamStack defaults for each user")
     assert task["ansible.builtin.command"]["argv"] == ["/usr/local/bin/streamstack", "setup", "--quiet"]
     assert task["become_user"] == "{{ item.item.name }}"
     assert "--force" not in task["ansible.builtin.command"]["argv"]
@@ -191,7 +191,7 @@ def test_panel_menu_is_installed_and_the_tray_icon_is_opt_in() -> None:
     autostart = _task("Start the StreamStack panel icon at login")
     assert autostart["when"] == "streamstack_tray_autostart | bool"
     assert (ROLE / "files" / autostart["ansible.builtin.copy"]["src"]).is_file()
-    for package in ("python3-gi", "gir1.2-ayatanaappindicator3-0.1", "python3-websocket"):
+    for package in ("python3-gi", "gir1.2-ayatanaappindicator3-0.1"):
         assert package in DEFAULTS["streamstack_packages"]
 
 
@@ -205,6 +205,8 @@ def test_every_vendored_file_the_role_installs_exists() -> None:
                 for item in task["loop"]]
 
     for task in TASKS:
+        if task.get("name") == "Install the StreamStack WirePlumber drop-ins":
+            continue  # optional by design: guarded by a stat, the release may not ship drop-ins
         for src in sources(task):
             assert (ROLE / "files" / src).exists(), f"{task['name']}: {src}"
 
@@ -229,7 +231,7 @@ def test_the_package_installs_self_contained_and_runs(tmp_path: Path) -> None:
     assert settings.returncode == 0, settings.stderr
     assert "Studio Cam" in settings.stdout
     assert run("setup", "--quiet").returncode == 0
-    assert (tmp_path / ".config/obs-studio/basic/scenes/StreamStack.json").is_file()
+    assert not (tmp_path / ".config/obs-studio").exists(), "StreamStack no longer seeds OBS"
 
 
 def test_the_settings_file_is_the_one_the_app_reads() -> None:
@@ -308,3 +310,62 @@ def test_call_users_join_the_video_group_without_creating_accounts() -> None:
     assert "select('in', getent_passwd.keys())" in task["loop"]
     lookup = _task("Look up the accounts on this host")["ansible.builtin.getent"]
     assert lookup["database"] == "passwd"
+
+
+def test_obs_and_easy_effects_are_retired_not_installed() -> None:
+    for retired in ("obs-studio", "easyeffects", "obs-backgroundremoval"):
+        assert retired in DEFAULTS["streamstack_retired_packages"]
+        assert retired not in DEFAULTS["streamstack_packages"]
+    for package in ("lsp-plugins-lv2", "calf-plugins", "python3-websocket"):
+        assert package not in DEFAULTS["streamstack_packages"]
+    assert "zam-plugins" in DEFAULTS["streamstack_packages"]  # the voice chain's gate, de-esser, compressor, limiter
+    removal = _task("Remove OBS Studio, Easy Effects and the OBS background plugin")["ansible.builtin.apt"]
+    assert removal["state"] == "absent"
+    assert removal["name"] == "{{ streamstack_retired_packages }}"
+    cleanup = _task("Remove the OBS background plugin links and the Easy Effects autostart")
+    assert "/etc/xdg/autostart/streamstack-easyeffects.desktop" in cleanup["loop"]
+    assert not any("easyeffects.desktop" in str(t.get("ansible.builtin.copy", "")) for t in TASKS)
+    assert not any("streamstack_easyeffects_autostart" in str(t) for t in TASKS)
+    assert not any(key.startswith("streamstack_easyeffects") for key in DEFAULTS)
+
+
+def test_the_console_runs_headless_for_the_studio_account_only() -> None:
+    assert DEFAULTS["streamstack_console_users"] == ["mrh"]
+    unit = _environment().from_string((ROLE / "templates/streamstack-console.service.j2").read_text()).render(
+        **{k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")}
+    )
+    assert "ExecStart=/usr/local/bin/streamstack console --no-window" in unit
+    assert "ConditionUser=|mrh" in unit
+    assert "WantedBy=graphical-session.target" in unit
+    assert "/dev/video43" in unit
+    link = _task("Start the StreamStack Console (video engine and voice chain) at login")
+    assert link["ansible.builtin.file"]["src"] == "/etc/systemd/user/streamstack-console.service"
+    assert link["when"] == "streamstack_console_users | length > 0"
+    assert _task("Leave the StreamStack Console to `streamstack console`")["when"] == \
+        "streamstack_console_users | length == 0"
+    # the headless Console must be something the installed app can do
+    assert '"--no-window"' in (APP / "src/streamstack/cli.py").read_text()
+
+
+def test_the_voice_chain_is_not_enabled_beside_the_console() -> None:
+    # The Console starts the chain host itself; a second supervisor would restart it against the first.
+    install = _task("Install the StreamStack voice chain and deck user services")
+    assert install["loop"] == ["streamstack-audio-chain", "streamstack-deck"]
+    assert not any("wants" in str(t.get("ansible.builtin.file", {}).get("path", "")) and "audio-chain" in str(t) for t in TASKS)
+    for item in install["loop"]:
+        assert (APP / f"packaging/systemd/user/{item}.service").is_file()
+
+
+def test_the_processed_voice_becomes_the_default_microphone_and_the_sink_is_left_alone() -> None:
+    task = _task("Make StreamStack Mic the default microphone for each Console account")
+    script = task["ansible.builtin.shell"]["cmd"]
+    assert "pactl set-default-source streamstack_mic" in script
+    assert "set-default-sink" not in script
+    assert 'STREAMSTACK_STREAM_AUDIO": "streamstack_mic"' in (APP / "src/streamstack/config.py").read_text()
+
+
+def test_streamstack_wireplumber_dropins_are_installed_from_the_release() -> None:
+    copy = _task("Install the StreamStack WirePlumber drop-ins")["ansible.builtin.copy"]
+    assert copy["src"] == "streamstack/packaging/wireplumber/wireplumber.conf.d/"
+    assert copy["dest"] == "/etc/wireplumber/wireplumber.conf.d/"
+    assert not [t for t in TASKS if "wireplumber" in str(t.get("ansible.builtin.systemd", ""))]

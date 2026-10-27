@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from streamstack import cli, system
+from streamstack import cli, store, system
+from streamstack.audiochain import runtime as chain_runtime
 from streamstack.director import adapters, faces
 
 
@@ -30,6 +31,12 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def clean_store_warnings() -> None:
+    """The store's warning log is process-wide; no test inherits another's."""
+    store.dismiss()
+
+
+@pytest.fixture(autouse=True)
 def no_real_hardware(monkeypatch: pytest.MonkeyPatch) -> None:
     """Auto mode must not probe (let alone drive) the camera, lights or interface of the machine running the tests.
 
@@ -39,6 +46,19 @@ def no_real_hardware(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(faces, "install", lambda cfg, finders=None: (None, faces.heuristic_row("disabled in tests")))
 
 
+@pytest.fixture(autouse=True)
+def no_real_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test may probe the devices of the machine running it: the command lines fall back to the name rules.
+
+    Hardware tests build their own `Found` from a recording or a `FakeMachine` and patch this back in.
+    """
+    from streamstack.hardware import found, voice
+
+    monkeypatch.setattr(found, "probe_now", lambda cfg=None, catalogue=None: None)
+    monkeypatch.setattr(voice, "probe_now", lambda cfg=None, catalogue=None: None)
+    monkeypatch.setattr(cli, "probe_now", lambda cfg=None, catalogue=None: None)
+
+
 def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool | None:
     """Keep the browser suite out of the default unit run; it only runs when asked for by path (make e2e)."""
     e2e = Path(__file__).parent / "e2e"
@@ -46,3 +66,9 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool 
         return None
     asked = [Path(a.split("::")[0]).resolve() for a in config.invocation_params.args if not a.startswith("-")]
     return None if any(a == e2e or e2e in a.parents for a in asked) else True
+
+
+@pytest.fixture(autouse=True)
+def no_real_audio_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test may start a `pipewire -c` host on the machine running the tests (tests that want one use fakes)."""
+    monkeypatch.setattr(chain_runtime, "start_host", lambda conf, log_path=None: None)

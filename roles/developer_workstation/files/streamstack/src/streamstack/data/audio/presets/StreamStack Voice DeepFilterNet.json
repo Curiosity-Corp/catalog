@@ -1,0 +1,7 @@
+{
+  "name": "StreamStack Voice DeepFilterNet",
+  "blurb": "the default voice, with DeepFilterNet required (about 30 ms more delay than RNNoise)",
+  "engine": "deepfilternet",
+  "strict_engine": true,
+  "params": {}
+}

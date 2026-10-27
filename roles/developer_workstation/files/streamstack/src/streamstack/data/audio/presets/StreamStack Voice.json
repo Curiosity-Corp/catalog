@@ -1,0 +1,6 @@
+{
+  "name": "StreamStack Voice",
+  "blurb": "default broadcast voice",
+  "engine": "deepfilternet",
+  "params": {}
+}

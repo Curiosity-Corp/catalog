@@ -7,7 +7,7 @@
 # on every catalog run.
 #
 # An idle module is reloaded so the modprobe options apply. A module in use (a
-# call, OBS, a camera bridge) - or one another tool configures, with
+# call, the Console, a camera bridge) - or one another tool configures, with
 # STREAMSTACK_CAMERA_EXTERNAL=true - is never unloaded: missing nodes are added
 # next to the open ones and a node with another name is reported as busy.
 set -euo pipefail

@@ -1,0 +1,13 @@
+{
+  "name": "StreamStack Voice Minimal",
+  "blurb": "only high-pass, gentle compression and the limiter",
+  "engine": "deepfilternet",
+  "params": {
+    "gate_on": false,
+    "denoise_on": false,
+    "deess_on": false,
+    "bass_db": 0,
+    "presence_db": 0,
+    "treble_db": 0
+  }
+}

@@ -84,7 +84,7 @@ Prior art (open source, MIT): `rikkichy/openwave` (`crates/openwave-core/src/pro
 - the firmware forgets its gain at power loss (philipredstone).
 
 **Clipguard and low cut have no documented register.** OpenWave's low cut is a software DSP stage. The page lists
-both under "Not available on this interface"; use the high-pass in the Easy Effects voice chain as the low cut.
+both under "Not available on this interface"; use the high-pass stage of the StreamStack voice chain (docs/audio-chain.md) as the low cut.
 
 **Status: unverified on hardware.** The protocol is reverse engineered by others and the projects themselves call it
 "not a physical-validation certificate". The maximum gain is 75 dB here (OpenWave allows 80); nothing on this host

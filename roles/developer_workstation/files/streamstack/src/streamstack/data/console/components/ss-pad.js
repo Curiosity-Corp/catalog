@@ -12,6 +12,8 @@
 //   tally     program (red: it is on air) | preview (green) — only meaningful with `active`
 //   tone      "" (blue) | red | amber — colour of the lit state when there is no tally (e.g. privacy = amber)
 //   compact   smaller pad
+//   fit       label wraps, up to three lines, at spaces and camelCase joins, and shrinks with the pad's width,
+//             for a row of narrow pads that must show whole names (Live voice presets)
 //   big       one-press control pad (MUTE, PRIVACY): centred large icon and label
 //   row       with big: icon beside the text instead of above it (short pads)
 //   solid     with big/active: fills solid with the tone colour and white text (the loud state)
@@ -64,6 +66,9 @@ const styles = css`
   :host([big][row]) .top .icon { width: 2rem; height: 2rem; }
   :host([big][row]) .text { text-align: left; }
   :host([big][row]) .label { font-size: var(--fs-lg); }
+  :host([fit]) { container-type: inline-size; }
+  :host([fit]) button { padding-inline: var(--s-2); }
+  :host([fit]) .label { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; white-space: normal; overflow-wrap: break-word; font-size: clamp(var(--fs-xs), 12cqi, var(--fs-md)); }
   button:disabled { opacity: 0.45; box-shadow: none; }
   :host([busy]) button { animation: pulse 0.9s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.6; } }
@@ -72,7 +77,7 @@ const styles = css`
 export class SSPad extends SSElement {
   static styles = styles;
   static delegatesFocus = true;
-  static observedAttributes = ['label', 'sub', 'hotkey', 'icon', 'active', 'tally', 'tone', 'compact', 'big', 'row', 'solid', 'disabled', 'busy'];
+  static observedAttributes = ['label', 'sub', 'hotkey', 'icon', 'active', 'tally', 'tone', 'compact', 'fit', 'big', 'row', 'solid', 'disabled', 'busy'];
 
   build(root) {
     root.innerHTML = `<button part="button" type="button">
@@ -90,7 +95,8 @@ export class SSPad extends SSElement {
     const icon = this.getAttribute('icon') || '';
     const hot = this.getAttribute('hotkey') || '';
     const tally = this.getAttribute('tally') || '';
-    this.$.label.textContent = label;
+    // a zero-width space at each camelCase join lets "DeepFilterNet" wrap as "DeepFilter / Net"
+    this.$.label.textContent = this.bool('fit') ? label.replace(/([a-z])(?=[A-Z])/g, '$1\u200b') : label;
     this.$.sub.textContent = sub;
     this.$.sub.hidden = !sub;
     if (icon !== this._icon) { this._icon = icon; this.$.ic.innerHTML = icon ? iconHTML(icon) : ''; }

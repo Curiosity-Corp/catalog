@@ -1,6 +1,18 @@
 /* audio.css — the channel strip. Designed at 1280×720 (no scrolling for the core controls), then stretched and folded. */
 /* Scoped to this page: page stylesheets stay loaded after navigation, so unscoped class names would leak into other pages. */
 @scope ([data-page="audio"]) {
+  /* the section switch on top, then the Input strip or the Output strips */
+  .au-page { height: 100%; display: flex; flex-direction: column; }
+  .au-tabs { flex: none; padding: var(--s-2) var(--s-4) 0; }
+  .au-sec { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .au-sec[hidden] { display: none; }
+  /* the switch takes a row: the strip keeps its size and the page scrolls a little on a 720 px screen */
+  .au-sec > .au { flex: 1; height: auto; min-height: 47rem; padding-top: var(--s-2); }
+  .au-tabs .seg button { padding: 0 var(--s-4); font-size: var(--fs-sm); }
+  .au-badge { display: inline-grid; place-items: center; min-width: 1.15rem; height: 1.15rem; padding: 0 0.3rem; border-radius: var(--r-pill); font-size: var(--fs-2xs); font-weight: 800; background: var(--accent); color: var(--accent-ink); }
+  .au-badge[data-tone="warn"] { background: var(--amber); color: var(--amber-ink); }
+  .au-badge[hidden] { display: none; }
+
   .au {
     height: 100%; min-height: 40rem; padding: var(--s-4); gap: var(--s-4);
     display: grid; grid-template-columns: minmax(16rem, 0.8fr) minmax(0, 1.35fr) minmax(0, 1.15fr); grid-template-rows: minmax(0, 1.3fr) minmax(0, 1fr);
@@ -126,6 +138,8 @@
     .knobs ss-knob { --knob-size: 4.6rem; }
   }
   @media (max-width: 1100px) {
+    .au-page { height: auto; min-height: 100%; }
+    .au-sec > .au { min-height: 0; }
     .au { grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.2fr); grid-template-rows: auto auto auto auto; grid-template-areas: "strip tone" "strip voice" "hist check" "hist check"; height: auto; overflow-y: auto; }
     .au-hist { min-height: 14rem; }
     .knobs ss-knob { --knob-size: 4.4rem; }

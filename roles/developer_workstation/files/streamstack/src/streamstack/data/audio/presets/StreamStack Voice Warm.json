@@ -1,0 +1,10 @@
+{
+  "name": "StreamStack Voice Warm",
+  "blurb": "more low end for thin rooms or mics",
+  "engine": "deepfilternet",
+  "params": {
+    "bass_db": 5,
+    "presence_db": 2,
+    "treble_db": 0
+  }
+}

@@ -235,17 +235,23 @@ i.e. the next modeset or hotplug.
 ### StreamStack call and stream studio
 
 `streamstack_enabled` (from the hardware profile's `streamstack` flag; only
-`deskmeet-b760` sets it) installs OBS Studio, Easy Effects and the camera
-tools, creates two `exclusive_caps` loopback cameras
+`deskmeet-b760` sets it) installs the camera tools and StreamStack's own
+packages, creates two `exclusive_caps` loopback cameras
 (`streamstack_camera_video_nr`/`_label` for the camera bridge,
-`streamstack_program_video_nr`/`_label` for the OBS virtual camera) and
-installs the vendored StreamStack app (`streamstack`, `streamstack-tray`,
-`streamstack-auto`). `streamstack_microphone` names the call microphone (part
-of its PipeWire name; empty picks an Elgato Wave, then the default input). Enable it on any other desktop with
+`streamstack_program_video_nr`/`_label` for the program camera the native
+video engine writes) and installs the vendored StreamStack app (`streamstack`,
+`streamstack-console`, `streamstack-tray`, `streamstack-auto`). OBS Studio and
+Easy Effects are not installed and are removed where an earlier release put
+them (`streamstack_retired_packages`). `streamstack_console_users` (default
+`[mrh]`) lists the accounts that run the Console headless at login: it hosts the
+video engine and starts the voice chain "StreamStack Mic", which the role makes
+that account's default microphone. `streamstack_microphone` names the call
+microphone (part of its PipeWire name; empty picks an Elgato Wave, then the
+default input). Enable it on any other desktop with
 `streamstack_enabled: true` in `/etc/ansible/local-vars.yml`. The Canon bridge
 is `streamstack_canon_bridge` (`gphoto2`, `command` with
 `streamstack_canon_bridge_command`, or `none`); `streamstack_width`,
-`streamstack_height` and `streamstack_fps` set the OBS canvas and bridge frame.
+`streamstack_height` and `streamstack_fps` set the engine's canvas and bridge frame.
 `streamstack_camera_external: true` adopts a camera node another tool on the
 host already configures and feeds: StreamStack then adds only its program node.
 Auto mode (off until `streamstack auto on`) is set by `streamstack_auto_backend`
@@ -253,12 +259,11 @@ Auto mode (off until `streamstack auto on`) is set by `streamstack_auto_backend`
 `streamstack_auto_interval` (seconds, at least 5), `streamstack_auto_ai_interval`
 (seconds, at least 60), `streamstack_auto_video`, `streamstack_auto_audio`,
 `streamstack_auto_notify` and `streamstack_auto_autostart`.
-`streamstack_background_removal_enabled`, `streamstack_framing_enabled` and
-`streamstack_deepfilter_enabled` (all `true`) install the obs-backgroundremoval
-OBS plugin, the DeepFilterNet LADSPA library for Easy Effects, and the auto-framing
-dependencies (OpenVINO, OpenCV, the Intel GPU compute runtime where an Intel GPU
+`streamstack_framing_enabled` and `streamstack_deepfilter_enabled` (both
+`true`) install the DeepFilterNet LADSPA library for the voice chain, and the auto-framing
+and background-blur dependencies (OpenVINO, OpenCV, the Intel GPU compute runtime where an Intel GPU
 exists, the YuNet face model); the pinned versions and checksums are the
-`streamstack_backgroundremoval_*`, `streamstack_openvino_*`, `streamstack_deepfilter_*` and
+`streamstack_openvino_*`, `streamstack_deepfilter_*` and
 `streamstack_framing_model_*` variables.
 See [`streamstack.md`](streamstack.md) for the Teams and Zoom setup.
 

@@ -15,7 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from subprocess import CompletedProcess
 
-from streamstack import config, system
+from streamstack import config, store, system
 
 UNIT = "streamstack-lights.service"
 SYSTEM_UNIT_DIRS = (
@@ -72,8 +72,7 @@ def install_unit(run: Runner = system.run) -> str:
     if previous == text:
         return "present"
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text)
+        store.atomic_write_text(target, text)
     except OSError as exc:
         raise ServiceError(f"Cannot write {target}: {exc.strerror or exc}") from exc
     run(["systemctl", "--user", "daemon-reload"])

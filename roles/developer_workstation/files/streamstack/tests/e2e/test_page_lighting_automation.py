@@ -7,9 +7,10 @@ control and every status sentence can be exercised without a camera, a light or 
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 from support import LOADED, App, Rig, poll, tap
 
@@ -75,17 +76,42 @@ def test_camera_follow_switch_and_f_key(li: App, rig: Rig) -> None:
     assert poll(rig, lambda s: auto(s)["settings"]["follow"]["enabled"] is True)
 
 
+def test_a_key_pressed_before_the_server_answers_flips_the_click(li: App, rig: Rig) -> None:
+    """The store only learns of a click when the server answers; F in between must undo the click, not repeat it."""
+    held: list[Route] = []
+
+    def hold_first(route: Route) -> None:
+        if "lighting.auto.follow" in (route.request.post_data or ""):
+            held.append(route)
+        else:
+            route.continue_()
+
+    li.page.route("**/api/action", hold_first)
+    follow = li.switch("Follow the camera")
+    expect(follow).to_have_attribute("aria-checked", "true", timeout=LOADED)
+    tap(li.page, follow)
+    expect(follow).to_have_attribute("aria-checked", "false", timeout=LOADED)
+    li.press("f")
+    deadline = time.monotonic() + LOADED / 1000
+    while len(held) < 2 and time.monotonic() < deadline:
+        li.page.wait_for_timeout(50)
+    assert len(held) == 2, f"expected the click and the key to each post once, saw {len(held)}"
+    held[0].continue_()  # one at a time: the server must see the click first and the key second
+    assert poll(rig, lambda s: auto(s)["settings"]["follow"]["enabled"] is False)
+    held[1].continue_()
+    assert poll(rig, lambda s: auto(s)["settings"]["follow"]["enabled"] is True)
+    li.page.unroute("**/api/action", hold_first)
+
+
 def test_grace_and_sources_are_saved(li: App, rig: Rig) -> None:
     grace = li.page.get_by_role("spinbutton", name="Grace period in seconds")
     grace.fill("45")
     grace.press("Tab")
     assert poll(rig, lambda s: auto(s)["settings"]["follow"]["grace_seconds"] == 45)
-    tap(li.page, li.switch(re.compile("OBS is recording")))
-    assert poll(rig, lambda s: auto(s)["settings"]["follow"]["record"] is False)
     ignore = li.page.get_by_role("textbox", name="Apps to ignore")
-    ignore.fill("Slack, obs-studio")
+    ignore.fill("Slack, cheese")
     ignore.press("Tab")
-    assert poll(rig, lambda s: auto(s)["settings"]["follow"]["ignore"] == ["Slack", "obs-studio"])
+    assert poll(rig, lambda s: auto(s)["settings"]["follow"]["ignore"] == ["Slack", "cheese"])
 
 
 def test_a_refused_value_is_reverted_with_a_message(li: App, rig: Rig) -> None:
@@ -142,8 +168,14 @@ def test_the_clock_table_edits_one_hour(li: App, rig: Rig) -> None:
 def test_the_s_key_and_the_palette_toggle_the_schedule(li: App, rig: Rig) -> None:
     li.press("s")
     assert poll(rig, lambda s: auto(s)["settings"]["schedule"]["enabled"] is True)
+    # The palette entry reads "off" only once the page has the new state: open it after the page shows the schedule
+    # on, and press Enter once the entry it names is listed (a filter that has not settled would run nothing).
+    expect(li.switch("Follow the schedule")).to_have_attribute("aria-checked", "true", timeout=LOADED)
     li.press("Control+k")
     li.palette.get_by_role("combobox").fill("daylight schedule off")
+    expect(li.palette.get_by_role("option", name=re.compile("Turn the daylight schedule off"))).to_be_visible(
+        timeout=LOADED
+    )
     li.page.keyboard.press("Enter")
     assert poll(rig, lambda s: auto(s)["settings"]["schedule"]["enabled"] is False)
 

@@ -1,0 +1,45 @@
+{
+  "schema": "streamstack.tiers/1",
+  "tiers": [
+    {
+      "id": "ultra", "name": "Ultra", "blurb": "4K60 for a fast, wired uplink.", "min_uplink_mbps": 60,
+      "ladders": {
+        "av1":  [{"short_side": 2160, "fps": 60, "bitrate_kbps": 20000}, {"short_side": 1440, "fps": 60, "bitrate_kbps": 11000}, {"short_side": 1080, "fps": 60, "bitrate_kbps": 7000}, {"short_side": 1080, "fps": 30, "bitrate_kbps": 4500}],
+        "hevc": [{"short_side": 2160, "fps": 60, "bitrate_kbps": 25000}, {"short_side": 1440, "fps": 60, "bitrate_kbps": 14000}, {"short_side": 1080, "fps": 60, "bitrate_kbps": 9000}, {"short_side": 1080, "fps": 30, "bitrate_kbps": 5500}],
+        "h264": [{"short_side": 2160, "fps": 60, "bitrate_kbps": 35000}, {"short_side": 1440, "fps": 60, "bitrate_kbps": 24000}, {"short_side": 1080, "fps": 60, "bitrate_kbps": 12000}, {"short_side": 1080, "fps": 30, "bitrate_kbps": 8000}]
+      }
+    },
+    {
+      "id": "high", "name": "High", "blurb": "1080p60 with generous bitrate.", "min_uplink_mbps": 20,
+      "ladders": {
+        "av1":  [{"short_side": 1080, "fps": 60, "bitrate_kbps": 5500}, {"short_side": 1080, "fps": 30, "bitrate_kbps": 4000}, {"short_side": 720, "fps": 60, "bitrate_kbps": 3500}],
+        "hevc": [{"short_side": 1080, "fps": 60, "bitrate_kbps": 7000}, {"short_side": 1080, "fps": 30, "bitrate_kbps": 5000}, {"short_side": 720, "fps": 60, "bitrate_kbps": 4200}],
+        "h264": [{"short_side": 1080, "fps": 60, "bitrate_kbps": 9000}, {"short_side": 1080, "fps": 30, "bitrate_kbps": 6500}, {"short_side": 720, "fps": 60, "bitrate_kbps": 5500}]
+      }
+    },
+    {
+      "id": "balanced", "name": "Balanced", "blurb": "1080p30 or 720p60: the safe default for a good home connection.", "min_uplink_mbps": 12,
+      "ladders": {
+        "av1":  [{"short_side": 1080, "fps": 30, "bitrate_kbps": 3200}, {"short_side": 720, "fps": 60, "bitrate_kbps": 2800}, {"short_side": 720, "fps": 30, "bitrate_kbps": 1900}],
+        "hevc": [{"short_side": 1080, "fps": 30, "bitrate_kbps": 4000}, {"short_side": 720, "fps": 60, "bitrate_kbps": 3500}, {"short_side": 720, "fps": 30, "bitrate_kbps": 2400}],
+        "h264": [{"short_side": 1080, "fps": 30, "bitrate_kbps": 5000}, {"short_side": 720, "fps": 60, "bitrate_kbps": 4500}, {"short_side": 720, "fps": 30, "bitrate_kbps": 3000}]
+      }
+    },
+    {
+      "id": "constrained", "name": "Constrained", "blurb": "720p30 for a shared or modest uplink.", "min_uplink_mbps": 6,
+      "ladders": {
+        "av1":  [{"short_side": 720, "fps": 30, "bitrate_kbps": 1500}, {"short_side": 540, "fps": 30, "bitrate_kbps": 1000}, {"short_side": 480, "fps": 30, "bitrate_kbps": 750}],
+        "hevc": [{"short_side": 720, "fps": 30, "bitrate_kbps": 1900}, {"short_side": 540, "fps": 30, "bitrate_kbps": 1200}, {"short_side": 480, "fps": 30, "bitrate_kbps": 900}],
+        "h264": [{"short_side": 720, "fps": 30, "bitrate_kbps": 2500}, {"short_side": 540, "fps": 30, "bitrate_kbps": 1600}, {"short_side": 480, "fps": 30, "bitrate_kbps": 1200}]
+      }
+    },
+    {
+      "id": "cellular", "name": "Cellular-safe", "blurb": "Small and steady for a phone hotspot or a poor link.", "min_uplink_mbps": 3,
+      "ladders": {
+        "av1":  [{"short_side": 540, "fps": 30, "bitrate_kbps": 750}, {"short_side": 480, "fps": 30, "bitrate_kbps": 550}, {"short_side": 360, "fps": 30, "bitrate_kbps": 350}],
+        "hevc": [{"short_side": 540, "fps": 30, "bitrate_kbps": 900}, {"short_side": 480, "fps": 30, "bitrate_kbps": 650}, {"short_side": 360, "fps": 30, "bitrate_kbps": 420}],
+        "h264": [{"short_side": 540, "fps": 30, "bitrate_kbps": 1200}, {"short_side": 480, "fps": 30, "bitrate_kbps": 900}, {"short_side": 360, "fps": 30, "bitrate_kbps": 600}]
+      }
+    }
+  ]
+}

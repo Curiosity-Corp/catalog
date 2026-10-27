@@ -2,7 +2,7 @@
 //
 //   act(action, params?, {quiet?})      -> Promise<{ok, message?}|null>
 //        Applies the optimistic update at once, POSTs api/action, toasts the server's
-//        `error` text on failure (with a one-press fix when OBS/studio is down) and
+//        `error` text on failure (with a one-press fix when the studio is down) and
 //        rolls the optimistic value back to the server's. Never rejects.
 //   actStream(action, params, {ms})     -> void
 //        For drags: coalesces to at most 15 requests/s, always delivers the last value.
@@ -34,6 +34,32 @@ function masterPatch(patch, s, extra = {}) {
 const lumenFor = (l, percent) => Math.round(l.lumen_range[0] + (l.lumen_range[1] - l.lumen_range[0]) * (percent - 1) / 99);
 const targetsAll = (p) => p.id === undefined || p.id === 'all';
 
+/** Dotted-path patches for the output an action names (`name: null` patches every output). */
+function outputPatch(p, s, fields) {
+  const out = {};
+  s.audio.outputs.devices.forEach((d, i) => {
+    if (p.name !== null && d.name !== p.name) return;
+    for (const [key, value] of Object.entries(fields(d))) out[`audio.outputs.devices.${i}.${key}`] = value;
+  });
+  return out;
+}
+
+/** The encoder settings of `stream.set` (the rest of its params, the destination list, is not a setting). */
+const STREAM_SETTINGS = ['codec', 'encoder', 'tier', 'fps', 'bitrate_kbps', 'rate_control', 'keyint_s', 'quality', 'audio_bitrate_kbps'];
+
+/** Dotted-path patches for chain parameter changes `{key: value}`: a stage switch is `<stage>_on`, the rest are faders. */
+function chainPatch(values, s) {
+  const out = {};
+  s.audio.chain.stages.forEach((st, i) => {
+    if (`${st.id}_on` in values) out[`audio.chain.stages.${i}.on`] = !!values[`${st.id}_on`];
+    st.params.forEach((param, j) => {
+      if (param.key in values) out[`audio.chain.stages.${i}.params.${j}.value`] = Number(values[param.key]);
+    });
+  });
+  if (Object.keys(out).length) out['audio.chain.custom'] = true;
+  return out;
+}
+
 const NEUTRAL_LOOK = { brightness: 0, contrast: 0, gamma: 0, saturation: 0, warmth: 0 };
 
 export const OPTIMISTIC = {
@@ -43,10 +69,24 @@ export const OPTIMISTIC = {
   'audio.preset': (p) => ({ 'audio.chain.preset': p.name }),
   'audio.bypass': (p) => ({ 'audio.chain.bypass': !!p.on }),
   'audio.tone': (p) => Object.fromEntries(Object.entries(p).map(([k, v]) => [`audio.tone.${k}`, v])),
+  'audio.chain': (p, s) => chainPatch(p.params || {}, s),
+  'audio.loudness': (p) => ({
+    ...(p.on !== undefined ? { 'audio.chain.loudness.on': !!p.on } : {}),
+    ...(p.target_lufs !== undefined ? { 'audio.chain.loudness.target_lufs': Number(p.target_lufs) } : {}),
+  }),
   'audio.denoise': (p) => ({
     ...(p.engine !== undefined ? { 'audio.denoise.engine': p.engine } : {}),
     ...(p.atten_limit_db !== undefined ? { 'audio.denoise.atten_limit_db': Number(p.atten_limit_db) } : {}),
   }),
+  'audio.output_volume': (p, s) => outputPatch(p, s, () => ({ volume: Number(p.percent) })),
+  'audio.output_mute': (p, s) => outputPatch(p, s, () => ({ muted: !!p.on })),
+  'audio.output_default': (p, s) => ({
+    'audio.outputs.default': p.name,
+    ...outputPatch({ name: null }, s, (d) => ({ default: d.name === p.name })),
+    ...Object.fromEntries(s.audio.outputs.routes.map((r, i) => [`audio.outputs.routes.${i}.default`, r.name === p.name])),
+    'audio.outputs.warning': null,
+  }),
+  'audio.output_dismiss': () => ({ 'audio.outputs.warning': null }),
   'video.scene': (p, s) => ({
     'video.scenes': s.video.scenes.map((sc) => ({ ...sc, active: sc.name === p.name })),
     'video.program_scene': p.name,
@@ -107,12 +147,13 @@ export const OPTIMISTIC = {
     const extra = preset.on ? { 'lighting.master.brightness': preset.brightness, 'lighting.master.kelvin': preset.kelvin } : {};
     return masterPatch(lightPatch({}, s, fields), s, { 'lighting.preset': p.name, ...extra });
   },
+  'stream.set': (p) => Object.fromEntries(STREAM_SETTINGS.filter((k) => p[k] !== undefined).map((k) => [`stream.settings.${k}`, p[k]])),
   'studio.start': () => ({ 'studio.busy': true }),
   'studio.stop': () => ({ 'studio.busy': true }),
 };
 
 /** Actions whose server message is worth showing (they take seconds and report through state). */
-const SLOW = new Set(['studio.start', 'studio.stop', 'audio.mic_check', 'auto.once', 'auto.reset', 'health.refresh', 'open.app', 'video.looks.save', 'video.looks.delete', 'video.looks.apply']);
+const SLOW = new Set(['studio.start', 'studio.stop', 'audio.mic_check', 'audio.output_default', 'auto.once', 'auto.reset', 'health.refresh', 'open.app', 'video.looks.save', 'video.looks.delete', 'video.looks.apply']);
 
 /** Wording of the server's 409s that have a one-press fix. */
 const STUDIO_DOWN = /not running|start the studio|studio first/i;
@@ -144,43 +185,56 @@ export async function act(action, params = {}, { quiet = false, hold } = {}) {
   }
 }
 
-const streams = new Map();   // key -> { params, timer, last }
+const streams = new Map();   // key -> { params, timer, last, busy }
 
-/** Throttled action for continuous controls (faders, knobs). */
+/** Throttled action for continuous controls (faders, knobs).
+ *  One request per key is in flight at a time: the server handles requests on separate threads, so two overlapping
+ *  posts of the same fader can land out of order and leave an older value on the device. While a post is out, the
+ *  newest values are held and sent the moment it answers. */
 export function actStream(action, params, { ms = 1000 / 15, key = action } = {}) {
   let s = streams.get(key);
   if (!s) {
-    s = { params: null, timer: 0, last: 0 };
+    s = { action, params: null, timer: 0, last: 0, busy: false };
     streams.set(key, s);
   }
   // Merge `values` objects so two look faders dragged together do not drop each other.
   if (s.params && params.values && s.params.values) s.params = { ...params, values: { ...s.params.values, ...params.values } };
+  else if (s.params && params.params && s.params.params) s.params = { ...params, params: { ...s.params.params, ...params.params } };
   else s.params = params;
   // Optimistic update on every call, so the UI never waits for the network.
   const optimistic = OPTIMISTIC[action];
   if (optimistic) store.patch(optimistic(params, store.state));
-  if (s.timer) return;
-  const fire = () => {
-    s.timer = 0;
-    const p = s.params;
-    s.params = null;
-    s.last = performance.now();
-    if (p) act(action, p, { quiet: true });
-  };
+  if (s.timer || s.busy) return;
   const wait = ms - (performance.now() - s.last);
-  if (wait <= 0) fire();
-  else s.timer = setTimeout(fire, wait);
+  if (wait <= 0) sendStream(s, ms);
+  else s.timer = setTimeout(() => sendStream(s, ms), wait);
+}
+
+function sendStream(s, ms) {
+  s.timer = 0;
+  const p = s.params;
+  if (!p || s.busy) return;
+  s.params = null;
+  s.busy = true;
+  s.last = performance.now();
+  act(s.action, p, { quiet: true }).finally(() => {
+    s.busy = false;
+    if (!s.params || s.timer) return;
+    const wait = ms - (performance.now() - s.last);
+    if (wait <= 0) sendStream(s, ms);
+    else s.timer = setTimeout(() => sendStream(s, ms), wait);
+  });
 }
 
 /** Send whatever a stream still holds right now. Call it on `change`: the control has already passed its final
- *  value through `input` (commit() flushes that first), so `change` must not stream the value a second time. */
+ *  value through `input` (commit() flushes that first), so `change` must not stream the value a second time.
+ *  When a post is still in flight the held values go out as soon as it answers. */
 export function flushStream(key) {
   const s = streams.get(key);
-  if (!s || !s.timer) return;
-  clearTimeout(s.timer);
-  s.timer = 0;
-  const p = s.params;
-  s.params = null;
-  s.last = performance.now();
-  if (p) act(key, p, { quiet: true });
+  if (!s || !s.params) return;
+  if (s.timer) {
+    clearTimeout(s.timer);
+    s.timer = 0;
+  }
+  if (!s.busy) sendStream(s, 0);
 }

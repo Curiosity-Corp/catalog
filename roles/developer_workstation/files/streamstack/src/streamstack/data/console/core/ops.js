@@ -18,6 +18,11 @@ export const selectSceneByIndex = (i) => {
 /** Restart a stalled microphone (suspend/resume, then card profile cycle on the server). */
 export const reviveMic = () => act('audio.revive');
 export const selectPreset = (name) => act('audio.preset', { name });
+/** The sound check on one output (a short left/right then chime, on that output only), or on every output in turn. */
+export const testOutput = (name) => act('audio.output_test', { name });
+export const testAllOutputs = () => act('audio.output_test_all');
+export const stopOutputTest = () => act('audio.output_test_stop');
+export const setDefaultOutput = (name) => act('audio.output_default', { name });
 
 /** Starting is safe; stopping is only done after a confirmation (hold a button, or confirm the toast). */
 export function setRecord(on) { return act('video.record', { on }); }

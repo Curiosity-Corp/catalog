@@ -9,7 +9,7 @@
 //   heading   title (not `title`, which would show a native tooltip)
 //   icon      icon name shown before the heading
 //   reason    when set, the content is inert and dimmed and this text is shown over it:
-//             the card's *disabled state with the reason* ("OBS is not running", "No microphone found")
+//             the card's *disabled state with the reason* ("No microphone found")
 //   fix       label of a one-press fix button shown with the reason ("Start studio")
 //   tone      "" | live (red edge) | warn (amber edge)
 //   flush     no inner padding (previews, lists)

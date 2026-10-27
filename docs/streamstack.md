@@ -1,30 +1,33 @@
 # StreamStack: call and stream studio
 
 StreamStack turns a desktop workstation into a repeatable studio for Microsoft
-Teams, Zoom and OBS streams. It sets up a DSLR, an HDMI capture card and a
+Teams, Zoom and streams. It sets up a DSLR, an HDMI capture card and a
 USB microphone the same way on every machine, and gives you one command to check
 picture and sound before you go live.
 
 ```text
 Canon EOS (USB live view) --streamstack-canon--> /dev/video42  "Canon EOS 50D"
 Elgato Cam Link 4K (HDMI) ---------------------> /dev/streamstack/camlink
-            both --> OBS (lighting, colour, LUT, scenes) --> /dev/video43 "StreamStack Camera"
-Elgato Wave / any mic --> Easy Effects (voice chain) --> "Easy Effects Source"
+     both --> native video engine (grade, LUT, framing, blur on the GPU) --> /dev/video43 "StreamStack Camera"
+Elgato Wave / any mic --> PipeWire voice chain (gate, denoise, EQ, limiter) --> "StreamStack Mic"
 ```
 
-In Teams and Zoom, pick **StreamStack Camera** and **Easy Effects Source**.
+In Teams and Zoom, pick **StreamStack Camera** and **StreamStack Mic** (the role
+also makes StreamStack Mic the default microphone of the studio account, so an
+app that records from "default" gets the processed voice). There is no OBS
+Studio and no Easy Effects: StreamStack makes both itself.
 
 ## Where it lives
 
 The application (the `streamstack` command, the Console, the panel menu, auto mode, the
-voice presets and OBS templates) is its own project, StreamStack, with its own
+voice presets, native video engine and voice chain) is its own project, StreamStack, with its own
 tests and releases. This role vendors a release tag at
 [`roles/developer_workstation/files/streamstack`](../roles/developer_workstation/files/streamstack/README.md)
 as a squashed `git subtree` and wires it into the host:
 
 | The role does | The app does |
 | --- | --- |
-| apt packages, the v4l2loopback module and its two nodes, udev access, `/etc/streamstack/streamstack.env` from role variables, the install under `/usr/local`, user units, autostart entries, per-user seeding | everything a user runs: the Console, doctor, studio, previews, voice presets, auto mode, the panel menu |
+| apt packages, the v4l2loopback module and its two nodes, udev access, `/etc/streamstack/streamstack.env` from role variables, the install under `/usr/local`, user units (the headless Console, lights, auto mode), autostart entries, per-user seeding, removal of OBS Studio and Easy Effects | everything a user runs: the Console, doctor, studio, previews, voice presets, auto mode, the panel menu |
 
 To move to a newer StreamStack release:
 
@@ -47,13 +50,19 @@ installs:
 
 | Piece | Purpose |
 | --- | --- |
-| OBS Studio | scenes, the Color Correction / Sharpen / LUT filters, the virtual camera, test recordings |
-| Easy Effects + LSP and Calf plugins | the live voice chain: high-pass, noise removal, gate, compressor, bass/presence/treble EQ, de-esser, pitch, limiter |
+| `zam-plugins` | the voice chain's gate, de-esser, compressor and limiter |
 | qpwgraph, pavucontrol | see and patch PipeWire routing; per-app levels |
 | v4l-utils, qv4l2, guvcview | camera formats and UVC controls (exposure, white balance) |
 | gphoto2, ffmpeg | Canon live view bridge, `ffplay` previews |
 | StreamStack | `/usr/local/lib/streamstack`, with `streamstack`, `streamstack-auto`, `streamstack-console` and `streamstack-tray` in `/usr/local/bin` |
+| `streamstack-console.service` | a user service that runs the Console without a window for the accounts in `streamstack_console_users` (default `[mrh]`): it hosts the native video engine, the only writer of `/dev/video43`, and starts the voice chain, so both exist at login |
 
+A host that still has OBS Studio, Easy Effects or the obs-backgroundremoval
+plugin from an earlier role release gets them removed (`streamstack_retired_packages`,
+packages only: users' own settings stay in their homes) and the Easy Effects
+autostart entry deleted; the role stops a running Easy Effects only after the
+Console has started the voice chain. Run it between calls: the program camera
+and the microphone are re-created.
 Two v4l2loopback devices are created with `exclusive_caps=1` (brought up
 by `/usr/local/sbin/curiosity-streamstack-loopback`, at boot through
 `curiosity-streamstack-loopback.service`); Chromium-based
@@ -83,7 +92,7 @@ README for the pages and shortcuts.
 The entry's **Panel menu** action (`streamstack-tray --menu`) opens the older
 studio menu at the pointer: what calls receive right now, Start/Stop studio,
 voice presets and effect bypass, mic check, previews of every live camera in
-every mode it offers, shortcuts to OBS, Easy Effects, qpwgraph, pavucontrol and
+every mode it offers, shortcuts to qpwgraph, pavucontrol and
 qv4l2, the doctor and the Teams/Zoom settings.
 
 For a panel button, show `streamstack status --icon` and open the Console on
@@ -111,12 +120,12 @@ default because some tint2 builds crash when a GTK status icon docks.
 ### From a terminal
 
 ```bash
-streamstack studio          # Easy Effects + Canon bridge + OBS with the virtual camera
+streamstack studio          # voice chain + Canon bridge (the Console runs the video engine)
 streamstack doctor          # every device, its format, and what to pick in the call app
 streamstack preview canon   # raw Canon feed (also: camlink, program); --grid for thirds
 streamstack cameras         # every live camera and every mode it offers
 streamstack preview /dev/video0 --mode '1920x1080@30 MJPG'
-streamstack stop            # stop OBS (and the bridge): calls use the raw camera
+streamstack stop            # stop the Canon bridge: calls use the raw camera
 streamstack mic-check --raw # hear the raw mic, then the processed voice
 streamstack voice           # list voice presets; `streamstack voice "StreamStack Voice Warm"`
 streamstack call-settings   # the Teams and Zoom toggles that match this rig
@@ -125,8 +134,7 @@ streamstack call-settings   # the Teams and Zoom toggles that match this rig
 ### Voice presets
 
 All presets share one chain, so bass, treble and pitch are always one slider
-away in Easy Effects (Equalizer: band 0 is bass, band 3 is treble; Pitch:
-semitones).
+away on the Console's Audio page (EQ band 0 is bass, band 3 is air).
 
 | Preset | Character |
 | --- | --- |
@@ -137,16 +145,16 @@ semitones).
 | StreamStack Voice Minimal | only high-pass, gentle compression and the limiter |
 
 Set the preset every session starts with through `streamstack_voice_preset`.
-Your own tweaks saved in Easy Effects are never overwritten by the role;
-`streamstack setup --force` restores the shipped presets and OBS defaults.
+Your own tweaks are never overwritten by the role; the first `streamstack setup`
+imports an Easy Effects voice preset you had saved, and `streamstack setup --force`
+restores the shipped defaults.
 
 ### Lighting and colour
 
-The OBS scene collection **StreamStack** has the Canon and Cam Link sources
-with three filters each: **Lighting & Color** (Color Correction: exposure,
-contrast, gamma, temperature/saturation), **Sharpen** (off) and **Cinematic
-LUT** (off, teal/orange at 35%). Grade in OBS, not in the call app, so Teams
-and Zoom both receive the same picture.
+The native engine grades the camera on the GPU (brightness, contrast,
+saturation, gamma, warmth, sharpening, a LUT) and optionally blurs the
+background through OpenVINO; the Console's Camera page drives it live. Grade
+there, not in the call app, so Teams and Zoom both receive the same picture.
 
 Get it right in camera first:
 
@@ -166,7 +174,7 @@ It is off until each person turns it on, from the panel menu
 (**Auto-cinematographer and auto-audio (Claude)**) or a terminal:
 
 ```bash
-streamstack auto check      # OBS websocket, Claude and microphone ready?
+streamstack auto check      # Claude and microphone ready?
 streamstack auto on         # start it (the streamstack-auto user service)
 streamstack auto once --dry-run   # what Claude would change, nothing applied
 streamstack auto status     # on/off and the recent changes
@@ -211,20 +219,20 @@ streamstack_longitude: "-74.0060"  # decimal degrees, east positive
 
 ## Laptops: graded or raw
 
-The graded **StreamStack Camera** runs OBS on top of the camera feed: it
-composites on the GPU, then copies every frame back to the CPU for the virtual
-camera, while the browser encodes the call. On a dual-core laptop that is
-enough to make the fan, the call and the picture stutter under load.
+The graded **StreamStack Camera** is the native engine's picture: it grades on
+the GPU, then copies every frame back to the CPU for the virtual camera, while
+the browser encodes the call. On a dual-core laptop without a discrete GPU that
+can make the fan, the call and the picture stutter under load.
 
 - For everyday calls on a laptop, stop the studio and pick the raw camera
   (for example **Canon EOS 50D Webcam**). Grade in camera instead: Picture
   Style, Kelvin white balance and fixed exposure cost nothing.
-- Keep the studio for calls that need scenes, a LUT or side-by-side.
-- Match the OBS canvas to the camera instead of upscaling, for example
+- Keep the studio for calls that need a LUT, framing or background blur.
+- Match the engine's canvas to the camera instead of upscaling, for example
   `streamstack_width: 1280`, `streamstack_height: 720`, `streamstack_fps: 20`
   for a 720p20 PTP feed.
-- Each stage is also one more thing that can stop mid-call: if OBS exits, the
-  StreamStack Camera disappears from Teams. The raw camera has fewer moving
+- Each stage is also one more thing that can stop mid-call: if the Console
+  exits, the StreamStack Camera disappears from Teams (the user service restarts it). The raw camera has fewer moving
   parts.
 
 ### HDMI capture instead of USB live view
@@ -237,15 +245,16 @@ or hub the Cam Link cannot carry 1080p.
 
 ## Teams and Zoom
 
-Start `streamstack studio` **before** joining, so the virtual camera is
-already running when the browser enumerates devices.
+The Console service runs from login, so the virtual camera and microphone
+exist before the browser enumerates devices. On a host without it, start
+`streamstack console` (and `streamstack studio`) **before** joining.
 
-**Teams**: Settings → Devices: camera StreamStack Camera, microphone Easy Effects
-Source, speaker your headphones, noise suppression Low. Do not use Teams
+**Teams**: Settings → Devices: camera StreamStack Camera, microphone StreamStack
+Mic, speaker your headphones, noise suppression Low. Do not use Teams
 background effects; the picture is already graded.
 
 **Zoom**: Video: camera StreamStack Camera, HD on, Adjust for low light and Touch up
-off. Audio: microphone Easy Effects Source, Automatically adjust microphone volume
+off. Audio: microphone StreamStack Mic, Automatically adjust microphone volume
 off, background noise suppression Low (or Original sound for musicians).
 
 Use headphones to stop echo, and make a test call (Teams "Make a test call",
@@ -276,8 +285,8 @@ streamstack_camera_label: Canon EOS 50D Webcam
 
 StreamStack then writes no module options (and removes its own), never
 reloads the module, runs no Canon bridge, and only adds its program node
-(`video43`) next to the existing one at run time and at boot. OBS reads the
-adopted node like any other camera.
+(`video43`) next to the existing one at run time and at boot. The native engine
+reads the adopted node like any other camera.
 
 The bridge is the `streamstack-canon` user service. `streamstack studio`
 starts it; set `streamstack_canon_bridge_autostart: true` to start it at
@@ -285,16 +294,15 @@ login.
 
 ## AI helper dependencies
 
-StreamStack's background blur, auto-framing and DeepFilterNet voice option need packages it never installs
-itself. The role installs them as three optional groups; without them StreamStack
+StreamStack's auto-framing, background blur (the OpenVINO runtime) and DeepFilterNet voice option need packages it never installs
+itself. The role installs them as two optional groups; without them StreamStack
 works as before and says what is missing (`streamstack doctor`, the Console
 System page).
 
 | Group | Variable (default) | Tag | What it installs |
 |---|---|---|---|
-| Background blur | `streamstack_background_removal_enabled` (`true`) | `streamstack-background-removal` | The OBS plugin [obs-backgroundremoval](https://github.com/royshil/obs-backgroundremoval) (GPL-3.0-or-later, a separate package that StreamStack only reaches through obs-websocket), the upstream release `.deb` pinned by version and sha256 (`streamstack_backgroundremoval_*`), plus `libonnxruntime1.23` and `libopencv-core410`/`-imgproc410` from the archive. It installs under `/usr/local/lib/obs-plugins` and `/usr/local/share/obs/obs-plugins`, which Ubuntu's OBS does not search, so the role links the module into `/usr/lib/x86_64-linux-gnu/obs-plugins` and its data into `/usr/share/obs/obs-plugins/obs-backgroundremoval`. Skipped when the pinned version or a newer one is already installed. |
-| Auto-framing | `streamstack_framing_enabled` (`true`) | `streamstack-framing` | `python3-numpy`, `python3-opencv`, `python3-packaging`, `python3-pip`; the OpenVINO runtime and `openvino-telemetry` from pinned, checksummed wheels installed with `pip --target /usr/local/lib/streamstack` (the one directory the isolated `python3 -I` launcher adds; Ubuntu has no OpenVINO package and PEP 668 blocks system pip); and, per user in `dev_users`, the YuNet face model in `~/.local/share/streamstack/models/` (commit-pinned URL, sha256 checked, the same file `streamstack framing --fetch` verifies). |
-| Noise remover | `streamstack_deepfilter_enabled` (`true`) | `streamstack-deepfilter` | `libdeep_filter_ladspa.so` from [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) (MIT or Apache-2.0), the upstream x86_64 release asset pinned by version and sha256 (`streamstack_deepfilter_*`), installed to `/usr/local/lib/ladspa/`, one of the directories Easy Effects 8.1.2's Deep Noise Remover searches; Ubuntu does not ship it. The release is recorded in `/usr/local/share/streamstack/libdeep_filter_ladspa.release`; a newer or unrecorded library is left alone. Easy Effects is not restarted: it looks for the library when the effect loads. |
+| Auto-framing and blur | `streamstack_framing_enabled` (`true`) | `streamstack-framing` | `python3-numpy`, `python3-opencv`, `python3-packaging`, `python3-pip`; the OpenVINO runtime and `openvino-telemetry` from pinned, checksummed wheels installed with `pip --target /usr/local/lib/streamstack` (the one directory the isolated `python3 -I` launcher adds; Ubuntu has no OpenVINO package and PEP 668 blocks system pip); and, per user in `dev_users`, the YuNet face model in `~/.local/share/streamstack/models/` (commit-pinned URL, sha256 checked, the same file `streamstack framing --fetch` verifies). |
+| Noise remover | `streamstack_deepfilter_enabled` (`true`) | `streamstack-deepfilter` | `libdeep_filter_ladspa.so` from [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) (MIT or Apache-2.0), the upstream x86_64 release asset pinned by version and sha256 (`streamstack_deepfilter_*`), installed to `/usr/local/lib/ladspa/`, one of the directories the voice chain searches; Ubuntu does not ship it. The release is recorded in `/usr/local/share/streamstack/libdeep_filter_ladspa.release`; a newer or unrecorded library is left alone. Nothing is restarted: the voice chain loads the library when it starts. |
 
 The Intel GPU compute runtime (`intel-opencl-icd`, `libze-intel-gpu1`,
 `libze1`, `libigdgmm12`, `ocl-icd-libopencl1`) is installed, and the desktop
@@ -305,18 +313,17 @@ it exists. The OpenVINO wheel matches the system Python (`cp314`, x86_64); on
 another interpreter the role prints a notice and skips it, and StreamStack
 falls back to OpenCV's DNN on the CPU until `streamstack_openvino_*` is bumped.
 
-Nothing is restarted: OBS loads the plugin at its next start, and a new `render`
+Nothing is restarted: a new `render`
 group applies at the next login. To check a host (read-only):
 
 ```
-dpkg -s obs-backgroundremoval | grep Version
 cat /usr/local/share/streamstack/libdeep_filter_ladspa.release; nm -D /usr/local/lib/ladspa/libdeep_filter_ladspa.so | grep ladspa_descriptor
 /usr/bin/python3 -I -c "import sys; sys.path.insert(0,'/usr/local/lib/streamstack'); import openvino, numpy, cv2; print(openvino.Core().available_devices)"
 streamstack doctor
 ```
 
 To bump a pinned artifact, change its version, URL and sha256 together
-(`streamstack_backgroundremoval_*`, `streamstack_openvino_*`, `streamstack_deepfilter_*`); the role
+(`streamstack_openvino_*`, `streamstack_deepfilter_*`); the role
 re-downloads, verifies the checksum, and replaces the old version.
 
 ## Low latency
@@ -479,12 +486,9 @@ v4l2loopback releases; Ubuntu 26.04 package archive.
 - If `streamstack doctor` reports a loopback device with the wrong name,
   another `/etc/modprobe.d/*.conf` sets v4l2loopback options (the role warns
   about these). Remove that file and its service, then reboot.
-- The OBS virtual camera feeds the **first free** loopback node, not a named
-  one. If the camera node has no producer yet, OBS can take it and your call
-  apps see the wrong picture. `streamstack studio` therefore waits for the
-  camera to be live and otherwise starts OBS without the virtual camera;
-  `streamstack doctor` warns when OBS holds a loopback node other than the
-  program camera.
+- Only one account may feed `/dev/video43`. The Console service therefore runs
+  for `streamstack_console_users` only (default `mrh`); a second logged-in
+  account opens the raw camera or starts its own Console on demand.
 - An open camera keeps the module loaded, so a changed device layout applies
   at the next reboot rather than in the middle of a call.
 - Plug the Cam Link 4K straight into a USB 3 port; through a USB 2 hub it

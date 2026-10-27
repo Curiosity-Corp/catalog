@@ -174,7 +174,7 @@ def test_findings_and_actuators_are_listed_and_the_hardware_ones_are_ready_on_th
 ) -> None:
     expect(page.get_by_role("list", name="Findings").get_by_role("listitem").first).to_be_visible(timeout=LOADED)
     acts = page.get_by_role("list", name="Actuators")
-    expect(acts).to_contain_text("OBS picture look")
+    expect(acts).to_contain_text("Program picture look")
     for name in ("Canon exposure and white balance", "Litra key and fill lights", "Audio interface hardware gain"):
         row = acts.get_by_role("listitem").filter(has_text=name)
         expect(row).to_contain_text("Ready")

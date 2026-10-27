@@ -3,7 +3,7 @@
 //   drawSwatch(canvas, values)      canvas 64×40 (any size works); values = a look ({brightness, …, lut_enabled})
 //   sameLook(a, b)                  true when two looks are the same to the precision the faders show
 //
-// The transform mirrors OBS's Lighting & Color filter closely enough for a thumbnail: brightness adds,
+// The transform mirrors the engine's colour grade closely enough for a thumbnail: brightness adds,
 // contrast scales around mid grey, gamma bends the mid-tones, saturation scales the colour distance from
 // luma, warmth pushes red up and blue down. LUT adds a teal/orange split-tone, sharpen draws a crisp edge.
 

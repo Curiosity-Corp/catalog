@@ -9,33 +9,36 @@ from pathlib import Path
 import pytest
 
 from streamstack import auto, config, system
-from streamstack.obs import COLOR_FILTER, LUT_FILTER, SHARPEN_FILTER
 
 LOOK = {"brightness": 0.0, "contrast": 0.0, "gamma": 0.0, "saturation": 0.0, "warmth": 0.0}
 
 
-class FakeOBS:
-    def __init__(self, color: dict | None = None, lut: tuple[bool, dict] = (False, {"clut_amount": 0.35})) -> None:
-        self.filters = {
-            COLOR_FILTER: [True, dict(color or {})],
-            LUT_FILTER: [lut[0], dict(lut[1])],
-            SHARPEN_FILTER: [False, {}],
+class FakeLink:
+    """Just enough of the Console link: the look in place on one camera, a log of writes, a still."""
+
+    def __init__(self, look: dict | None = None) -> None:
+        self.values = {
+            "brightness": 0.0,
+            "contrast": 0.0,
+            "gamma": 0.0,
+            "saturation": 0.0,
+            "warmth": 0.0,
+            "lut_enabled": False,
+            "lut_amount": 0.35,
+            "sharpen_enabled": False,
+            **(look or {}),
         }
-        self.writes: list[tuple[str, dict]] = []
+        self.writes: list[dict] = []
 
     def camera_sources(self) -> list[str]:
         return ["Camera"]
 
-    def filter_settings(self, source: str, name: str) -> tuple[bool, dict]:
-        enabled, values = self.filters[name]
-        return enabled, dict(values)
+    def look(self, source: str) -> dict:
+        return dict(self.values)
 
-    def set_filter(self, source: str, name: str, values: dict) -> None:
-        self.filters[name][1].update(values)
-        self.writes.append((name, values))
-
-    def enable_filter(self, source: str, name: str, enabled: bool) -> None:
-        self.filters[name][0] = enabled
+    def set_look(self, source: str, values: dict) -> None:
+        self.values.update(values)
+        self.writes.append(dict(values))
 
     def screenshot(self, source: str, path: Path, width: int = 768) -> Path:
         path.write_bytes(b"jpeg")
@@ -88,12 +91,32 @@ def test_limits_hold_whatever_claude_proposes() -> None:
     assert "sharpen_enabled" not in target  # nor filters the scene does not have
 
 
-def test_warmth_round_trips_through_the_obs_colour_multiply() -> None:
-    assert auto.warmth_to_multiply(0.0) == 0xFFFFFF
-    for warmth in (-0.5, -0.2, 0.25, 0.5):
-        assert abs(auto.multiply_to_warmth(auto.warmth_to_multiply(warmth)) - warmth) < 0.05
-    warm = auto.warmth_to_multiply(0.5)
-    assert warm & 0xFF == 0xFF and (warm >> 16) & 0xFF < 0xFF  # red kept, blue lowered
+def test_a_ramp_writes_smooth_steps_ending_exactly_on_the_target() -> None:
+    link = FakeLink()
+    auto.ramp(link, "Camera", auto.current_look(link, "Camera"), {"gamma": 0.2, "warmth": 0.4}, seconds=1.0, steps=5)
+    assert len(link.writes) == 5
+    gammas = [w["gamma"] for w in link.writes]
+    assert gammas == sorted(gammas) and gammas[-1] == 0.2 and link.values["warmth"] == 0.4
+
+
+def test_a_ramp_with_nothing_to_change_writes_nothing_and_a_cancelled_one_stops() -> None:
+    link = FakeLink()
+    auto.ramp(link, "Camera", dict(link.values), {"gamma": 0.0}, seconds=1.0, steps=4)
+    assert link.writes == []
+    cancel = auto.threading.Event()
+    cancel.set()
+    auto.ramp(link, "Camera", dict(link.values), {"gamma": 0.2}, seconds=1.0, steps=4, cancel=cancel)
+    assert link.writes == []
+
+
+def test_apply_look_ramps_the_colour_then_sets_the_filters_in_one_write() -> None:
+    link = FakeLink()
+    look = auto.current_look(link, "Camera")
+    changed = auto.apply_look(link, "Camera", look, {"gamma": 0.1, "lut_enabled": True, "lut_amount": 0.5}, seconds=1.0)
+    assert changed
+    assert link.writes[-1] == {"lut_enabled": True, "lut_amount": 0.5}
+    assert link.values["gamma"] == 0.1
+    assert not auto.apply_look(link, "Camera", dict(link.values), dict(link.values), seconds=1.0)
 
 
 def test_exposure_lifts_mid_tones_first_and_never_clips() -> None:
@@ -183,18 +206,19 @@ def test_astats_parsing_reads_the_overall_section() -> None:
 
 
 def _claude_pass(monkeypatch, replies, stats=None):
-    obs = FakeOBS({"brightness": 0.0, "contrast": 0.0, "gamma": 0.0, "saturation": 0.0})
+    link = FakeLink()
     monkeypatch.setattr(
         auto, "picture_stats", lambda frame, box=None: stats or {"YAVG": 118.0, "YHIGH": 230.0, "YMIN": 16, "YMAX": 235}
     )
-    monkeypatch.setattr(system, "ee_presets", lambda: ["Voice", "Broadcast"])
-    monkeypatch.setattr(system, "easyeffects_preset", lambda: "Voice")
-    loaded: list[list[str]] = []
-    monkeypatch.setattr(system, "run", lambda argv, timeout=10: loaded.append(argv))
+    monkeypatch.setattr(auto.voicechain, "preset_names", lambda: ["Voice", "Broadcast"])
+    monkeypatch.setattr(auto.voicechain, "current_preset", lambda: "Voice")
+    loaded: list[str] = []
+    monkeypatch.setattr(auto.voicechain, "load_preset", lambda name: loaded.append(name) or True)
+    monkeypatch.setattr(system, "run", lambda argv, timeout=10: None)
     monkeypatch.setattr(auto, "ask_claude", lambda cfg, frame, context: next(replies))
     a = quiet()
-    a.obs = obs
-    return a, obs, loaded
+    a.link = link
+    return a, link, loaded
 
 
 def test_a_confident_proposal_is_applied_bounded_and_can_be_undone(monkeypatch) -> None:
@@ -210,25 +234,25 @@ def test_a_confident_proposal_is_applied_bounded_and_can_be_undone(monkeypatch) 
             {"video": {"contrast": 0.4}, "confidence": 0.3, "notes": "Unsure."},
         ]
     )
-    a, obs, loaded = _claude_pass(monkeypatch, replies)
+    a, link, loaded = _claude_pass(monkeypatch, replies)
     a.ai_tick(force=True)
-    color = obs.filters[COLOR_FILTER][1]
+    color = link.values
     assert color["contrast"] == 0.1
-    assert abs(auto.multiply_to_warmth(color["color_multiply"]) - auto.AI_STEP["warmth"]) < 0.05
-    assert obs.filters[LUT_FILTER][0] is True
-    assert ["easyeffects", "-l", "Broadcast"] in loaded
+    assert abs(color["warmth"] - auto.AI_STEP["warmth"]) < 0.05
+    assert link.values["lut_enabled"] is True
+    assert loaded == ["Broadcast"]
     assert a.subject["box"] == [0.4, 0.2, 0.2, 0.3] and a.subject["target"] == 130
     assert a.ai_backoff == 1
     baseline = auto.load_baseline()
     assert baseline["look"]["Camera"]["contrast"] == 0.0 and baseline["preset"] == {"input": "Voice"}
-    writes = len(obs.writes)
+    writes = len(link.writes)
     a.ai_tick(force=True)  # low confidence: logged, not applied, and the next pass waits longer
-    assert len(obs.writes) == writes and color["contrast"] == 0.1
+    assert len(link.writes) == writes and color["contrast"] == 0.1
     assert a.ai_backoff == 2
     events = [e["event"] for e in journal()]
     assert events.count("ai") == 2 and set(events) == {"ai", "change"}
     reasons = {(e["actuator"], e["key"]): e["reason"] for e in journal() if e["event"] == "change"}
-    assert reasons[("obs-look", "contrast")] and reasons[("voice-preset", "voice_preset")]
+    assert reasons[("program-look", "contrast")] and reasons[("voice-preset", "voice_preset")]
     cache = config.cache_dir() / "auto"
     assert (cache / "last-ai.jpg").is_file() and cache.stat().st_mode & 0o077 == 0
     assert (cache / "last-ai.jpg").stat().st_mode & 0o077 == 0
@@ -244,7 +268,7 @@ def test_a_black_frame_is_never_sent_to_claude(monkeypatch) -> None:
     def never(*a):
         raise AssertionError("called Claude")
 
-    a, _obs, _ = _claude_pass(monkeypatch, iter([]), stats={"YAVG": 1.0, "YMIN": 0, "YMAX": 3})
+    a, _link, _ = _claude_pass(monkeypatch, iter([]), stats={"YAVG": 1.0, "YMIN": 0, "YMAX": 3})
     monkeypatch.setattr(auto, "ask_claude", never)
     assert a.ai_tick(force=True) is None
     assert journal()[-1]["event"] == "ai-skipped"
@@ -253,7 +277,7 @@ def test_a_black_frame_is_never_sent_to_claude(monkeypatch) -> None:
 def test_local_backend_never_calls_claude(monkeypatch) -> None:
     monkeypatch.setattr(auto, "ask_claude", lambda *a: (_ for _ in ()).throw(AssertionError("called")))
     a = quiet(STREAMSTACK_AUTO_BACKEND="local")
-    a.obs = FakeOBS()
+    a.link = FakeLink()
     assert a.ai_tick(force=True) is None
 
 
@@ -355,3 +379,22 @@ def test_journal_rotates(monkeypatch) -> None:
     state = config.state_dir()
     assert (state / "auto.jsonl.1").is_file()
     assert (state / "auto.jsonl").stat().st_size <= 400
+
+
+def test_the_program_look_actuator_needs_the_console_and_says_so() -> None:
+    from streamstack.director.actuators import ProgramLookActuator
+
+    actuator = ProgramLookActuator(
+        connect=lambda: None,
+        read_look=lambda link, target: {},
+        apply_look=lambda link, target, current, wanted, seconds: None,
+        remember=lambda *args: None,
+        sources=lambda link: [],
+    )
+    availability = actuator.availability()
+    assert not availability.ok and "Console is not running" in availability.reason
+    assert actuator.targets() == []
+    with pytest.raises(RuntimeError, match="Console is not running"):
+        actuator.read("program")
+    with pytest.raises(RuntimeError, match="Console is not running"):
+        actuator.apply("program", {}, {"contrast": 1.1}, 1.0)

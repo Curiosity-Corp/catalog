@@ -1,0 +1,10 @@
+{
+  "name": "StreamStack Voice Bright",
+  "blurb": "more presence and air for dark mics",
+  "engine": "deepfilternet",
+  "params": {
+    "bass_db": 0,
+    "presence_db": 3.5,
+    "treble_db": 4
+  }
+}

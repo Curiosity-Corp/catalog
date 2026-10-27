@@ -11,6 +11,7 @@ import pytest
 
 from streamstack import lightauto, lighting, lightplan, lightservice
 from streamstack.camerause import Consumer, Usage
+from streamstack.console import lightauto as panel_module
 from streamstack.console.errors import ActionError
 from streamstack.console.lighting import DemoLighting, LightingController, PresetLibrary
 from streamstack.lighting import MODELS, Found, SimulatedTransport
@@ -53,7 +54,7 @@ def test_the_state_carries_everything_the_page_draws(demo: DemoLighting) -> None
     assert [s["id"] for s in auto["slots"]] == ["night", "dawn", "morning", "afternoon", "evening"]
     assert {r["id"] for r in auto["roles"]} == {"key", "fill", "manual"}
     assert [m["id"] for m in auto["modes"]] == ["sun", "clock"]
-    assert [s["id"] for s in auto["sources"]] == ["apps", "virtualcam", "stream", "record"]
+    assert [s["id"] for s in auto["sources"]] == ["apps"]
     assert len(auto["curve"]["brightness"]) == len(auto["curve"]["kelvin"]) == 97
     assert len(auto["hours"]) == 24
     assert {"sunrise", "sunset"} <= auto["sun"].keys()
@@ -145,9 +146,9 @@ def test_a_demo_call_switches_the_demo_lights_on_and_off(demo: DemoLighting) -> 
 def test_a_demo_director_takes_brightness_from_the_schedule(demo: DemoLighting) -> None:
     demo.act("lighting.auto.schedule", {"enabled": True})
     demo.act("lighting.demo.director", {"on": True})
-    assert until(lambda: automation(demo)["status"]["owner"] == "director")
+    assert until(lambda: automation(demo)["status"].get("owner") == "director")
     demo.act("lighting.demo.director", {"on": False})
-    assert until(lambda: automation(demo)["status"]["owner"] == "schedule")
+    assert until(lambda: automation(demo)["status"].get("owner") == "schedule")
 
 
 def test_resume_is_a_stamp_the_engine_notices(demo: DemoLighting) -> None:
@@ -184,7 +185,7 @@ def test_a_fresh_status_file_means_the_service_is_running(live: LightingControll
         "owner": "schedule",
         "owner_label": "The daylight schedule",
         "summary": "Camera in use since 14:02: Teams opened the camera.",
-        "camera": {"in_use": True, "reason": "Teams opened the camera", "apps": [], "obs": [], "obs_known": False},
+        "camera": {"in_use": True, "reason": "Teams opened the camera", "apps": []},
         "lights": {},
         "events": [],
     }
@@ -282,3 +283,31 @@ def test_the_real_controller_and_the_engine_follow_a_camera(tmp_path: Path) -> N
         engine.tick()
     assert all(w.on for w in wires.wires.values())
     assert seen and seen[0] == {"/dev/video43"}
+
+
+# ---- the pinned demo clock -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("hour", [3, 7, 12, 18, 23])
+def test_a_pinned_demo_clock_fixes_the_hour_and_the_place(
+    hour: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(panel_module.DEMO_CLOCK_ENV, f"2026-06-21T{hour:02d}:30:00-04:00")
+    monkeypatch.setenv("TZ", "Asia/Tokyo")  # the host zone must not matter
+    ctl = DemoLighting(plan=lightplan.Store(tmp_path / "plan.json"))
+    ctl.poll_once()
+    auto = ctl.state()["automation"]
+    assert auto["now"]["minute"] == hour * 60 + 30
+    assert (auto["location"]["latitude"], auto["location"]["longitude"]) == (40.71, -74.01)
+    assert auto["sun"]["sunrise"].startswith("05:")  # New York in June, not the host zone
+
+
+def test_the_demo_follows_the_real_clock_unless_one_is_pinned(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(panel_module.DEMO_CLOCK_ENV, raising=False)
+    assert panel_module.demo_clock() is None
+
+
+@pytest.mark.parametrize("value", ["noon", "2026-06-21T12:00:00"])
+def test_a_bad_demo_clock_is_refused_with_a_message(value: str) -> None:
+    with pytest.raises(ValueError, match=panel_module.DEMO_CLOCK_ENV):
+        panel_module.demo_clock({panel_module.DEMO_CLOCK_ENV: value})

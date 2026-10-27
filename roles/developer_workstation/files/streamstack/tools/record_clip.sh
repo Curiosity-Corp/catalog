@@ -4,8 +4,8 @@
 #   tools/record_clip.sh --confirm-no-call /dev/video42 canon.mkv                  # Canon, 1056x704 MJPEG
 #   tools/record_clip.sh --confirm-no-call /dev/video0 camlink.mkv 1920x1080 30    # Cam Link
 #
-# USE ONLY WHEN NO CALL IS IN PROGRESS. It opens the camera, so nothing else (OBS, a browser, Teams, Zoom) may be
-# using it: stop the call and OBS's camera source first. It refuses to start unless you pass --confirm-no-call and
+# USE ONLY WHEN NO CALL IS IN PROGRESS. It opens the camera, so nothing else (the Console, a browser, Teams, Zoom) may be
+# using it: stop the call and the Console's video engine first. It refuses to start unless you pass --confirm-no-call and
 # refuses a device another process has open. It records video only: no audio, no keystrokes, nothing else is touched.
 #
 # MJPEG sources are stream-copied (the pixels are exactly what the camera sent); raw sources (YUYV, NV12) are stored
@@ -48,7 +48,7 @@ seconds=${5:-20}
 command -v ffmpeg >/dev/null || { echo "record_clip: ffmpeg is not installed" >&2; exit 1; }
 
 if command -v fuser >/dev/null && fuser -s "$device" 2>/dev/null; then
-    echo "record_clip: $device is open in another process (a call, OBS or a browser?). Close it and retry." >&2
+    echo "record_clip: $device is open in another process (a call, the Console or a browser?). Close it and retry." >&2
     exit 1
 fi
 

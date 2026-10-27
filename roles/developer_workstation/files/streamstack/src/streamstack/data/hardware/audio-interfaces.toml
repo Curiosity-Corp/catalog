@@ -1,0 +1,66 @@
+# Audio interfaces: what each can do. The driver family is the one hardware/profiles.py selects (the Console renders
+# whatever controls the driver reports); rates, formats and channels are what the interface advertises on the bus, in
+# ALSA names, and are only given where they were recorded from the device (tests/fixtures/hardware).
+schema = 1
+
+[[device]]
+id = "scarlett-2i2-gen4"
+class = "audio-interface"
+label = "Focusrite Scarlett 2i2 (4th Gen)"
+summary = "Gain, Autogain, Air presence and drive, 48V, Safe, direct monitor"
+[device.match]
+usb = ["1235:8219"]
+names = ["Scarlett 2i2"]
+[device.audio]
+driver = "scarlett"
+generation = "gen4"
+tier = "usb"
+
+[[device]]
+id = "scarlett-2i2-gen3"
+class = "audio-interface"
+label = "Focusrite Scarlett 2i2 (3rd Gen)"
+summary = "Air, 48V, Line/Inst, direct monitor (the gain knobs are analogue)"
+[device.match]
+usb = ["1235:8210"]
+names = ["Scarlett 2i2"]
+[device.audio]
+driver = "scarlett"
+generation = "gen3"
+tier = "usb"
+
+[[device]]
+id = "wave-xlr"
+class = "audio-interface"
+label = "Elgato Wave XLR"
+summary = "Gain, mute, 48V, headphone volume and low impedance over the vendor USB protocol"
+[device.match]
+usb = ["0fd9:007d"]
+names = ["Wave XLR"]
+[device.audio]
+driver = "wave-xlr"
+tier = "usb"
+playback_rates = [48000, 96000]
+capture_rates = [48000, 96000]
+formats = ["S24_3LE"]
+playback_channels = 2
+capture_channels = 1
+preferred_rate = 48000
+# Measured on dm313red (docs/audio-chain.md): a 96 kHz graph passes no audio through DeepFilterNet, the PipeWire clock is
+# 48 kHz only (clock.allowed-rates), and calls and the stream run at 48 kHz. The quantum is PipeWire's own default.
+rate_note = "the denoise stages are 48 kHz models and the PipeWire clock is fixed at 48 kHz, so 96 kHz would only add a resampler"
+quantum = 256
+card_profile = "output:analog-stereo+input:mono-fallback"
+clock = "async-usb"
+
+# The PCH's HD audio controller (Realtek ALC897 on deskmeet1; the codec is not visible from PCI). Its cards sit at the
+# card profile `off` until something switches them on, so it is never chosen as the call microphone by itself.
+[[device]]
+id = "onboard-hda"
+class = "audio-interface"
+label = "Onboard HD Audio (Raptor Lake PCH)"
+summary = "Motherboard line in and out and HDMI audio; card profile off until activated"
+[device.match]
+pci = ["8086:7a50"]
+[device.audio]
+tier = "onboard"

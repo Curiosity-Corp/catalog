@@ -1,6 +1,6 @@
 """One registry for everything the director can change, and the rules every change obeys.
 
-An actuator wraps one controllable thing (the OBS look, the microphone gain, the voice preset, Canon exposure and
+An actuator wraps one controllable thing (the program look, the microphone gain, the voice preset, Canon exposure and
 white balance, Litra lights, audio-interface hardware gain) behind the same small interface:
 what it can read, which parameters it has with their hard limits, how far one pass may move each, and how to apply
 and undo a change. Nothing outside this module needs to know which hardware is behind an actuator.
@@ -325,7 +325,7 @@ class Governor:
 
 
 # ---------------------------------------------------------------------------
-# The shipped actuators. Device access is injected so this module stays free of OBS, PulseAudio and Easy Effects.
+# The shipped actuators. Device access is injected so this module stays free of HTTP, PulseAudio and the voice chain.
 # ---------------------------------------------------------------------------
 
 _LOOK_LABELS = (
@@ -343,11 +343,11 @@ LOOK_PARAMS = (
 )
 
 
-class ObsLookActuator(Actuator):
-    """The "Lighting & Color", LUT and Sharpen filters of every camera source in the program scene."""
+class ProgramLookActuator(Actuator):
+    """The colour grade, LUT and Sharpen of the camera on air, applied live by the native video engine."""
 
-    id = "obs-look"
-    label = "OBS picture look"
+    id = "program-look"
+    label = "Program picture look"
     kind = "video"
     proposal_key = "video"
     baseline_kind = "look"
@@ -368,23 +368,23 @@ class ObsLookActuator(Actuator):
         self._sources = sources
 
     def availability(self) -> Availability:
-        return Availability(True) if self._connect() else Availability(False, "OBS is not running")
+        return Availability(True) if self._connect() else Availability(False, "the Console is not running")
 
     def targets(self) -> list[str]:
-        obs = self._connect()
-        return list(self._sources(obs)) if obs else []
+        link = self._connect()
+        return list(self._sources(link)) if link else []
 
     def read(self, target: str) -> dict:
-        obs = self._connect()
-        if not obs:
-            raise RuntimeError("OBS is not running")
-        return self._read(obs, target)
+        link = self._connect()
+        if not link:
+            raise RuntimeError("the Console is not running")
+        return self._read(link, target)
 
     def apply(self, target: str, current: dict, wanted: dict, seconds: float) -> None:
-        obs = self._connect()
-        if not obs:
-            raise RuntimeError("OBS is not running")
-        self._apply(obs, target, current, wanted, seconds)
+        link = self._connect()
+        if not link:
+            raise RuntimeError("the Console is not running")
+        self._apply(link, target, current, wanted, seconds)
 
     def remember(self, target: str, current: dict) -> None:
         self._remember("look", target, current)
@@ -449,7 +449,7 @@ class MicGainActuator(Actuator):
 
 
 class VoicePresetActuator(Actuator):
-    """The Easy Effects input preset (the voice chain)."""
+    """The StreamStack voice chain preset (stage parameters; see audiochain)."""
 
     id = "voice-preset"
     label = "Voice preset"
@@ -468,7 +468,7 @@ class VoicePresetActuator(Actuator):
         self._presets, self._current, self._load, self._remember = presets, current, load, remember
 
     def availability(self) -> Availability:
-        return Availability(True) if self._presets() else Availability(False, "no Easy Effects presets installed")
+        return Availability(True) if self._presets() else Availability(False, "no voice presets installed")
 
     def targets(self) -> list[str]:
         return ["input"]

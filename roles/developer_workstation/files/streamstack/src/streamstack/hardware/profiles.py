@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from . import schema
 from .usb import UsbDevice
 
 FOCUSRITE = 0x1235
@@ -41,38 +42,31 @@ class Profile:
         return f"{self.vid:04x}:{self.pid:04x}"
 
 
-# Focusrite ids are the Scarlett 2i2 entries of the kernel's scarlett2 driver (sound/usb/mixer_scarlett2.c,
-# scarlett2_devices[]): 0x8210 = 2i2 Gen 3, 0x8219 = 2i2 Gen 4. The Wave XLR id comes from the device itself
-# (`lsusb`: 0fd9:007d).
-PROFILES: tuple[Profile, ...] = (
-    Profile(
-        "scarlett-2i2-gen4",
-        "Focusrite Scarlett 2i2 (4th Gen)",
-        FOCUSRITE,
-        0x8219,
-        "scarlett",
-        "gen4",
-        "Gain, Autogain, Air presence and drive, 48V, Safe, direct monitor",
-    ),
-    Profile(
-        "scarlett-2i2-gen3",
-        "Focusrite Scarlett 2i2 (3rd Gen)",
-        FOCUSRITE,
-        0x8210,
-        "scarlett",
-        "gen3",
-        "Air, 48V, Line/Inst, direct monitor (the gain knobs are analogue)",
-    ),
-    Profile(
-        "wave-xlr",
-        "Elgato Wave XLR",
-        ELGATO,
-        0x007D,
-        "wave-xlr",
-        "",
-        "Gain, mute, 48V, headphone volume and low impedance over the vendor USB protocol",
-    ),
-)
+def _catalogue() -> tuple[Profile, ...]:
+    """The interfaces the Console can drive: the audio-interface device profiles that name a driver family, in the
+    order of src/streamstack/data/hardware/audio-interfaces.toml. The Focusrite ids are the Scarlett 2i2 entries of the
+    kernel's scarlett2 driver (sound/usb/mixer_scarlett2.c, scarlett2_devices[]): 0x8210 = 2i2 Gen 3, 0x8219 = 2i2
+    Gen 4. The Wave XLR id comes from the device itself (`lsusb`: 0fd9:007d)."""
+    found = []
+    for device in schema.packaged().of_class("audio-interface"):
+        if device.audio is None or not device.audio.driver or not device.usb:
+            continue
+        vid, _, pid = device.usb[0].partition(":")
+        found.append(
+            Profile(
+                device.id,
+                device.label,
+                int(vid, 16),
+                int(pid, 16),
+                device.audio.driver,
+                device.audio.generation,
+                device.summary,
+            )
+        )
+    return tuple(found)
+
+
+PROFILES: tuple[Profile, ...] = _catalogue()
 
 BY_ID = {p.id: p for p in PROFILES}
 

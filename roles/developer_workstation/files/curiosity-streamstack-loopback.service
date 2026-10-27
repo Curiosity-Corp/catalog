@@ -1,6 +1,6 @@
 # Managed by the curiosity workstation role (streamstack task group).
 [Unit]
-Description=StreamStack loopback cameras (camera bridge and OBS virtual camera)
+Description=StreamStack loopback cameras (camera bridge and the program camera)
 After=systemd-modules-load.service systemd-udevd.service
 
 [Service]

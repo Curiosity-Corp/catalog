@@ -9,9 +9,9 @@ description = "Camera, lighting and voice for Teams, Zoom and streams on Linux, 
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
-# Runtime pieces come from the distribution: python3-gi (tray), python3-websocket
-# (auto mode), OBS Studio, Easy Effects, ffmpeg, v4l-utils, pulseaudio-utils.
+requires-python = ">=3.11"
+# Runtime pieces come from the distribution: python3-gi (tray), PipeWire with the zam-plugins and DeepFilterNet
+# LADSPA plugins (the voice chain), ffmpeg, v4l-utils, pulseaudio-utils, alsa-utils (amixer).
 dependencies = []
 classifiers = [
     "Environment :: X11 Applications :: GTK",
@@ -21,11 +21,16 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-auto = ["websocket-client>=1.6"]
 canon = ["gphoto2>=2.5"]
+# Elgato Stream Deck keys (`streamstack deck run`); the library also needs the system hidapi (libhidapi-libusb0).
+deck = ["streamdeck>=0.9.8", "pillow>=10.1"]
+# Background blur on the Arc (streamstack.engine.segment); optional, the Console says why it is unavailable without it.
+blur = ["numpy>=1.26", "openvino>=2026.1"]
 framing = ["numpy>=1.26", "opencv-python-headless>=4.10", "openvino>=2026.1"]
 # tools/bench_ai.py (offline AI benchmark, not shipped in the wheel); the GPU busy figure also needs intel_gpu_top.
 bench = ["numpy>=1.26", "opencv-python-headless>=4.10", "openvino>=2026.1", "onnxruntime>=1.20"]
+# WHIP publishing (streamstack.stream.whip): aiortc's ICE, DTLS-SRTP and RTP stack, which also brings av and pyOpenSSL.
+whip = ["aiortc>=1.15.0"]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
 e2e = ["pytest>=8", "playwright>=1.64"]
 
@@ -46,7 +51,7 @@ streamstack = ["data/**/*"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]

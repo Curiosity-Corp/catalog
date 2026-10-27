@@ -1,55 +1,75 @@
----
+# StreamStack CI: the org-standard launch-sequence python-package pipeline, plus StreamStack's own gates.
+#
+# The template (DroidOpsInc/launch-sequence `pipelines/python-package.yml`, pinned to a release tag; Renovate
+# bumps it) owns the stages, the workflow rules and every assurance plane:
+#
+#   preflight        lint, test (below), release-verify (tags)
+#   source-security  sast (semgrep + gitleaks; gitleaks blocks on tags), e2e and e2e-lighting (below)
+#   supply-chain     lockfile-verify (no runtime dependencies: asserted), dependency-scan, scorecard
+#   build            python-build (wheel + sdist, dist/SHA256SUMS, twine check, tag == package version), package
+#   supply-chain-vex python-sbom (CycloneDX of what the wheel installs, with the auto and framing extras)
+#   artifact-security / policy-gate   python-vuln-scan (grype), python-license, pip-audit, test-py311
+#   attest           python-sign (Notation + Azure Key Vault over the dist and SBOM checksums; main and tags)
+#   artifact-promote python-publish (the project's PyPI registry; tags only; also the signed manifest,
+#                    signature and SBOM into the Generic Package Registry)
+#   release-create   release-notes (CHANGELOG section of the tag), release-assets, release (GitLab Release)
+#   pipeline-attestation  in-toto statement over dist/SHA256SUMS
+#
+# The DeepFilterNet LADSPA plugin (issue #91, docs/audio-chain.md) is built from a pinned upstream release by
+# BuildKit on the K8s runners (dfn-ladspa-image, recipe images/dfn-ladspa/: licence policy, CycloneDX SBOM, load-and-run
+# smoke test), copied out of the image and published with its checksum to the Generic Package Registry
+# (dfn-ladspa-package), then fetched back through the same path `streamstack chain install-plugin` uses and run
+# (dfn-ladspa-verify). It runs on main when the recipe or the pin changes, never on merge requests: BuildKit dispatch
+# needs the protected ci-dispatch runner.
+#
+# Release: `scripts/release.py prepare`, merge, then tag vX.Y.Z. See docs/release.md. The tag pipeline repeats
+# every gate before anything is published. python-sign and release-evidence run on the ci-dispatch runner, which
+# serves PROTECTED tags only: keep `v*` a protected tag pattern.
+#
+# Pipeline tiers (launch-sequence#145): the cheap gates (lint, test, sast, lockfile, e2e, package) run on merge
+# request pipelines too; the heavy ones (build, SBOM, scans, signing) run on main and tags only.
+
 include:
-  - template: Jobs/Secret-Detection.gitlab-ci.yml
-
-image: python:3.13-slim
-
-stages:
-  - test
-  - e2e
-  - security
-  - package
+  - project: 'DroidOpsInc/launch-sequence'
+    ref: v0.2.14
+    file:
+      - '/pipelines/python-package.yml'
+      # .build:buildkit for dfn-ladspa-image (python-package.yml has no image build).
+      - '/jobs/build-buildkit.yml'
 
 variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PIP_NO_CACHE_DIR: "1"
   PYTHONDONTWRITEBYTECODE: "1"
-
-workflow:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
-      when: never
-    - if: $CI_COMMIT_BRANCH
-    - if: $CI_COMMIT_TAG
-
-.venv:
-  before_script:
-    # The shared runner is non-root: tools go into a disposable virtualenv.
-    - python -m venv .ci-venv
-    - export PATH="$CI_PROJECT_DIR/.ci-venv/bin:$PATH"
-    - python -m pip install --upgrade pip
-
-lint:
-  extends: .venv
-  stage: test
-  script:
-    - python -m pip install "ruff>=0.6"
-    - ruff check src tests tools
-    - ruff format --check src tests tools
-
-test:
-  extends: .venv
-  stage: test
-  parallel:
-    matrix:
-      - PYTHON_IMAGE: ["python:3.10-slim", "python:3.13-slim"]
-  image: $PYTHON_IMAGE
-  script:
-    - python -m pip install -e ".[dev,auto,framing,bench]"
+  # --- launch-sequence python-package inputs ---
+  PREFLIGHT_REQUIRED_TOOLS: "uv uvx python3"
+  PREFLIGHT_COMMANDS: >-
+    uvx --from "ruff>=0.6" ruff check src tests tools scripts &&
+    uvx --from "ruff>=0.6" ruff format --check src tests tools scripts
+  # The wheel has no runtime dependencies (the distribution provides python3-gi, ffmpeg), so
+  # there is nothing to lock; this fails the day one is added without a lockfile policy.
+  LOCKFILE_COMMANDS: >-
+    python3 -c "import tomllib; d = tomllib.load(open('pyproject.toml', 'rb'));
+    assert d['project']['dependencies'] == [], 'runtime dependencies need a lockfile'"
+  # Unit tests on the template's Python (3.13); test-py311 below covers the oldest supported Python.
+  TEST_COMMANDS: |
+    set -eu
+    uv venv --quiet .ci-venv
+    . .ci-venv/bin/activate
+    uv pip install --quiet -e ".[dev,auto,framing,bench,deck,whip]"
     # The real-backend framing tests need the face model; they skip, not fail, when the download is unreachable.
-    - python -m streamstack framing --fetch || echo "face model not fetched; real-backend framing tests will skip"
-    - python -m pytest --cov=streamstack --cov-report=term --cov-report=xml:coverage.xml --junitxml=report.xml
+    python -m streamstack framing --fetch || echo "face model not fetched; real-backend framing tests will skip"
+    python -m pytest --cov=streamstack --cov-report=term --cov-report=xml:coverage.xml --junitxml=report.xml
+  # The SBOM, the grype scan and the licence gate cover what a user installs with the extras.
+  PYTHON_SBOM_EXTRAS: "auto framing whip"
+  PYTHON_SBOM_MC_TYPE: "application"
+  # The DeepFilterNet plugin package: version = upstream version + build revision. tests/test_dfn_ladspa_ci.py
+  # keeps this equal to audiochain/plugin.py and images/dfn-ladspa/Dockerfile.
+  DFN_LADSPA_VERSION: "0.5.6-1"
+  DFN_LADSPA_IMAGE: "harbor.focuscell.org/apps/streamstack-dfn-ladspa"
+
+# Lint and test only get their reports here; the template owns their image, stage and rules.
+test:
   coverage: '/^TOTAL.+?(\d+(?:\.\d+)?)%$/'
   artifacts:
     when: always
@@ -59,12 +79,46 @@ test:
         coverage_format: cobertura
         path: coverage.xml
 
+# Cheap-tier rules for StreamStack's own jobs: merge request pipelines and the full tier (main, tags).
+.rules-gate:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      interruptible: true
+    - !reference [.ls-tier:full, rules]
+
+.venv:
+  before_script:
+    # The shared runner is non-root: tools go into a disposable virtualenv.
+    - python -m venv .ci-venv
+    - export PATH="$CI_PROJECT_DIR/.ci-venv/bin:$PATH"
+    - python -m pip install --upgrade pip
+
+# The oldest supported Python (requires-python >= 3.11).
+test-py311:
+  extends: .venv
+  stage: artifact-security
+  needs: []
+  image: python:3.11-slim
+  interruptible: true
+  rules: !reference [.rules-gate, rules]
+  script:
+    - python -m pip install -e ".[dev,auto,framing,bench,deck,whip]"
+    - python -m streamstack framing --fetch || echo "face model not fetched; real-backend framing tests will skip"
+    - python -m pytest --junitxml=report-py311.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report-py311.xml
+
 # Console browser tests against the demo rig. The Playwright image carries the browsers and runs non-root; it
 # ships no python3-venv and an externally-managed Python, so tools go into the user site. The pip package must
 # match the image tag exactly or the browser builds differ.
 e2e:
-  stage: e2e
+  stage: source-security
+  needs: []
   image: mcr.microsoft.com/playwright/python:v1.64.0-noble
+  interruptible: true
+  rules: !reference [.rules-gate, rules]
   variables:
     E2E_ARTIFACTS: $CI_PROJECT_DIR/e2e-artifacts
     E2E_TIMEOUT_SCALE: "3"
@@ -82,29 +136,259 @@ e2e:
     reports:
       junit: e2e-report.xml
 
-audit:
+# The lighting engine races a person's hand on a light, and the daylight schedule moves with the hour. This gate
+# soaks both lighting e2e files three times at each of three simulated hours (night, noon, the evening transition),
+# on the demo rig's pinned clock (scripts/e2e_lighting_soak.py), one job per hour. On merge requests it runs when
+# anything it exercises changes; on main and tags always.
+e2e-lighting:
+  stage: source-security
+  needs: []
+  image: mcr.microsoft.com/playwright/python:v1.64.0-noble
+  interruptible: true
+  parallel:
+    matrix:
+      - SOAK_HOUR: ["03:30", "12:00", "18:30"]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - src/streamstack/lightauto.py
+        - src/streamstack/lightplan.py
+        - src/streamstack/lighting.py
+        - src/streamstack/director/daylight.py
+        - src/streamstack/console/lighting.py
+        - src/streamstack/console/lightauto.py
+        - src/streamstack/data/console/core/actions.js
+        - src/streamstack/data/console/pages/lighting.js
+        - tests/e2e/conftest.py
+        - tests/e2e/support.py
+        - tests/e2e/test_page_lighting*.py
+        - scripts/e2e_lighting_soak.py
+        - .gitlab-ci.yml
+      interruptible: true
+    - !reference [.ls-tier:full, rules]
+  variables:
+    E2E_ARTIFACTS: $CI_PROJECT_DIR/e2e-artifacts
+    E2E_TIMEOUT_SCALE: "3"
+    E2E_BROWSERS: chromium
+    PIP_BREAK_SYSTEM_PACKAGES: "1"
+  before_script:
+    - python3 -m pip install --user -e ".[e2e]" "playwright==1.64.0"
+    - export PATH="$HOME/.local/bin:$PATH"
+  script:
+    - python3 scripts/e2e_lighting_soak.py --hours "$SOAK_HOUR" --repeat 3
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - e2e-artifacts/
+
+# A second advisory source beside grype (which scans the SBOM): the PyPA database over the installed extras.
+pip-audit:
   extends: .venv
-  stage: security
+  stage: artifact-security
+  needs: []
+  image: python:3.13-slim
+  interruptible: true
+  rules: !reference [.rules-gate, rules]
   script:
     - python -m pip install pip-audit
-    - python -m pip install ".[auto,framing]"
+    - python -m pip install ".[framing,whip]"
     - pip-audit --skip-editable
 
+# What the wheel must carry and do once installed. It builds into smoke-dist/, never dist/: python-sign and
+# python-publish download the artifacts of every earlier job and must find only python-build's files in dist/.
 package:
   extends: .venv
-  stage: package
+  stage: build
+  needs: []
+  image: python:3.13-slim
+  interruptible: true
+  rules: !reference [.rules-gate, rules]
   script:
     - python -m pip install build
-    - python -m build
-    - python -m pip install dist/*.whl
+    - python -m build --outdir smoke-dist
+    - python -m pip install smoke-dist/*.whl
     - streamstack --version
     - streamstack call-settings >/dev/null
-    - python -c "from streamstack.config import data_dir; assert (data_dir() / 'obs/scenes.json').is_file()"
+    - python -c "from streamstack.config import data_dir; assert (data_dir() / 'presets').is_dir()"
     # the wheel must carry the Console frontend and its server must import from the installed copy
     - python -c "from streamstack.config import data_dir; d = data_dir() / 'console'; assert all((d / f).is_file() for f in ('index.html', 'app.js', 'pages/index.js', 'components/index.js'))"
     - python -c "import streamstack.console.server, streamstack.console.launcher; from streamstack.console.rig import Rig; r = Rig.demo(); r.start(); assert r.snapshot()['demo']; r.stop()"
-    - cd dist && sha256sum * | tee SHA256SUMS
+    # the install's own self-check (version, packaged files, the four commands); the tray needs python3-gi, so it only warns here
+    - streamstack verify-install
+
+# =============================================================================
+# DeepFilterNet LADSPA plugin (issue #91)
+# =============================================================================
+
+.dfn-ladspa-rules:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
+      changes:
+        - images/dfn-ladspa/**/*
+        - src/streamstack/audiochain/plugin.py
+    # A rebuild by hand (web or API pipeline on main), e.g. after a registry cleanup.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true" && $DFN_LADSPA_REBUILD == "1"
+
+# BuildKit builds the pinned upstream source (sha256-checked), runs the licence policy and the smoke test inside the
+# build, and attaches an SBOM and a Notation signature to the image like every launch-sequence image. A rust build with
+# fat LTO needs more than the template's default pod.
+dfn-ladspa-image:
+  extends: .build:buildkit
+  stage: build
+  tags: [ci-dispatch]
+  needs: []
+  interruptible: false
+  variables:
+    IMAGE_NAME: streamstack-dfn-ladspa
+    HARBOR_PROJECT: apps
+    CONTEXT_DIR: images/dfn-ladspa
+    PUSH_LATEST: "false"
+    BUILD_CPU_REQUEST: "2"
+    BUILD_CPU_LIMIT: "8"
+    BUILD_MEMORY_REQUEST: "4Gi"
+    BUILD_MEMORY_LIMIT: "12Gi"
+    BUILD_EPHEMERAL_STORAGE_REQUEST: "4Gi"
+    BUILD_EPHEMERAL_STORAGE_LIMIT: "20Gi"
+    BUILD_TIMEOUT: "3600"
+  rules: !reference [.dfn-ladspa-rules, rules]
+
+# The plugin, its checksum, SBOM and licence list go from the image into the project's Generic Package Registry as
+# streamstack-ladspa/<version>. A published version is never overwritten: the same bytes are a no-op, different
+# bytes fail (raise the build revision in the Dockerfile, plugin.py and DFN_LADSPA_VERSION above). SHA256SUMS goes up
+# last, so a package that has it is complete.
+dfn-ladspa-package:
+  stage: artifact-promote
+  needs:
+    - job: dfn-ladspa-image
+  image:
+    name: ${DFN_LADSPA_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    entrypoint: [""]
+  interruptible: false
+  rules: !reference [.dfn-ladspa-rules, rules]
+  script:
+    - cd /opt/dfn-ladspa
+    - sha256sum -c SHA256SUMS
+    - cat BUILD-INFO.txt
+    - BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/streamstack-ladspa/${DFN_LADSPA_VERSION}"
+    - |
+      if curl -fsS -H "JOB-TOKEN: ${CI_JOB_TOKEN}" -o /tmp/published.sums "${BASE}/SHA256SUMS"; then
+        if cmp -s /tmp/published.sums SHA256SUMS; then
+          echo "streamstack-ladspa ${DFN_LADSPA_VERSION} is already published with identical bytes; nothing to do."
+          exit 0
+        fi
+        echo "streamstack-ladspa ${DFN_LADSPA_VERSION} is published with DIFFERENT bytes. Never overwrite a published version: raise the build revision (Dockerfile, plugin.py, DFN_LADSPA_VERSION)." >&2
+        exit 1
+      fi
+    - |
+      for f in libdeep_filter_ladspa.so libdeep_filter_ladspa.cdx.json LICENSES.json BUILD-INFO.txt LICENSE LICENSE-MIT LICENSE-APACHE SHA256SUMS; do
+        curl -fsS -H "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$f" "${BASE}/${f}"; echo
+      done
+    - echo "published ${BASE}/libdeep_filter_ladspa.so"
+    - mkdir -p "${CI_PROJECT_DIR}/dfn-ladspa" && cp -r /opt/dfn-ladspa/. "${CI_PROJECT_DIR}/dfn-ladspa/"
   artifacts:
     paths:
-      - dist/
-    expire_in: 30 days
+      - dfn-ladspa/
+    expire_in: 90 days
+
+# The install path, end to end, on what was just published: fetch with the job token through
+# audiochain/plugin.py (checksum, ELF and label checks), then load and run the installed file.
+dfn-ladspa-verify:
+  stage: artifact-promote
+  needs:
+    - job: dfn-ladspa-package
+      artifacts: false
+  image: python:3.13-slim
+  interruptible: false
+  rules: !reference [.dfn-ladspa-rules, rules]
+  variables:
+    PYTHONPATH: src
+    STREAMSTACK_GITLAB_HOST: $CI_SERVER_HOST
+    STREAMSTACK_PROJECT_ID: $CI_PROJECT_ID
+  script:
+    - python -c "from pathlib import Path; from streamstack.audiochain import plugin; print(plugin.install_deepfilternet(dest=Path('installed')))"
+    - python images/dfn-ladspa/smoke.py installed/libdeep_filter_ladspa.so
+
+# =============================================================================
+# Release (tag vX.Y.Z only)
+# =============================================================================
+
+# Fail before building: the tag, streamstack.__version__ and CHANGELOG.md must agree, and the version must be a
+# 0.0.x patch release unless the owner approved a minor (RELEASE_OWNER_APPROVED_MINOR=true on the pipeline).
+release-verify:
+  stage: preflight
+  needs: []
+  image: ${PYTHON_IMAGE}
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - python3 scripts/release.py check-tag "$CI_COMMIT_TAG"
+
+python-build:
+  needs:
+    - job: lint
+      artifacts: false
+    - job: test
+      optional: true
+      artifacts: false
+    - job: release-verify
+      optional: true
+      artifacts: false
+
+# The GitLab Release body is the tag's CHANGELOG section, not generated commit text.
+git-cliff:
+  rules:
+    - when: never
+
+release-notes:
+  stage: release-create
+  needs: []
+  image: ${PYTHON_IMAGE}
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - python3 scripts/release.py notes "$CI_COMMIT_TAG" | tee changelog-entry.md
+  artifacts:
+    paths:
+      - changelog-entry.md
+
+# The wheel and sdist (already on the PyPI registry) also go to the Generic Package Registry beside the signed
+# manifest, signature and SBOM, so one place (and one download URL scheme) holds a whole release.
+release-assets:
+  extends: .python:base
+  stage: release-create
+  interruptible: false
+  needs:
+    - job: python-publish
+      artifacts: false
+    - job: python-build
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - python3 scripts/release.py upload-assets "$CI_COMMIT_TAG" --dist "${PYTHON_DIST_DIR}"
+
+release:
+  needs:
+    - job: python-publish
+      artifacts: false
+    - job: release-notes
+      artifacts: true
+    - job: release-assets
+      artifacts: false
+  before_script:
+    - !reference [.release:create, before_script]
+    - |
+      # One link per line: the files of this release in the Generic Package Registry.
+      VERSION="${CI_COMMIT_TAG#v}"
+      BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/streamstack-release/${VERSION}"
+      RELEASE_ASSETS_LINKS="$(printf '%s\n' \
+        "{\"name\":\"Wheel\",\"url\":\"${BASE}/streamstack-${VERSION}-py3-none-any.whl\",\"link_type\":\"package\"}" \
+        "{\"name\":\"Source distribution\",\"url\":\"${BASE}/streamstack-${VERSION}.tar.gz\",\"link_type\":\"package\"}" \
+        "{\"name\":\"SBOM (CycloneDX)\",\"url\":\"${BASE}/python-sbom.cdx.json\",\"link_type\":\"other\"}" \
+        "{\"name\":\"Signed checksum manifest\",\"url\":\"${BASE}/RELEASE-SHA256SUMS\",\"link_type\":\"other\"}" \
+        "{\"name\":\"Signature (Notation COSE)\",\"url\":\"${BASE}/RELEASE-SHA256SUMS.cose.sig\",\"link_type\":\"other\"}" \
+        "{\"name\":\"Package registry\",\"url\":\"${CI_PROJECT_URL}/-/packages\",\"link_type\":\"package\"}")"
+      export RELEASE_ASSETS_LINKS
