@@ -205,6 +205,8 @@ def test_every_vendored_file_the_role_installs_exists() -> None:
                 for item in task["loop"]]
 
     for task in TASKS:
+        if task.get("name") == "Install the StreamStack WirePlumber drop-ins":
+            continue  # optional by design: guarded by a stat, the release may not ship drop-ins
         for src in sources(task):
             assert (ROLE / "files" / src).exists(), f"{task['name']}: {src}"
 
@@ -360,3 +362,10 @@ def test_the_processed_voice_becomes_the_default_microphone_and_the_sink_is_left
     assert "pactl set-default-source streamstack_mic" in script
     assert "set-default-sink" not in script
     assert 'STREAMSTACK_STREAM_AUDIO": "streamstack_mic"' in (APP / "src/streamstack/config.py").read_text()
+
+
+def test_streamstack_wireplumber_dropins_are_installed_from_the_release() -> None:
+    copy = _task("Install the StreamStack WirePlumber drop-ins")["ansible.builtin.copy"]
+    assert copy["src"] == "streamstack/packaging/wireplumber/wireplumber.conf.d/"
+    assert copy["dest"] == "/etc/wireplumber/wireplumber.conf.d/"
+    assert not [t for t in TASKS if "wireplumber" in str(t.get("ansible.builtin.systemd", ""))]

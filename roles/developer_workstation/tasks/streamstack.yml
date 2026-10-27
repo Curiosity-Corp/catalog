@@ -381,6 +381,28 @@
       {{ streamstack_canon_bridge_autostart | bool and streamstack_canon_bridge != 'none'
          and not (streamstack_camera_external | bool) }}
 
+# StreamStack ships WirePlumber drop-ins (for example the Wave XLR capture hold)
+# that `make install` puts in /etc/wireplumber/wireplumber.conf.d. Install whatever
+# the vendored release ships, so a new drop-in needs no catalog change. WirePlumber
+# reads them at its next start; this role never restarts it (that drops every
+# audio stream, so it never happens during a call).
+- name: Find the WirePlumber drop-ins the vendored StreamStack ships
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/streamstack/packaging/wireplumber/wireplumber.conf.d"
+  delegate_to: localhost
+  become: false
+  register: _streamstack_wireplumber_dropins
+
+- name: Install the StreamStack WirePlumber drop-ins
+  ansible.builtin.copy:
+    src: streamstack/packaging/wireplumber/wireplumber.conf.d/
+    dest: /etc/wireplumber/wireplumber.conf.d/
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+  when: _streamstack_wireplumber_dropins.stat.isdir | default(false)
+
 - name: Install the Canon bridge user service
   ansible.builtin.copy:
     src: streamstack/packaging/systemd/user/streamstack-canon.service
