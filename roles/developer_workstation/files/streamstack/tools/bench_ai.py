@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from streamstack.framing import model as models
+from streamstack.framing.detector import choose_device
 
 # The decision gate fixed before measuring (docs/hardware-ai-evaluation.md): added p95 frame time under 8 ms, under
 # 1 percent total CPU, no dropped frames at the program camera's 30 fps.
@@ -51,7 +52,13 @@ RIGS: dict[str, tuple[int, int]] = {"canon": (1056, 704), "camlink": (1920, 1080
 
 DOC_BEGIN = "<!-- bench-ai:begin -->"
 DOC_END = "<!-- bench-ai:end -->"
-KIND_RE = re.compile(r"<!-- bench-ai:kind=(\w+) -->")
+KIND_RE = re.compile(r"<!-- bench-ai:kind=([\w-]+) -->")
+# What a doc block holds, weakest first: a block never replaces a stronger one.
+#   synthetic  generated frames, a placeholder (decides nothing)
+#   rig-size   generated frames at each rig's real size, measured on the real hardware (latency only: the models'
+#              run time does not depend on the picture); the gates are evaluated
+#   recorded   a clip recorded from each rig
+KIND_RANK = {"synthetic": 0, "rig-size": 1, "recorded": 2}
 
 SEGMENTATION = "segmentation"
 FACE = "face"
@@ -405,6 +412,7 @@ class Runner:
     compile_cold_ms: float
     compile_cached_ms: float | None
     close: Callable[[], None] = lambda: None
+    pci_device_id: str | None = None  # the GPU's PCI device id (lower-case hex, no 0x), for the intel_gpu_top filter
 
 
 def _ms_since(start: float) -> float:
@@ -452,6 +460,11 @@ def _ov_core() -> Any:
 
 def open_openvino(path: Path, bench: BenchModel, opts: argparse.Namespace, device: str) -> Runner:
     core = _ov_core()
+    if device == "auto":
+        # The same choice auto-framing makes (!53): the discrete Arc by device type, never by GPU.n.
+        device = choose_device(core, "auto")
+        if device == "CPU":
+            raise Unavailable(f"OpenVINO lists no GPU (devices: {', '.join(core.available_devices) or 'none'})")
     if device == "CPU":
         wanted = "CPU"
     else:
@@ -503,7 +516,13 @@ def open_openvino(path: Path, bench: BenchModel, opts: argparse.Namespace, devic
         full_name = str(core.get_property(wanted, "FULL_DEVICE_NAME"))
     except Exception:  # a device without the property is still benchmarkable; only the label is lost
         full_name = wanted
-    return Runner(run, width, height, layout, f"{wanted} ({full_name})", cold_ms, cached_ms)
+    pci_id: str | None = None
+    if wanted != "CPU":
+        try:
+            pci_id = f"{int(str(core.get_property(wanted, 'GPU_DEVICE_ID')), 16):04x}"
+        except Exception as exc:  # an older runtime has no such property; intel_gpu_top then samples its default GPU
+            print(f"bench_ai: no PCI id for {wanted}: {exc}", file=sys.stderr)
+    return Runner(run, width, height, layout, f"{wanted} ({full_name})", cold_ms, cached_ms, pci_device_id=pci_id)
 
 
 def open_backend(name: str, path: Path, bench: BenchModel, opts: argparse.Namespace) -> Runner:
@@ -558,7 +577,7 @@ def gpu_busy(samples: Sequence[dict[str, Any]]) -> tuple[float, str] | None:
 
 
 @contextlib.contextmanager
-def gpu_top(enabled: bool, device: str | None, result: dict[str, Any]) -> Iterator[None]:
+def gpu_top(enabled: bool, device: str | None, result: dict[str, Any], *, sudo: bool = False) -> Iterator[None]:
     """Sample intel_gpu_top while the body runs; fills result with busy/note. Skips cleanly without the tool."""
     if not enabled:
         yield
@@ -568,7 +587,9 @@ def gpu_top(enabled: bool, device: str | None, result: dict[str, Any]) -> Iterat
         result["note"] = "intel_gpu_top not installed (intel-gpu-tools)"
         yield
         return
-    command = [binary, "-J", "-s", "250"] + (["-d", device] if device else [])
+    # intel_gpu_top reads the GPU's performance counters, which needs CAP_PERFMON; `sudo -n` supplies it where the
+    # user has passwordless sudo (read-only: nothing on the GPU is changed). SIGINT reaches the child through sudo.
+    command = (["sudo", "-n"] if sudo else []) + [binary, "-J", "-s", "250"] + (["-d", device] if device else [])
     with tempfile.TemporaryFile("w+") as out:
         try:
             process = subprocess.Popen(command, stdout=out, stderr=subprocess.PIPE, text=True)
@@ -618,7 +639,10 @@ def measure(runner: Runner, bench: BenchModel, source: Source, opts: argparse.Na
     infers: list[float] = []
     gpu: dict[str, Any] = {}
     wanted_gpu = row.backend == "ov-gpu"
-    with gpu_top(wanted_gpu and not opts.no_gpu_top, opts.gpu_top_device, gpu):
+    top_device = opts.gpu_top_device
+    if top_device is None and runner.pci_device_id:
+        top_device = f"pci:vendor=8086,device={runner.pci_device_id}"  # the GPU OpenVINO ran on, not the first one
+    with gpu_top(wanted_gpu and not opts.no_gpu_top, top_device, gpu, sudo=opts.gpu_top_sudo):
         cpu_start = time.process_time()
         for index in range(opts.iterations):
             total, infer = feed(index)
@@ -668,8 +692,10 @@ def run_matrix(sources: Sequence[Source], opts: argparse.Namespace) -> list[Row]
                 if path is None:
                     row.status, row.reason = "skipped", fetch_error
                     continue
+                # a cache directory per rig, so every rig's first compile is cold and the second is a cache hit
+                row_opts = argparse.Namespace(**{**vars(opts), "cache_dir": opts.cache_dir / source.label})
                 try:
-                    runner = open_backend(backend, path, bench, opts)
+                    runner = open_backend(backend, path, bench, row_opts)
                 except Unavailable as exc:
                     row.status, row.reason = "skipped", str(exc)
                     continue
@@ -682,7 +708,8 @@ def run_matrix(sources: Sequence[Source], opts: argparse.Namespace) -> list[Row]
                     runner.close()
                 print(f"  {source.label} {bench.spec.key} {backend}: {row.status}", file=sys.stderr, flush=True)
                 verdict = evaluate_gate(row, opts.fps, cpus)  # also fills cpu_total_pct
-                row.gate = "n/a" if row.synthetic else verdict  # placeholders never pass or fail a gate
+                # placeholders never pass or fail a gate; a measured rig-size run does
+                row.gate = "n/a" if row.synthetic and not opts.measured else verdict
     return rows
 
 
@@ -771,6 +798,7 @@ def build_report(
         "issue": "Curiosity-Corp/streamstack#22",
         "generated": when.isoformat(timespec="seconds"),
         "synthetic": bool(opts.synthetic),
+        "kind": run_kind(opts),
         "settings": {
             "iterations": opts.iterations,
             "warmup": opts.warmup,
@@ -792,9 +820,15 @@ def build_report(
     }
 
 
+def run_kind(opts: argparse.Namespace) -> str:
+    if not opts.synthetic:
+        return "recorded"
+    return "rig-size" if opts.measured else "synthetic"
+
+
 def doc_block(rows: Sequence[Row], opts: argparse.Namespace, host: dict[str, Any], when: dt.datetime) -> str:
-    synthetic = bool(opts.synthetic)
-    kind = "synthetic" if synthetic else "recorded"
+    kind = run_kind(opts)
+    synthetic = kind == "synthetic"
     sources = list(dict.fromkeys(r.source for r in rows))
     lines = [DOC_BEGIN, f"<!-- bench-ai:kind={kind} -->"]
     if synthetic:
@@ -802,6 +836,14 @@ def doc_block(rows: Sequence[Row], opts: argparse.Namespace, host: dict[str, Any
             "> **SYNTHETIC PLACEHOLDER. These are not measurements of the rigs.** They come from generated frames on",
             "> the CPU of whatever machine ran the harness (`--synthetic`), only prove the harness works, and decide",
             "> nothing. The gate column is `n/a` on purpose. Replace them by running the quiet-host steps below.",
+            "",
+        ]
+    elif kind == "rig-size":
+        lines += [
+            f"Measured {when.date().isoformat()} on {host.get('host') or 'unknown host'}, on the hardware, with "
+            "generated frames at each rig's real size (no live device was opened). This is latency and load only: "
+            "the models' run time does not depend on the picture, but nothing here says how good a mask or a face "
+            "box is. Re-run with `--clip` once clips are recorded; recorded numbers replace these.",
             "",
         ]
     else:
@@ -818,18 +860,25 @@ def doc_block(rows: Sequence[Row], opts: argparse.Namespace, host: dict[str, Any
     ]
     for source in sources:
         size = next(r.size for r in rows if r.source == source)
-        lines += [f"**{source}** ({size}{', generated' if synthetic else ''})", "", markdown_table(rows, source), ""]
+        lines += [
+            f"**{source}** ({size}{', generated' if opts.synthetic else ''})",
+            "",
+            markdown_table(rows, source),
+            "",
+        ]
+    gpus = sorted({r.device for r in rows if r.backend == "ov-gpu" and r.status == "ok" and r.device})
     lines += [
         "Gate: p95 under 8 ms, under 1 percent total CPU (CPU % of one core divided by the logical CPUs), slowest "
-        "frame under one frame period. `ov-gpu` runs on the configured OpenVINO GPU device; check the device name "
-        "in the JSON, because on a host with an iGPU as well as the Arc the Arc may be `GPU.1`.",
+        "frame under one frame period. `ov-gpu` runs on the discrete Intel GPU by default (the same choice "
+        "auto-framing makes), so the Arc is picked whether OpenVINO calls it `GPU.0` or `GPU.1`. "
+        + (f"`ov-gpu` ran on: {'; '.join(gpus)}." if gpus else "No `ov-gpu` row ran."),
         DOC_END,
     ]
     return "\n".join(lines)
 
 
-def update_doc(path: Path, block: str, *, synthetic: bool) -> None:
-    """Replace the marked block in the doc. A synthetic run never overwrites recorded numbers."""
+def update_doc(path: Path, block: str) -> None:
+    """Replace the marked block in the doc. A weaker kind of run never overwrites a stronger one (see KIND_RANK)."""
     try:
         text = path.read_text()
     except OSError as exc:
@@ -838,8 +887,11 @@ def update_doc(path: Path, block: str, *, synthetic: bool) -> None:
     if start < 0 or end < start:
         raise BenchError(f"{path} has no {DOC_BEGIN} ... {DOC_END} block to update")
     existing = KIND_RE.search(text[start:end])
-    if synthetic and existing and existing.group(1) == "recorded":
-        raise BenchError(f"{path} already holds recorded numbers; refusing to replace them with synthetic ones")
+    incoming = KIND_RE.search(block)
+    if existing and incoming:
+        old, new = existing.group(1), incoming.group(1)
+        if KIND_RANK.get(new, 0) < KIND_RANK.get(old, 0):
+            raise BenchError(f"{path} already holds {old} numbers; refusing to replace them with {new} ones")
     updated = text[:start] + block + text[end + len(DOC_END) :]
     try:
         path.write_text(updated)
@@ -859,6 +911,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     src.add_argument("--clip", action="append", metavar="[LABEL=]PATH", help="a recorded clip file; repeat per rig")
     src.add_argument("--synthetic", action="store_true", help="generate frames instead (a placeholder, for CI)")
     src.add_argument("--size", metavar="WxH", help="with --synthetic: one generated size instead of both rigs")
+    src.add_argument(
+        "--measured",
+        action="store_true",
+        help="with --synthetic: a real run on the rig host at the rigs' sizes; gates are evaluated (kind rig-size)",
+    )
     src.add_argument("--max-frames", type=int, default=90, help="frames decoded from each clip (default 90)")
     run = parser.add_argument_group("measurement")
     run.add_argument("--iterations", type=int, default=200, help="timed frames per model and backend (default 200)")
@@ -872,9 +929,18 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="comma list of model keys (default all): " + ", ".join(m.spec.key for m in CANDIDATES),
     )
     run.add_argument(
-        "--gpu-device", default="GPU.0", help="OpenVINO device for ov-gpu (default GPU.0; the Arc may be GPU.1)"
+        "--gpu-device",
+        default="auto",
+        help="OpenVINO device for ov-gpu (default auto: the discrete Intel GPU, whichever GPU.n it is)",
     )
-    run.add_argument("--gpu-top-device", default=None, help="intel_gpu_top -d filter, e.g. drm:/dev/dri/card1")
+    run.add_argument(
+        "--gpu-top-device",
+        default=None,
+        help="intel_gpu_top -d filter, e.g. drm:/dev/dri/card1 (default: the PCI id of the GPU OpenVINO ran on)",
+    )
+    run.add_argument(
+        "--gpu-top-sudo", action="store_true", help="run intel_gpu_top through `sudo -n` (it needs CAP_PERFMON)"
+    )
     run.add_argument("--no-gpu-top", action="store_true", help="do not sample intel_gpu_top")
     run.add_argument(
         "--cache-dir",
@@ -906,6 +972,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--warmup must be 0 or more and --fps above 0")
     if args.synthetic and args.clip:
         parser.error("use --clip or --synthetic, not both")
+    if args.measured and not args.synthetic:
+        parser.error("--measured only applies to --synthetic frames; clips are always measured")
     return args
 
 
@@ -937,7 +1005,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.json:
             args.json.write_text(json.dumps(build_report(rows, args, host, when), indent=2) + "\n")
         if args.update_doc:
-            update_doc(args.update_doc, doc_block(rows, args, host, when), synthetic=bool(args.synthetic))
+            update_doc(args.update_doc, doc_block(rows, args, host, when))
     except OSError as exc:
         print(f"bench_ai: cannot write output: {exc.strerror or exc}", file=sys.stderr)
         return 1

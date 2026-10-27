@@ -1256,6 +1256,7 @@ class DemoAudio:
         self._clips = ClipStore(clock)
         self._check = _empty_check()
         self._check_start = 0.0
+        self._check_hold = False  # demo only: the take timeline stands still until audio.demo_check_step
         self._stalled = False
         self._stalled_since: str | None = None
         self._revive = {"state": "idle", "message": None, "at": 0.0}
@@ -1292,22 +1293,37 @@ class DemoAudio:
     def _advance(self) -> None:
         self._advance_revive()
         with self._lock:
+            if not self._check_hold:
+                self._settle_check(self._clock() - self._check_start)
+
+    def _settle_check(self, elapsed: float) -> None:
+        """Move the mic check to where `elapsed` seconds from its start put it (the lock is held)."""
+        state = self._check["state"]
+        if state not in ("recording-raw", "recording-processed"):
+            return
+        seconds = self._check["seconds"]
+        if state == "recording-raw" and elapsed >= seconds:
+            clip_id, path = self._clips.reserve()
+            synth_wav(path, min(seconds, 15.0), processed=False)
+            self._clips.add(clip_id, "raw microphone")
+            self._check["state"] = state = "recording-processed"
+        if state == "recording-processed" and elapsed >= 2 * seconds:
+            clip_id, path = self._clips.reserve()
+            synth_wav(path, min(seconds, 15.0), processed=True)
+            self._clips.add(clip_id, "processed voice")
+            self._check["state"] = "done"
+            self._check_hold = False  # a held check never outlives itself
+            _emit(self.notify, "ok", "Mic check ready - play it back")
+
+    def _demo_check_step(self) -> str:
+        """Demo only: end the current take now, however long it has run (the timeline must be held)."""
+        with self._lock:
             state = self._check["state"]
             if state not in ("recording-raw", "recording-processed"):
-                return
+                raise ActionError("There is no mic check running.", 409)
             seconds = self._check["seconds"]
-            elapsed = self._clock() - self._check_start
-            if state == "recording-raw" and elapsed >= seconds:
-                clip_id, path = self._clips.reserve()
-                synth_wav(path, min(seconds, 15.0), processed=False)
-                self._clips.add(clip_id, "raw microphone")
-                self._check["state"] = state = "recording-processed"
-            if state == "recording-processed" and elapsed >= 2 * seconds:
-                clip_id, path = self._clips.reserve()
-                synth_wav(path, min(seconds, 15.0), processed=True)
-                self._clips.add(clip_id, "processed voice")
-                self._check["state"] = "done"
-                _emit(self.notify, "ok", "Mic check ready - play it back")
+            self._settle_check(seconds if state == "recording-raw" else 2 * seconds)
+            return f"Mic check: {self._check['state']}"
 
     def state(self) -> dict[str, Any]:
         self._advance()
@@ -1480,6 +1496,12 @@ class DemoAudio:
             for latch in self._latches.values():
                 latch.trip(0.0, 0.0)
             return None
+        if action == "audio.demo_check_hold":  # demo only: stand the mic-check timeline still, for the e2e suite
+            with self._lock:
+                self._check_hold = bool_param(params)
+            return None
+        if action == "audio.demo_check_step":  # demo only: end the current take now, for the e2e suite
+            return self._demo_check_step()
         if action == "audio.demo_stall":  # demo only: the deterministic trigger for the e2e suite
             self._advance_revive()
             return self._demo_stall(bool_param(params))

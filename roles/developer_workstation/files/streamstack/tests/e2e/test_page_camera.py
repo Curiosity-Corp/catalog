@@ -524,6 +524,36 @@ def test_engine_chip_shows_the_gpu_path_and_frame_rate(cam: App, rig: Rig) -> No
     expect(cam.page.get_by_text(re.compile(r"GPU · \d+ fps"))).to_be_visible()
 
 
+def test_an_idle_engine_is_shown_and_keep_awake_wakes_it(cam: App, page: Page, rig: Rig) -> None:
+    """#128: no app reads StreamStack Camera, so the engine rests; the page says so and Keep awake overrides it."""
+    rig.act("video.idle.demo", state="idle")
+    engine = page.locator("ss-status-chip[label='ENGINE']")
+    expect(engine).to_have_attribute("value", "idle", timeout=LOADED)
+    expect(engine).to_have_attribute("state", "info")
+    expect(engine).to_have_attribute("title", re.compile("no app is reading StreamStack Camera"))
+    assert rig.state()["video"]["engine"]["idle"]["state"] == "idle"
+    assert rig.state()["video"]["virtualcam"] is True  # still listed while idle
+
+    keep = output(page, "Keep awake")
+    host_off(keep)
+    tap(page, keep)
+    assert poll(rig, lambda s: s["video"]["engine"]["idle"]["keep_alive"])
+    host_on(keep)
+    expect(keep).to_contain_text("On")
+    expect(engine).to_have_attribute("value", re.compile(r"GPU"), timeout=LOADED)  # the demo woke on keep alive
+    tap(page, keep)
+    assert poll(rig, lambda s: not s["video"]["engine"]["idle"]["keep_alive"])
+    host_off(keep)
+
+
+def test_the_canon_card_says_live_view_is_off_while_idle(cam: App, page: Page, rig: Rig) -> None:
+    rig.act("video.idle.demo", state="idle")
+    assert poll(rig, lambda s: s["video"]["canon"]["state"] == "idle")
+    expect(page.get_by_text("Live view is off while no app uses the camera").first).to_be_attached(timeout=LOADED)
+    rig.act("video.idle.demo", state="running")
+    assert poll(rig, lambda s: s["video"]["canon"]["state"] == "running")
+
+
 def test_a_slider_move_reaches_the_engine_without_a_restart(cam: App, rig: Rig) -> None:
     before = rig.state()["video"]["engine"]
     rig.act("video.look", values={"contrast": 0.3})

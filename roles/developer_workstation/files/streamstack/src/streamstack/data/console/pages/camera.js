@@ -17,6 +17,7 @@ import { Scopes } from './camera-scopes.js';
 import { drawSwatch, sameLook } from './look-swatch.js';
 import { mountBody } from './camera-body.js';
 import { mountFraming } from './framing.js';
+import { mountSlots } from './slots.js';
 import { mountBlur, blurCommands } from './blur.js';
 
 const STORE_KEY = 'streamstack.console.camera';
@@ -40,6 +41,12 @@ export function engineChip(engine) {
     const apply = engine.look_apply_ms == null ? '' : ` · look ${engine.look_apply_ms.toFixed(2)} ms`;
     return { id: 'engine', state: engine.dropped ? 'warn' : 'ok', label: 'ENGINE', value: `${path} · ${fps}${drops}`.replace(/ · $/, ''), icon: 'system', title: `${engine.source || 'Camera'} → ${engine.output || ''}, decode ${engine.decode || ''}${apply}` };
   }
+  if (engine.state === 'idle') {
+    const idle = engine.idle || {};
+    const why = idle.reason ? ` ${idle.reason}.` : '';
+    return { id: 'engine', state: 'info', label: 'ENGINE', value: 'idle', icon: 'system', title: `Resting: no app is reading StreamStack Camera.${why} It starts within a second when one opens it.` };
+  }
+  if (engine.idle && engine.idle.state === 'waking') return { id: 'engine', state: 'info', label: 'ENGINE', value: 'waking', icon: 'system', title: engine.idle.reason || 'An app opened the camera' };
   if (engine.state === 'off') return { id: 'engine', state: 'off', label: 'ENGINE', value: 'off', icon: 'system', title: 'The program camera is switched off' };
   return { id: 'engine', state: 'warn', label: 'ENGINE', value: engine.state === 'waiting' ? 'waiting' : engine.state, icon: 'system', title: engine.error || '' };
 }
@@ -71,12 +78,17 @@ const TEMPLATE = `
             <ss-button size="sm" icon="cross" data-ref="tCross" title="Centre cross (C)"><span class="lbl">Centre</span></ss-button>
             <ss-button size="sm" icon="zebra" data-ref="tZebra" title="Zebra: stripes where highlights clip (Z)"><span class="lbl">Zebra</span></ss-button>
             <ss-button size="sm" icon="eye" data-ref="tFraming" title="Auto-framing: keep you in the picture" aria-haspopup="dialog" aria-expanded="false"><span class="lbl">Framing</span></ss-button>
+            <ss-button size="sm" icon="moonsun" data-ref="tSlots" title="Time-of-day profiles: a look, lights and more for each part of the day" aria-haspopup="dialog" aria-expanded="false"><span class="lbl">Day</span></ss-button>
             <ss-button size="sm" icon="scope" data-ref="tScopes" title="Scopes: histogram and parade (H)"><span class="lbl">Scopes</span></ss-button>
           </div>
         </ss-preview>
         <div class="fr-pop" role="dialog" aria-label="Auto-framing" data-ref="framingPop" hidden>
           <div class="fr-pop-head"><span class="eyebrow">Auto-framing</span></div>
           <div data-ref="framingHost"></div>
+        </div>
+        <div class="fr-pop sl-pop" role="dialog" aria-label="Time-of-day profiles" data-ref="slotsPop" hidden>
+          <div class="fr-pop-head sl-pop-head"><span class="eyebrow">Time of day</span><button type="button" class="sl-close" data-ref="slotsClose" aria-label="Close time-of-day profiles">Close</button></div>
+          <div data-ref="slotsHost"></div>
         </div>
       </div>
     </ss-card>
@@ -107,6 +119,7 @@ const TEMPLATE = `
       <div class="c-outputs">
         <div class="outs" role="group" aria-label="Outputs">
           <ss-button size="lg" data-ref="oVcam"><span class="o-l">Virtual cam</span><span class="o-s" data-ref="oVcamS">Off</span></ss-button>
+          <ss-button size="lg" data-ref="oKeep" title="Keep the engine and the camera running even when no app reads StreamStack Camera"><span class="o-l">Keep awake</span><span class="o-s" data-ref="oKeepS">Off</span></ss-button>
           <ss-button size="lg" data-ref="oRec"><span class="o-l">Record</span><span class="o-s mono" data-ref="oRecS">Off</span></ss-button>
           <ss-button size="lg" data-ref="oStream"><span class="o-l">Stream</span><span class="o-s mono" data-ref="oStreamS">Off</span></ss-button>
         </div>
@@ -179,6 +192,7 @@ export async function mount(host, ctx) {
   await ctx.ensureCss(new URL('./camera.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./framing.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./blur.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./slots.css', import.meta.url).href);
   document.title = 'Camera · StreamStack';
   host.innerHTML = TEMPLATE;
   const R = {};
@@ -189,6 +203,7 @@ export async function mount(host, ctx) {
   off.push(mountFraming(R.framingHost, ctx));
   // The framing panel is a popover over the picture: the right column has no room for another card.
   const setFramingOpen = (open) => {
+    if (open && R.slotsPop && !R.slotsPop.hidden) { R.slotsPop.hidden = true; R.tSlots.setAttribute('aria-expanded', 'false'); }
     R.framingPop.hidden = !open;
     R.tFraming.setAttribute('aria-expanded', String(open));
   };
@@ -201,6 +216,22 @@ export async function mount(host, ctx) {
   document.addEventListener('pointerdown', closeFraming);
   off.push(() => { document.removeEventListener('keydown', closeFraming); document.removeEventListener('pointerdown', closeFraming); });
   off.push(store.subscribe((st) => st.framing.mode, (mode) => R.tFraming.toggleAttribute('pressed', mode !== 'off')));
+  off.push(mountSlots(R.slotsHost, ctx));
+  const setSlotsOpen = (open) => {
+    if (open) setFramingOpen(false);
+    R.slotsPop.hidden = !open;
+    R.tSlots.setAttribute('aria-expanded', String(open));
+  };
+  R.tSlots.addEventListener('click', () => setSlotsOpen(R.slotsPop.hidden));
+  R.slotsClose.addEventListener('click', () => { setSlotsOpen(false); R.tSlots.focus(); });
+  const closeSlots = (e) => {
+    if (R.slotsPop.hidden) return;
+    if (e.type === 'keydown' ? e.key === 'Escape' : !e.target.closest?.('.sl-pop, [data-ref="tSlots"]')) setSlotsOpen(false);
+  };
+  document.addEventListener('keydown', closeSlots);
+  document.addEventListener('pointerdown', closeSlots);
+  off.push(() => { document.removeEventListener('keydown', closeSlots); document.removeEventListener('pointerdown', closeSlots); });
+  off.push(store.subscribe((st) => st.slots.status.state, (state) => R.tSlots.toggleAttribute('pressed', state === 'applied' || state === 'suggested')));
   const save = () => writePrefs(prefs);
 
   // ---------- overlays + scopes ----------
@@ -307,6 +338,15 @@ export async function mount(host, ctx) {
     setOut(R.oStream, R.oStreamS, stream.active, { onText: `${stream.timecode || '00:00:00'} · hold to stop`, hold: 900, offHint: 'Press and hold to end the stream' });
   });
   R.oVcam.addEventListener('click', () => toggleVirtualcam());
+  sub((s) => [s.video.engine], ([engine]) => {
+    const idle = engine && engine.idle;
+    const on = !!(idle && idle.keep_alive);
+    R.oKeep.toggleAttribute('pressed', on);
+    R.oKeep.setAttribute('variant', on ? 'primary' : 'default');
+    R.oKeepS.textContent = on ? 'On' : (idle && idle.mode === 'off' ? 'Never idles' : 'Off');
+    R.oKeep.toggleAttribute('disabled', !!(idle && idle.mode === 'off'));
+  });
+  R.oKeep.addEventListener('click', () => act('video.keepalive', { on: !store.state.video.engine?.idle?.keep_alive }));
   R.oRec.addEventListener('click', () => setRecord(!store.state.video.recording.active));
   R.oStream.addEventListener('click', () => act('video.stream', { on: !store.state.video.streaming.active }));
 

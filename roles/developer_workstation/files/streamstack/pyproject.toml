@@ -31,6 +31,11 @@ framing = ["numpy>=1.26", "opencv-python-headless>=4.10", "openvino>=2026.1"]
 bench = ["numpy>=1.26", "opencv-python-headless>=4.10", "openvino>=2026.1", "onnxruntime>=1.20"]
 # WHIP publishing (streamstack.stream.whip): aiortc's ICE, DTLS-SRTP and RTP stack, which also brings av and pyOpenSSL.
 whip = ["aiortc>=1.15.0"]
+# Lossless JPEG XL recompression of camera JPEGs (streamstack.stills): imagecodecs bundles libjxl; without it the
+# system libjxl (libjxl0.11) is used when present.
+stills = ["imagecodecs>=2024.6"]
+# Global hotkeys on Wayland (streamstack.hotkeys_portal): the XDG GlobalShortcuts portal over D-Bus. X11 needs nothing.
+shortcuts = ["jeepney>=0.9"]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
 e2e = ["pytest>=8", "playwright>=1.64"]
 

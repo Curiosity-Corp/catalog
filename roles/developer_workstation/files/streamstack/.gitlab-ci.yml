@@ -3,7 +3,7 @@
 # The template (DroidOpsInc/launch-sequence `pipelines/python-package.yml`, pinned to a release tag; Renovate
 # bumps it) owns the stages, the workflow rules and every assurance plane:
 #
-#   preflight        lint, test (below), release-verify (tags)
+#   preflight        lint, test (below), changelog-check (MRs), release-verify (tags)
 #   source-security  sast (semgrep + gitleaks; gitleaks blocks on tags), e2e and e2e-lighting (below)
 #   supply-chain     lockfile-verify (no runtime dependencies: asserted), dependency-scan, scorecard
 #   build            python-build (wheel + sdist, dist/SHA256SUMS, twine check, tag == package version), package
@@ -37,10 +37,29 @@ include:
       # .build:buildkit for dfn-ladspa-image (python-package.yml has no image build).
       - '/jobs/build-buildkit.yml'
 
+# A merge to main must never cancel the main pipeline still running for the previous merge. Otherwise, while
+# merges land faster than a pipeline runs (CI is slow: infrastructure#639), main never finishes a pipeline,
+# its last finished one stays red and every merge-train ship waits on a main that is green in fact. Main
+# pipelines run to the end; merge request pipelines keep cancelling their superseded runs.
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      auto_cancel:
+        on_new_commit: none
+    - when: always
+
 variables:
+  # A Gitaly 500 or a runner that cannot reach GitLab fails the fetch, not the code: retry it
+  # (infrastructure#639). These attempts cover only source checkout, artifacts and caches.
+  GET_SOURCES_ATTEMPTS: "3"
+  ARTIFACT_DOWNLOAD_ATTEMPTS: "3"
+  RESTORE_CACHE_ATTEMPTS: "3"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PIP_NO_CACHE_DIR: "1"
   PYTHONDONTWRITEBYTECODE: "1"
+  # The release host is configuration, never code (streamstack.registry, scripts/install-release.sh): in a pipeline of
+  # the project it is the server the pipeline runs on.
+  STREAMSTACK_GITLAB_HOST: $CI_SERVER_HOST
   # --- launch-sequence python-package inputs ---
   PREFLIGHT_REQUIRED_TOOLS: "uv uvx python3"
   PREFLIGHT_COMMANDS: >-
@@ -56,12 +75,12 @@ variables:
     set -eu
     uv venv --quiet .ci-venv
     . .ci-venv/bin/activate
-    uv pip install --quiet -e ".[dev,auto,framing,bench,deck,whip]"
+    uv pip install --quiet -e ".[dev,auto,framing,bench,deck,whip,shortcuts]"
     # The real-backend framing tests need the face model; they skip, not fail, when the download is unreachable.
     python -m streamstack framing --fetch || echo "face model not fetched; real-backend framing tests will skip"
     python -m pytest --cov=streamstack --cov-report=term --cov-report=xml:coverage.xml --junitxml=report.xml
   # The SBOM, the grype scan and the licence gate cover what a user installs with the extras.
-  PYTHON_SBOM_EXTRAS: "auto framing whip"
+  PYTHON_SBOM_EXTRAS: "auto framing whip shortcuts"
   PYTHON_SBOM_MC_TYPE: "application"
   # The DeepFilterNet plugin package: version = upstream version + build revision. tests/test_dfn_ladspa_ci.py
   # keeps this equal to audiochain/plugin.py and images/dfn-ladspa/Dockerfile.
@@ -102,7 +121,7 @@ test-py311:
   interruptible: true
   rules: !reference [.rules-gate, rules]
   script:
-    - python -m pip install -e ".[dev,auto,framing,bench,deck,whip]"
+    - python -m pip install -e ".[dev,auto,framing,bench,deck,whip,stills,shortcuts]"
     - python -m streamstack framing --fetch || echo "face model not fetched; real-backend framing tests will skip"
     - python -m pytest --junitxml=report-py311.xml
   artifacts:
@@ -330,6 +349,22 @@ dfn-ladspa-verify:
 # =============================================================================
 # Release (tag vX.Y.Z only)
 # =============================================================================
+
+# Merge requests do not edit CHANGELOG.md (every merge conflicted every other open MR): each adds a
+# changelog.d/<issue>.<type>.md fragment that `scripts/release.py prepare` compiles. This job fails an MR that edits
+# CHANGELOG.md, or changes src/ without a fragment, unless it carries the skip-changelog label or a Skip-Changelog
+# trailer. It needs git history (the full python image, not the uv slim one); release commits are exempt.
+changelog-check:
+  stage: preflight
+  needs: []
+  image: python:3.13
+  interruptible: true
+  variables:
+    GIT_DEPTH: "100"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - python3 scripts/release.py check-fragments
 
 # Fail before building: the tag, streamstack.__version__ and CHANGELOG.md must agree, and the version must be a
 # 0.0.x patch release unless the owner approved a minor (RELEASE_OWNER_APPROVED_MINOR=true on the pipeline).

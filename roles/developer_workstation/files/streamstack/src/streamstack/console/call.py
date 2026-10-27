@@ -352,7 +352,7 @@ class DemoCall(CallController):
             return self._demo(params)
         if action == "call.demo_reset":
             self.script.reset()
-            self.monitor.report_mute(None, "")
+            self.monitor.reset()  # not the leave hold: a muted call left over from the last test must not outlive it
             self.monitor.poll_once()
             with self._lock:
                 self._settings = default_settings()

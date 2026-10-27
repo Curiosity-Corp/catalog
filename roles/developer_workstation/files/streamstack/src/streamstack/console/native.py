@@ -34,6 +34,7 @@ from streamstack import config
 from streamstack.console import blur as blurctl
 from streamstack.console.arcblur import ArcBlur
 from streamstack.console.canon import CanonLink
+from streamstack.console.delivery import Delivery
 from streamstack.console.errors import ActionError
 from streamstack.console.video import (
     APPLY_SECONDS,
@@ -49,7 +50,7 @@ from streamstack.console.video import (
     required_name,
     validate_look,
 )
-from streamstack.engine import graph, probe, source
+from streamstack.engine import graph, idle, probe, source
 from streamstack.engine.cropper import SCENE, EngineCropper
 from streamstack.engine.graph import Source, Spec
 from streamstack.engine.process import VideoEngine
@@ -59,6 +60,7 @@ from streamstack.hardware import roles
 log = logging.getLogger(__name__)
 Notify = Callable[[str, str], None]
 
+PREVIEW_DEMAND = 6.0  # a preview frame asked for this recently counts as someone looking at the picture
 MONITOR_SECONDS = 2.0
 RAMP_HZ = 20.0
 SAVE_EVERY = 1.0
@@ -83,6 +85,9 @@ class NativeVideo:
         canon: CanonLink | None = None,
         arc: ArcBlur | None = None,
         plan: roles.PlanSource | None = None,
+        delivery: Delivery | None = None,
+        watch_factory: Callable[..., idle.ReaderWatch] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.cfg = cfg
         self._plan = plan or (lambda: None)  # the hardware Plan: which GPU does the grade (ADR 0003)
@@ -94,6 +99,23 @@ class NativeVideo:
         self.lock = threading.RLock()
         self.canon = canon or CanonLink(cfg, self._toast)
         self.arc = arc or ArcBlur(cfg, plan=self._plan)
+        # keeps StreamStack Camera fed while the real camera is away (console/delivery.py)
+        self.delivery = delivery or Delivery(
+            cfg,
+            notify=self._toast,
+            camera_device=lambda: hwcamera.device_for("camera", self.cfg, self._plan()),
+            program_device=lambda: hwcamera.device_for("program", self.cfg, self._plan()),
+            last_frame=self._last_detect_frame,
+        )
+        self._feeding: str | None = None  # the camera the engine reads now (the picked one, or its stand-in)
+        # idle the engine (and the Canon live view) while no app reads the program node (#128, engine/idle.py)
+        self._clock = clock
+        self._idle = idle.IdleGovernor(clock=clock, enabled=idle.idle_mode(cfg) == "auto", after=idle.idle_after(cfg))
+        self._idle_lock = threading.RLock()
+        self._watch_factory = watch_factory or idle.ReaderWatch
+        self._watch: idle.ReaderWatch | idle.NullWatch = idle.NullWatch()
+        self._demand_until: dict[str, float] = {}  # name -> until when it asked for the picture
+        self._demand_probes: dict[str, Callable[[], bool]] = {}  # standing needs: an output that is running
         self._blur_built = False  # the running engine's graph has the blur branch
         self._cameras: list[source.Camera] = []
         self._active: str | None = None
@@ -161,6 +183,7 @@ class NativeVideo:
                     log.warning("video state: ignoring the saved look of %s: %s", label, exc.message)
         if isinstance(data.get("active"), str):
             self._active = data["active"]
+        self._idle.keep_alive = data.get("keep_alive") is True
         self.arc.restore(data.get("blur"))
 
     def _save(self, force: bool = False) -> None:
@@ -169,7 +192,12 @@ class NativeVideo:
             return
         self._saved_at = now
         with self.lock:
-            payload = {"active": self._active, "looks": copy.deepcopy(self._looks), "blur": self.arc.settings()}
+            payload = {
+                "active": self._active,
+                "looks": copy.deepcopy(self._looks),
+                "blur": self.arc.settings(),
+                "keep_alive": self._idle.keep_alive,
+            }
         try:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=self._state_file.parent, prefix=".video-", suffix=".tmp")
@@ -187,6 +215,12 @@ class NativeVideo:
         self._stop.clear()
         self.canon.start()
         self.arc.start()
+        self._watch = self._watch_factory(
+            lambda: hwcamera.device_for("program", self.cfg, self._plan()),
+            ignore=idle.idle_ignore(self.cfg),
+            on_tick=self._idle_tick,
+        )
+        self._watch.start()
         self._thread = threading.Thread(target=self._monitor, daemon=True, name="streamstack-video")
         self._thread.start()
 
@@ -194,6 +228,7 @@ class NativeVideo:
         self._stop.set()
         self._wake.set()
         self._ramp_cancel.set()
+        self._watch.stop()  # first: nothing may idle or wake the engine while it is being taken down
         thread = self._thread
         if thread and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=5)
@@ -204,6 +239,7 @@ class NativeVideo:
             engine, self._engine = self._engine, None
         if engine is not None:
             engine.stop()
+        self.delivery.stop()
         self.arc.stop()
         for stream in self._streams.values():
             stream.stop()
@@ -228,19 +264,125 @@ class NativeVideo:
             labels = [c.label for c in found]
             if self._active not in labels:
                 self._active = labels[0] if labels else None
-            active = next((c for c in found if c.label == self._active), None)
+            picked = self._active
             wanted, engine = self._wanted, self._engine
-        if not wanted or active is None:
+        if not wanted:
+            self.delivery.stop()
             return
+        self.delivery.tick()
+        self._idle_tick()
+        if self._idle.state == idle.IDLE:
+            return  # resting: the placeholder holds the node, the camera list above stays current, nothing to build
+        active = self.delivery.choose(found, picked)
+        if active is None:
+            self._no_source("no camera is connected", engine)
+            return
+        with self.lock:
+            self._feeding = active.label
         moved = engine is not None and self._node().path != self._engine_node
+        same = self._source is not None and self._source.label == active.label
         if (
             not moved
+            and same
             and engine is not None
             and engine.state()["state"] == "running"
             and (self._blur_built or not self.arc.capable)
         ):
             return
         self._ensure_engine(active)
+
+    # -- idle: rest the engine and the Canon live view while no app reads StreamStack Camera (#128) -------------------
+
+    def add_demand(self, name: str, probe: Callable[[], bool]) -> None:
+        """Something inside StreamStack that needs the engine's picture while `probe()` is true (a running stream or
+        recording reads /dev/video43 through its own ffmpeg, which the reader scan rightly ignores as plumbing)."""
+        self._demand_probes[name] = probe
+
+    def touch(self, name: str = "preview", seconds: float = PREVIEW_DEMAND) -> None:
+        """Someone is looking at the picture (a Console preview was asked for): keep or wake the engine for a while."""
+        self._demand_until[name] = self._clock() + seconds
+
+    def _demands(self) -> list[str]:
+        now = self._clock()
+        names = [name for name, until in list(self._demand_until.items()) if until > now]
+        for name, needs in list(self._demand_probes.items()):
+            try:
+                if needs():
+                    names.append(name)
+            except Exception:
+                log.exception("video: the %s demand probe failed; counting it as demand", name)
+                names.append(name)
+        return names
+
+    def _idle_tick(self) -> None:
+        """One step of the idle governor: called from the reader watch every quarter second and from the monitor.
+
+        A verdict is only ever acted on with a fresh reader scan: a sensor that cannot tell keeps the camera awake."""
+        if self._stop.is_set():
+            return
+        with self._idle_lock:
+            with self.lock:
+                engine, wanted = self._engine, self._wanted
+            if engine is None or not wanted:
+                return
+            latest = self._watch.latest
+            readers = latest.present or not self._watch.fresh()
+            verdict = self._idle.step(
+                readers=readers,
+                demand=bool(self._demands()),
+                engine_running=engine.state()["state"] == "running",
+            )
+            if verdict.action == "idle":
+                self._enter_idle(engine, verdict.reason)
+            elif verdict.action == "wake":
+                self._leave_idle(engine, verdict.reason)
+            elif self._idle.state == idle.IDLE:
+                self.canon.rest(True)  # renew the bridge's lease: it wakes on its own if this process dies
+
+    def _enter_idle(self, engine: VideoEngine, reason: str) -> None:
+        """Stop the engine child, put the placeholder on the node and let the Canon body leave live view."""
+        engine.stop()
+        if not self.delivery.park():
+            self._idle.force_running()  # CAMERA_LOSS=off: nobody may write the node but the engine; do not idle
+            engine.start()
+            log.info("video: not idling, STREAMSTACK_CAMERA_LOSS=off keeps the engine on the node")
+            return
+        self.canon.rest(True)
+        log.info("video: engine idle (%s)", reason)
+
+    def _leave_idle(self, engine: VideoEngine, reason: str) -> None:
+        """Start the engine and the Canon live view; the engine's own guard takes the placeholder off the node."""
+        log.info("video: waking the engine (%s)", reason)
+        self.canon.rest(False)
+        engine.start()
+        self._wake.set()
+
+    def _idle_snapshot(self) -> dict:
+        with self._idle_lock:
+            block = self._idle.snapshot()
+        latest = self._watch.latest
+        block["readers"] = latest.public()
+        block["sensor"] = "ok" if self._watch.fresh() else "unsure"
+        block["demand"] = self._demands()
+        return block
+
+    def _keepalive(self, params: dict) -> str | None:
+        on = required_flag(params)
+        with self._idle_lock:
+            self._idle.keep_alive = on
+        self._idle_tick()  # on while resting: the governor's own wake, at once
+        self._save(force=True)
+        return "Camera kept awake" if on else "Camera may idle when no app uses it"
+
+    def _no_source(self, reason: str, engine: VideoEngine | None) -> None:
+        """No camera can be read and no engine child is running: keep the program camera listed with the slate.
+        (With an engine, its guard does this; it also knows when the child has just died.)"""
+        if engine is None:
+            self.delivery.cover(reason)
+
+    def _last_detect_frame(self) -> bytes | None:
+        engine = self._engine
+        return engine.latest_frame(max_age=1e9) if engine is not None else None
 
     def _node(self) -> roles.NodeChoice:
         """The render node for the graph: the setting, else the Plan's grade role, else the generic choice."""
@@ -281,7 +423,8 @@ class NativeVideo:
             src = self._resolve(camera, self.cfg)
         except source.SourceError as exc:
             with self.lock:
-                self._reason = str(exc)
+                self._reason, engine = str(exc), self._engine
+            self._no_source(str(exc), engine)
             return
         self.arc.wait_probed()  # the blur branch is part of the graph, so the answer is needed before it is built
         spec = self._spec_for(src)
@@ -289,7 +432,9 @@ class NativeVideo:
             self._reason, self._source, self._blur_built = None, src, spec.blur is not None
             engine, look, privacy = self._engine, dict(self._active_look()), self._privacy
         if engine is None:
-            engine = self._factory(spec, look, notify=self._toast)
+            engine = self._factory(
+                spec, look, notify=self._toast, before_child=self.delivery.guard, on_exit=self.delivery.on_exit
+            )
             engine.set_blackout(privacy)
             self._wire_blur(engine, spec)
             with self.lock:
@@ -365,18 +510,20 @@ class NativeVideo:
             selected_source=active,
             look=look,
             looks=self.library.listing(),
-            virtualcam=bool(info and info["state"] == "running"),
+            virtualcam=bool(info and info["state"] == "running") or self._idle.state != idle.RUNNING,
             canon=self.canon.state(),
         )
         snapshot["blur"] = self.arc.state()
         snapshot["engine"] = self._engine_block(info, src, reason, wanted)
+        snapshot["engine"]["delivery"] = self.delivery.state(info["state"] if info else None, self._feeding, active)
         return snapshot
 
     def _engine_block(self, info: dict | None, src: Source | None, reason: str | None, wanted: bool) -> dict:
         backend = self._backend
+        resting = self._idle.state == idle.IDLE and wanted
         block: dict = {
             "native": True,
-            "state": "off" if not wanted else "waiting" if info is None else info["state"],
+            "state": "off" if not wanted else "idle" if resting else "waiting" if info is None else info["state"],
             "error": reason if info is None else info["error"],
             "backend": (info or {}).get("backend") or (backend[0] if backend else None),
             "backend_note": backend[1] if backend and backend[0] == "cpu" else None,
@@ -389,11 +536,19 @@ class NativeVideo:
             "restarts": (info or {}).get("restarts", 0),
             "look_apply_ms": (info or {}).get("look_apply_ms"),
             "crop": (info or {}).get("crop"),
+            "idle": self._idle_snapshot(),
         }
         return block
 
     def health_checks(self) -> list[dict[str, str]]:
-        return self._engine_checks() + self.arc.health()
+        return self._engine_checks() + self._delivery_checks() + self.arc.health()
+
+    def _delivery_checks(self) -> list[dict[str, str]]:
+        with self.lock:
+            wanted = self._wanted
+        if not wanted:
+            return []
+        return self.delivery.checks(self.state()["engine"]["delivery"], config.camera_external(self.cfg))
 
     def _engine_checks(self) -> list[dict[str, str]]:
         block = self.state()["engine"]
@@ -401,6 +556,16 @@ class NativeVideo:
         if block["state"] == "off":
             return [
                 {**base, "state": "warn", "title": "The program camera is off", "detail": "", "hint": "turn on Camera"}
+            ]
+        if block["state"] == "idle":
+            return [
+                {
+                    **base,
+                    "state": "ok",
+                    "title": "Video engine is idle: no app is reading StreamStack Camera",
+                    "detail": "it starts within a second when an app opens the camera; a placeholder keeps it listed",
+                    "hint": "",
+                }
             ]
         if block["state"] == "running":
             detail = f"{block['output']}, {block['decode']}, {block['fps'] or 0:g} fps, {block['dropped']} dropped"
@@ -448,6 +613,7 @@ class NativeVideo:
             "video.looks.delete": self._looks_delete,
             "video.blur": self._blur,
             "video.virtualcam": self._virtualcam,
+            "video.keepalive": self._keepalive,
             "video.record": self._output,
             "video.stream": self._output,
         }.get(action)
@@ -555,6 +721,9 @@ class NativeVideo:
 
     def _virtualcam(self, params: dict) -> str | None:
         on = required_flag(params)
+        with self._idle_lock:
+            self._idle.force_running()  # on: start at once; off: nothing is resting any more
+            self.canon.rest(False)
         with self.lock:
             engine, self._wanted = self._engine, on
         if on:
@@ -574,6 +743,7 @@ class NativeVideo:
     def frame(self, source_name: str, width: int) -> bytes | None:
         """One JPEG: "program" (what /dev/video43 shows), "camera" or a camera label."""
         width = clamp_width(width)
+        self.touch("preview")  # someone is looking: an idle engine wakes for it
         key = (source_name, width)
         cached = self._frames.get(key)
         if cached and time.monotonic() - cached[0] < FRAME_TTL:

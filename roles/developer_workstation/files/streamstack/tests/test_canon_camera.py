@@ -317,3 +317,31 @@ def test_cli_session_raises_when_another_program_holds_the_camera(fake_cli: Path
         assert err.value.kind == "busy"
     finally:
         s.close()
+
+
+def test_lib_session_rest_lowers_the_mirror_and_resume_is_free(fake_camera: type[FakeCamera]) -> None:
+    fake_camera.settings["viewfinder"] = {"label": "Viewfinder", "type": "RADIO", "value": "1", "choices": ["0", "1"]}
+    s = LibSession(FakeGp)
+    s.open()
+    s.rest(False)  # resuming needs nothing: the next preview frame raises the mirror
+    assert s.read(["viewfinder"])["viewfinder"].value == "1"
+    s.rest(True)
+    assert s.read(["viewfinder"])["viewfinder"].value == "0"
+    s.close()
+
+
+def test_cli_session_rest_stops_the_capture_and_resume_restarts_it(fake_cli: Path) -> None:
+    s = cli_session()
+    s.open()
+    try:
+        assert s.next_frame(2.0) is not None
+        s.rest(True)
+        assert s.proc is None and s.resting
+        s._start_capture()  # a setting change while resting must not bring live view back
+        assert s.proc is None
+        s.rest(False)
+        wait_for(lambda: s.next_frame(0.2) is not None)
+        log = Path(str(fake_cli) + ".log").read_text().split()
+        assert log[:3] == ["live-start", "live-stop", "live-start"]
+    finally:
+        s.close()

@@ -184,6 +184,33 @@ def decode_image(jpeg: bytes) -> Any:
 # -- backends ---------------------------------------------------------------------------------------------------
 
 
+def choose_device(core: Any, device: str) -> str:
+    """The OpenVINO device for `device` ("auto", "gpu" or "cpu"): the discrete Intel GPU (the Arc), else another
+    Intel GPU, else any GPU when one was asked for, else the CPU. OpenVINO numbers GPUs in enumeration order, so with
+    an iGPU present GPU.0 is the iGPU and the Arc is GPU.1; the choice goes by device type, never by the number."""
+    gpus = [d for d in core.available_devices if d == "GPU" or d.startswith("GPU.")]
+    if device == "cpu" or not gpus:
+        return "CPU"
+    intel: list[tuple[int, str]] = []
+    for gpu in gpus:
+        try:
+            name = str(core.get_property(gpu, "FULL_DEVICE_NAME"))
+        except Exception as exc:  # OpenVINO raises plain RuntimeError of its own
+            log.debug("framing: cannot describe %s: %s", gpu, exc)
+            continue
+        if "intel" not in name.lower():
+            continue
+        try:
+            discrete = "discrete" in str(core.get_property(gpu, "DEVICE_TYPE")).lower()
+        except Exception as exc:
+            log.debug("framing: no device type for %s: %s", gpu, exc)
+            discrete = "dgpu" in name.lower() or "arc" in name.lower()
+        intel.append((0 if discrete else 1, gpu))
+    if intel:
+        return sorted(intel)[0][1]
+    return gpus[0] if device == "gpu" else "CPU"
+
+
 class OpenVinoDetector:
     """YuNet on OpenVINO: the Intel GPU when the runtime offers one (and it is allowed), otherwise the CPU."""
 
@@ -219,18 +246,7 @@ class OpenVinoDetector:
             raise DetectorUnavailable(f"OpenVINO could not load the face model: {exc}") from exc
 
     def _choose(self, device: str) -> str:
-        devices = list(self._core.available_devices)
-        gpus = [d for d in devices if d == "GPU" or d.startswith("GPU.")]
-        if device == "cpu" or not gpus:
-            return "CPU"
-        # Prefer the first GPU that is Intel (GPU.0 is the discrete Arc when the iGPU is off or listed later).
-        for gpu in gpus:
-            try:
-                if "intel" in str(self._core.get_property(gpu, "FULL_DEVICE_NAME")).lower():
-                    return gpu
-            except Exception as exc:
-                log.debug("framing: cannot describe %s: %s", gpu, exc)
-        return gpus[0] if device == "gpu" else "CPU"
+        return choose_device(self._core, device)
 
     def _network(self, width: int, height: int) -> Any:
         key = (width, height)

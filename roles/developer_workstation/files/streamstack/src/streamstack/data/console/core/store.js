@@ -74,6 +74,13 @@ export function emptyState() {
       mode: 'off', state: 'off', held: false, available: false, unavailable_hint: null, reason: null, backend: null, device: null,
       detect_ms: null, detect_p95_ms: null, fps: null, model: null, zoom: 1, window: null, sources: [], skipped: [], modes: [],
     },
+    slots: {
+      available: false, mode: 'off', modes: [], fade_seconds: 4, limits: {}, slots: [], parts: [],
+      current: { slot: 'morning', label: 'Morning', minute: 0, clock: '00:00' }, strip: [],
+      options: { looks: [], scenes: [], voices: [], lighting: [], canon: { present: false, exposure_choices: [], exposure_readonly: false, kelvin_range: [2500, 10000] }, blur: false },
+      status: { state: 'off', summary: '', applied: null, held: null, suggestion: null, can_undo: false },
+      director: { on: false }, events: [], demo: false,
+    },
     health: { updated: null, summary: 'ok', checks: [] },
     system: { cpu_percent: null, load: [0, 0, 0], cores: 0 },
     virtual: { camera: null, mic: null, seen: [] },
@@ -82,6 +89,12 @@ export function emptyState() {
       profile: { layout: { rows: 4, cols: 4 }, model: 'virtual-4x4', home: 'main', settings: { brightness: 70, sleep_minutes: 15 }, pristine: true, mismatch: false, pages: [] },
       surface: { rows: 4, cols: 4, page: { id: '', name: '' }, keys: [], can_back: false, fitted: false },
       models: [], palette_rev: '0',
+    },
+    hotkeys: {
+      available: false, enabled: true, session: 'none',
+      keys: { backend: 'none', ok: false, reason: null },
+      midi: { ok: false, reason: null, devices: [], last: null },
+      bindings: [], learn: { active: false, event: null }, events: [], limits: { bindings: 128 },
     },
     lighting: {
       scanned: false, lights: [], master: { on: false, all_on: false, brightness: 50, kelvin: 4500 },

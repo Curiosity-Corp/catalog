@@ -274,3 +274,28 @@ def test_cli_identity_prints_only_the_hash(
     out = capsys.readouterr().out.strip()
     assert len(out) == 32 and set(out) <= set("0123456789abcdef")
     assert out != "0123456789abcdef0123456789abcdef"  # a hash, never the machine id itself
+
+
+def test_health_checks_cache_the_scarlett_evidence_and_survive_a_failing_collector(tmp_path: Path) -> None:
+    """#130: the System page reads amixer and the kernel log at most once per TTL, and a collector that raises
+    must not take the page down."""
+    machine = FakeMachine(tmp_path)
+    machine.add_usb("1235:8219", "Scarlett 2i2 4th Gen")
+    calls: list[str] = []
+
+    def collect(snapshot, catalogue, rig_id):
+        calls.append(rig_id)
+        if len(calls) == 3:
+            raise OSError("journal closed")
+        return None
+
+    hw = HardwareController({"STREAMSTACK_RIG": "studio-deck"}, take=machine.snapshot, watch=False, scarlett=collect)
+    hw.start()
+    wait_for(lambda: hw.plan() is not None, "first probe")
+    first = hw.health_checks()
+    assert hw.health_checks() == first and calls == ["studio-deck"]
+    hw._scarlett_cache = None
+    assert hw.health_checks() and len(calls) == 2
+    hw._scarlett_cache = None
+    assert hw.health_checks() and len(calls) == 3  # the OSError was logged, the rows still came back
+    hw.stop()

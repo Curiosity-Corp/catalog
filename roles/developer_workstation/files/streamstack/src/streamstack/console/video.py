@@ -359,6 +359,8 @@ class DemoVideo:
         self.selected = DEMO_SOURCES[0]
         self.looks_by_source = {name: dict(NEUTRAL) for name in DEMO_SOURCES}
         self.virtualcam = True
+        self.idle_state = "running"  # running | idle | waking: `video.idle.demo` puts the demo engine in one
+        self.keep_alive = False
         self.started: dict[str, float | None] = {"record": None, "stream": None}
         self.cards: dict[str, bytes] = {}
         self.canon = DemoCanon(notify)
@@ -412,9 +414,10 @@ class DemoVideo:
 
     def _engine_block(self) -> dict:
         """A believable native-engine block, so the Camera page's engine chip has something to show."""
+        resting = self.virtualcam and self.idle_state == "idle"
         return {
             "native": True,
-            "state": "running" if self.virtualcam else "off",
+            "state": "off" if not self.virtualcam else "idle" if resting else "running",
             "error": None,
             "backend": "vulkan",
             "backend_note": None,
@@ -422,11 +425,24 @@ class DemoVideo:
             "source": self.selected,
             "source_mode": "1920x1080 MJPG",
             "output": "/dev/video43 1920x1080 yuyv422",
-            "fps": 30.0 if self.virtualcam else None,
+            "fps": 30.0 if self.virtualcam and not resting else None,
             "dropped": 0,
             "restarts": 0,
             "look_apply_ms": 0.06,
             "crop": None,
+            "idle": {
+                "mode": "auto",
+                "state": self.idle_state if self.virtualcam else "running",
+                "keep_alive": self.keep_alive,
+                "after_s": 10.0,
+                "since_s": 0.0,
+                "reason": "no app has read the camera for 10 s" if resting else "",
+                "wakes": 0,
+                "wake_ms": None,
+                "readers": [],
+                "sensor": "ok",
+                "demand": [],
+            },
         }
 
     def act(self, action: str, params: dict) -> str | None:
@@ -484,6 +500,18 @@ class DemoVideo:
             return self.blur.set_installed(required_flag(params, "installed"))
         if action in ("video.virtualcam", "video.record", "video.stream"):
             return self._output(action.split(".")[1], required_flag(params))
+        if action == "video.keepalive":
+            self.keep_alive = required_flag(params)
+            if self.keep_alive and self.idle_state == "idle":
+                self.idle_state = "running"  # the real engine wakes on keep alive
+            return "Camera kept awake" if self.keep_alive else "Camera may idle when no app uses it"
+        if action == "video.idle.demo":  # demo only: put the engine in a state so the page can show it
+            state = str(params.get("state", ""))
+            if state not in ("running", "idle", "waking"):
+                raise ActionError("state must be running, idle or waking", 400)
+            self.idle_state = state
+            self.canon.rest(state == "idle")  # the simulated body leaves live view with the engine
+            return f"Demo engine {state}"
         raise ActionError(f"unknown action: {action}", 400)
 
     def _look(self, action: str, params: dict) -> str | None:
@@ -504,6 +532,7 @@ class DemoVideo:
         label = {"virtualcam": "Virtual camera", "record": "Recording", "stream": "Stream"}[kind]
         if kind == "virtualcam":
             self.virtualcam = on
+            self.idle_state = "running"
         else:
             self.started[kind] = time.monotonic() if on else None
         text = f"{label} {'started' if on else 'stopped'}"

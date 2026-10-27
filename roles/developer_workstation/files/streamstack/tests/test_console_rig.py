@@ -19,6 +19,8 @@ TOP_LEVEL = {
     "stream",
     "storage",
     "deck",
+    "slots",
+    "hotkeys",
     "diagnostics",
     "call",
 }  # fmt: skip

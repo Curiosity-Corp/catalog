@@ -149,6 +149,7 @@ def test_lights_status_prints_what_the_service_says(
             "camera": {"reason": "Teams opened the camera"},
             "lights": {"c901-a": {"state": "On for the camera session", "held": True}},
         },
+        ephemeral=True,  # as the service writes it: a durable write can outlast the ten-second heartbeat on a busy disk
     )
     monkeypatch.setattr(lightservice, "is_active", lambda run=None: True)
     assert cli.main(["lights", "status"]) == 0

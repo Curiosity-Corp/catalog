@@ -23,6 +23,7 @@ user and never needs root.
     streamstack lights          camera follow and daylight schedule for Litra lights (run|status|enable|disable)
     streamstack deck            Elgato Stream Deck as a control surface for the Console (run|status|enable|disable)
     streamstack setup           seed this user's voice presets and the lights and deck services
+    streamstack stills          AVIF snapshots and the lossless JPEG XL archive (status|archive|restore|snapshot)
     streamstack framing         auto-framing: backends, face model (--fetch downloads and verifies it)
     streamstack call-settings   the Teams and Zoom settings that match this rig
     streamstack hardware        what is plugged in and the rig it resolves to (--json, --identity)
@@ -48,9 +49,11 @@ from streamstack import (
     deckservice,
     lightservice,
     micwatch,
+    stills_cli,
     store,
     system,
     verify_install,
+    videochain,
     virtualdevices,
 )
 from streamstack.audiochain import cli as chain_cli
@@ -61,6 +64,7 @@ from streamstack.audiochain import migrate
 from streamstack.audiochain import plugin as voice_plugin
 from streamstack.canon import run as canon_run
 from streamstack.config import camera_external, load_settings
+from streamstack.consolelink import ConsoleLink, ConsoleRefused, ConsoleUnavailable
 from streamstack.framing import cli as framing_cli
 from streamstack.framing import health as framing_health
 from streamstack.hardware import capturehold, duplex
@@ -113,6 +117,18 @@ def auto_running() -> bool:
 
 def check(group: str, cid: str, state: str, title: str, detail: str = "", hint: str = "") -> dict[str, str]:
     return {"id": cid, "group": group, "state": state, "title": title, "detail": detail, "hint": hint}
+
+
+def _console_video() -> dict | None:
+    """The running Console's video block, or None when there is no Console or it does not answer (doctor stays read-only
+    and never fails because the Console is down)."""
+    link = ConsoleLink.find(timeout=2.0)
+    if link is None:
+        return None
+    try:
+        return link.state()
+    except (ConsoleUnavailable, ConsoleRefused):
+        return None
 
 
 def camlink_checks(probe: camlink.Probe) -> list[dict[str, str]]:
@@ -181,6 +197,17 @@ def call_microphone(cfg: dict[str, str], sources: dict[str, str], found: Found |
     return system.pick_microphone(sources, cfg["STREAMSTACK_MICROPHONE"], system.default_device("source"))
 
 
+def _loopback_guard_checks(cfg: dict[str, str], program: str) -> list[dict[str, str]]:
+    """The v4l2loopback contract (#86): the module for this and the next kernel, the call-app caps and format, and
+    who else holds the camera nodes. Each part is read-only and a probe that cannot run says nothing."""
+    from streamstack.hardware import contention, contract, kmod
+
+    rows = kmod.guard_checks()
+    rows += contract.report_check(virtualdevices.camera_report(program, cfg["STREAMSTACK_PROGRAM_LABEL"]))
+    rows += contention.guard_checks(cfg, find_camlink() or None)
+    return rows
+
+
 def run_checks(
     cfg: dict[str, str] | None = None, *, stall_probe: bool = True, found: Found | None = None, hardware: bool = True
 ) -> list[dict[str, str]]:
@@ -245,6 +272,8 @@ def run_checks(
             )
 
     checks.extend(virtualdevices.camera_checks(virtualdevices.camera_report(program, cfg["STREAMSTACK_PROGRAM_LABEL"])))
+    checks.extend(videochain.chain_checks(cfg))
+    checks.extend(videochain.idle_checks(_console_video()))
 
     canon = usb_products(CANON_USB_VENDOR)
     if canon:
@@ -384,6 +413,7 @@ def run_checks(
 
     checks.extend(app_checks())
     checks.append(virtualdevices.seen_check(virtualdevices.seen_by_apps(cfg)))
+    checks.extend(_loopback_guard_checks(cfg, program))
     checks.append(
         check("apps", "auto-mode", "ok", "auto mode", f"{'on' if auto_running() else 'off'} (streamstack auto on|off)")
     )
@@ -1194,6 +1224,17 @@ def cmd_hardware(args: argparse.Namespace) -> int:
     return 0
 
 
+def _loopback_guard(cfg: dict[str, str]) -> int:
+    """`streamstack loopback guard`: the module for this and the next kernel, the call-app contract, the holders.
+    Exit 1 when a row fails (a warning is printed but passes)."""
+    rows = _loopback_guard_checks(cfg, cfg["STREAMSTACK_PROGRAM_DEVICE"])
+    for row in rows:
+        print(f"{row['state']:<4} {row['title']}")
+        if row["state"] != "ok" and row["hint"]:
+            print(f"     fix: {row['hint']}")
+    return 1 if any(r["state"] == "fail" for r in rows) else 0
+
+
 def cmd_loopback(args: argparse.Namespace) -> int:
     """The virtual cameras the rig profile asks for: `status` compares, `apply` writes the module files and creates
     a missing node (never touching one that exists)."""
@@ -1209,6 +1250,8 @@ def cmd_loopback(args: argparse.Namespace) -> int:
     plan = resolve(probe.snapshot(), catalogue, overrides_from(load_settings(), os.environ))
     rig = catalogue.rig(plan.rig.id) or catalogue.fallback_rig()
     try:
+        if args.action == "guard":
+            return _loopback_guard(cfg=load_settings())
         if args.action == "status":
             current = loopback.status(plan, rig)
             print(f"rig: {plan.rig.label} ({plan.rig.id})")
@@ -1329,6 +1372,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eng.set_defaults(func=cmd_engine)
     framing_cli.add_parser(sub)
+    stills_cli.add_parser(sub)
     lights = sub.add_parser("lights", help="camera follow and daylight schedule for Litra lights")
     lights.add_argument("action", nargs="?", default="status", choices=("run", "status", "enable", "disable"))
     lights.set_defaults(func=cmd_lights)
@@ -1336,8 +1380,11 @@ def build_parser() -> argparse.ArgumentParser:
     hardware.add_argument("--json", action="store_true", help="print the full resolved plan as JSON")
     hardware.add_argument("--identity", action="store_true", help="print this machine's rig identity hash")
     hardware.set_defaults(func=cmd_hardware)
-    loop = sub.add_parser("loopback", help="the virtual cameras the rig profile asks for: status, or apply")
-    loop.add_argument("action", nargs="?", default="status", choices=("status", "apply"))
+    loop = sub.add_parser(
+        "loopback",
+        help="the virtual cameras the rig profile asks for: status, apply, or guard (module per kernel, contract)",
+    )
+    loop.add_argument("action", nargs="?", default="status", choices=("status", "apply", "guard"))
     loop.add_argument("--root", default="/", help="with apply: write the module files under this directory")
     loop.add_argument("--dry-run", action="store_true", help="with apply: print what would change, change nothing")
     loop.set_defaults(func=cmd_loopback)

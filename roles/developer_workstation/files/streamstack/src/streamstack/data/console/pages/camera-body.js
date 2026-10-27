@@ -14,6 +14,7 @@ const FOCUS_STEPS = [-3, -2, -1, 1, 2, 3];
 const STATE_PILL = {
   running: { state: 'ok', text: 'Live' },
   paused: { state: 'info', text: 'Changing a setting…' },
+  idle: { state: 'info', text: 'Idle' },
   starting: { state: 'info', text: 'Starting' },
   stalled: { state: 'warn', text: 'Waiting for the camera' },
   offline: { state: 'fail', text: 'Camera offline' },
@@ -173,8 +174,9 @@ export async function mountBody(side, ctx) {
     const hints = [control('liveviewsize')?.hint].filter(Boolean);
     const input = c.input;
     const small = input && input.height < 720;
-    R.hint.hidden = !(small && hints.length);
-    R.hint.textContent = small && hints.length ? `Live view is ${input.width}×${input.height}. ${hints[0]}` : '';
+    const resting = c.state === 'idle';
+    R.hint.hidden = !(resting || (small && hints.length));
+    R.hint.textContent = resting ? (c.message || 'Live view is off while no app uses the camera.') : (small && hints.length ? `Live view is ${input.width}×${input.height}. ${hints[0]}` : '');
   }
 
   // ---------- focus ----------

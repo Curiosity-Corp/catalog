@@ -191,7 +191,10 @@ def test_a_fresh_status_file_means_the_service_is_running(live: LightingControll
     }
     from streamstack.director import settings
 
-    settings.write_json(lightplan.state_path(), bench_status)
+    # Written the way the service writes it every tick (`ephemeral`: atomic, no fsync). The durable write used before
+    # stamps the heartbeat first and can then wait on the disk for longer than the ten seconds a heartbeat stays
+    # fresh, on a runner whose disk is busy (pipeline 96694: 'missing' == 'running').
+    settings.write_json(lightplan.state_path(), bench_status, ephemeral=True)
     auto = automation(live)
     assert auto["service"]["state"] == "running"
     assert auto["status"]["summary"].startswith("Camera in use since 14:02")

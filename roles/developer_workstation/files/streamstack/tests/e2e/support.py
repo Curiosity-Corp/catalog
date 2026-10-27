@@ -397,3 +397,40 @@ def hold(page: Page, button: Locator, ms: int) -> None:
         page.wait_for_timeout(int(ms * max(1.0, SCALE)))
     finally:
         page.mouse.up()
+
+
+DRAG_SCRIPT = """
+(source, target) => {
+  const dt = new DataTransfer();
+  const fire = (el, type) => {
+    const ev = new DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: dt });
+    el.dispatchEvent(ev);
+    return ev;
+  };
+  const started = fire(source, 'dragstart');
+  const marked = document.body.dataset.dragging || '';
+  fire(target, 'dragenter');
+  const over = fire(target, 'dragover');
+  const dropped = { marked, started: !started.defaultPrevented, accepted: over.defaultPrevented };
+  if (dropped.started && dropped.accepted) fire(target, 'drop');
+  fire(source, 'dragend');
+  return dropped;
+}
+"""
+
+
+def drag_onto(page: Page, source: Locator, target: Locator, *, kind: str = "key") -> None:
+    """Run an HTML5 drag of ``source`` onto ``target`` through the page's own handlers and check they took it.
+
+    Dispatches ``dragstart``, ``dragenter``, ``dragover``, ``drop`` and ``dragend`` with one shared ``DataTransfer``,
+    so the page's handlers run exactly as for a hand drag but nothing depends on how the browser turns mouse events
+    into a native drag. That conversion is what a starved runner lost (pipeline 96654: the drop never happened), and
+    Playwright's mouse-driven version of it could not be made reliable either (pipeline 96700). The result says
+    whether the drag started (the page did not cancel ``dragstart``), whether it marked the body as dragging the
+    expected ``kind``, and whether the target accepted it (the page cancels ``dragover`` only for a drop it takes).
+    """
+    source.scroll_into_view_if_needed()
+    result = source.evaluate(DRAG_SCRIPT, target.element_handle())
+    assert result["started"], f"the page cancelled the {kind} drag at its start: {result}"
+    assert result["marked"] == kind, f"the page did not mark a {kind} drag in progress: {result}"
+    assert result["accepted"], f"the drop target did not accept the {kind} drag: {result}"

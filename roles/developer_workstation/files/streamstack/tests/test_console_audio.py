@@ -1486,3 +1486,33 @@ def test_revive_of_digital_silence_resyncs_the_capture_controls_first(rig: Rig) 
     assert revive["state"] == "ok" and "capture controls re-written" in revive["message"]
     assert resynced == [3]
     assert pactl_mutations(rig) == []  # the resync alone fixed it
+
+
+def test_demo_mic_check_hold_stands_the_timeline_still_until_stepped() -> None:
+    clock = Clock()
+    demo = DemoAudio(clock=clock)
+    demo.act("audio.demo_check_hold", {"on": True})
+    demo.act("audio.mic_check", {"seconds": 2})
+    clock.advance(600.0)  # however long the runner stalls, no step is skipped
+    assert demo.state()["mic_check"]["state"] == "recording-raw"
+    demo.act("audio.demo_check_step", {})
+    check = demo.state()["mic_check"]
+    assert check["state"] == "recording-processed"
+    assert [c["label"] for c in check["clips"]] == ["raw microphone"]
+    clock.advance(600.0)
+    assert demo.state()["mic_check"]["state"] == "recording-processed"
+    demo.act("audio.demo_check_step", {})
+    check = demo.state()["mic_check"]
+    assert check["state"] == "done"
+    assert [c["label"] for c in check["clips"]] == ["raw microphone", "processed voice"]
+    # the hold ended with the check: the next one runs on its own clock again
+    demo.act("audio.mic_check", {"seconds": 2})
+    clock.advance(2.5)
+    assert demo.state()["mic_check"]["state"] == "recording-processed"
+
+
+def test_demo_mic_check_step_needs_a_running_check() -> None:
+    demo = DemoAudio(clock=Clock())
+    with pytest.raises(ActionError) as err:
+        demo.act("audio.demo_check_step", {})
+    assert err.value.status == 409

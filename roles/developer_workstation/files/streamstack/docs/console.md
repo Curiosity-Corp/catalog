@@ -90,8 +90,10 @@ page URL as `?token=…`; `app.js` keeps it in memory.
 | GET | `/api/preview.mjpg?source=program\|<camera>\|camera&fps=1..15&width=160..1280` | `multipart/x-mixed-replace` JPEG stream |
 | GET | `/api/preview.jpg?source=…&width=…` | one JPEG (look thumbnails) |
 | GET | `/api/deck/palette` | the options a key can be given (`{"palette": [...]}`), built from the live rig |
+| GET | `/api/slots/profiles.json` | the time-of-day profiles, for export (`slots.import` takes it back) |
 | GET | `/api/deck/profile.json` | the deck profile, for export |
 | GET | `/api/deck/key.png?page=&key=&size=` | the picture of one key (empty `page`: the page the deck is on); needs Pillow |
+| GET | `/api/hotkeys/bindings.json` | the hotkey and MIDI bindings, for export (`docs/hotkeys.md`) |
 | GET | `/api/clips/<id>.wav` | a mic-check recording (kept for 10 minutes, at most 4) |
 
 ## State snapshot
@@ -142,7 +144,7 @@ values in the engine's units.
     "streaming": {"active": false, "timecode": null},
     "canon": {                       // the Canon bridge and body; every key is always present
       "available": true,             // the bridge answered; false = not running (state says why)
-      "state": "running",            // disabled | offline | starting | running | paused | stalled | stopped
+      "state": "running",            // disabled | offline | starting | running | paused | stalled | stopped | idle (live view rested with the engine)
       "message": null,
       "session": "shared",           // shared (python-gphoto2, instant) | pause (gphoto2 command, ~1 s freeze per change)
       "usb": ["04a9:3215 Canon EOS 50D"],
@@ -219,6 +221,16 @@ values in the engine's units.
     "last_note": "Face slightly under-exposed; lifted gamma.", "last_time": "2026-10-22T14:03:11",
     "journal": [{"time": "…", "event": "ai", "text": "…", "kind": "video|audio|ai|error"}]  // newest first, ≤ 30
   },
+  "slots": {                           // time-of-day profiles, docs/slots.md
+    "available": true, "mode": "off",  // off | suggest | auto
+    "fade_seconds": 4.0,
+    "slots": [{"id": "dawn", "label": "Dawn", "profile": {"look": "Natural", "lighting": "Soft"}, "empty": false}],
+    "current": {"slot": "morning", "label": "Morning", "minute": 562, "clock": "09:22"},
+    "strip": [{"slot": "night", "start": 0, "end": 300}],   // the local day in minutes
+    "options": {"looks": [], "scenes": [], "voices": [], "lighting": [], "canon": {"present": true}, "blur": true},
+    "status": {"state": "idle", "summary": "…", "applied": null, "held": null, "suggestion": null, "can_undo": false},
+    "director": {"on": false}, "events": [{"time": "…", "level": "ok", "text": "…"}]
+  },
   "framing": {                         // auto-framing, docs/auto-framing.md
     "mode": "off",                     // off | gentle | tight | follow
     "state": "off",                    // off | starting | tracking | held | no-face | unavailable
@@ -285,6 +297,15 @@ values in the engine's units.
                 "keys": [KEY, ...]},  // what the deck itself shows (the profile re-flowed to its grid)
     "models": [{"id": "xl", "name": "Stream Deck XL", "rows": 4, "cols": 8, "size": 96}],
     "palette_rev": "1a2b3c4d"        // changes when the options list does (api/deck/palette)
+  },
+  "hotkeys": {                       // global hotkeys and MIDI; see docs/hotkeys.md
+    "available": true, "enabled": true, "session": "x11",   // x11 | wayland | none
+    "keys": {"backend": "x11", "ok": true, "reason": null},  // x11 | portal | demo | none
+    "midi": {"ok": true, "reason": null, "devices": [{"id": "midiC1D0", "name": "nanoKONTROL2", "status": "ok"}],
+             "last": null},
+    "bindings": [{"id": "b1", "trigger": {...}, "action": "audio.mute", "params": {}, "trigger_text": "Ctrl+Alt+M",
+                  "status": "ok", "detail": "", "last": {"ok": true, "time": "10:15:00", "text": "Done"}}],
+    "learn": {"active": false, "event": null}, "events": [...], "limits": {"bindings": 128}
   },
   "diagnostics": {                   // opt-in telemetry and crash reports (docs/telemetry.md)
     "telemetry": {"enabled": false, "path": "/metrics", "url": null,   // url: where a scraper reads it, no token
@@ -357,6 +378,8 @@ take seconds (studio start, mic check, auto once) return at once with
 | `video.blur.plugin` | `installed: bool` | demo only: pretend the plugin is (not) installed, to see the install hint |
 | `video.blur.arc` | `mode` | demo only: put the native blur path in a state (`off` keeps the plain demo blur, `running`, `downloading`, `unavailable`, `failed`, `stalled`) |
 | `video.virtualcam` | `on` | start/stop the program camera (the native engine) |
+| `video.keepalive` | `on` | Keep awake: never idle the engine and the Canon live view, and wake them now if they rest (saved in `video.json`; see [camera-delivery.md](camera-delivery.md#idle-when-no-app-reads-the-camera)) |
+| `video.idle.demo` | `state`: `running` \| `idle` \| `waking` | demo only: put the simulated engine (and Canon body) in an idle state to see the page |
 | `video.record` | `on` | start/stop recording |
 | `video.stream` | `on` | start/stop streaming |
 | `video.canon_set` | `id`, `value` | set a Canon setting (`iso`, `shutter`, `aperture`, `exposure_comp`, `whitebalance`, `kelvin`, `picturestyle`, `focusmode`, `liveviewsize`); 409 with the camera's own reason when it refuses (for example the mode dial). The answer message says when the camera kept a different value |
@@ -376,6 +399,8 @@ take seconds (studio start, mic check, auto once) return at once with
 | `audio.demo_stall` | `on` | demo only: put the demo microphone into (or out of) the stalled state |
 | `audio.clip_clear` | | clear the clip latch (every window shows it cleared) |
 | `audio.demo_clip` | | demo only: trip the clip latch |
+| `audio.demo_check_hold` | `on` | demo only: stand the mic-check timeline still (each take then ends only on `audio.demo_check_step`); it lets go when the check is done |
+| `audio.demo_check_step` | | demo only: end the current mic-check take now; 409 when no check is running |
 | `audio.mic_check` | `seconds?` (2–15, default 6) | record raw then processed; clips appear in state |
 | `audio.output_volume` | `name`, `percent` (0 to 100) | volume of one output (`wpctl set-volume`) |
 | `audio.output_mute` | `name`, `on` | mute or unmute one output |
@@ -409,6 +434,8 @@ take seconds (studio start, mic check, auto once) return at once with
 | `lighting.presets.save` / `lighting.presets.delete` | `name` | save the current lights as a preset (`~/.config/streamstack/lighting.json`) / delete a saved one |
 | `lighting.identify` | `id` | pulse one light three times, then restore it |
 | `lighting.rescan` | | look for lights now |
+| `slots.mode` / `slots.fade` / `slots.profile` / `slots.clear` / `slots.save_current` / `slots.starter` | see docs/slots.md | time-of-day profiles: settings and the six profiles |
+| `slots.apply` / `slots.undo` / `slots.resume` / `slots.dismiss` / `slots.import` / `slots.reset` | see docs/slots.md | apply a profile now, put it back, end a hold, drop a suggestion, import or reset |
 | `framing.mode` | `mode`: `off` \| `gentle` \| `tight` \| `follow` | auto-framing mode; 409 when the extra or model is missing |
 | `framing.hold` | `on` | freeze or release the crop; 409 while off |
 | `framing.reset` | | recentre: forget the crop and find the face again; 409 while off |
@@ -423,6 +450,10 @@ take seconds (studio start, mic check, auto once) return at once with
 | `deck.settings` | `brightness` 5..100, `sleep_minutes`, or `step` | the deck's brightness and sleep timer |
 | `deck.layout` / `deck.import` / `deck.reset` | `model` or `rows`+`cols` / `profile` | lay out for another deck, import, reset to the default |
 | `deck.attach` / `deck.detach` | `name`, `serial`, `rows`, `cols`, `size` or `error` | the deck service reporting its device (demo: `model`) |
+| `hotkeys.add` / `hotkeys.update` | `binding`: `{trigger, action, params?, label?, scale?}` (+ `id` to update) | add or change a binding. The binding is nested because the request's own `action` names the action |
+| `hotkeys.remove` / `hotkeys.clear` / `hotkeys.fire` | `id` | remove a binding, remove all, or run one as if its trigger fired |
+| `hotkeys.enable` / `hotkeys.learn` | `on` | switch all hotkeys on or off; listen for the next MIDI control |
+| `hotkeys.import` | `document` | replace the bindings with an exported file |
 | `health.refresh` | | re-run the checks now |
 | `open.app` | `name`: `qpwgraph` \| `pavucontrol` \| `qv4l2` | open the full tool |
 

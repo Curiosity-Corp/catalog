@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Reproduce the Wave XLR capture-after-playback zeros (issue #126). A manual tool, not shipped.
 
-For each cycle: start a playback stream on the XLR sink first (silence), then a capture stream on the XLR source for a
-second, and count captures that are bit-exact zero. Run it with the voice chain, calls and anything else using the XLR
-stopped, because it opens both ends of the card:
+For each cycle: start a playback stream on the XLR sink first (silence), then a capture stream on the XLR source
+for 6 seconds (the first buffer arrives about 2 s after open, so a shorter window reads as short), and count captures
+that are bit-exact zero. Run it with the voice chain, calls and anything else using the XLR stopped, because it opens
+both ends of the card:
 
     python3 tools/xlr_capture_order.py --cycles 20            # playback first (the suspected failure order)
     python3 tools/xlr_capture_order.py --cycles 20 --capture-first   # the control: capture first
@@ -21,6 +22,7 @@ import time
 
 RATE = 48000
 BYTES_PER_SECOND = RATE * 4  # float32le, mono
+MIN_SECONDS = 6.0  # the XLR delivers its first buffer about 2 s after open, so a 1 s window reads as "short" (#126)
 
 
 def classify(data: bytes, seconds: float) -> str:
@@ -76,7 +78,9 @@ def cycle(sink: str, source: str, seconds: float, capture_first: bool) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cycles", type=int, default=20)
-    parser.add_argument("--seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--seconds", type=float, default=MIN_SECONDS, help="window per cycle (below 6 the XLR can read as short)"
+    )
     parser.add_argument("--capture-first", action="store_true")
     args = parser.parse_args()
     sink, source = find("sinks"), find("sources")

@@ -5,6 +5,70 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-10-27
+
+v0.0.14 was never published: its tag was refused by the release gate because changelog fragments from merge requests that landed on the train after `release.py prepare` were still in `changelog.d/`. Everything listed under 0.0.14 below shipped in this release instead.
+
+### Added
+- Global hotkeys and MIDI (#44): bind a keyboard shortcut or a MIDI note, button, fader or program change to any Console action (the same options as a Stream Deck key), and they work while the call window has focus. On an X11 session the keys are grabbed directly (and a combo another program holds is shown as "In use elsewhere"); on Wayland they register through the XDG GlobalShortcuts portal (optional `streamstack[shortcuts]` extra). MIDI ports are read from ALSA with hot-plug, and Learn fills the form from the next control you move. Faders can scale into an action parameter. Bindings live in `~/.config/streamstack/hotkeys.json` and export and import as JSON. New "Hotkeys and MIDI" card on the Deck page; `docs/hotkeys.md`.
+- The engine, the GPU and the Canon live view rest while no app reads StreamStack Camera (#128, docs/camera-delivery.md).
+  A governor (`engine/idle.py`) watches who holds `/dev/video43` open (inotify on the node as the trigger, a `/proc` scan
+  as the answer, never opening the device) and idles the engine after 10 s without a reader (`STREAMSTACK_ENGINE_IDLE`
+  = `auto`/`off`, `_AFTER`, `_IGNORE`). While idle a quiet "Camera idle" placeholder at 5 fps keeps the camera listed
+  for Teams and Edge, and the Canon bridge ends live view by lease (`rest`, renewed by the Console, so a dead Console
+  never leaves the body dark). The first reader, confirmed for 0.25 s so an Edge probe that opens and closes the device
+  does not flap it, wakes the engine; the wake time is measured and shown. A Console preview, a running stream or
+  recording, and the new **Keep awake** switch on the Camera page count as demand. The Camera page shows an `ENGINE idle`
+  chip and the Canon card says live view is off; `streamstack doctor` gets an `engine-idle` row;
+  `state.video.engine.idle` carries the details and `video.keepalive` is the new action.
+- Doctor now says why a Focusrite Scarlett shows no controls: not on USB, on USB without a sound card, MSD (Easy Start) mode, firmware too old, or healthy, with the kernel line and the fix command (`hw-scarlett`, read-only; it never flashes or reboots the interface) (#130).
+- v4l2loopback contract and hardening (#86): `streamstack doctor` and the new `streamstack loopback guard` report a
+  v4l2loopback module that is missing or not built for the running or newest installed kernel (with the DKMS fix), a
+  loaded version below 0.15.4, a format outside the Chromium contract (YUYV or NV12, one even size, 24 to 60 fps,
+  `exclusive_caps` on), and a competing producer on the program or camera node with the program and pid that holds it
+  (for example a leftover OBS virtual camera). `make install` adds a kernel postinst hook that runs
+  `dkms autoinstall` for each new kernel. See docs/loopback-contract.md.
+
+### Changed
+- The AI benchmark (`tools/bench_ai.py`) now picks the discrete Arc by device type like auto-framing does, points `intel_gpu_top` at that GPU (`--gpu-top-sudo` for CAP_PERFMON), gives each rig its own compile cache and has a `--measured` mode for real-hardware runs on generated frames; docs/hardware-ai-evaluation.md holds the first Arc A380 numbers and the decision-gate verdicts (#22).
+- The GitLab release host is configuration only. `streamstack verify-install`, `streamstack chain install-plugin` and `scripts/install-release.sh` read it from `STREAMSTACK_GITLAB_HOST` (CI: `CI_SERVER_HOST`; the install script also falls back to the checkout's git remote) and the project from `STREAMSTACK_PROJECT_ID`. When no host is set they say so and print a `$STREAMSTACK_GITLAB_HOST` placeholder instead of a hardcoded private host, and a test guards the shipped code and docs against a private hostname.
+
+### Fixed
+- The deck e2e drags a key in acknowledged steps through the page's own drag handlers (a shared DataTransfer, no dependence on how the browser turns mouse events into a drag), checking the page took each one, so a stalled runner can no longer lose the drop. Tests only.
+- The lights-status tests no longer fail on a busy disk: they stamped the heartbeat and then wrote the status durably (fsync), which can outlast the ten seconds a heartbeat stays fresh; they now write it as the service does. Tests only.
+
+## [0.0.14] - 2026-10-27
+
+### Added
+- Time-of-day look profiles (#42): one profile for each part of the day (night, dawn, morning, midday, afternoon, evening)
+  that sets a look, a scene, a voice preset, a lighting preset, the Canon's exposure compensation and the background
+  blur. The Camera page has a "Day" popover with a strip of the day, a mode (Off, Suggest or Automatic) and a row per
+  slot. A profile applies when a call starts or the slot changes between calls (never in the middle of one), lights
+  fade to the new level, a manual change holds the profile until the slot ends, "Undo" puts the picture back, and with
+  the AI Director on a profile seeds the Director's baselines instead of competing with it. New `slots.*` actions,
+  Stream Deck keys, and `GET /api/slots/profiles.json`. Details: docs/slots.md.
+- Crash-safe local recording (#81): recordings keep the **raw microphone as a third track** (track 2 stays the processed program sound; live destinations never receive it), a **disk guard** refuses to start under twice `STREAMSTACK_RECORD_MIN_FREE_MB` (default 1024), warns once, and ends the recording cleanly at the minimum with the file saved, and a recording killed with `kill -9`, an out-of-memory kill or a power cut is **found by its `<file>.recording` marker and repaired at the next start** (an indexed remux, verified before it replaces anything). The Stream page shows free space and the time left. Tests kill a real recorder with SIGKILL and stop a real Console with SIGTERM. See docs/stream.md (Crash-safe recording).
+- Stills (#85): `streamstack stills` writes AVIF snapshots (`snapshot`) and recompresses camera JPEGs to JPEG XL reversibly (`archive`, `restore`): every archive is rebuilt and compared byte for byte with the original before it is kept, and the JPEG is removed only on request after that proof. Runs on the system libjxl or the new `stills` extra (`imagecodecs`). See docs/stills.md.
+- StreamStack Camera stays listed when the real camera goes away (work package C, docs/camera-delivery.md). On
+  dm313red the external PTP bridge died after a reboot, nothing wrote `/dev/video43`, and Teams in Edge lost the
+  camera without any alarm. The engine supervisor now asks a guard before each start (the source node exists and has a
+  producer) and waits instead of failing, stops a child whose frame counter stalls (ffmpeg blocks in the V4L2 read when
+  a loopback producer disappears), and a "Camera reconnecting" slate writes the program node at the engine's own
+  size and rate while no engine child does (`STREAMSTACK_CAMERA_LOSS` = `slate`, `hold` or `off`). With the Cam Link
+  connected the engine fails over to it after 6 s and returns to the picked camera after 5 s of a steady picture
+  (`STREAMSTACK_CAMERA_FALLBACK`, `_AFTER`, `_BACK`). The Console shows the state as a System-page row and in
+  `video.engine.delivery`; `streamstack doctor` gets a `video-chain` row ("nothing feeds /dev/video43").
+
+### Changed
+- Changelog entries are per-merge-request fragments (#136). Merge requests no longer edit `CHANGELOG.md`, which
+  serialised every parallel MR on conflicts: each adds `changelog.d/<issue>.<type>.md` (`added`, `changed`, `deprecated`,
+  `removed`, `fixed`, `security`), and `scripts/release.py prepare` compiles and deletes them. The new `changelog-check`
+  job fails an MR that edits `CHANGELOG.md` or changes `src/` without a fragment (opt out with the `skip-changelog` label
+  or a `Skip-Changelog: <reason>` trailer), and the tag gate refuses a release that still has fragments.
+
+### Fixed
+- `streamstack chain stop` no longer brings back the wrong default microphone (#142). It used to restore whatever default was recorded when the chain started, which on dm313red was the Cam Link's HDMI audio (twice), and it left StreamStack Mic as the default when that record was missing. The default now goes to the chain's own capture target, the Plan's microphone (the Wave XLR), and never to a camera's audio; a microphone that is not plugged in is never named, the key is cleared instead. `tools/xlr_capture_order.py` now defaults to a 6 s window, because the XLR delivers its first buffer about 2 s after open.
+
 ## [0.0.13] - 2026-10-27
 
 ### Added
@@ -16,6 +80,15 @@ All notable changes are recorded here. The project follows
   of pipelines 96021 and 96223 (a UI post that had not landed when the test sampled the server).
 
 ### Fixed
+- `test_mic_check_runs_to_done_and_both_clips_load` failed on a busy runner (pipeline 96315, MR !67 which does not touch
+  audio; the page showed "Done" and never "Step 2 of 2"). The demo's takes are timed by the wall clock and the page learns of
+  each step only on the hub's next push, so a 5 s step can pass unseen when the runner stalls. The demo rig gains two
+  demo-only actions, `audio.demo_check_hold` and `audio.demo_check_step`, and the test holds the timeline and ends each
+  take itself, so the page is shown every step for as long as it needs. No timeout was raised; no real-hardware path changes.
+- `test_an_open_mic_never_warns_and_the_warning_can_be_switched_off` failed on !93's pipeline 96527 (`assert 1 == 0`).
+  The e2e reset (`call.demo_reset`) left the demo call monitor in_call and muted for the leave hold, long enough for the
+  demo's speech-like meters to raise a warning on the fresh watcher. The reset now drops the call at once
+  (`CallMonitor.reset`). Demo rig only.
 - e2e: Firefox `Page.goto` 60 s timeouts on the CI runner (#124). Both recorded cases (pipelines 87280 and 87570) ran
   while the runner pod waited on "12 Insufficient cpu", and the Console's first load is a 54-module graph that Firefox
   must fetch and evaluate before the `load` event. The e2e `goto` now navigates at `commit` and waits for the page's
