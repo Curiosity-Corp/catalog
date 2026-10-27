@@ -4,3 +4,8 @@
 # public variable API. Prefix migration is tracked as a breaking-change task.
 skip_list:
   - var-naming[no-role-prefix]
+
+# The vendored StreamStack subtree is a Python project, not Ansible content: its
+# .gitlab-ci.yml uses GitLab's !reference tag, which ansible-lint cannot load.
+exclude_paths:
+  - roles/developer_workstation/files/streamstack/
