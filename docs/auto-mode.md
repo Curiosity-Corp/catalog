@@ -246,6 +246,24 @@ limit for lit pictures. The 1280x720 feed is area-downscaled 4x to 320 px, so th
 1056 px live view does not move the sharpness scale. These still need a pass with the lights on and the person in
 frame; the audio half of #32 also remains.
 
+### Calibrating on the real rig: the procedure (issue #32, audio half and the lit-room pass)
+
+`tools/calibrate_director.py` collects the evidence and prints suggestions. It never edits the shipped bands: the
+persona bands stay as they are until the numbers justify a change in a reviewed MR. It needs a person, so it is run by
+the owner at an idle desk (no call; `record` refuses while a call app holds a capture stream):
+
+1. Voice. In each room and mic setup (Wave XLR, Scarlett, with and without the voice chain), read the same passage
+   aloud at the normal distance: `python3 tools/calibrate_director.py record --label xlr-office-day --execute`, 20 s
+   by default, from the StreamStack Mic. Then `analyze --kind voice --label xlr-office-day calibration/*.wav --out
+   voice.jsonl`.
+2. Picture. With the lights on and the person in frame, take a few stills of the program output in each light (day,
+   evening, lamp only) and run `analyze --kind picture --label canon-lit stills/*.jpg --out picture.jsonl`.
+3. `fit voice.jsonl` prints the spread of every number and, per voice bar, the shipped band against the 5th to 95th
+   percentile of the clips. It withholds suggestions below 8 clips from 2 setups. Paste the table on #32 and, if a band
+   clearly misfits, change it in `audiofeatures.scores` or the persona files with the table in the MR description.
+
+Do not commit the WAVs or stills; only the numbers.
+
 ## The Console link
 
 Auto mode is its own process, and the native video engine lives inside the Console, so the director changes the

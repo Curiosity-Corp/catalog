@@ -49,6 +49,7 @@ from streamstack import (
     deckservice,
     lightservice,
     micwatch,
+    pipewirecam,
     stills_cli,
     store,
     system,
@@ -273,6 +274,7 @@ def run_checks(
 
     checks.extend(virtualdevices.camera_checks(virtualdevices.camera_report(program, cfg["STREAMSTACK_PROGRAM_LABEL"])))
     checks.extend(videochain.chain_checks(cfg))
+    checks.extend(pipewirecam.checks(cfg))
     checks.extend(videochain.idle_checks(_console_video()))
 
     canon = usb_products(CANON_USB_VENDOR)

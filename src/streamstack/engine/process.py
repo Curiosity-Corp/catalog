@@ -2,9 +2,12 @@
 
 * **Commands** go to the child's stdin (`graph.Command`), so looks, crop windows and the privacy blackout change
   between two frames. Only controls that differ from what the child already has are sent.
-* **Restart** happens only when the graph itself must change (another camera, another output size) or the child
-  dies; then the new child starts from the current look and window, so the picture comes back as it was. The wait
-  grows 0.5 s, 1 s, 2 s, 5 s and stays at 5 s; a camera that is unplugged shows as "waiting".
+* **Restart** happens only when the graph itself must change (another camera, another output size, or a look that
+  moves the GPU sharpen to another baked step, see `graph.GraphKey`) or the child dies; then the new child starts from
+  the current look and window, so the picture comes back as it was. A deliberate restart starts the new child at
+  once; after a crash the wait grows 0.5 s, 1 s, 2 s, 5 s and stays at 5 s; a camera that is unplugged shows as
+  "waiting". A change of the baked step waits `KEY_SETTLE` seconds for the look to stop moving (a slider drag or a
+  look ramp crosses several steps and costs one restart).
 * **Background blur** (`Spec.blur`, see blurfeed.py) adds two pipes per child, camera frames out and person masks in,
   and a pump thread that answers one with the other. On, off and strength are commands to `maskedmerge@blur` and
   `gblur@bg` like any other control; nothing restarts.
@@ -29,7 +32,7 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 
-from streamstack.engine import graph
+from streamstack.engine import graph, shaders
 from streamstack.engine.blurfeed import BlurFeed
 from streamstack.engine.graph import Command, Rect, Spec
 from streamstack.engine.jpeg import JpegSplitter
@@ -45,6 +48,7 @@ STALL_FIRST = 10.0  # a camera may need this long to deliver its first frame (a 
 NOT_READY_POLL = 1.0  # how often a source that is not ready is asked again
 BeforeChild = Callable[[Spec], str | None]
 OnExit = Callable[[str, int], None]
+KEY_SETTLE = 0.6  # seconds a look must rest on a new baked step before the child is rebuilt for it
 
 
 class VideoEngine:
@@ -92,6 +96,10 @@ class VideoEngine:
         self._last_apply_ms: float | None = None
         self._stalled: str | None = None  # set by the watchdog for the child it is stopping
         self._not_ready: str | None = None  # why the source is not ready now, None when it is
+        self._built_key: graph.GraphKey | None = None  # what the running child has baked in
+        self._key_timer: threading.Timer | None = None
+        self._planned = False  # the next child exit is a deliberate restart: no crash back-off
+        self._no_shader = False  # the sharpen shader could not be written: sharpen is off until restart
 
     # -- lifecycle -----------------------------------------------------------------------------------------------
 
@@ -107,6 +115,7 @@ class VideoEngine:
     def stop(self) -> None:
         self._halt.set()
         self._wake.set()
+        self._cancel_key_timer()
         with self.lock:
             proc = self._proc
         if proc is not None:
@@ -134,6 +143,7 @@ class VideoEngine:
         with self.lock:
             proc = self._proc
             self._sent = None
+            self._planned = True
         if proc is not None:
             self._terminate(proc)
         self._wake.set()
@@ -146,7 +156,12 @@ class VideoEngine:
         with self.lock:
             self._look = dict(look)
             commands = self._pending_commands()
+            rebuild = self._key_for(look) != self._built_key and self._proc is not None
         self._send(commands)
+        if rebuild:
+            self._schedule_rebuild()
+        else:
+            self._cancel_key_timer()
         elapsed = (self._clock() - began) * 1000
         self._last_apply_ms = round(elapsed, 3)
         return elapsed
@@ -189,8 +204,38 @@ class VideoEngine:
             return None
         return (rect.x / src.width, rect.y / src.height, (rect.x + rect.w) / src.width, (rect.y + rect.h) / src.height)
 
+    def _key_for(self, look: dict) -> graph.GraphKey | None:
+        """What `look` bakes into the graph, with sharpening dropped if its shader could not be written."""
+        key = graph.graph_key(self._spec, look)
+        if key is not None and self._no_shader:
+            key = replace(key, sharpen=0.0)
+        return key
+
+    def _schedule_rebuild(self) -> None:
+        """The look moved to another baked step: rebuild the child once the look has rested for KEY_SETTLE."""
+        with self.lock:
+            if self._key_timer is not None:
+                self._key_timer.cancel()
+            timer = threading.Timer(KEY_SETTLE, self._rebuild_if_needed)
+            timer.daemon = True
+            self._key_timer = timer
+        timer.start()
+
+    def _cancel_key_timer(self) -> None:
+        with self.lock:
+            timer, self._key_timer = self._key_timer, None
+        if timer is not None:
+            timer.cancel()
+
+    def _rebuild_if_needed(self) -> None:
+        with self.lock:
+            self._key_timer = None
+            stale = self._proc is not None and self._key_for(self._look) != self._built_key
+        if stale and not self._halt.is_set():
+            self._restart_child()
+
     def _controls(self) -> dict[tuple[str, str], str]:
-        controls = graph.look_controls(self._look, self._spec.backend, self._blackout)
+        controls = graph.look_controls(self._look, self._spec.backend, self._blackout, self._built_key)
         if self._spec.blur is not None and self._blur is not None:
             controls.update(graph.blur_controls(self._blur_on, self._blur_strength))
         return controls
@@ -269,6 +314,7 @@ class VideoEngine:
             "blackout": self._blackout,
             "not_ready": self._not_ready,
             "blur": self._blur.stats() if self._blur is not None and spec.blur is not None else None,
+            "sharpen": "gpu" if graph.graph_key(spec, {}) is not None and not self._no_shader else "cpu",
         }
 
     def latest_frame(self, max_age: float = FRAME_MAX_AGE) -> bytes | None:
@@ -306,6 +352,10 @@ class VideoEngine:
             if self._halt.is_set():
                 break
             failures = 0 if ran >= STABLE_SECONDS else failures + 1
+            with self.lock:
+                planned, self._planned = self._planned, False
+            if planned:
+                failures = 0  # a deliberate restart (a new baked step): straight back up
             wait = BACKOFF[min(failures, len(BACKOFF)) - 1] if failures else 0.1
             with self.lock:
                 if self._state != "error":
@@ -365,13 +415,16 @@ class VideoEngine:
             spec, look, rect, blackout = self._spec, dict(self._look), self._rect, self._blackout
             self._state, self._progress = "starting", {}
             self._stderr.clear()
+        key = self._prepare_key(spec, look)
+        with self.lock:
+            self._built_key = key
         progress_r, progress_w = os.pipe()
         blur_pipes = self._open_blur_pipes(spec)
         blur_fds = (blur_pipes[1], blur_pipes[2]) if blur_pipes else None  # (seg write, mask read): the child's ends
         blur_args = (self._blur_on, self._blur_strength) if blur_pipes else None
         try:
             argv = graph.build_argv(
-                spec, look, rect, blackout, progress_fd=progress_w, blur=blur_args, blur_fds=blur_fds
+                spec, look, rect, blackout, progress_fd=progress_w, blur=blur_args, blur_fds=blur_fds, key=key
             )
         except graph.GraphError:
             _close_all(progress_r, progress_w, *(blur_pipes or ()))
@@ -462,6 +515,21 @@ class VideoEngine:
             log.warning("engine: %s", self._stalled)
             self._terminate(proc)
             return
+
+    def _prepare_key(self, spec: Spec, look: dict) -> graph.GraphKey | None:
+        """The baked step for a new child, with its shader on disk. A shader that cannot be written turns sharpening
+        off (and says so once) instead of stopping the picture."""
+        key = self._key_for(look)
+        if key is None or key.sharpen <= 0:
+            return key
+        try:
+            shaders.ensure_sharpen(spec.shaders, key.sharpen)
+        except OSError as exc:
+            log.warning("engine: cannot write the sharpen shader under %s: %s", spec.shaders, exc)
+            self._no_shader = True
+            self._toast("warn", f"Sharpening is off: the GPU shader cannot be written ({exc.strerror or exc}).")
+            return replace(key, sharpen=0.0)
+        return key
 
     def _open_blur_pipes(self, spec: Spec) -> tuple[int, int, int, int] | None:
         """(seg read, seg write, mask read, mask write) for a child that has a blur branch, else None."""

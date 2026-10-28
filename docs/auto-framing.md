@@ -23,6 +23,24 @@ The zoom limit is also capped by the camera's resolution: the picture is never e
 output. A 704-line Canon live view drawn 1080 lines tall gets about 1.3x; a 1080p Cam Link gets up to the mode's
 limit. Hold freezes the crop where it is (and stops detecting). Recentre forgets the crop and finds you again.
 
+## Groups, speakers and shots
+
+- **Who to frame.** `Everyone` (the default) keeps every person in the picture: a face becomes part of the group after
+  about a second and three detections, and leaves it three seconds after its last one, so a passer-by or a missed
+  detection never moves the window. `One person` follows the main face, as before.
+- **Follow speaker.** With more than one person and the switch on, the shot moves to the person who is talking: the
+  microphone's voice activity (the same raw-mic detector as the muted-talk warning, nothing is recorded) says that
+  someone talks, and the mouth movement from the YuNet landmarks says who. A new speaker must lead for a second before
+  the shot moves; it returns to the group four seconds after the voice stops. A stereo voice direction can break a tie
+  (`FramingController.voice_x`); no stereo source is wired yet.
+- **Shots.** Auto (the mode decides), Close, Medium, Wide, Presenter (head and shoulders, a little off-centre) and Desk,
+  a fixed crop on the desk that runs no detector and uses no CPU. Choosing a shot while framing is off turns it on.
+- **Lost subject.** When nobody is seen the crop holds, widens halfway after the lost timeout, and returns to the
+  shot's home framing after six seconds, instead of staring at where you were.
+- **Benchmark.** `tests/test_framing_group.py` replays scripted clips with 1, 2 and 3 faces and alternating speakers:
+  at least 95 percent of frames keep everyone inside, the window never exceeds its speed limit, and a detection plus
+  framing step stays under 8 ms at p95.
+
 ## Install
 
 ```

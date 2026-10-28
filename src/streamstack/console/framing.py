@@ -6,8 +6,10 @@
 The picture path is never touched: no device is opened, no filter is added, nothing waits on a detection. If the
 detector or the engine stops answering the crop eases back to the full frame and the program feed goes on unchanged.
 
-For other code (the AI director) the actuator surface is `set_mode`, `hold`, `reset` and `status`; the Console
-actions call exactly those.
+For other code (the AI director) the actuator surface is `set_mode`, `set_shot`, `set_subjects`, `set_handoff`, `hold`,
+`reset` and `status`; the Console actions call exactly those. Speaker hand-off listens to the microphone's meter frames
+(`on_meters`, the same raw-mic level the call warning uses) and decides only "someone is talking"; the face is found
+from the picture (`streamstack.framing.group`).
 """
 
 from __future__ import annotations
@@ -19,11 +21,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar, Protocol
 
-from streamstack import config, store
+from streamstack import config, speech, store
 from streamstack.console.errors import ActionError
 from streamstack.framing import detector, health, model
 from streamstack.framing.crop import Crop, Item, face_to_frame, window_to_crop
-from streamstack.framing.engine import MODES, PROFILES, Framer, resolution_zoom_cap
+from streamstack.framing.engine import MODES, PROFILES, SHOT_AUTO, SHOTS, SUBJECTS, Framer, resolution_zoom_cap
 
 log = logging.getLogger(__name__)
 Notify = Callable[[str, str], None]
@@ -55,6 +57,37 @@ def mode_list() -> list[dict[str, str]]:
         {"name": "off", "label": "Off", "blurb": "No framing. The picture is the camera's own."},
         *({"name": p.name, "label": p.label, "blurb": p.blurb} for p in PROFILES.values()),
     ]
+
+
+def shot_list() -> list[dict[str, str]]:
+    return [
+        {"name": SHOT_AUTO, "label": "Auto", "blurb": "The framing mode decides how close."},
+        *({"name": p.name, "label": p.label, "blurb": p.blurb} for p in SHOTS.values()),
+    ]
+
+
+SUBJECT_LABELS = {"group": "Everyone", "one": "One person"}
+
+
+def subject_list() -> list[dict[str, str]]:
+    return [
+        {"name": "group", "label": "Everyone", "blurb": "Keep everyone in the picture."},
+        {"name": "one", "label": "One person", "blurb": "Follow the main face only."},
+    ]
+
+
+def clean_shot(value: object) -> str:
+    shot = str(value or "").strip().lower()
+    if shot != SHOT_AUTO and shot not in SHOTS:
+        raise ActionError(f"Unknown shot {value!r}. Use one of: {', '.join((SHOT_AUTO, *SHOTS))}.", 400)
+    return shot
+
+
+def clean_subjects(value: object) -> str:
+    subjects = str(value or "").strip().lower()
+    if subjects not in SUBJECTS:
+        raise ActionError(f"Unknown subjects {value!r}. Use one of: {', '.join(SUBJECTS)}.", 400)
+    return subjects
 
 
 def clean_mode(value: object) -> str:
@@ -97,6 +130,14 @@ class FramingController:
         self._wake = threading.Event()
         self._threads: list[threading.Thread] = []
         self._mode = "off"
+        self._shot_choice = SHOT_AUTO
+        self._subjects = "group"
+        self._handoff = False
+        self._vad = speech.SpeechDetector()
+        self._speaking = False
+        self.voice_x: Callable[[], float | None] | None = (
+            None  # a stereo microphone's voice direction, 0 left to 1 right
+        )
         self._held = False
         self._framers: dict[str, Framer] = {}
         self._items: list[Item] = []
@@ -119,6 +160,7 @@ class FramingController:
         self._skipped: list[str] = []
         self._warned: dict[str, float] = {}
         self._mode = self._initial_mode()
+        self._load_choices()
 
     # -- notifications ------------------------------------------------------------------------------------------
 
@@ -156,9 +198,23 @@ class FramingController:
         mode = data.get("mode")
         return mode if isinstance(mode, str) else None
 
+    def _load_choices(self) -> None:
+        """The shot, the subjects and the hand-off the person chose last time (bad values fall back to the defaults)."""
+        data = store.read_json(self._state_file, {}, validate=store.object_with())
+        shot, subjects, handoff = data.get("shot"), data.get("subjects"), data.get("handoff")
+        if isinstance(shot, str) and (shot == SHOT_AUTO or shot in SHOTS):
+            self._shot_choice = shot
+        if isinstance(subjects, str) and subjects in SUBJECTS:
+            self._subjects = subjects
+        if isinstance(handoff, bool):
+            self._handoff = handoff
+
     def _save_mode(self) -> None:
         try:
-            store.write_json(self._state_file, {"mode": self._mode})
+            store.write_json(
+                self._state_file,
+                {"mode": self._mode, "shot": self._shot_choice, "subjects": self._subjects, "handoff": self._handoff},
+            )
         except OSError as exc:
             log.warning("framing mode not saved to %s: %s", self._state_file, exc)
 
@@ -210,6 +266,47 @@ class FramingController:
         self._wake.set()
         return f"Auto-framing: {MODE_LABELS[mode]}"
 
+    def set_shot(self, shot: str) -> str:
+        """Choose a shot preset. Framing starts (at the Gentle pace) when it is off; Auto hands the choice back."""
+        shot = clean_shot(shot)
+        if shot != SHOT_AUTO and self._mode == "off":
+            self.set_mode("gentle")  # raises when framing cannot run here; nothing changes then
+        with self.lock:
+            self._shot_choice = shot
+            for framer in self._framers.values():
+                framer.set_shot(shot)
+        self._save_mode()
+        self._wake.set()
+        label = "Auto" if shot == SHOT_AUTO else SHOTS[shot].label
+        return f"Shot: {label}"
+
+    def set_subjects(self, subjects: str) -> str:
+        subjects = clean_subjects(subjects)
+        with self.lock:
+            self._subjects = subjects
+            for framer in self._framers.values():
+                framer.set_subjects(subjects)
+        self._save_mode()
+        return f"Framing: {SUBJECT_LABELS[subjects]}"
+
+    def set_handoff(self, on: bool) -> str:
+        with self.lock:
+            self._handoff = bool(on)
+            for framer in self._framers.values():
+                framer.set_handoff(self._handoff)
+        self._save_mode()
+        return "Following the speaker" if on else "Not following the speaker"
+
+    def on_meters(self, frame: dict, now: float | None = None) -> None:
+        """One meter frame from the hub: the raw microphone's level says whether someone is talking."""
+        mic = frame.get("mic") if isinstance(frame, dict) else None
+        level = mic.get("rms_db") if isinstance(mic, dict) else None
+        if not isinstance(level, (int, float)) or not self._handoff or self._mode == "off":
+            return
+        now = self._clock() if now is None else now
+        with self.lock:
+            self._speaking = self._vad.feed(now, float(level))
+
     def hold(self, on: bool) -> str:
         with self.lock:
             self._held = bool(on)
@@ -229,6 +326,15 @@ class FramingController:
     def act(self, action: str, params: dict) -> str | None:
         if action == "framing.mode":
             return self.set_mode(params.get("mode"))
+        if action == "framing.shot":
+            return self.set_shot(params.get("shot"))
+        if action == "framing.subjects":
+            return self.set_subjects(params.get("subjects"))
+        if action == "framing.handoff":
+            on = params.get("on")
+            if not isinstance(on, bool):
+                raise ActionError("Say whether to follow the speaker: on must be true or false.", 400)
+            return self.set_handoff(on)
         if action == "framing.hold":
             on = params.get("on")
             if not isinstance(on, bool):
@@ -247,6 +353,7 @@ class FramingController:
     def state(self) -> dict:
         with self.lock:
             mode, held, status, reason = self._mode, self._held, self._status, self._reason
+            shot, subjects, handoff, speaking = self._shot_choice, self._subjects, self._handoff, self._speaking
             framers = dict(self._framers)
             air = set(self._on_air)
             skipped = list(self._skipped)
@@ -263,6 +370,8 @@ class FramingController:
                     "cx": round(window.cx, 4),
                     "cy": round(window.cy, 4),
                     "max_zoom": round(framer.max_zoom, 2),
+                    "people": framer.people,
+                    "speaker": framer.speaker,
                 }
             )
         lead = next((s for s in sources if s["on_air"]), sources[0] if sources else None)
@@ -294,6 +403,14 @@ class FramingController:
             "model": model.YUNET.name,
             "zoom": lead["zoom"] if lead else 1.0,
             "window": {"cx": lead["cx"], "cy": lead["cy"], "zoom": lead["zoom"]} if lead else None,
+            "shot": shot,
+            "shots": shot_list(),
+            "subjects": subjects,
+            "subject_options": subject_list(),
+            "handoff": handoff,
+            "speaking": bool(handoff and speaking and mode != "off"),
+            "people": lead["people"] if lead else 0,
+            "speaker": bool(lead and lead["speaker"]),
             "sources": sources,
             "skipped": skipped,
             "modes": mode_list(),
@@ -379,7 +496,9 @@ class FramingController:
             for source, group in by_source.items():
                 framer = self._framers.get(source)
                 if framer is None:
-                    framer = self._framers[source] = Framer(self._mode)
+                    framer = self._framers[source] = Framer(
+                        self._mode, subjects=self._subjects, shot=self._shot_choice, handoff=self._handoff
+                    )
                     framer.set_hold(self._held)
                 cap = min(resolution_zoom_cap(i.frame_height, i.out_height) for i in group)
                 framer.set_zoom_cap(cap)
@@ -481,8 +600,8 @@ class FramingController:
                     self._close_detector()
             return False
         self._detector_off_since = None
-        if self._held:
-            return False
+        if self._held or self._shot_choice == "desk":
+            return False  # a fixed desk crop looks at nobody
         if self._detector is None:
             try:
                 self._detector = self._opener(self._device)
@@ -521,12 +640,24 @@ class FramingController:
         with self.lock:
             framer = self._framers.get(source)
             if framer is not None:
-                framer.observe(now, framed)
+                voice_x = self._voice_direction() if self._handoff else None
+                framer.observe(now, framed, self._speaking if self._handoff else None, voice_x)
             self._frames += 1
             if now - self._frames_since >= 2.0:
                 self._rate = self._frames / (now - self._frames_since)
                 self._frames, self._frames_since = 0, now
         return True
+
+    def _voice_direction(self) -> float | None:
+        hook = self.voice_x
+        if hook is None:
+            return None
+        try:
+            value = hook()
+        except Exception as exc:  # a stereo microphone helper must never stop framing
+            log.warning("framing: the voice direction hook failed: %s", exc)
+            return None
+        return float(value) if isinstance(value, (int, float)) and 0.0 <= value <= 1.0 else None
 
     def _detector_error(self, exc: Exception) -> bool:
         self._errors += 1
@@ -546,12 +677,16 @@ class DemoFraming:
 
     DEVICE = "Intel Arc A380 (GPU)"
     ZOOM: ClassVar[dict[str, float]] = {"off": 1.0, "gentle": 1.15, "tight": 1.45, "follow": 1.3}
+    SHOT_ZOOM: ClassVar[dict[str, float]] = {"close": 1.6, "medium": 1.3, "wide": 1.1, "presenter": 1.25, "desk": 1.6}
 
     def __init__(self, notify: Notify | None = None, mode: str = "off") -> None:
         self._notify = notify
         self.lock = threading.RLock()
         self.mode = mode if mode in MODES else "off"
         self.held = False
+        self.shot = "auto"
+        self.subjects = "group"
+        self.handoff = False
         self.window = {"cx": 0.5, "cy": 0.5, "zoom": self.ZOOM[self.mode]}
 
     @property
@@ -590,9 +725,30 @@ class DemoFraming:
     def status(self) -> dict:
         return self.state()
 
+    def set_shot(self, shot: object) -> str:
+        shot = clean_shot(shot)
+        with self.lock:
+            if shot != "auto" and self.mode == "off":
+                self.set_mode("gentle")
+            self.shot = shot
+            if shot != "auto":
+                self.window = {"cx": 0.5, "cy": 0.46, "zoom": self.SHOT_ZOOM.get(shot, 1.3)}
+        return f"Shot: {SHOTS[shot].label if shot in SHOTS else 'Auto'}"
+
     def act(self, action: str, params: dict) -> str | None:
         if action == "framing.mode":
             return self.set_mode(params.get("mode"))
+        if action == "framing.shot":
+            return self.set_shot(params.get("shot"))
+        if action == "framing.subjects":
+            self.subjects = clean_subjects(params.get("subjects"))
+            return f"Framing: {SUBJECT_LABELS[self.subjects]}"
+        if action == "framing.handoff":
+            on = params.get("on")
+            if not isinstance(on, bool):
+                raise ActionError("Say whether to follow the speaker: on must be true or false.", 400)
+            self.handoff = on
+            return "Following the speaker" if on else "Not following the speaker"
         if action in ("framing.hold", "framing.reset"):
             if self.mode == "off":
                 raise ActionError("Auto-framing is off.", 409)
@@ -636,6 +792,14 @@ class DemoFraming:
                 ],
                 "skipped": [],
                 "modes": mode_list(),
+                "shot": self.shot,
+                "shots": shot_list(),
+                "subjects": self.subjects,
+                "subject_options": subject_list(),
+                "handoff": self.handoff,
+                "speaking": False,
+                "people": 2 if on and self.subjects == "group" else 1 if on else 0,
+                "speaker": False,
             }
 
     def health_checks(self) -> list[dict[str, str]]:

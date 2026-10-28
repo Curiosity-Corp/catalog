@@ -73,6 +73,7 @@ export function emptyState() {
     framing: {
       mode: 'off', state: 'off', held: false, available: false, unavailable_hint: null, reason: null, backend: null, device: null,
       detect_ms: null, detect_p95_ms: null, fps: null, model: null, zoom: 1, window: null, sources: [], skipped: [], modes: [],
+      shot: 'auto', shots: [], subjects: 'group', subject_options: [], handoff: false, speaking: false, people: 0, speaker: false,
     },
     slots: {
       available: false, mode: 'off', modes: [], fade_seconds: 4, limits: {}, slots: [], parts: [],

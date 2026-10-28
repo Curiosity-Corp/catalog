@@ -106,14 +106,69 @@ def test_crop_commands_order_depends_on_growing() -> None:
 
 def test_raw_source_graph_uploads_to_vulkan_and_detection_is_its_own_graph() -> None:
     text = graph.build_graph(spec(), NEUTRAL)
-    assert text.startswith("[0:v]format=nv12,hwupload,")
+    assert text.startswith("[0:v]format=yuv422p,hwupload,")
     assert "split" not in text
-    assert "format=nv12,hwupload" in text
     assert "libplacebo@grade=w=1280:h=720:format=yuv444p" in text
     assert "hwdownload,format=yuv444p,colorcorrect@tone" in text
     assert text.endswith("cas@sharp=strength=0:enable=0,format=yuyv422[prog]")
     detect = graph.build_detect_graph(spec())
     assert detect.startswith("[0:v]fps=8,scale=320:-2") and detect.endswith("[det]")
+
+
+def test_gpu_sharpen_graph_has_no_cpu_stage_and_stays_4_2_2() -> None:
+    look = {**NEUTRAL, "sharpen_enabled": True, "sharpen_amount": 0.18, "warmth": 0.4}
+    text = graph.build_graph(spec(shaders="/run/s"), look)
+    assert "custom_shader_path=/run/s/cas-0.20.hook" in text
+    assert "colorcorrect" not in text and "cas@" not in text
+    assert "format=yuv422p,hwupload" in text and "hwdownload,format=yuv422p,format=yuyv422[prog]" in text
+    assert "extra_opts=temperature=-0.4" in text
+
+
+def test_gpu_graph_without_sharpen_has_no_shader() -> None:
+    text = graph.build_graph(spec(shaders="/run/s"), NEUTRAL)
+    assert "custom_shader_path" not in text and "colorcorrect" not in text
+
+
+def test_split_tone_keeps_the_cpu_stage_only_when_the_key_says_so() -> None:
+    look = {**NEUTRAL, "lut_enabled": True, "lut_amount": 0.5}
+    key = graph.graph_key(spec(shaders="/s"), look)
+    assert key == graph.GraphKey(sharpen=0.0, split=True)
+    text = graph.build_graph(spec(shaders="/s"), look)
+    assert "colorcorrect@tone" in text and "cas@" not in text
+    controls = graph.look_controls(look, key=key)
+    assert (graph.TONE, "enable") in controls and (graph.SHARP, "enable") not in controls
+
+
+def test_graph_key_is_none_without_shaders_or_on_the_cpu_backend() -> None:
+    assert graph.graph_key(spec(), NEUTRAL) is None
+    assert graph.graph_key(spec(backend="cpu", shaders="/s"), NEUTRAL) is None
+
+
+def test_baked_look_sends_no_command_to_filters_that_are_not_there() -> None:
+    key = graph.GraphKey(sharpen=0.2)
+    controls = graph.look_controls({**NEUTRAL, "sharpen_enabled": True, "sharpen_amount": 0.2}, key=key)
+    assert {t for t, _ in controls} == {graph.GRADE}
+
+
+def test_sharpen_level_rounds_to_steps_and_is_never_zero_while_on() -> None:
+    on = {"sharpen_enabled": True}
+    assert graph.sharpen_level({**on, "sharpen_amount": 0.18}) == 0.2
+    assert graph.sharpen_level({**on, "sharpen_amount": 0.001}) == graph.SHARP_STEP
+    assert graph.sharpen_level({**on, "sharpen_amount": 5}) == 1.0
+    assert graph.sharpen_level({"sharpen_enabled": False, "sharpen_amount": 0.5}) == 0.0
+    assert graph.sharpen_level({**on, "sharpen_amount": 0}) == 0.0
+
+
+def test_warmth_temperature_is_signed_bounded_and_never_negative_zero() -> None:
+    assert str(graph.warmth_temperature(0.0)) == "0.0"
+    assert graph.warmth_temperature(1.0) == graph.WARM_TEMPERATURE < 0
+    assert graph.warmth_temperature(-1.0) == graph.COOL_TEMPERATURE > 0
+    assert graph.warmth_temperature(9) == graph.WARM_TEMPERATURE
+
+
+def test_upload_format_keeps_the_cameras_chroma_layout() -> None:
+    assert graph.upload_format(CANON) == "yuv422p"
+    assert graph.upload_format(Source("x", "/dev/video9", "NV12", 640, 480, 30.0)) == "nv12"
 
 
 def test_mjpeg_source_decodes_on_vaapi_and_maps_to_vulkan() -> None:

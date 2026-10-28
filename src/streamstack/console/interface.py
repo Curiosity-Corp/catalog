@@ -57,14 +57,15 @@ def empty_state(setting: str = "auto") -> dict[str, Any]:
     }
 
 
-def default_factory(cfg: dict[str, str]) -> DriverFactory:
+def default_factory(cfg: dict[str, str], call_active: Callable[[], bool] | None = None) -> DriverFactory:
     def build(profile: Profile, device: UsbDevice) -> Driver:
         if profile.family == "scarlett":
             if device.card is None:
                 raise MixerError("The kernel has not created a sound card for this interface yet.")
             return Scarlett(profile, device, Mixer(device.card))
         if profile.family == "wave-xlr":
-            return WaveXlr(profile, device, mode=cfg.get("STREAMSTACK_WAVE_XLR_USB", "off").strip().lower())
+            mode = cfg.get("STREAMSTACK_WAVE_XLR_USB", "off").strip().lower()
+            return WaveXlr(profile, device, mode=mode, call_active=call_active)
         raise ActionError(f"No driver for {profile.label}.", 409)
 
     return build
@@ -76,12 +77,13 @@ class InterfaceController:
         cfg: dict[str, str] | None = None,
         scan: Scan | None = None,
         factory: DriverFactory | None = None,
+        call_active: Callable[[], bool] | None = None,
     ) -> None:
         self.cfg = cfg or {}
         self.notify: Notify = _no_notify
         self._setting = self.cfg.get("STREAMSTACK_INTERFACE", "auto").strip().lower() or "auto"
         self._scan = scan or usb.scan
-        self._factory = factory or default_factory(self.cfg)
+        self._factory = factory or default_factory(self.cfg, call_active)
         self._io = threading.Lock()  # serialises hardware I/O and driver changes
         self._state_lock = threading.Lock()
         self._state = empty_state(self._setting)

@@ -60,6 +60,7 @@ TIMEOUT_MS = 1000
 OFF_GAIN, OFF_MUTE, OFF_PHANTOM, OFF_HP, OFF_KNOB, OFF_LOW_Z = 0, 4, 6, 9, 14, 33
 GAIN_MAX_DB = 75.0  # openwave allows 0x5000 (80 dB); the other projects and the product page say 75, so 75 it is
 HP_MIN_DB = -60.0
+CACHE_TOLERANCE_DB = 6.0  # ALSA's dB scale is the driver's guess; only a clear disagreement is worth showing
 GAIN_TOLERANCE = 128  # raw units (0.5 dB) the firmware may round a written level by
 
 GROUP = "Hardware"
@@ -222,8 +223,12 @@ class WaveXlr:
         mode: str = "off",
         opener: Opener = open_usbfs,
         proc_root: Path = Path("/proc"),
+        call_active: Callable[[], bool] | None = None,
+        mixer: Callable[[int], alsa.MixerLike] | None = None,
     ) -> None:
         self.profile, self.device = profile, device
+        self._call_active = call_active
+        self._mixer = mixer or (lambda card: alsa.Mixer(card))
         self.mode = mode if mode in MODES else "off"
         self._open = opener
         self.proc_root = proc_root
@@ -284,10 +289,47 @@ class WaveXlr:
         base["controls"] = self._widgets(config, locked)
         base["info"] = [
             readout("knob", "Knob controls", GROUP, config["knob"], hint="What the front dial changes right now"),
+            *self._cache_info(config),
             readout("firmware", "Firmware", "Device", f"{self._firmware['firmware']} (API {self._firmware['api']})"),
             *info,
         ]
         return base
+
+    def _cache_info(self, config: dict[str, Any]) -> list[Widget]:
+        """Say so when the kernel's cached capture gain disagrees with the device's own block.
+
+        The kernel caches `Mic Capture Volume` and never reads it back, so ALSA can show a gain the device does not
+        have (74 dB cached against 48 dB in the device block was seen on another unit). The device block read above is
+        the truth; this is only shown when the mixer states a dB scale and the two differ by more than a few dB.
+        """
+        if self.device.card is None:
+            return []
+        try:
+            mixer = self._mixer(self.device.card)
+            if not mixer.available():
+                return []
+            control = mixer.controls().get("Mic Capture Volume")
+        except alsa.MixerError:
+            return []
+        if control is None or control.db_range is None or not isinstance(control.value, int):
+            return []
+        if control.minimum is None or control.maximum is None or control.maximum <= control.minimum:
+            return []
+        low, high = control.db_range
+        cached = low + (control.value - control.minimum) / (control.maximum - control.minimum) * (high - low)
+        if abs(cached - config["gain_db"]) <= CACHE_TOLERANCE_DB:
+            return []
+        return [
+            readout(
+                "alsa_cache",
+                "Kernel mixer gain",
+                "Device",
+                f"{cached:.0f} dB (the device says {config['gain_db']:.0f} dB)",
+                state="warn",
+                hint="The kernel caches this value and never reads it back; the device's own value above is the real "
+                "one. `streamstack mic-revive` writes it again.",
+            )
+        ]
 
     def _rate_info(self) -> list[Widget]:
         if self.device.card is None:
@@ -357,6 +399,8 @@ class WaveXlr:
         change, check = self._change(control_id, value)
         if control_id == "phantom" and value and not confirm:
             raise ActionError("48V phantom power needs a deliberate confirmation.", 400)
+        if control_id == "phantom":
+            self._refuse_during_call()
         try:
             transport = self._open(self.device)
         except XlrError as exc:
@@ -373,6 +417,21 @@ class WaveXlr:
         if not check(after):
             raise ActionError("The Wave XLR did not keep that setting (another program may have changed it).", 409)
         return None
+
+    def _refuse_during_call(self) -> None:
+        """Phantom power thumps and can silence a condenser microphone: never while a call may be live.
+
+        With no call detector wired the write is allowed (the demo rig); a detector that fails counts as a call."""
+        if self._call_active is None:
+            return
+        try:
+            active = self._call_active()
+        except Exception as exc:  # any detector failure must stop a phantom switch, not let it through
+            raise ActionError(
+                f"Cannot tell whether a call is live ({type(exc).__name__}), so 48V is not switched.", 409
+            ) from exc
+        if active:
+            raise ActionError("A call is live, so 48V phantom power is not switched. Try again after the call.", 409)
 
     @staticmethod
     def _change(control_id: str, value: Any) -> tuple[dict[str, Any], Callable[[dict[str, Any]], bool]]:

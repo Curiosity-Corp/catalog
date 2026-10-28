@@ -170,6 +170,15 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             rig.act("audio.demo_stall", on=False)
         rig.act("audio.demo_check_hold", on=False)
         rig.act("audio.clip_clear")
+        fr = s["framing"]
+        if fr["handoff"]:
+            rig.act("framing.handoff", on=False)
+        if fr["subjects"] != "group":
+            rig.act("framing.subjects", subjects="group")
+        if fr["shot"] != "auto":
+            rig.act("framing.shot", shot="auto")
+        if fr["mode"] != "off":
+            rig.act("framing.mode", mode="off")
         rig.act("call.demo_reset")  # no call, the warning at its defaults
         rig.act("audio.demo_output_reset")  # outputs plugged, first the default
         rig.act("audio.mute", on=False)

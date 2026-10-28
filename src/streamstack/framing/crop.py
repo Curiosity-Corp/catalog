@@ -74,6 +74,8 @@ def face_to_frame(face: Face, item: Item) -> Face:
     ox, oy = item.base.left, item.base.top
     sx, sy = item.width / fw, item.height / fh
     eye = None if face.eye_y is None else (face.eye_y * item.height - oy) / fh
+    mouth = None if face.mouth_y is None else (face.mouth_y * item.height - oy) / fh
+    mouth_w = None if face.mouth_w is None else face.mouth_w * sx
     return Face(
         (face.x * item.width - ox) / fw,
         (face.y * item.height - oy) / fh,
@@ -81,4 +83,6 @@ def face_to_frame(face: Face, item: Item) -> Face:
         face.h * sy,
         face.score,
         eye,
+        mouth,
+        mouth_w,
     )

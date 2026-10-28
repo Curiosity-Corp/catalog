@@ -459,3 +459,62 @@ def test_xlr_detects_a_setting_the_device_did_not_keep(tmp_path: Path) -> None:
     dev.ignore_mute = True
     with pytest.raises(ActionError, match="did not keep"):
         driver.apply("mute", True, False)
+
+
+def test_xlr_phantom_is_refused_while_a_call_is_live(tmp_path: Path) -> None:
+    dev = sim.SimXlr()
+    for active, ok in ((True, False), (False, True)):
+        driver = wavexlr.WaveXlr(
+            profiles.BY_ID["wave-xlr"], sim.XLR_DEVICE, "write", dev.opener, tmp_path, call_active=lambda a=active: a
+        )
+        if ok:
+            driver.apply("phantom", True, True)
+            assert wavexlr.parse_config(dev.config)["phantom"] is True
+        else:
+            writes = len(dev.writes)
+            with pytest.raises(ActionError, match="call is live") as caught:
+                driver.apply("phantom", True, True)
+            assert caught.value.status == 409 and len(dev.writes) == writes
+            driver.apply("gain", 30, False)  # the gain is not a surprise to the call; only 48V is held back
+
+
+def test_xlr_phantom_fails_closed_when_the_call_detector_breaks(tmp_path: Path) -> None:
+    def broken() -> bool:
+        raise OSError("pactl missing")
+
+    dev = sim.SimXlr()
+    driver = wavexlr.WaveXlr(
+        profiles.BY_ID["wave-xlr"], sim.XLR_DEVICE, "write", dev.opener, tmp_path, call_active=broken
+    )
+    with pytest.raises(ActionError, match="Cannot tell"):
+        driver.apply("phantom", False, False)
+    assert dev.writes == []
+
+
+class _CachedMixer:
+    def __init__(self, raw: int, db: bool = True) -> None:
+        text = (
+            "numid=6,iface=MIXER,name='Mic Capture Volume'\n"
+            "  ; type=INTEGER,access=rw---R--,values=1,min=0,max=150,step=1\n"
+            + ("  | dBminmax-min=0.00dB,max=75.00dB\n" if db else "")
+            + f"  : values={raw}\n"
+        )
+        self.controls_ = alsa.parse_contents(text)
+
+    def available(self) -> bool:
+        return True
+
+    def controls(self) -> dict[str, alsa.MixerControl]:
+        return self.controls_
+
+
+def test_xlr_shows_a_kernel_cache_that_disagrees_with_the_device(tmp_path: Path) -> None:
+    dev = sim.SimXlr()  # the fixture block says 42 dB
+    make = lambda raw, db=True: wavexlr.WaveXlr(  # noqa: E731
+        profiles.BY_ID["wave-xlr"], sim.XLR_DEVICE, "read", dev.opener, sim.sim_proc(tmp_path, card=7),
+        mixer=lambda card: _CachedMixer(raw, db),
+    )  # fmt: skip
+    info = {w["id"]: w for w in make(148).read()["info"]}
+    assert info["alsa_cache"]["state"] == "warn" and "74 dB" in info["alsa_cache"]["value"]
+    assert "alsa_cache" not in {w["id"] for w in make(84).read()["info"]}  # 42 dB agrees
+    assert "alsa_cache" not in {w["id"] for w in make(148, db=False).read()["info"]}  # no dB scale, no verdict

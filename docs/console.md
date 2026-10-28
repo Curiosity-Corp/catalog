@@ -231,7 +231,7 @@ values in the engine's units.
     "status": {"state": "idle", "summary": "…", "applied": null, "held": null, "suggestion": null, "can_undo": false},
     "director": {"on": false}, "events": [{"time": "…", "level": "ok", "text": "…"}]
   },
-  "framing": {                         // auto-framing, docs/auto-framing.md
+  "framing": {                         // auto-framing, docs/auto-framing.md (also shot, shots, subjects, handoff, speaking, people, speaker)
     "mode": "off",                     // off | gentle | tight | follow
     "state": "off",                    // off | starting | tracking | held | no-face | unavailable
     "held": false, "available": true,  // available false: the extra or the model is missing
@@ -437,6 +437,9 @@ take seconds (studio start, mic check, auto once) return at once with
 | `slots.mode` / `slots.fade` / `slots.profile` / `slots.clear` / `slots.save_current` / `slots.starter` | see docs/slots.md | time-of-day profiles: settings and the six profiles |
 | `slots.apply` / `slots.undo` / `slots.resume` / `slots.dismiss` / `slots.import` / `slots.reset` | see docs/slots.md | apply a profile now, put it back, end a hold, drop a suggestion, import or reset |
 | `framing.mode` | `mode`: `off` \| `gentle` \| `tight` \| `follow` | auto-framing mode; 409 when the extra or model is missing |
+| `framing.shot` | `shot`: `auto` \| `close` \| `medium` \| `wide` \| `presenter` \| `desk` | shot preset; a preset other than `auto` turns framing on (Gentle) when it is off; 409 when unavailable |
+| `framing.subjects` | `subjects`: `group` \| `one` | frame everyone, or only the main face |
+| `framing.handoff` | `on` | move the shot to whoever is talking (group only) |
 | `framing.hold` | `on` | freeze or release the crop; 409 while off |
 | `framing.reset` | | recentre: forget the crop and find the face again; 409 while off |
 | `auto.persona` | `id` | choose the director's persona |

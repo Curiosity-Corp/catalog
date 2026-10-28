@@ -188,7 +188,7 @@ class Rig:
             video,
             StudioController(cfg),
             lighting=lighting,
-            interface=InterfaceController(cfg),
+            interface=InterfaceController(cfg, call_active=call.active),
             framing=FramingController(cfg, video),
             stream=stream,
             deck=DeckController(),

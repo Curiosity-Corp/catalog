@@ -7,6 +7,10 @@
   .fr-seg button:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
   .fr-seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent) inset; }
   .fr-seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .fr-shots { flex-wrap: wrap; border-radius: var(--r-3); }
+  .fr-subjects { padding: 0.35rem 0.6rem; border-radius: var(--r-pill); font-size: var(--fs-sm); border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text-2); }
+  .fr-subjects:disabled { opacity: 0.45; }
+  .fr-people { font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
   .fr-hold { padding: 0.35rem 0.8rem; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); border: 1px solid var(--line-strong); background: var(--surface-2); }
   .fr-hold:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
   .fr-hold[aria-pressed="true"] { background: var(--amber-soft); color: var(--amber); border-color: var(--amber); }

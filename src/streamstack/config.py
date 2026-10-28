@@ -54,6 +54,9 @@ DEFAULTS = {
     "STREAMSTACK_ENGINE_BACKEND": "auto",
     "STREAMSTACK_ENGINE_RENDER_NODE": "",
     "STREAMSTACK_ENGINE_LUT": "",
+    # Sharpening on the Vulkan backend: auto | gpu (a shader on the Arc, strength in steps of 0.05, the engine rebuilds
+    # its child when a look moves to another step) or cpu (the live cas filter, about 260 % of a core at 1080p).
+    "STREAMSTACK_ENGINE_SHARPEN": "auto",
     # Background blur on the Arc through OpenVINO (needs `pip install 'streamstack[blur]'`): auto | off. Device: auto
     # picks the discrete Arc; or an OpenVINO device id such as GPU.1.
     "STREAMSTACK_ENGINE_BLUR": "auto",

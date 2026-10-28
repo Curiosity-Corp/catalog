@@ -112,6 +112,18 @@ camera side is covered by a fake-`/proc` unit test and by `doctor` naming a plai
 * **A seat-less ACL hack in StreamStack (chmod, setfacl from the app).** Access is a host policy; the product detects it
   and says what to change.
 
+## Addendum 2026-10-27: the PipeWire camera path (#88)
+
+Decision: no StreamStack producer node. WirePlumber's v4l2 monitor already publishes `/dev/video43` as a PipeWire
+`Video/Source` ("StreamStack Camera (V4L2)", `object.path` `v4l2:/dev/video43`) whenever the node is fed and the user can
+open it; that is the second path for the camera portal (Firefox with `media.webrtc.camera.allow-pipewire`, Chromium with
+`chrome://flags/#enable-webrtc-pipewire-camera`) and `pw-v4l2 <app>` serves legacy apps. A libpipewire producer would
+duplicate it with a writer process to maintain and no app that needs it (Teams in Edge and Zoom read the v4l2 node).
+StreamStack now verifies the path instead: `streamstack doctor` has a `video-pipewire` row (read from `pw-dump`,
+read-only) that is ok when the node is published and a warning with the WirePlumber fix when it is fed but missing.
+Reopen this if a call app ships PipeWire-only camera capture. Which Zoom and Teams builds use the portal is recorded in
+docs/camera-delivery.md and needs a person on a call.
+
 ## Sources
 
 * Teams PWA on Linux (Edge and Chrome): windowscentral.com and itsfoss.com, "Microsoft Teams PWA for Linux" and the
