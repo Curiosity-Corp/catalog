@@ -375,6 +375,38 @@ def test_tv_power_test_seam(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert guard.tv_power("203.0.113.9") == "on"
 
 
+def test_tv_is_found_by_mac_when_dhcp_moves_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    neigh = (
+        "192.168.1.250 dev wlp8s0  FAILED\n"
+        "192.168.1.16 dev wlp8s0 lladdr 14:ab:c5:c0:a6:a2 REACHABLE\n"
+        "192.168.1.5 dev wlp8s0 lladdr 70:09:71:93:5A:20 STALE\n"
+    )
+    monkeypatch.setattr(
+        guard.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout=neigh, stderr=""),
+    )
+    assert guard.neighbour_ip("70:09:71:93:5a:20") == "192.168.1.5"
+    assert guard.neighbour_ip("aa:bb:cc:dd:ee:ff") is None
+    assert guard.resolve_tv_host("192.168.1.250", "70:09:71:93:5a:20") == "192.168.1.5"
+    assert guard.resolve_tv_host("192.168.1.250", "") == "192.168.1.250"
+
+
+def test_unknown_mac_sweeps_once_then_falls_back_to_the_fixed_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    sweeps: list[int] = []
+    monkeypatch.setattr(guard, "neighbour_ip", lambda mac: None)
+    monkeypatch.setattr(guard, "arp_sweep", lambda: sweeps.append(1))
+    monkeypatch.setattr(guard.time, "sleep", lambda s: None)
+    monkeypatch.setattr(guard, "_sweep_at", 0.0)
+    assert guard.resolve_tv_host("192.168.1.5", "70:09:71:93:5a:20") == "192.168.1.5"
+    assert guard.resolve_tv_host("192.168.1.5", "70:09:71:93:5a:20") == "192.168.1.5"
+    assert sweeps == [1]  # throttled to one sweep a minute
+
+
+def test_profile_pins_the_tv_mac() -> None:
+    pin = DEFAULTS["hardware_profiles"]["deskmeet-b760"]["display_guard"]
+    assert pin["tv_mac"] == "70:09:71:93:5A:20" and pin["tv_host"] != "192.168.1.250"
+
+
 # --- the shared helper never falls back to 4K -----------------------------------
 
 PROP = "Screen 0: minimum 16 x 16, current 7680 x 4320, maximum 32767 x 32767\n"
