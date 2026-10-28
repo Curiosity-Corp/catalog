@@ -8,7 +8,12 @@ Managed by Ansible (curiosity.workstation). Config: /etc/curiosity/display-guard
   mode=7680x4320       the only mode it will ever apply
   rate=60              refresh rate of that mode
   lane_count=4         DisplayPort lanes expected to be locked (default 4)
-  tv_host=192.168.1.250  optional: LAN address of a Samsung TV (wake detector)
+  tv_host=192.168.1.5    optional: LAN address of a Samsung TV (wake detector)
+  tv_mac=70:09:71:93:5A:20
+                       optional: the TV's MAC. DHCP moves the TV (it left .250 for
+                       .5), so when set the address is looked up by MAC (neighbour
+                       table, then a throttled ARP sweep of the local subnet) and
+                       tv_host is only the fallback
   display=:0           X display (default :0)
   xauthority=/var/run/lightdm/root/:0
 
@@ -44,11 +49,13 @@ import contextlib
 import ctypes
 import fcntl
 import glob
+import ipaddress
 import json
 import os
 import re
 import select
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -98,6 +105,7 @@ class Config:
     rate: float
     lane_count: int = 4
     tv_host: str = ""
+    tv_mac: str = ""
     display: str = ":0"
     xauthority: str = ""
 
@@ -127,6 +135,9 @@ def load_config(path: str = CONF_PATH) -> Config:
     cfg = Config(output=output, mode=mode, rate=rate)
     cfg.lane_count = int(values.get("lane_count", "4") or 4)
     cfg.tv_host = values.get("tv_host", "")
+    cfg.tv_mac = values.get("tv_mac", "").lower()
+    if cfg.tv_mac and not re.fullmatch(r"([0-9a-f]{2}:){5}[0-9a-f]{2}", cfg.tv_mac):
+        raise SystemExit(f"{PROG}: invalid tv_mac in {path}")
     cfg.display = values.get("display", ":0") or ":0"
     cfg.xauthority = values.get("xauthority", "")
     return cfg
@@ -583,11 +594,70 @@ def repair(cfg: Config, reason: str, force: bool = False) -> int:
 # --------------------------------------------------------------------------- wake detection
 
 
-def tv_power(host: str) -> str:
+def neighbour_ip(mac: str) -> str | None:
+    """The IPv4 address the neighbour table holds for this MAC (reachable or stale)."""
+    try:
+        out = subprocess.run(["ip", "-4", "neigh", "show"], capture_output=True, text=True,
+                             timeout=5, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    for line in out.splitlines():
+        parts = line.split()
+        if "lladdr" in parts and parts[parts.index("lladdr") + 1].lower() == mac \
+                and parts[-1] not in ("FAILED", "INCOMPLETE"):
+            return parts[0]
+    return None
+
+
+def arp_sweep() -> None:
+    """Make the kernel ARP every address of the local subnets (one UDP datagram each).
+
+    Only subnets of /22 or smaller are swept; the datagram goes to the discard port."""
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"],
+                             capture_output=True, text=True, timeout=5, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setblocking(False)
+        for line in out.splitlines():
+            fields = line.split()
+            if "inet" not in fields:
+                continue
+            try:
+                net = ipaddress.ip_interface(fields[fields.index("inet") + 1]).network
+            except ValueError:
+                continue
+            if net.prefixlen < 22 or net.is_loopback:
+                continue
+            for host in net.hosts():
+                with contextlib.suppress(OSError):
+                    sock.sendto(b"\0", (str(host), 9))
+
+
+_sweep_at = 0.0
+
+
+def resolve_tv_host(host: str, mac: str) -> str:
+    """The TV's current address: found by MAC when one is configured, else the fixed host."""
+    global _sweep_at
+    if not mac:
+        return host
+    found = neighbour_ip(mac)
+    if found is None and time.time() - _sweep_at >= 60:
+        _sweep_at = time.time()
+        arp_sweep()
+        time.sleep(2)
+        found = neighbour_ip(mac)
+    return found or host
+
+
+def tv_power(host: str, mac: str = "") -> str:
     """'on', 'standby' or 'off' (unreachable) from the Samsung REST API (no token)."""
     seam = os.environ.get("CURIOSITY_DISPLAY_GUARD_TV_FILE")
     if seam:  # test seam: the file holds on, standby or off
         return read_text(seam) or "off"
+    host = resolve_tv_host(host, mac)
     if not host:
         return "off"
     try:
@@ -684,11 +754,11 @@ def watch(cfg: Config, interval: float = 5.0) -> int:
     last_tv_poll = 0.0
     tv: str | None = None
     heal_forced_off(cfg, force_check=True)
-    log("watching", output=cfg.output, mode=f"{cfg.mode}@{cfg.rate:g}", tv=cfg.tv_host or "none")
+    log("watching", output=cfg.output, mode=f"{cfg.mode}@{cfg.rate:g}", tv=cfg.tv_host or "none", tv_mac=cfg.tv_mac or "none")
     while True:
         now = time.time()
-        if (cfg.tv_host or os.environ.get("CURIOSITY_DISPLAY_GUARD_TV_FILE")) and now - last_tv_poll >= 5:
-            tv = tv_power(cfg.tv_host)
+        if (cfg.tv_host or cfg.tv_mac or os.environ.get("CURIOSITY_DISPLAY_GUARD_TV_FILE")) and now - last_tv_poll >= 5:
+            tv = tv_power(cfg.tv_host, cfg.tv_mac)
             last_tv_poll = now
         heal_forced_off(cfg)
         conn = connector_dir(cfg.output)

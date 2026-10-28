@@ -478,12 +478,13 @@ do not change. `deskmeet-b760` sets `display_outputs: [DP-4]`, so its 8K60 DSC
 output beats the 8K30 DP-3 fallback when both cables are connected.
 
 A hardware profile can also set `display_guard` (`output`, `mode`, `rate`,
-`lane_count`, `tv_host`; derived variable `minimal_desktop_display_guard`, empty
+`lane_count`, `tv_host`, `tv_mac`; derived variable `minimal_desktop_display_guard`, empty
 by default). It pins that output and mode in `/etc/curiosity/display-guard.conf`
 and installs `curiosity-display-guard`: a watch service (TV PowerState edge,
 EDID, DPMS, idle wake and a slow link/mode watchdog), a drm change udev rule and
 a resume hook, all running one rate-limited repair that re-applies the pinned
-mode and never falls back to another one. Read the result with
+mode and never falls back to another one. `tv_mac` makes it find the TV by MAC when DHCP moves it (the TV went from
+`.250` to `.5`). Read the result with
 `journalctl -u curiosity-display-guard -u 'curiosity-display-guard@*'`.
 
 `/usr/local/bin/curiosity-display-setup` reads the output names (one per line in

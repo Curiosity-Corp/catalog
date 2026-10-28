@@ -1617,7 +1617,10 @@ hardware_profiles:
       mode: 7680x4320
       rate: 60
       lane_count: 4
-      tv_host: 192.168.1.250
+      # The TV left 192.168.1.250 for .5 on a DHCP lease change, which blinded
+      # the wake detector: the guard finds it by MAC and uses tv_host as fallback.
+      tv_host: 192.168.1.5
+      tv_mac: "70:09:71:93:5A:20"
     # Readable fbcon at 8K: 16x32 Terminus (Uni3, 512 glyphs) on VT1-9 (so the
     # higher VTs match), also persisted for early boot through console-setup.
     console_tuning:

@@ -114,9 +114,10 @@
       - minimal_desktop_display_guard.rate | float > 0
       - (minimal_desktop_display_guard.lane_count | default(4)) | int in [1, 2, 4]
       - (minimal_desktop_display_guard.tv_host | default('')) is match('^[A-Za-z0-9_.:-]*$')
+      - (minimal_desktop_display_guard.tv_mac | default('')) is match('^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$|^$')
     fail_msg: >-
       display_guard needs output (an xrandr name), mode (WxH), a numeric rate
-      and optionally lane_count (1, 2 or 4) and tv_host.
+      and optionally lane_count (1, 2 or 4), tv_host and tv_mac.
   when: minimal_desktop_display_guard_enabled | bool
 
 - name: Install the display guard
@@ -143,6 +144,7 @@
       rate={{ minimal_desktop_display_guard.rate }}
       lane_count={{ minimal_desktop_display_guard.lane_count | default(4) }}
       tv_host={{ minimal_desktop_display_guard.tv_host | default('') }}
+      tv_mac={{ minimal_desktop_display_guard.tv_mac | default('') }}
       display=:0
       xauthority=/var/run/lightdm/root/:0
   when: minimal_desktop_display_guard_enabled | bool
