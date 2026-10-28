@@ -127,7 +127,7 @@ out a PC desktop on a TV; `Full` fixes that. `deskmeet-b760` sets
 A profile that sets `samsung_tv_cli: true` (`deskmeet-b760`; derived variable
 `samsung_tv_cli_enabled`) installs `python3-websocket` and
 `/usr/local/bin/curiosity-tv`, which controls the Samsung QN55QN700B (Tizen) TV
-at `192.168.1.250` (MAC `70:09:71:93:5A:20`) without the physical remote. It uses
+(MAC `70:09:71:93:5A:20`; found by MAC through the shared `/usr/local/lib/curiosity/curiosity_tv_locate.py`, also used by the display guard, because DHCP moved it from `.250` to `.5`) without the physical remote. It uses
 the REST API (`:8001/api/v2/`), the WebSocket remote (`wss://:8002`), UPnP
 RenderingControl (`:9197`) and Wake-on-LAN. `--host`/`--mac` (or
 `CURIOSITY_TV_HOST`/`CURIOSITY_TV_MAC`) override the address. The WebSocket
@@ -485,7 +485,7 @@ EDID, DPMS, idle wake and a slow link/mode watchdog), a drm change udev rule and
 a resume hook, all running one rate-limited repair that re-applies the pinned
 mode and never falls back to another one. `tv_mac` makes it find the TV by MAC when DHCP moves it (the TV went from
 `.250` to `.5`). Read the result with
-`journalctl -u curiosity-display-guard -u 'curiosity-display-guard@*'`.
+`journalctl -u curiosity-display-guard -u 'curiosity-display-guard@*'`. The watch service also runs one `startup` check whenever X first answers (boot, greeter to session, X restart): `assessed reason=startup`.
 
 `/usr/local/bin/curiosity-display-setup` reads the output names (one per line in
 `/etc/curiosity/display-outputs`), picks the first connected one (or the first

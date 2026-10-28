@@ -49,13 +49,11 @@ import contextlib
 import ctypes
 import fcntl
 import glob
-import ipaddress
 import json
 import os
 import re
 import select
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -64,6 +62,9 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, os.environ.get("CURIOSITY_LIB", "/usr/local/lib/curiosity"))
+import curiosity_tv_locate as tvlocate  # noqa: E402  (shared with curiosity-tv)
 
 PROG = "curiosity-display-guard"
 CONF_PATH = os.environ.get("CURIOSITY_DISPLAY_GUARD_CONF", "/etc/curiosity/display-guard.conf")
@@ -79,7 +80,7 @@ MAX_MODESETS_IN_WINDOW = 8
 MIN_GAP = 15  # seconds between repair runs that actually change something
 COOLDOWN_AFTER_FAILURE = 120
 DISCONNECT_GRACE = 90  # a disconnected output is only "dead" after this long
-SETTLE = {"hotplug": 3, "resume": 6, "tv-wake": 8, "sink-wake": 8, "dpms-on": 3, "idle-wake": 2}
+SETTLE = {"startup": 5, "hotplug": 3, "resume": 6, "tv-wake": 8, "sink-wake": 8, "dpms-on": 3, "idle-wake": 2}
 VERIFY_WAIT = 5
 FORCED_REASONS = {"resume", "tv-wake", "sink-wake", "idle-wake", "manual-force"}
 
@@ -594,70 +595,12 @@ def repair(cfg: Config, reason: str, force: bool = False) -> int:
 # --------------------------------------------------------------------------- wake detection
 
 
-def neighbour_ip(mac: str) -> str | None:
-    """The IPv4 address the neighbour table holds for this MAC (reachable or stale)."""
-    try:
-        out = subprocess.run(["ip", "-4", "neigh", "show"], capture_output=True, text=True,
-                             timeout=5, check=False).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    for line in out.splitlines():
-        parts = line.split()
-        if "lladdr" in parts and parts[parts.index("lladdr") + 1].lower() == mac \
-                and parts[-1] not in ("FAILED", "INCOMPLETE"):
-            return parts[0]
-    return None
-
-
-def arp_sweep() -> None:
-    """Make the kernel ARP every address of the local subnets (one UDP datagram each).
-
-    Only subnets of /22 or smaller are swept; the datagram goes to the discard port."""
-    try:
-        out = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"],
-                             capture_output=True, text=True, timeout=5, check=False).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.setblocking(False)
-        for line in out.splitlines():
-            fields = line.split()
-            if "inet" not in fields:
-                continue
-            try:
-                net = ipaddress.ip_interface(fields[fields.index("inet") + 1]).network
-            except ValueError:
-                continue
-            if net.prefixlen < 22 or net.is_loopback:
-                continue
-            for host in net.hosts():
-                with contextlib.suppress(OSError):
-                    sock.sendto(b"\0", (str(host), 9))
-
-
-_sweep_at = 0.0
-
-
-def resolve_tv_host(host: str, mac: str) -> str:
-    """The TV's current address: found by MAC when one is configured, else the fixed host."""
-    global _sweep_at
-    if not mac:
-        return host
-    found = neighbour_ip(mac)
-    if found is None and time.time() - _sweep_at >= 60:
-        _sweep_at = time.time()
-        arp_sweep()
-        time.sleep(2)
-        found = neighbour_ip(mac)
-    return found or host
-
-
 def tv_power(host: str, mac: str = "") -> str:
     """'on', 'standby' or 'off' (unreachable) from the Samsung REST API (no token)."""
     seam = os.environ.get("CURIOSITY_DISPLAY_GUARD_TV_FILE")
     if seam:  # test seam: the file holds on, standby or off
         return read_text(seam) or "off"
-    host = resolve_tv_host(host, mac)
+    host = tvlocate.resolve_tv_host(host, mac)
     if not host:
         return "off"
     try:
@@ -743,6 +686,16 @@ class WakeDetector:
         return events
 
 
+def x_came_up(was_up: bool, result: "Assessment") -> tuple[bool, bool]:
+    """(is_up, started): `started` is true on the first sample where X answers.
+
+    That is the first one after the guard starts or after X restarted (greeter to
+    session, a crashed server), so a boot that comes up wrong is repaired without
+    waiting for the watchdog's two bad samples or any wake edge."""
+    is_up = result.facts.get("x") != "unavailable"
+    return is_up, is_up and not was_up
+
+
 def _terminate(signum: int, _frame: object) -> None:
     raise SystemExit(128 + signum)
 
@@ -751,6 +704,7 @@ def watch(cfg: Config, interval: float = 5.0) -> int:
     detector = WakeDetector()
     pending: list[tuple[float, str]] = []
     bad_ticks = 0
+    x_up = False
     last_tv_poll = 0.0
     tv: str | None = None
     heal_forced_off(cfg, force_check=True)
@@ -775,8 +729,12 @@ def watch(cfg: Config, interval: float = 5.0) -> int:
         due = [item for item in pending if item[0] <= now]
         pending = [item for item in pending if item[0] > now]
         for _, event in due:
-            repair(cfg, event, force=event != "dpms-on")
+            repair(cfg, event, force=event not in ("dpms-on", "startup"))
         result = assess(cfg)
+        x_up, started = x_came_up(x_up, result)
+        if started:
+            log("X session is up", event="startup")
+            pending.append((now + 2, "startup"))
         if result.ok:
             bad_ticks = 0
         else:

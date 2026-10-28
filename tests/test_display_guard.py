@@ -23,6 +23,9 @@ DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 TASKS = yaml.safe_load((ROLE / "tasks/minimal-desktop-display-setup.yml").read_text())
 
 
+os.environ["CURIOSITY_LIB"] = str(ROLE / "files")
+
+
 def _load() -> ModuleType:
     loader = importlib.machinery.SourceFileLoader("curiosity_display_guard", str(GUARD))
     spec = importlib.util.spec_from_loader("curiosity_display_guard", loader)
@@ -375,31 +378,73 @@ def test_tv_power_test_seam(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert guard.tv_power("203.0.113.9") == "on"
 
 
-def test_tv_is_found_by_mac_when_dhcp_moves_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    neigh = (
-        "192.168.1.250 dev wlp8s0  FAILED\n"
-        "192.168.1.16 dev wlp8s0 lladdr 14:ab:c5:c0:a6:a2 REACHABLE\n"
-        "192.168.1.5 dev wlp8s0 lladdr 70:09:71:93:5A:20 STALE\n"
-    )
-    monkeypatch.setattr(
-        guard.subprocess, "run",
-        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout=neigh, stderr=""),
-    )
-    assert guard.neighbour_ip("70:09:71:93:5a:20") == "192.168.1.5"
-    assert guard.neighbour_ip("aa:bb:cc:dd:ee:ff") is None
-    assert guard.resolve_tv_host("192.168.1.250", "70:09:71:93:5a:20") == "192.168.1.5"
-    assert guard.resolve_tv_host("192.168.1.250", "") == "192.168.1.250"
+def test_guard_locates_the_tv_through_the_shared_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple[str, str]] = []
+
+    class Reply:
+        def __enter__(self) -> "Reply":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"device": {"PowerState": "standby"}}'
+
+    monkeypatch.setattr(guard.tvlocate, "resolve_tv_host", lambda host, mac: seen.append((host, mac)) or "192.168.1.5")
+    monkeypatch.setattr(guard.urllib.request, "urlopen", lambda url, timeout: (seen.append((url, "")), Reply())[1])
+    monkeypatch.delenv("CURIOSITY_DISPLAY_GUARD_TV_FILE", raising=False)
+    assert guard.tv_power("192.168.1.250", "70:09:71:93:5a:20") == "standby"
+    assert seen[0] == ("192.168.1.250", "70:09:71:93:5a:20")
+    assert seen[1][0] == "http://192.168.1.5:8001/api/v2/"
 
 
-def test_unknown_mac_sweeps_once_then_falls_back_to_the_fixed_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    sweeps: list[int] = []
-    monkeypatch.setattr(guard, "neighbour_ip", lambda mac: None)
-    monkeypatch.setattr(guard, "arp_sweep", lambda: sweeps.append(1))
-    monkeypatch.setattr(guard.time, "sleep", lambda s: None)
-    monkeypatch.setattr(guard, "_sweep_at", 0.0)
-    assert guard.resolve_tv_host("192.168.1.5", "70:09:71:93:5a:20") == "192.168.1.5"
-    assert guard.resolve_tv_host("192.168.1.5", "70:09:71:93:5a:20") == "192.168.1.5"
-    assert sweeps == [1]  # throttled to one sweep a minute
+def test_x_coming_up_triggers_one_startup_check() -> None:
+    down = guard.Assessment(True, [], {"x": "unavailable"})
+    up = guard.Assessment(False, ["no-mode"], {})
+    assert guard.x_came_up(False, down) == (False, False)  # greeter/X not up yet
+    assert guard.x_came_up(False, up) == (True, True)      # first answer after boot
+    assert guard.x_came_up(True, up) == (True, False)      # steady state: no repeat
+    assert guard.x_came_up(True, down) == (False, False)   # X died...
+    assert guard.x_came_up(False, up) == (True, True)      # ...and came back: check again
+
+
+def test_watch_queues_a_startup_repair_when_x_first_answers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, bool]] = []
+    clock = [1000.0]
+    monkeypatch.setattr(guard.time, "time", lambda: clock[0])
+    monkeypatch.setattr(guard, "heal_forced_off", lambda *a, **k: False)
+    monkeypatch.setattr(guard, "connector_dir", lambda output: None)
+    monkeypatch.setattr(guard, "idle_ms", lambda: None)
+    monkeypatch.setattr(guard, "assess", lambda cfg, deep=False: guard.Assessment(True, [], {}))
+
+    def fake_repair(cfg: object, reason: str, force: bool = False) -> int:
+        calls.append((reason, force))
+        return 0
+
+    def fake_sleep(seconds: float) -> None:
+        clock[0] += 3
+        if clock[0] > 1020:
+            raise SystemExit(0)
+
+    monkeypatch.setattr(guard, "repair", fake_repair)
+    monkeypatch.setattr(guard, "sleep", fake_sleep)
+    with pytest.raises(SystemExit):
+        guard.watch(guard.Config(output="DP-4", mode="7680x4320", rate=60.0))
+    assert calls == [("startup", False)]  # once, and not a forced modeset on a healthy boot
+
+
+def test_startup_repair_runs_the_ladder_when_the_boot_came_up_broken(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(guard, "STATE_DIR", tmp_path)
+    monkeypatch.setenv("CURIOSITY_DISPLAY_GUARD_NOSLEEP", "1")
+    stages: list[str] = []
+    verdicts = iter([guard.Assessment(False, ["no-mode"], {"target_listed": 1})])
+    healthy = guard.Assessment(True, [], {"mode": "7680x4320@60"})
+    monkeypatch.setattr(guard, "assess", lambda cfg, deep=False: next(verdicts, healthy))
+    monkeypatch.setattr(guard, "LADDER", [("reprobe", lambda c: stages.append("reprobe"), False),
+                                          ("reapply", lambda c: stages.append("reapply"), True)])
+    assert guard.repair(guard.Config(output="DP-4", mode="7680x4320", rate=60.0), "startup") == 0
+    assert stages == ["reprobe"]  # a plain (unforced) start: cheapest stage first, then verified
 
 
 def test_profile_pins_the_tv_mac() -> None:

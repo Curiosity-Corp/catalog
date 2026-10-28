@@ -31,6 +31,9 @@ def _include_file(task: dict) -> str | None:
     include = task.get("ansible.builtin.include_tasks")
     return include.get("file") if isinstance(include, dict) else include
 
+os.environ["CURIOSITY_LIB"] = str(ROLE / "files")
+
+
 def _load() -> ModuleType:
     loader = importlib.machinery.SourceFileLoader("curiosity_tv", str(SCRIPT))
     spec = importlib.util.spec_from_loader("curiosity_tv", loader)
@@ -52,6 +55,7 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CURIOSITY_TV_ENV", str(tmp_path / "absent.env"))
     monkeypatch.setattr(tv.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(tv, "CLOSE_TIMEOUT", 0.1)
+    monkeypatch.setattr(tv.tvlocate, "resolve_tv_host", lambda host, mac: host)
     tv._secrets.clear()
 
 
@@ -142,7 +146,8 @@ def test_zero_timeouts_are_rejected() -> None:
 
 def test_defaults_target_the_deskmeet_tv() -> None:
     args = tv.build_parser().parse_args(["status"])
-    assert args.host == "192.168.1.250"
+    assert args.host is None  # resolved by MAC at run time, DEFAULT_HOST is only the fallback
+    assert tv.DEFAULT_HOST != "192.168.1.250"
     assert args.mac == "70:09:71:93:5A:20"
 
 
@@ -632,7 +637,7 @@ def test_upnp_volume_get_and_set(monkeypatch: pytest.MonkeyPatch, capsys: pytest
     assert tv.main(["volume", "get"]) == 0
     assert capsys.readouterr().out.strip() == "17"
     soap = requests[-1]
-    assert soap.full_url == "http://192.168.1.250:9197/upnp/control/RenderingControl1"
+    assert soap.full_url == f"http://{tv.DEFAULT_HOST}:9197/upnp/control/RenderingControl1"
     assert soap.get_header("Soapaction") == '"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume"'
     assert tv.main(["volume", "set", "25"]) == 0
     body = requests[-1].data.decode()
@@ -821,7 +826,7 @@ def test_a_hung_rest_call_exits_4_with_a_clear_message(
     started = time.monotonic()
     assert tv.main(["--timeout", "0.2", "status"]) == 4
     assert time.monotonic() - started < 2
-    assert "timed out after 0.2 s waiting for GET /api/v2/ from the TV at 192.168.1.250:8001" in capsys.readouterr().err
+    assert f"timed out after 0.2 s waiting for GET /api/v2/ from the TV at {tv.DEFAULT_HOST}:8001" in capsys.readouterr().err
     assert tv.main(["--timeout", "0.2", "volume", "get"]) == 4
     assert "UPnP description" in capsys.readouterr().err
 
@@ -965,3 +970,31 @@ def test_apps_columns_fit_long_names(monkeypatch: pytest.MonkeyPatch, capsys: py
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].split(long_name)[1].startswith("  ") and lines[0].endswith("installed")
     assert lines[0].index("installed") == lines[1].index("running")
+
+
+def test_main_finds_the_tv_by_mac_with_the_shared_locator(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    monkeypatch.delenv("CURIOSITY_TV_HOST", raising=False)
+    monkeypatch.setattr(tv.tvlocate, "resolve_tv_host", lambda host, mac: seen.append(f"{host}|{mac}") or "192.168.1.77")
+    monkeypatch.setattr(tv, "device_info", lambda host, timeout: seen.append(host) or {"device": {"PowerState": "on"}})
+    assert tv.build_parser().parse_args(["status"]).func  # command wired
+    tv.main(["status"])
+    assert seen[0] == f"{tv.DEFAULT_HOST}|{tv.DEFAULT_MAC}" and seen[1] == "192.168.1.77"
+
+
+def test_an_explicit_host_skips_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CURIOSITY_TV_HOST", "10.1.2.3")
+    monkeypatch.setattr(tv.tvlocate, "resolve_tv_host", lambda host, mac: pytest.fail("must not discover"))
+    hosts: list[str] = []
+    monkeypatch.setattr(tv, "device_info", lambda host, timeout: hosts.append(host) or {"device": {}})
+    tv.main(["status"])
+    assert hosts == ["10.1.2.3"]
+
+
+def test_the_locator_is_one_shared_module_installed_for_both_tools() -> None:
+    assert not hasattr(tv, "neighbour_ip")
+    module = ROLE / "files/curiosity_tv_locate.py"
+    assert module.exists()
+    for name in ("samsung-tv-cli.yml", "minimal-desktop-display-setup.yml"):
+        text = (ROLE / "tasks" / name).read_text()
+        assert "dest: /usr/local/lib/curiosity/curiosity_tv_locate.py" in text
