@@ -295,7 +295,7 @@ def test_a_detector_that_cannot_load_falls_back_to_off_with_a_toast(tmp_path: Pa
     assert rig.toasts and rig.toasts[0][0] == "warn" and "Auto-framing is off" in rig.toasts[0][1]
     assert rig.engine.windows == []
     assert health_titles(rig) == ["Auto-framing is unavailable"]
-    assert json.loads((tmp_path / "state/framing.json").read_text()) == {"mode": "off"}  # does not retry at every start
+    assert json.loads((tmp_path / "state/framing.json").read_text())["mode"] == "off"  # does not retry at every start
     rig.ctl.act("framing.mode", {"mode": "off"})
     assert rig.ctl.state()["state"] == "off"
 
@@ -409,6 +409,7 @@ def test_state_shape_is_stable(rigging: Rigging) -> None:
     assert set(state) == {
         "mode", "state", "held", "available", "unavailable_hint", "reason", "backend", "device", "detect_ms",
         "detect_p95_ms", "fps", "model", "zoom", "window", "sources", "skipped", "modes",
+        "shot", "shots", "subjects", "subject_options", "handoff", "speaking", "people", "speaker",
     }  # fmt: skip
     assert [m["name"] for m in state["modes"]] == ["off", "gentle", "tight", "follow"]
     json.dumps(state)  # it goes to the browser as JSON
@@ -493,3 +494,144 @@ def test_demo_framing_notifies_through_the_rig_hook() -> None:
     seen: list[tuple[str, str]] = []
     demo.notify = lambda level, text: seen.append((level, text))
     assert demo.notify is not None
+
+
+# -- group framing, speaker hand-off and shot presets -----------------------------------------------------------------
+
+
+def two_people() -> list[Face]:
+    return [Face(0.18, 0.30, 0.07, 0.12, 0.95, eye_y=0.34), Face(0.76, 0.30, 0.07, 0.12, 0.95, eye_y=0.34)]
+
+
+def test_a_shot_starts_framing_when_it_is_off_and_auto_hands_the_choice_back(rigging: Rigging) -> None:
+    assert rigging.ctl.act("framing.shot", {"shot": "close"}) == "Shot: Close"
+    state = rigging.ctl.state()
+    assert state["mode"] == "gentle" and state["shot"] == "close"
+    assert [s["name"] for s in state["shots"]] == ["auto", "close", "medium", "wide", "presenter", "desk"]
+    rigging.run(14)
+    close = rigging.crop()
+    rigging.ctl.act("framing.shot", {"shot": "wide"})
+    rigging.run(14)
+    left, _, right, _ = rigging.crop()
+    assert (1056 - left - right) > (1056 - close[0] - close[2])  # wide shows more than close
+    assert rigging.ctl.act("framing.shot", {"shot": "auto"}) == "Shot: Auto"
+    assert rigging.ctl.state()["mode"] == "gentle"  # framing stays on
+
+
+def test_a_bad_shot_or_subjects_is_refused_and_changes_nothing(rigging: Rigging) -> None:
+    with pytest.raises(ActionError, match="Unknown shot") as err:
+        rigging.ctl.act("framing.shot", {"shot": "cinematic"})
+    assert err.value.status == 400
+    with pytest.raises(ActionError, match="Unknown subjects"):
+        rigging.ctl.act("framing.subjects", {"subjects": "crowd"})
+    with pytest.raises(ActionError, match="true or false"):
+        rigging.ctl.act("framing.handoff", {"on": "yes"})
+    state = rigging.ctl.state()
+    assert state["mode"] == "off" and state["shot"] == "auto" and state["subjects"] == "group" and not state["handoff"]
+
+
+def test_a_shot_needs_framing_to_be_available(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        health, "readiness", lambda: (False, "OpenVINO is not installed", "pip install 'streamstack[framing]'")
+    )
+    rigging = Rigging(tmp_path)
+    with pytest.raises(ActionError, match="not available") as err:
+        rigging.ctl.act("framing.shot", {"shot": "close"})
+    assert err.value.status == 409
+    assert rigging.ctl.state()["shot"] == "auto"
+
+
+def test_the_choices_are_remembered_across_a_restart(tmp_path: Path, ready: None) -> None:
+    first = Rigging(tmp_path)
+    first.ctl.act("framing.shot", {"shot": "presenter"})
+    first.ctl.act("framing.subjects", {"subjects": "one"})
+    first.ctl.act("framing.handoff", {"on": True})
+    saved = json.loads((tmp_path / "state/framing.json").read_text())
+    assert saved == {"mode": "gentle", "shot": "presenter", "subjects": "one", "handoff": True}
+    again = Rigging(tmp_path)
+    state = again.ctl.state()
+    assert (state["mode"], state["shot"], state["subjects"], state["handoff"]) == ("gentle", "presenter", "one", True)
+
+
+def test_an_old_state_file_and_a_damaged_one_still_load(tmp_path: Path, ready: None) -> None:
+    path = tmp_path / "state" / "framing.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"mode": "tight"}')
+    state = Rigging(tmp_path).ctl.state()
+    assert state["mode"] == "tight" and state["shot"] == "auto" and state["subjects"] == "group"
+    path.write_text('{"mode": "tight", "shot": "cinematic", "subjects": 3, "handoff": "yes"}')
+    state = Rigging(tmp_path).ctl.state()
+    assert state["shot"] == "auto" and state["subjects"] == "group" and state["handoff"] is False
+
+
+def test_everyone_in_the_picture_is_framed_and_one_person_mode_follows_the_main_face(rigging: Rigging) -> None:
+    rigging.det.faces = two_people()
+    rigging.ctl.act("framing.mode", {"mode": "follow"})
+    rigging.run(14)
+    state = rigging.ctl.state()
+    assert state["people"] == 2
+    window = state["window"]
+    assert window["cx"] == pytest.approx(0.5, abs=0.12)  # between them
+    rigging.ctl.act("framing.subjects", {"subjects": "one"})
+    rigging.run(14)
+    assert rigging.ctl.state()["people"] == 1
+
+
+def test_the_desk_shot_crops_without_loading_a_detector(rigging: Rigging) -> None:
+    rigging.ctl.act("framing.shot", {"shot": "desk"})
+    rigging.run(14)
+    assert rigging.opened == [] and rigging.video.calls == []  # nobody is looked for
+    assert rigging.crop() != (0, 0, 0, 0)
+    assert rigging.ctl.state()["state"] == "fixed" or rigging.ctl.state()["sources"][0]["state"] == "fixed"
+    rigging.ctl.act("framing.mode", {"mode": "off"})
+    rigging.run(20)
+    assert rigging.crop() == (0, 0, 0, 0) and rigging.engine.windows[-1] is None  # the original picture is back
+
+
+def test_speaker_hand_off_listens_to_the_microphone_only_when_it_is_asked_to(rigging: Rigging) -> None:
+    def feed(start: float, level: float, seconds: float) -> float:
+        t = start
+        while t < start + seconds:
+            rigging.ctl.on_meters({"mic": {"rms_db": level}}, now=t)
+            t += 0.02
+        return t
+
+    rigging.ctl.act("framing.mode", {"mode": "follow"})
+    t = feed(1000.0, -70.0, 4.0)
+    feed(t, -20.0, 1.5)
+    assert rigging.ctl.state()["speaking"] is False  # hand-off is off: the level is ignored
+    rigging.ctl.act("framing.handoff", {"on": True})
+    t = feed(2000.0, -70.0, 4.0)
+    t = feed(t, -20.0, 1.5)
+    assert rigging.ctl.state()["speaking"] is True
+    rigging.ctl.on_meters({"mic": {}}, now=t)  # a frame without a level is skipped, not an error
+    rigging.ctl.on_meters({}, now=t + 0.1)
+
+
+def test_the_voice_direction_hook_may_fail_without_stopping_framing(rigging: Rigging) -> None:
+    def broken() -> float:
+        raise RuntimeError("no stereo microphone")
+
+    rigging.ctl.voice_x = broken
+    rigging.det.faces = two_people()
+    rigging.ctl.act("framing.handoff", {"on": True})
+    rigging.ctl.act("framing.mode", {"mode": "follow"})
+    rigging.run(6)
+    assert rigging.ctl.state()["state"] == "tracking"
+    rigging.ctl.voice_x = lambda: 7.0  # out of range: ignored
+    rigging.run(2)
+    assert rigging.ctl.state()["state"] == "tracking"
+
+
+def test_the_demo_has_the_same_choices(tmp_path: Path) -> None:
+    demo = DemoFraming()
+    assert demo.act("framing.shot", {"shot": "close"}) == "Shot: Close"
+    state = demo.state()
+    assert state["mode"] == "gentle" and state["shot"] == "close" and state["zoom"] > 1.3
+    demo.act("framing.subjects", {"subjects": "one"})
+    demo.act("framing.handoff", {"on": True})
+    state = demo.state()
+    assert state["subjects"] == "one" and state["handoff"] is True
+    with pytest.raises(ActionError):
+        demo.act("framing.shot", {"shot": "cinematic"})
+    assert set(demo.state()) == set(FramingController(config.DEFAULTS, None, state_file=tmp_path / "f.json").state())

@@ -86,6 +86,21 @@ Prior art (open source, MIT): `rikkichy/openwave` (`crates/openwave-core/src/pro
 **Clipguard and low cut have no documented register.** OpenWave's low cut is a software DSP stage. The page lists
 both under "Not available on this interface"; use the high-pass stage of the StreamStack voice chain (docs/audio-chain.md) as the low cut.
 
+**Update 2026-10-27 (#18).** `emaspa/openxlr` (GPL-3.0, read and re-derived, not copied) lists gain, mute,
+headphone volume and low impedance as verified by testers on the MK.1, and 48 V (config byte 6) as coded; hardware low
+cut, ClipGuard and the mic/PC crossfade are still unmapped there, so they stay unavailable here (the software
+equivalents are the voice chain's high-pass and limiter). Two consequences are implemented:
+
+- **48 V is never switched while a call may be live.** The driver is handed the call monitor; a call (joining or in
+  call), or a monitor that fails, refuses the write (409). Switching on also still needs the explicit confirmation.
+- **The vendor block is the truth, ALSA is not.** The kernel caches `Mic Capture Volume` and never reads it back (74 dB
+  cached against 48 dB in the device block on another unit). The page reads the device block and, when the mixer states
+  a dB scale and its cached gain differs by more than 6 dB, shows a "Kernel mixer gain" warning that points to
+  `streamstack mic-revive`.
+
+Still to do by a person with a quiet moment: set `STREAMSTACK_WAVE_XLR_USB=read` on dm313red with the udev rule above,
+compare the page with Wave Link, then `=write`.
+
 **Status: unverified on hardware.** The protocol is reverse engineered by others and the projects themselves call it
 "not a physical-validation certificate". The maximum gain is 75 dB here (OpenWave allows 80); nothing on this host
 confirmed either. Because of that the write path is disabled by default:

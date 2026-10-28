@@ -5,6 +5,26 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-10-27
+
+v0.0.14 was never published (its release commit merged behind other merge requests whose changelog fragments were still in `changelog.d/`, so the release gate refused the tag); its changes shipped in 0.0.15.
+
+### Added
+- Auto-framing 2 (#46): the crop now frames everyone in the picture (a group window that tracks the people who stay, never a passer-by), can hand the shot to whoever is talking (mouth movement from the face landmarks, gated by the raw microphone's voice activity, with hold timers so it does not ping-pong) and has shot presets (Close, Medium, Wide, Presenter and a fixed Desk crop that runs no detector). When nobody is found the crop widens, then returns to the home framing after six seconds. The Camera panel gains the shot buttons, a Who-to-frame choice and a Follow speaker switch; the choices persist. New actions `framing.shot`, `framing.subjects` and `framing.handoff`. A replay benchmark (1, 2 and 3 faces, alternating speakers) gates the framing quality in CI. See docs/auto-framing.md.
+- Warmth and sharpen run on the GPU (#58). Warmth is libplacebo's colour temperature, live; sharpen is a
+  contrast-adaptive sharpening shader whose strength is baked in steps of 0.05 (the child is rebuilt, about 0.22 s,
+  when the slider rests on a new step). The camera goes up and comes back as 4:2:2, so the CPU 4:4:4 stages are gone:
+  at 1080p30 the engine's CPU for a sharpened look drops from 247 % to 28 % of a core (all sliders: 254 % to 29 %;
+  neutral: 52 % to 29 %), for 70 to 110 ms more GPU time per second. `STREAMSTACK_ENGINE_SHARPEN=cpu` keeps the CPU
+  path, which is also the fallback when the shader cannot be written. The cool side of warmth is milder than the old
+  filter. `tools/bench_look.py` measures the cost of each look.
+- `streamstack doctor` has a `video-pipewire` row: StreamStack Camera is also a PipeWire camera for the portal path
+  (Firefox, Chromium with the flag, `pw-v4l2`), or a warning with the WirePlumber fix when it is fed but not
+  published. ADR 0004 records that StreamStack publishes no node of its own (#88).
+
+### Changed
+- Wave XLR: 48 V phantom power is refused while a call is live (or the call detector fails), and the page warns when the kernel's cached capture gain disagrees with the device's own gain (#18).
+
 ## [0.0.15] - 2026-10-27
 
 v0.0.14 was never published: its tag was refused by the release gate because changelog fragments from merge requests that landed on the train after `release.py prepare` were still in `changelog.d/`. Everything listed under 0.0.14 below shipped in this release instead.

@@ -17,10 +17,10 @@ with the Console, has no state of its own, and is restarted from the Console's s
 camera (V4L2: YUYV / NV12 / UYVY / MJPG)
    |  CPU copy (V4L2 does not export dmabuf through libav; the one unavoidable upload)
    v
-hwupload -> libplacebo (Vulkan, Arc)   brightness, contrast, saturation, gamma, crop     [live-commandable]
-   |
+hwupload (yuv422p) -> libplacebo (Vulkan, Arc)   brightness, contrast, saturation, gamma, warmth, crop   [live]
+   |                        + CAS sharpen shader                                           [baked step]
    v
-hwdownload -> colorcorrect (warmth) -> cas (sharpen) -> yuyv422 -> /dev/video43           [live-commandable]
+hwdownload (yuv422p) -> yuyv422 -> /dev/video43
    |
    +-- encode tap (hwdownload -> nv12 -> av1_qsv | h264_qsv | ...)   recording / streaming, added later
 
@@ -110,8 +110,43 @@ exists, and adding it is one table row. Recording, SRT, WHIP/WebRTC, RTMP and Op
 - Slider to picture is about 100 ms at 720p (one pipeline latency plus feed alignment). Applying the look takes
   0.06 ms. The under-50-ms target is met for apply time and not for glass-to-picture; the picture cannot change
   faster than one frame traverses the pipeline.
-- At 1080p the dominant cost is `colorcorrect` and `cas`, which run on the CPU in yuv444p. Moving warmth and
-  sharpen into a GPU shader removes most of the 266 %. That is the first follow-up.
+- Before the GPU path, the dominant 1080p cost was `colorcorrect` and `cas`, which ran on the CPU in yuv444p
+  (next section).
+
+## Warmth and sharpen on the GPU (#58)
+
+Warmth is libplacebo's colour temperature, set live through the `extra_opts` command (`temperature=`). Sharpen is a
+contrast-adaptive sharpening shader (AMD FidelityFX CAS, written out as a libplacebo `.hook`). libplacebo reads
+custom shaders at init only and has no run-time parameter a shader could read, so the strength is a constant in the
+shader file and the strengths are baked in steps of 0.05, one generated file each (`engine/shaders.py`, written once
+under the Console's shader directory). When the sharpen slider crosses a step the supervisor waits 0.6 s for the
+look to stop moving and rebuilds the child (about 0.22 s to the first frame; the camera repeats its last frame
+meanwhile). Everything else in the look stays a live command. A shader that cannot be written turns sharpening off
+with a toast instead of stopping the picture.
+
+The upload is now `yuv422p` (the camera's own layout; `hwupload` refuses `yuyv422`) and the download comes back as
+`yuv422p`, so the 4:4:4 conversion that fed the CPU filters is gone. The CPU path is the fallback and is unchanged:
+`STREAMSTACK_ENGINE_SHARPEN=cpu` (default `auto`) keeps live `colorcorrect` and `cas`, and so does an engine started
+without a shader directory. The split-tone look (`lut_enabled`) still uses `colorcorrect` on the CPU, only while it
+is on, until #93 turns it into per-look LUTs.
+
+Measured with `tools/bench_look.py` (a photo with stamped frames through a real child and a pipe, 1080p30 YUYV, the
+Arc A380, nothing live touched; CPU is the child's share of one core):
+
+| Look | CPU before | CPU after | GPU ms/s before | GPU ms/s after | fps out after |
+|---|---|---|---|---|---|
+| neutral | 52 % | 29 % | 203 | 276 | 30.0 |
+| warmth +0.4 | 63 % | 30 % | 206 | 293 | 30.0 |
+| sharpen 0.18 | 247 % | 28 % | 211 | 317 | 27.8 |
+| all sliders and sharpen | 254 % | 29 % | 226 | 283 | 30.0 |
+
+Latency p50 stays at 80 to 85 ms in every case. The GPU time rises by 70 to 110 ms of the Arc's second, which is
+the price of moving the work onto it; the sharpen run dropped to 27.8 fps once in this measurement and the other
+runs held 30. The CPU `cas` filter is not monotonic in its strength, so the shader is checked against a numpy
+implementation of CAS on grey content (mean 0.1 to 0.3 grey levels), not against `cas` level for level.
+
+Known difference: libplacebo's cool side is mild (a white-point shift that saturates at about 20 R and 14 B). The
+warm side matches the old `colorcorrect` closely; strongly cool looks (Tungsten Fix at -0.45) are weaker than before.
 
 ## OBS was removed (#61)
 
@@ -204,4 +239,4 @@ guard releases the placeholder before the child opens the node, as it does after
 
 - Compositing the blur on the GPU (see above).
 - Hardware AV1 recording and streaming over the tap, SRT, WHIP/WebRTC, RTMP and Opus (`streamstack/stream`).
-- GPU shader for warmth and sharpen; a native PipeWire node; a dmabuf import path if libav ever exposes it.
+- A native PipeWire node; a dmabuf import path if libav ever exposes it.
