@@ -104,6 +104,143 @@
     state: absent
   when: not (minimal_desktop_display_setup_enabled | bool)
 
+# ---- curiosity-display-guard: keep the pinned output at its pinned mode ----
+
+- name: Validate the display guard settings
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_display_guard.output is match('^[A-Za-z0-9_.:-]+$')
+      - minimal_desktop_display_guard.mode is match('^[0-9]+x[0-9]+$')
+      - minimal_desktop_display_guard.rate | float > 0
+      - (minimal_desktop_display_guard.lane_count | default(4)) | int in [1, 2, 4]
+      - (minimal_desktop_display_guard.tv_host | default('')) is match('^[A-Za-z0-9_.:-]*$')
+    fail_msg: >-
+      display_guard needs output (an xrandr name), mode (WxH), a numeric rate
+      and optionally lane_count (1, 2 or 4) and tv_host.
+  when: minimal_desktop_display_guard_enabled | bool
+
+- name: Install the display guard
+  ansible.builtin.copy:
+    src: minimal-desktop/curiosity-display-guard
+    dest: /usr/local/sbin/curiosity-display-guard
+    owner: root
+    group: root
+    mode: "0755"
+  when: minimal_desktop_display_guard_enabled | bool
+  notify: Restart the display guard
+
+- name: Pin the display output and mode
+  ansible.builtin.copy:
+    dest: /etc/curiosity/display-guard.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible. The only output and mode curiosity-display-setup and
+      # curiosity-display-guard will apply.
+      output={{ minimal_desktop_display_guard.output }}
+      mode={{ minimal_desktop_display_guard.mode }}
+      rate={{ minimal_desktop_display_guard.rate }}
+      lane_count={{ minimal_desktop_display_guard.lane_count | default(4) }}
+      tv_host={{ minimal_desktop_display_guard.tv_host | default('') }}
+      display=:0
+      xauthority=/var/run/lightdm/root/:0
+  when: minimal_desktop_display_guard_enabled | bool
+  notify: Restart the display guard
+
+- name: Install the display guard units
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: curiosity-display-guard.service
+      content: |
+        # Managed by Ansible. Watches the pinned display output, detects TV wake
+        # edges and repairs a dead or wrong-mode output (curiosity-display-guard).
+        [Unit]
+        Description=Curiosity display guard (keep the 8K output alive)
+        After=display-manager.service
+        ConditionVirtualization=!container
+
+        [Service]
+        Type=simple
+        ExecStart=/usr/local/sbin/curiosity-display-guard watch
+        Restart=always
+        RestartSec=10
+        Nice=5
+
+        [Install]
+        WantedBy=multi-user.target
+    - name: curiosity-display-guard@.service
+      content: |
+        # Managed by Ansible. One repair run for the trigger named by the
+        # instance (hotplug, resume, ...). Starting it while it runs is a no-op.
+        [Unit]
+        Description=Curiosity display guard repair (%i)
+        ConditionVirtualization=!container
+        StartLimitIntervalSec=0
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/sbin/curiosity-display-guard repair --reason %i
+        TimeoutStartSec=300
+  loop_control:
+    label: "{{ item.name }}"
+  when: minimal_desktop_display_guard_enabled | bool
+  notify: Reload systemd
+
+- name: Install the display guard udev trigger
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/89-curiosity-display-guard.rules
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible. A DRM hotplug or link-status change starts one guard
+      # repair run (the guard waits for the burst to settle and does nothing when
+      # the output is healthy, so its own modesets cannot loop).
+      SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ACTION=="change", ENV{HOTPLUG}=="1", RUN+="/usr/bin/systemctl --no-block start curiosity-display-guard@hotplug.service"
+      SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ACTION=="change", ENV{LINK_STATUS}=="?*", RUN+="/usr/bin/systemctl --no-block start curiosity-display-guard@hotplug.service"
+  when: minimal_desktop_display_guard_enabled | bool
+  notify: Reload udev rules
+
+- name: Install the display guard resume hook
+  ansible.builtin.copy:
+    dest: /usr/lib/systemd/system-sleep/curiosity-display-guard
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by Ansible. After suspend/hibernate the TV may have slept: run a
+      # forced re-apply of the pinned mode. Never blocks or fails the resume.
+      case "$1" in
+          post) /usr/bin/systemctl --no-block start curiosity-display-guard@resume.service || true ;;
+      esac
+      exit 0
+  when: minimal_desktop_display_guard_enabled | bool
+
+- name: Enable the display guard
+  ansible.builtin.systemd:
+    name: curiosity-display-guard.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: minimal_desktop_display_guard_enabled | bool
+
+- name: Remove the display guard when it is not configured
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/udev/rules.d/89-curiosity-display-guard.rules
+    - /usr/lib/systemd/system-sleep/curiosity-display-guard
+    - /etc/curiosity/display-guard.conf
+  when: not (minimal_desktop_display_guard_enabled | bool)
+
 # Files installed by hand at the same paths are left alone: only files carrying
 # this role's marker are removed.
 - name: Find role-managed display setup files
