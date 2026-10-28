@@ -263,6 +263,78 @@ def test_concurrent_triggers_coalesce(env: Path, monkeypatch: pytest.MonkeyPatch
     assert x.calls == []
 
 
+# --- a forced-off connector must never be left behind ---------------------------
+
+
+def test_hotplug_restores_detect_even_if_the_modeset_stage_is_interrupted(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _kernel_connector(env)
+    monkeypatch.setattr(guard, "run", FakeX(None).run)
+
+    def killed(_seconds: float) -> None:
+        raise SystemExit(143)  # SIGTERM while sleeping with the connector forced off
+
+    monkeypatch.setattr(guard, "sleep", killed)
+    with pytest.raises(SystemExit):
+        guard.stage_hotplug(_cfg())
+    assert (conn / "status").read_text() == "detect"
+    assert not (guard.STATE_DIR / "forced-off").exists()
+
+
+def test_an_oserror_on_the_detect_write_is_retried_and_logged_loudly(env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    conn = _kernel_connector(env)
+    monkeypatch.setattr(guard, "run", FakeX(None).run)
+    real_write = Path.write_text
+    failures = {"detect": 2}
+
+    def flaky(self: Path, data: str, *args: object, **kwargs: object) -> int:
+        if self.name == "status" and data == "detect" and failures["detect"] > 0:
+            failures["detect"] -= 1
+            raise OSError(5, "I/O error")
+        return real_write(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", flaky)
+    guard.stage_hotplug(_cfg())
+    assert (conn / "status").read_text() == "detect"
+    assert "CRITICAL: cannot restore connector status to detect" in capsys.readouterr().out
+
+
+def test_a_permanently_failing_detect_write_is_logged_and_the_marker_kept(env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    _kernel_connector(env)
+    monkeypatch.setattr(guard, "run", FakeX(None).run)
+    real_write = Path.write_text
+
+    def broken(self: Path, data: str, *args: object, **kwargs: object) -> int:
+        if self.name == "status" and data == "detect":
+            raise OSError(5, "I/O error")
+        return real_write(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", broken)
+    guard.stage_hotplug(_cfg())
+    assert "CRITICAL: connector may stay forced off" in capsys.readouterr().out
+    assert (guard.STATE_DIR / "forced-off").exists()  # the next tick heals it
+
+
+def test_guard_start_restores_a_connector_left_forced_off(env: Path) -> None:
+    conn = _kernel_connector(env)
+    (conn / "status").write_text("off")  # a previous run was killed mid-hotplug
+    assert guard.heal_forced_off(_cfg(), force_check=True) is True
+    assert (conn / "status").read_text() == "detect"
+
+
+def test_watchdog_tick_heals_when_our_marker_says_it_was_forced_off(env: Path) -> None:
+    conn = _kernel_connector(env)
+    (conn / "status").write_text("off")
+    guard.STATE_DIR.mkdir(parents=True)
+    (guard.STATE_DIR / "forced-off").write_text("1")
+    assert guard.heal_forced_off(_cfg()) is True
+    assert (conn / "status").read_text() == "detect"
+    assert not (guard.STATE_DIR / "forced-off").exists()
+    # A healthy, connected output with no marker is left alone.
+    (conn / "status").write_text("connected")
+    assert guard.heal_forced_off(_cfg(), force_check=True) is False
+    assert (conn / "status").read_text() == "connected"
+
+
 # --- wake detection -------------------------------------------------------------
 
 

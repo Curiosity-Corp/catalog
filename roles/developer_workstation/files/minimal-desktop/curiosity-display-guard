@@ -48,6 +48,7 @@ import json
 import os
 import re
 import select
+import signal
 import subprocess
 import sys
 import time
@@ -438,17 +439,67 @@ def stage_retrain(cfg: Config) -> None:
     stage_reapply(cfg)
 
 
+def restore_detect(conn: str) -> bool:
+    """Write "detect" to the connector's status file; a forced "off" is a black TV.
+
+    Retried, and logged loudly when it cannot be done."""
+    for attempt in range(1, 4):
+        try:
+            Path(f"{conn}/status").write_text("detect")
+        except OSError as exc:
+            log("CRITICAL: cannot restore connector status to detect", conn=conn, attempt=attempt, error=exc)
+            sleep(1)
+        else:
+            return True
+    log("CRITICAL: connector may stay forced off", conn=conn)
+    return False
+
+
+def heal_forced_off(cfg: Config, force_check: bool = False) -> bool:
+    """Undo a forced-off connector (our own marker, or a kernel status that is not connected).
+
+    The kernel reads a forced "off" back as "disconnected", the same as a real
+    unplug, so the marker file tells them apart; at guard start any non-connected
+    status is reset (writing "detect" on an unplugged connector only re-probes it)."""
+    conn = connector_dir(cfg.output)
+    if not conn:
+        return False
+    marker = STATE_DIR / "forced-off"
+    if not (marker.exists() or (force_check and read_text(f"{conn}/status") != "connected")):
+        return False
+    log("healing: connector was left forced off; restoring detect", conn=conn)
+    if restore_detect(conn):
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as exc:
+            log("cannot remove the forced-off marker", error=exc)
+        return True
+    return False
+
+
 def stage_hotplug(cfg: Config) -> None:
     """Emulate unplug/replug (forces a fresh detect and EDID read), then modeset."""
     conn = connector_dir(cfg.output)
     if conn:
+        marker = STATE_DIR / "forced-off"
+        forced = False
         try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            marker.write_text("1")
             Path(f"{conn}/status").write_text("off")
+            forced = True
             sleep(2)
-            Path(f"{conn}/status").write_text("detect")
         except OSError as exc:
             log("forced hotplug failed", error=exc)
-        else:
+        finally:
+            # Always restore, also when interrupted (SIGTERM raises SystemExit below).
+            restored = restore_detect(conn)
+            if restored:
+                try:
+                    marker.unlink(missing_ok=True)
+                except OSError as exc:
+                    log("cannot remove the forced-off marker", error=exc)
+        if forced and restored:
             sleep(3)
     stage_reprobe(cfg)
     stage_reapply(cfg)
@@ -622,18 +673,24 @@ class WakeDetector:
         return events
 
 
+def _terminate(signum: int, _frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
 def watch(cfg: Config, interval: float = 5.0) -> int:
     detector = WakeDetector()
     pending: list[tuple[float, str]] = []
     bad_ticks = 0
     last_tv_poll = 0.0
     tv: str | None = None
+    heal_forced_off(cfg, force_check=True)
     log("watching", output=cfg.output, mode=f"{cfg.mode}@{cfg.rate:g}", tv=cfg.tv_host or "none")
     while True:
         now = time.time()
         if (cfg.tv_host or os.environ.get("CURIOSITY_DISPLAY_GUARD_TV_FILE")) and now - last_tv_poll >= 5:
             tv = tv_power(cfg.tv_host)
             last_tv_poll = now
+        heal_forced_off(cfg)
         conn = connector_dir(cfg.output)
         edid = edid_readable(conn) if conn else None
         dpms = read_text(f"{conn}/dpms") if conn else None
@@ -683,7 +740,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(result.summary())
         return 0 if result.ok else 1
+    signal.signal(signal.SIGTERM, _terminate)
     if args.command == "repair":
+        heal_forced_off(cfg)
         return repair(cfg, args.reason, args.force)
     return watch(cfg)
 
