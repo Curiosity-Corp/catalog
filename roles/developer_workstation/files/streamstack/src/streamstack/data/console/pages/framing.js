@@ -5,7 +5,7 @@
 // One segmented control (Off / Gentle / Tight / Follow), a Hold toggle and a status line: the device the face
 // detector runs on and how long one detection takes. The panel adds a small map of the crop window inside the
 // camera frame and says why framing is unavailable, with the fix. Everything comes from `state.framing`
-// (docs/console.md) and goes out as `framing.mode` / `framing.hold` / `framing.reset`; there is no local state.
+// (docs/console.md) and goes out as `framing.mode` / `framing.shot` / `framing.subjects` / `framing.handoff` / `framing.hold` / `framing.reset`; there is no local state.
 //
 // Page CSS lives in framing.css under `@scope` for the pages that mount it; load it with ensureCss first.
 
@@ -55,6 +55,13 @@ export function mountFraming(el, ctx, { compact = false } = {}) {
   hold.addEventListener('click', () => act('framing.hold', { on: hold.getAttribute('aria-pressed') !== 'true' }));
   const recentre = h('button', { type: 'button', class: 'fr-hold', title: 'Forget the current crop and find you again' }, 'Recentre');
   recentre.addEventListener('click', () => act('framing.reset'));
+  const shots = h('div', { class: 'fr-seg fr-shots', role: 'group', 'aria-label': 'Shot' });
+  const shotButtons = new Map();
+  const subjects = h('select', { class: 'fr-subjects', 'aria-label': 'Who to frame' });
+  subjects.addEventListener('change', () => act('framing.subjects', { subjects: subjects.value }));
+  const follow = h('button', { type: 'button', class: 'fr-hold fr-follow', 'aria-pressed': 'false', title: 'Move the shot to whoever is talking' }, 'Follow speaker');
+  follow.addEventListener('click', () => act('framing.handoff', { on: follow.getAttribute('aria-pressed') !== 'true' }));
+  const people = h('span', { class: 'fr-people' });
   const status = h('span', { class: 'fr-status', role: 'status' });
   const note = h('p', { class: 'fr-note', hidden: true });
   const win = h('div', { class: 'fr-map', 'aria-hidden': 'true' }, h('div', { class: 'fr-win' }));
@@ -63,7 +70,8 @@ export function mountFraming(el, ctx, { compact = false } = {}) {
     el.append(h('div', { class: 'fr fr-compact' }, h('span', { class: 'fr-eyebrow' }, 'Framing'), row, status));
   } else {
     row.append(recentre);
-    el.append(h('div', { class: 'fr' }, row, h('div', { class: 'fr-line' }, win, status), note));
+    el.append(h('div', { class: 'fr' }, row, h('div', { class: 'fr-row' }, shots, subjects, follow),
+      h('div', { class: 'fr-line' }, win, status, people), note));
   }
   const winEl = win.firstElementChild;
 
@@ -74,6 +82,30 @@ export function mountFraming(el, ctx, { compact = false } = {}) {
       if (name !== 'off') b.disabled = !f.available && f.mode === 'off';
       b.title = `${MODES.find((m) => m.name === name).blurb}${b.disabled ? ' Not available on this machine.' : ''}`;
     }
+    if (shotButtons.size !== (f.shots ?? []).length) {
+      shotButtons.clear();
+      shots.replaceChildren();
+      for (const sh of f.shots ?? []) {
+        const b = h('button', { type: 'button', 'data-shot': sh.name, title: sh.blurb ?? '' }, sh.label);
+        b.addEventListener('click', () => act('framing.shot', { shot: sh.name }));
+        shotButtons.set(sh.name, b);
+        shots.append(b);
+      }
+    }
+    for (const [name, b] of shotButtons) {
+      b.setAttribute('aria-pressed', String(f.shot === name));
+      b.disabled = !f.available && f.mode === 'off';
+    }
+    const opts = f.subject_options ?? [];
+    if (subjects.options.length !== opts.length) {
+      subjects.replaceChildren(...opts.map((o) => h('option', { value: o.name }, o.label)));
+    }
+    subjects.value = f.subjects;
+    subjects.disabled = f.shot === 'desk';
+    follow.setAttribute('aria-pressed', String(!!f.handoff));
+    follow.disabled = f.subjects !== 'group' || f.shot === 'desk';
+    people.textContent = f.mode !== 'off' && f.shot !== 'desk' && f.people > 0
+      ? `${f.people} ${f.people === 1 ? 'person' : 'people'}${f.handoff && f.speaker ? ' · speaker' : ''}` : '';
     const active = f.mode !== 'off';
     hold.disabled = !active;
     recentre.disabled = !active;

@@ -76,3 +76,13 @@ So the engine rests, and wakes when something wants it (`engine/idle.py`, `conso
 
 Fixing the feeder itself (the restart policy of `canonctl-ptp-webcam.service` and its ffmpeg logging) is the canonctl
 repository's job; StreamStack only guarantees the node stays listed while that is down.
+
+## The PipeWire path (#88)
+
+`StreamStack Camera` is also a PipeWire `Video/Source`, published by WirePlumber, not by StreamStack (ADR 0004
+addendum). Check it: `pw-dump | python3 -c "import sys,json;[print(o['id'],o['info']['props'].get('node.nick')) for o in json.load(sys.stdin) if o.get('info',{}).get('props',{}).get('media.class')=='Video/Source']"`
+or read the `video-pipewire` row in `streamstack doctor`. Verified on dm313red and deskmeet1's OS image
+(PipeWire 1.6.2, WirePlumber): the three v4l2 cameras including StreamStack Camera are Video/Source nodes. Legacy apps:
+`pw-v4l2 <app>`. Chromium lists PipeWire cameras only with the flag above; Firefox with `media.webrtc.camera.allow-pipewire`.
+Zoom and Teams use the v4l2 node directly; whether any build uses the portal is a question for a person on a call.
+

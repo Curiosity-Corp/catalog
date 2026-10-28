@@ -18,22 +18,35 @@ How a detection becomes motion, in order:
 4. A critically damped spring (exact solution, any step size) moves the window to the target with no overshoot
    and a velocity limit, so there is no hunting and no whip.
 
-Losing the face for `LOST_AFTER` seconds eases the window back to the full frame; `Framer.hold` freezes it.
+Losing the face for `LOST_AFTER` seconds starts a slow widening, and after `LOST_HOME_AFTER` the window is back at the
+shot's home (the full frame; the fixed crop for the desk shot); `Framer.hold` freezes it.
+
+Group framing (`subjects="group"`): with two or more people in the picture the window takes in all of them (`group.py`
+keeps the face tracks and the hold timers), never closer than the shot's own face size and never past the zoom cap.
+Speaker hand-off (`handoff=True`) narrows it to the person talking, and returns to the group a few seconds after the
+voice stops. Shot presets (`SHOTS`) replace how large a face is framed; the mode still sets the pace.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from streamstack.framing.group import SpeakerPicker, Track, Tracker
 
 MODES = ("off", "gentle", "tight", "follow")
+SUBJECTS = ("group", "one")  # frame everyone in the picture, or only the main face
 
 MIN_SCORE = 0.6  # detections below this are ignored
 MIN_FACE = 0.03  # a face shorter than this share of the frame height is noise
 MAX_FACE = 0.95
 CONFIRM_HITS = 2  # a face must be seen this many times in CONFIRM_WITHIN seconds before the window moves
 CONFIRM_WITHIN = 1.0
-LOST_AFTER = 1.5  # seconds without a face before easing back to the full frame
+LOST_AFTER = 1.5  # seconds without a face before the window starts to widen
+LOST_HOME_AFTER = 6.0  # seconds without a face before it is back at the shot's home
+GROUP_MARGIN = 0.35  # extra room around a group on each side, in widths of its widest face
+GROUP_MARGIN_MIN = 0.06  # and never less than this share of the frame
+GROUP_HEADROOM = 0.5  # above the highest face and below the lowest, in heights of its tallest face
 EDGE_MARGIN = 0.04  # share of the window kept between the face and the window edge
 MAX_STEP = 1.0  # a longer gap between steps (a stall) is treated as this long
 SETTLED = 0.005  # distance from the full frame that counts as back at the full frame (under 6 px of crop)
@@ -50,6 +63,8 @@ class Face:
     h: float
     score: float = 1.0
     eye_y: float | None = None  # normalised y of the eye line when the detector reports landmarks
+    mouth_y: float | None = None  # normalised y of the mouth corners (landmarks), for the speaker pick
+    mouth_w: float | None = None  # corner to corner, as a share of the frame width
 
     @property
     def cx(self) -> float:
@@ -107,6 +122,37 @@ PROFILES: dict[str, Profile] = {
     ),
 }
 OFF_PROFILE = PROFILES["gentle"]  # the pace at which the window returns to the full frame
+
+
+@dataclass(frozen=True)
+class Shot:
+    """A shot preset: how large the subject is framed. The mode still sets how fast the window moves."""
+
+    name: str
+    label: str
+    blurb: str
+    face_height: float | None  # wanted face height as a share of the window height; None for a fixed crop
+    max_zoom: float
+    eye_line: float
+    home: tuple[float, float, float] | None = None  # (cx, cy, zoom) of a fixed crop; None follows people
+
+
+SHOT_AUTO = "auto"
+SHOTS: dict[str, Shot] = {
+    "close": Shot("close", "Close", "Head and shoulders, close to the lens.", 0.40, 2.2, 0.36),
+    "medium": Shot("medium", "Medium", "You and a little desk.", 0.27, 1.6, 1 / 3),
+    "wide": Shot("wide", "Wide", "A roomy shot with air around you.", 0.15, 1.25, 0.38),
+    "presenter": Shot("presenter", "Presenter", "Standing: wider, with the head high in the picture.", 0.11, 1.3, 0.22),
+    "desk": Shot(
+        "desk",
+        "Desk",
+        "A fixed crop of the work surface (overhead or document camera).",
+        None,
+        1.6,
+        0.5,
+        (0.5, 0.66, 1.6),
+    ),
+}
 
 
 def resolution_zoom_cap(
@@ -216,9 +262,27 @@ class Framer:
     Not thread-safe; the owner serialises calls. `t` is any monotonic clock in seconds.
     """
 
-    def __init__(self, mode: str = "off", zoom_cap: float = MAX_UPSCALE) -> None:
+    def __init__(
+        self,
+        mode: str = "off",
+        zoom_cap: float = MAX_UPSCALE,
+        *,
+        subjects: str = "one",
+        shot: str = SHOT_AUTO,
+        handoff: bool = False,
+    ) -> None:
         self.zoom_cap = max(1.0, zoom_cap)
         self._mode = "off"
+        self._subjects = "one"
+        self._shot = SHOT_AUTO
+        self._handoff = False
+        self._tracker = Tracker()
+        self._picker = SpeakerPicker()
+        self._g_filters = [OneEuro() for _ in range(4)]  # the group's left, right, top and bottom
+        self._people: list[Face] = []
+        self._speaker_face: Face | None = None
+        self._lost_since: float | None = None
+        self._force = False  # the next composition commits whatever the dead zone says (a new shot)
         self._held = False
         self._cx = Spring(0.5)
         self._cy = Spring(0.5)
@@ -231,6 +295,9 @@ class Framer:
         self._hits: list[float] = []
         self._tracking = False
         self._face: Face | None = None
+        self.set_subjects(subjects)
+        self.set_shot(shot)
+        self.set_handoff(handoff)
         self.set_mode(mode)
 
     # -- configuration --------------------------------------------------------
@@ -245,11 +312,56 @@ class Framer:
 
     @property
     def profile(self) -> Profile:
-        return PROFILES.get(self._mode, OFF_PROFILE)
+        """The mode's pace with the shot's idea of how large a face is."""
+        base = PROFILES.get(self._mode, OFF_PROFILE)
+        shot = self.shot_preset
+        if shot is None or shot.face_height is None:
+            return base
+        return replace(base, face_height=shot.face_height, max_zoom=shot.max_zoom, eye_line=shot.eye_line)
 
     @property
     def max_zoom(self) -> float:
+        shot = self.shot_preset
+        if shot is not None and shot.home is not None:
+            return min(shot.max_zoom, self.zoom_cap)
         return min(self.profile.max_zoom, self.zoom_cap)
+
+    @property
+    def shot(self) -> str:
+        return self._shot
+
+    @property
+    def shot_preset(self) -> Shot | None:
+        return SHOTS.get(self._shot) if self._mode != "off" else None
+
+    @property
+    def subjects(self) -> str:
+        return self._subjects
+
+    @property
+    def handoff(self) -> bool:
+        return self._handoff
+
+    @property
+    def home(self) -> Window:
+        """Where the window rests with nobody to follow: the full frame, or the desk shot's own crop."""
+        shot = self.shot_preset
+        if shot is not None and shot.home is not None:
+            cx, cy, zoom = shot.home
+            zoom = min(zoom, self.zoom_cap)
+            half = 0.5 / zoom
+            return Window(_clamp(cx, half, 1 - half), _clamp(cy, half, 1 - half), zoom)
+        return FULL
+
+    @property
+    def people(self) -> int:
+        """How many people the window is framing now (0 with nobody to follow)."""
+        return len(self._people) if self._tracking else 0
+
+    @property
+    def speaker(self) -> bool:
+        """The window is on the person talking."""
+        return self._speaker_face is not None
 
     def set_mode(self, mode: str) -> None:
         if mode not in MODES:
@@ -265,6 +377,43 @@ class Framer:
             self._go_full()
         elif self._held:
             self._freeze()
+        elif was == "off" and self.home is not FULL:
+            self._go_home()  # a fixed shot starts moving to its crop at once
+
+    def set_shot(self, shot: str) -> None:
+        """Choose a shot preset ("auto" leaves the mode's own framing). The window eases to it at the mode's pace."""
+        if shot != SHOT_AUTO and shot not in SHOTS:
+            raise ValueError(f"unknown shot {shot!r}")
+        if shot == self._shot:
+            return
+        self._shot = shot
+        self._force = True
+        self._lost_since = None
+        if self._mode != "off" and not self._held:
+            if self.home is not FULL:
+                self._tracking = False
+                self._go_home()
+            elif self._tracking:
+                pass  # the next detection composes the new shot
+            else:
+                self._go_full()
+
+    def set_subjects(self, subjects: str) -> None:
+        if subjects not in SUBJECTS:
+            raise ValueError(f"unknown subjects {subjects!r}")
+        if subjects != self._subjects:
+            self._subjects = subjects
+            self._force = True
+            self._people = []
+            self._speaker_face = None
+            self._picker.reset()
+
+    def set_handoff(self, on: bool) -> None:
+        if bool(on) != self._handoff:
+            self._handoff = bool(on)
+            self._force = True
+            self._picker.reset()
+            self._speaker_face = None
 
     def set_zoom_cap(self, cap: float) -> None:
         self.zoom_cap = max(1.0, cap)
@@ -288,10 +437,13 @@ class Framer:
             self._last_seen = t
 
     def reset(self) -> None:
-        """Back to the full frame now (the mode stays); tracking starts again at the next face."""
+        """Back to the shot's home now (the mode stays); tracking starts again at the next face."""
         self._tracking = False
         self._hits.clear()
-        self._go_full()
+        self._tracker.reset()
+        self._picker.reset()
+        self._people, self._speaker_face, self._lost_since = [], None, None
+        self._go_home()
 
     # -- state ------------------------------------------------------------------
 
@@ -301,6 +453,9 @@ class Framer:
             return "off"
         if self._held:
             return "held"
+        shot = self.shot_preset
+        if shot is not None and shot.home is not None:
+            return "fixed"
         return "tracking" if self._tracking else "no-face"
 
     @property
@@ -331,11 +486,20 @@ class Framer:
 
     # -- input ------------------------------------------------------------------
 
-    def observe(self, t: float, faces: list[Face]) -> None:
-        """One detector result (possibly empty) taken at time `t`."""
+    def observe(self, t: float, faces: list[Face], speaking: bool | None = None, voice_x: float | None = None) -> None:
+        """One detector result (possibly empty) taken at time `t`.
+
+        `speaking` is the microphone's voice activity and `voice_x` the voice direction across the picture (0 left,
+        1 right) when a stereo microphone knows it; both only matter for speaker hand-off.
+        """
         if self._mode == "off" or self._held:
             return
-        face = self._pick([f for f in faces if self._plausible(f)])
+        plausible = [f for f in faces if self._plausible(f)]
+        self._tracker.update(t, plausible)
+        shot = self.shot_preset
+        if shot is not None and shot.home is not None:
+            return  # a fixed crop: there is nobody to follow
+        face = self._pick(plausible)
         if face is None:
             return
         if not self._tracking:
@@ -343,15 +507,59 @@ class Framer:
             if len(self._hits) < CONFIRM_HITS:
                 return
             self._tracking = True
+            self._lost_since = None
             if self._last_seen is None or t - self._last_seen > LOST_AFTER:
-                for f in (self._f_cx, self._f_eye, self._f_h):
+                for f in (self._f_cx, self._f_eye, self._f_h, *self._g_filters):
                     f.reset()
         self._last_seen = t
         self._face = face
-        cx = self._f_cx(t, face.cx)
-        eye = self._f_eye(t, face.eyes)
-        height = self._f_h(t, face.h)
-        self._compose(cx, eye, height)
+        members = self._tracker.members(t) if self._subjects == "group" else []
+        if len(members) >= 2:
+            self._observe_group(t, members, speaking, voice_x)
+            return
+        self._follow(t, face)
+        self._speaker_face = None
+        self._picker.reset()
+
+    def _follow(self, t: float, face: Face) -> None:
+        """Frame one face the way the mode and shot say."""
+        self._people = [face]
+        self._compose(self._f_cx(t, face.cx), self._f_eye(t, face.eyes), self._f_h(t, face.h))
+
+    def _observe_group(self, t: float, members: list[Track], speaking: bool | None, voice_x: float | None) -> None:
+        focus = None
+        if self._handoff:
+            chosen = self._picker.pick(t, members, speaking, voice_x)
+            focus = next((m for m in members if m.id == chosen), None)
+        else:
+            self._picker.reset()
+        if focus is not None:
+            if self._speaker_face is None or _overlap(self._speaker_face, focus.face) < 0.1:
+                for f in (self._f_cx, self._f_eye, self._f_h):
+                    f.reset()  # a new speaker: do not glide the filters across the room
+            self._speaker_face = focus.face
+            self._face = focus.face
+            self._follow(t, focus.face)
+            return
+        self._speaker_face = None
+        faces = [m.face for m in members]
+        self._people = faces
+        self._commit(self._group_window(t, faces))
+
+    def _group_window(self, t: float, faces: list[Face]) -> Window:
+        """The window that takes in every face with room around the group, no closer than the shot's face size."""
+        p = self.profile
+        hmax = max(f.h for f in faces)
+        wmax = max(f.w for f in faces)
+        margin = max(GROUP_MARGIN * wmax, GROUP_MARGIN_MIN)
+        left = self._g_filters[0](t, min(f.x for f in faces) - margin)
+        right = self._g_filters[1](t, max(f.x + f.w for f in faces) + margin)
+        top = self._g_filters[2](t, min(f.y for f in faces) - GROUP_HEADROOM * hmax)
+        bottom = self._g_filters[3](t, max(f.y + f.h for f in faces) + GROUP_HEADROOM * hmax)
+        fit = 1.0 / max(right - left, bottom - top, 1e-3)
+        zoom = _clamp(min(fit, p.face_height / max(hmax, 1e-3)), 1.0, self.max_zoom)
+        half = 0.5 / zoom
+        return Window(_clamp((left + right) / 2, half, 1 - half), _clamp((top + bottom) / 2, half, 1 - half), zoom)
 
     @staticmethod
     def _plausible(face: Face) -> bool:
@@ -381,31 +589,33 @@ class Framer:
         return Window(wx, wy, zoom)
 
     def _compose(self, cx: float, eye: float, height: float) -> None:
+        self._commit(self.desired(cx, eye, height))
+
+    def _commit(self, want: Window) -> None:
+        """Move to `want` when it is far enough from where the window is heading (or a face is about to leave)."""
         p = self.profile
-        want = self.desired(cx, eye, height)
         have = self.target
         moved = (
-            abs(want.cx - have.cx) > p.dead_pos
+            self._force
+            or abs(want.cx - have.cx) > p.dead_pos
             or abs(want.cy - have.cy) > p.dead_pos
             or abs(math.log(want.zoom / have.zoom)) > p.dead_zoom
             or self._near_edge(have)
         )
         if not moved:
             return
+        self._force = False
         self._cx.target, self._cy.target, self._lz.target = want.cx, want.cy, math.log(want.zoom)
 
     def _near_edge(self, window: Window) -> bool:
-        face = self._face
-        if face is None:
+        if window.zoom <= 1.0 + 1e-6:
             return False
         left, top, right, bottom = window.rect()
         margin = EDGE_MARGIN * window.size
-        return (
-            face.x < left + margin
-            or face.x + face.w > right - margin
-            or face.y < top + margin
-            or face.y + face.h > bottom - margin
-        ) and window.zoom > 1.0 + 1e-6
+        return any(
+            f.x < left + margin or f.x + f.w > right - margin or f.y < top + margin or f.y + f.h > bottom - margin
+            for f in self._people
+        )
 
     # -- output -----------------------------------------------------------------
 
@@ -422,7 +632,19 @@ class Framer:
         if lost and self._mode != "off" and not self._held:
             self._tracking = False
             self._hits.clear()
-            self._go_full()
+            self._lost_since = self._last_seen
+            self._people, self._speaker_face = [], None
+            self._picker.reset()
+            self._widen()
+        elif (
+            self._lost_since is not None
+            and not self._tracking
+            and self._mode != "off"
+            and not self._held
+            and t - self._lost_since >= LOST_HOME_AFTER
+        ):
+            self._lost_since = None
+            self._go_home()
         p = self.profile
         slow = 1.0 if self._mode != "off" and self._tracking else 1.5  # the return to full frame is unhurried
         self._cx.step(dt, p.smooth_pos * slow, p.max_speed)
@@ -433,6 +655,17 @@ class Framer:
 
     def _go_full(self) -> None:
         self._cx.target, self._cy.target, self._lz.target = 0.5, 0.5, 0.0
+
+    def _go_home(self) -> None:
+        home = self.home
+        self._cx.target, self._cy.target, self._lz.target = home.cx, home.cy, math.log(home.zoom)
+
+    def _widen(self) -> None:
+        """The subject is gone: half way out to the shot's home at once, all the way after LOST_HOME_AFTER."""
+        home = self.home
+        self._cx.target = (self._cx.target + home.cx) / 2
+        self._cy.target = (self._cy.target + home.cy) / 2
+        self._lz.target = (self._lz.target + math.log(home.zoom)) / 2
 
     def _freeze(self) -> None:
         for spring in (self._cx, self._cy, self._lz):

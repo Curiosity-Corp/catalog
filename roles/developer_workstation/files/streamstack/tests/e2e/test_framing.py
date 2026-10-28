@@ -104,3 +104,47 @@ def test_no_console_errors_with_framing_on(app: App, rig: Rig, route: str, probl
         open_panel(page)
     poll(rig, lambda st: st["framing"]["state"] == "tracking")
     assert problems == []
+
+
+def shot_button(page: Page, label: str):
+    return page.get_by_role("group", name="Shot").get_by_role("button", name=label, exact=True)
+
+
+def test_the_demo_offers_the_shots_and_the_subjects(rig: Rig) -> None:
+    framing = rig.state()["framing"]
+    assert [s["name"] for s in framing["shots"]] == ["auto", "close", "medium", "wide", "presenter", "desk"]
+    assert framing["subjects"] == "group" and framing["handoff"] is False
+
+
+def test_choosing_a_shot_starts_framing_and_marks_the_button(app: App, rig: Rig) -> None:
+    page = app.goto("camera").page
+    open_panel(page)
+    expect(shot_button(page, "Auto")).to_have_attribute("aria-pressed", "true", timeout=LOADED)
+    shot_button(page, "Wide").click()
+    poll(rig, lambda st: st["framing"]["shot"] == "wide" and st["framing"]["mode"] == "gentle")
+    expect(shot_button(page, "Wide")).to_have_attribute("aria-pressed", "true")
+    expect(shot_button(page, "Auto")).to_have_attribute("aria-pressed", "false")
+    expect(mode_button(page, "Gentle")).to_have_attribute("aria-pressed", "true")
+
+
+def test_who_to_frame_and_follow_speaker_reach_the_rig(app: App, rig: Rig) -> None:
+    page = app.goto("camera").page
+    open_panel(page)
+    follow = page.get_by_role("button", name="Follow speaker", exact=True)
+    expect(follow).to_have_attribute("aria-pressed", "false", timeout=LOADED)
+    follow.click()
+    poll(rig, lambda st: st["framing"]["handoff"] is True)
+    expect(follow).to_have_attribute("aria-pressed", "true")
+    page.get_by_label("Who to frame").select_option("one")
+    poll(rig, lambda st: st["framing"]["subjects"] == "one")
+    expect(follow).to_be_disabled()  # hand-off is for a group
+    page.get_by_label("Who to frame").select_option("group")
+    poll(rig, lambda st: st["framing"]["subjects"] == "group")
+    expect(follow).to_be_enabled()
+
+
+def test_a_shot_chosen_elsewhere_reaches_the_page(app: App, rig: Rig) -> None:
+    page = app.goto("camera").page
+    open_panel(page)
+    rig.act("framing.shot", shot="presenter")
+    expect(shot_button(page, "Presenter")).to_have_attribute("aria-pressed", "true", timeout=LOADED)

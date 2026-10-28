@@ -414,8 +414,14 @@ class NativeVideo:
             render_node=node,
             detect_fps=_detect_fps(self.cfg),
             lut=(self.cfg.get("STREAMSTACK_ENGINE_LUT") or "").strip(),
+            shaders=self._shader_dir(),
             blur=self.arc.graph if self.arc.capable else None,
         )
+
+    def _shader_dir(self) -> str:
+        """Where the GPU sharpen shaders go; empty keeps the live CPU cas filter (STREAMSTACK_ENGINE_SHARPEN=cpu)."""
+        wanted = (self.cfg.get("STREAMSTACK_ENGINE_SHARPEN") or "auto").strip().lower()
+        return "" if wanted == "cpu" else str(config.state_dir() / "shaders")
 
     def _ensure_engine(self, camera: source.Camera) -> None:
         """Resolve the camera and start the engine on it, or re-point a stuck engine at the camera's new mode."""

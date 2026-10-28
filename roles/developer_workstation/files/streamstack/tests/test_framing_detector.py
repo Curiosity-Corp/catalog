@@ -82,6 +82,10 @@ def test_decode_places_the_box_from_the_grid_cell_and_normalises_it() -> None:
     assert face.h == pytest.approx(side / height, abs=1e-3)
     assert face.score == pytest.approx(0.9, abs=1e-4)
     assert face.eye_y is not None and face.y < face.eye_y < face.cy  # the eyes sit above the middle
+    # the mouth corners (the speaker pick reads them): 0.3 cells below the grid row, 0.4 cells apart at stride 16
+    assert face.mouth_y is not None and face.y < face.mouth_y < face.y + face.h
+    assert face.mouth_y == pytest.approx((6 + 0.3) * 16 / height, abs=1e-4)
+    assert face.mouth_w == pytest.approx(0.4 * 16 / width, abs=1e-4)
 
 
 @needs_numpy

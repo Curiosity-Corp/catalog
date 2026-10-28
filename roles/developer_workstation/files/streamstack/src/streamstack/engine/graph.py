@@ -4,12 +4,18 @@ One ffmpeg process runs the whole camera path, so a slider never restarts anythi
 while the call is running is a *command* sent to a named filter instance over ffmpeg's stdin (`c<target> -1 <name>
 <value>`), applied before the next frame. Names used here (filter@instance):
 
-    libplacebo@grade   Vulkan: crop window, scale to the output size, brightness / contrast / saturation / gamma
-    colorcorrect@tone  YUV:    warmth and the split-tone "cinematic" grade (teal lows, orange highs)
-    cas@sharp          YUV:    contrast-adaptive sharpening
+    libplacebo@grade   Vulkan: crop window, scale to the output size, brightness / contrast / saturation / gamma,
+                       and warmth (libplacebo's colour temperature, set through `extra_opts`)
+    colorcorrect@tone  YUV:    the split-tone "cinematic" grade (teal lows, orange highs); warmth too on the CPU backend
+    cas@sharp          YUV:    contrast-adaptive sharpening (the CPU path)
 
 `colorcorrect` and `cas` sit behind the timeline `enable` switch, so at a neutral look they pass frames through
 untouched. When no Vulkan device is usable the same controls run on the CPU (`eq@grade`, no crop), see `Backend`.
+
+Sharpening has a GPU form too (`Spec.shaders`): a contrast-adaptive shader hooked into `libplacebo@grade`
+(see shaders.py). libplacebo takes a shader at init only, so its strength is *baked* into the graph, in steps of
+`SHARP_STEP`; `GraphKey` is what is baked, and the supervisor rebuilds the child when a look changes it. At 1080p the
+CPU `cas` costs about 260 % of a core; the shader costs a few points (docs/native-video-engine.md).
 
 Background blur (`Spec.blur`) adds one more input, the person mask (a raw yuv444p stream fed by
 `streamstack.engine.blurfeed`), a low-rate raw RGB output the segmenter reads, and two commandable filters:
@@ -38,8 +44,11 @@ SHARP = "cas@sharp"
 BLUR_BG = "gblur@bg"
 BLUR_MERGE = "maskedmerge@blur"
 
-WARMTH_SPAN = 0.35  # colorcorrect shift at warmth = +-1
+WARMTH_SPAN = 0.35  # colorcorrect shift at warmth = +-1 (CPU backend)
 SPLIT_SPAN = 0.25  # colorcorrect shift at lut_amount = 1
+SHARP_STEP = 0.05  # the GPU sharpen strengths are baked in these steps (one shader file each)
+WARM_TEMPERATURE = -1.0  # libplacebo temperature at warmth = +1 (negative is warmer; its range is -1.143 to 5)
+COOL_TEMPERATURE = 5.0  # ... at warmth = -1 (libplacebo's cool side tops out at a mild shift, see the docs)
 
 
 class GraphError(ValueError):
@@ -117,12 +126,23 @@ class Spec:
     detect_fps: float = 8.0
     detect_width: int = 320
     lut: str = ""  # optional static .cube 3D LUT, applied on the GPU
+    # Directory of generated GPU shaders (see shaders.py). Set: sharpening runs on the GPU in baked steps and the
+    # graph is rebuilt when a look moves to another step. Empty: sharpening is the live CPU `cas` filter.
+    shaders: str = ""
     pre_grade: tuple[str, ...] = ()
     taps: tuple[Tap, ...] = ()
     output_format: str = "yuyv422"
     # Replaces the v4l2 input (all input options and "-i ..."): the benchmark and tests feed raw frames this way.
     input_override: tuple[str, ...] = ()
     blur: BlurGraph | None = None
+
+
+@dataclass(frozen=True)
+class GraphKey:
+    """What a look bakes into the graph (the parts libplacebo takes at init only). A new key means a new child."""
+
+    sharpen: float = 0.0  # GPU sharpen strength, a multiple of SHARP_STEP; 0 = no sharpen stage
+    split: bool = False  # the colorcorrect split-tone stage is in the graph
 
 
 @dataclass(frozen=True)
@@ -156,10 +176,30 @@ def grade_values(look: dict, blackout: bool = False) -> dict[str, float]:
     }
 
 
-def tone_values(look: dict) -> dict[str, float]:
-    """colorcorrect spots: warmth shifts shadows and highlights together, the LUT grade splits them."""
-    warm = float(look.get("warmth", 0.0)) * WARMTH_SPAN
-    split = float(look.get("lut_amount", 0.0)) * SPLIT_SPAN if look.get("lut_enabled") else 0.0
+def warmth_temperature(warmth: float) -> float:
+    """libplacebo colour temperature for the warmth slider (-1 cool .. +1 warm; 0 is neutral).
+
+    libplacebo's scale is inverted (negative is warmer) and lopsided: -1 is a strong orange cast, +5 only a mild
+    blue one (a white-point shift saturates). The warm side is matched to what the CPU `colorcorrect` gave (red up
+    and blue down by about the same amount at +-1); the cool side uses the whole range libplacebo has.
+    """
+    warmth = min(1.0, max(-1.0, warmth))
+    return (warmth * WARM_TEMPERATURE if warmth >= 0 else -warmth * COOL_TEMPERATURE) + 0.0  # + 0.0: never "-0"
+
+
+def split_values(look: dict) -> float:
+    """The split-tone (teal lows, orange highs) shift; 0 when the look has none."""
+    return float(look.get("lut_amount", 0.0)) * SPLIT_SPAN if look.get("lut_enabled") else 0.0
+
+
+def tone_values(look: dict, warmth: bool = True) -> dict[str, float]:
+    """colorcorrect spots: warmth shifts shadows and highlights together, the LUT grade splits them.
+
+    `warmth=False` is the Vulkan backend, where warmth is libplacebo's colour temperature and colorcorrect only
+    carries the split-tone.
+    """
+    warm = float(look.get("warmth", 0.0)) * WARMTH_SPAN if warmth else 0.0
+    split = split_values(look)
     return {"rl": warm - split, "bl": -warm + split, "rh": warm + split, "bh": -warm - split}
 
 
@@ -168,25 +208,52 @@ def sharp_values(look: dict) -> tuple[bool, float]:
     return on, float(look.get("sharpen_amount", 0.0)) if on else 0.0
 
 
-def look_controls(look: dict, backend: str = "vulkan", blackout: bool = False) -> dict[tuple[str, str], str]:
-    """Every (target, command name) -> value the look needs. Diff two of these to get the minimal commands."""
+def sharpen_level(look: dict) -> float:
+    """The GPU sharpen strength for a look: its amount rounded to a step (never 0 while sharpening is on)."""
+    on, amount = sharp_values(look)
+    if not on or amount <= 0:
+        return 0.0
+    steps = max(1, round(min(1.0, amount) / SHARP_STEP))
+    return round(steps * SHARP_STEP, 2)
+
+
+def graph_key(spec: Spec, look: dict) -> GraphKey | None:
+    """What `look` bakes into the graph of `spec`, or None when nothing is baked (CPU sharpen, CPU backend)."""
+    if spec.backend != "vulkan" or not spec.shaders:
+        return None
+    return GraphKey(sharpen=sharpen_level(look), split=abs(split_values(look)) > 1e-4)
+
+
+def look_controls(
+    look: dict, backend: str = "vulkan", blackout: bool = False, key: GraphKey | None = None
+) -> dict[tuple[str, str], str]:
+    """Every (target, command name) -> value the look needs. Diff two of these to get the minimal commands.
+
+    `key` is the baked graph the child was built with (`graph_key`); None means the graph with the live CPU
+    colorcorrect and cas filters. With a key, sharpening is in the shader and colorcorrect exists only when the key
+    says so, so no command goes to a filter that is not there.
+    """
     controls: dict[tuple[str, str], str] = {}
     grade = grade_values(look, blackout)
     if backend == "vulkan":
         for name, value in grade.items():
             controls[(GRADE, name)] = fnum(value)
+        controls[(GRADE, "extra_opts")] = f"temperature={fnum(warmth_temperature(float(look.get('warmth', 0.0))))}"
     else:
         # eq: brightness -1..1, contrast 0..2 (-1000..1000 allowed), saturation 0..3, gamma 0.1..10
         for name, value in grade.items():
             controls[(CPU_GRADE, name)] = fnum(value)
-    tone = tone_values(look)
-    warm_active = any(abs(v) > 1e-4 for v in tone.values())
+    if key is not None and not key.split:
+        return controls
+    tone = tone_values(look, warmth=backend != "vulkan")
+    tone_active = any(abs(v) > 1e-4 for v in tone.values())
     for name, value in tone.items():
         controls[(TONE, name)] = fnum(value)
-    controls[(TONE, "enable")] = "1" if warm_active else "0"
-    sharp_on, amount = sharp_values(look)
-    controls[(SHARP, "strength")] = fnum(amount)
-    controls[(SHARP, "enable")] = "1" if sharp_on and amount > 0 else "0"
+    controls[(TONE, "enable")] = "1" if tone_active else "0"
+    if key is None:
+        sharp_on, amount = sharp_values(look)
+        controls[(SHARP, "strength")] = fnum(amount)
+        controls[(SHARP, "enable")] = "1" if sharp_on and amount > 0 else "0"
     return controls
 
 
@@ -240,24 +307,42 @@ def crop_commands(rect: Rect, grow: bool = True) -> list[Command]:
 # ---------------------------------------------------------------------------
 
 
-def _grade_filter(spec: Spec, look: dict, rect: Rect | None, blackout: bool) -> str:
+def _grade_filter(
+    spec: Spec, look: dict, rect: Rect | None, blackout: bool, key: GraphKey | None = None, out_format: str = "yuv444p"
+) -> str:
     grade = grade_values(look, blackout)
     if spec.backend == "vulkan":
         opts = [
             f"w={spec.out_width}",
             f"h={spec.out_height}",
-            "format=yuv444p",
+            f"format={out_format}",
             "upscaler=ewa_lanczos",
             "downscaler=ewa_lanczos",
         ]
         if rect is not None:
             opts += [f"crop_x={rect.x}", f"crop_y={rect.y}", f"crop_w={rect.w}", f"crop_h={rect.h}"]
         opts += [f"{k}={fnum(v)}" for k, v in grade.items()]
+        opts.append(f"extra_opts=temperature={fnum(warmth_temperature(float(look.get('warmth', 0.0))))}")
         if spec.lut:
             opts += [f"lut={_quote(spec.lut)}", "lut_type=conversion"]
+        if key is not None and key.sharpen > 0:
+            opts.append(f"custom_shader_path={_quote(sharpen_shader_path(spec.shaders, key.sharpen))}")
         return f"libplacebo@grade={':'.join(opts)}"
     sets = ":".join(f"{k}={fnum(v)}" for k, v in grade.items())
     return f"scale={spec.out_width}:{spec.out_height}:flags=bicubic,format=yuv444p,eq@grade={sets}:eval=frame"
+
+
+UPLOAD_FORMATS = {"yuyv422": "yuv422p", "uyvy422": "yuv422p", "nv12": "nv12", "yuv420p": "yuv420p"}
+
+
+def upload_format(src: Source) -> str:
+    """The pixel format a raw camera goes up to the GPU in: its own chroma layout, planar (4:2:2 stays 4:2:2)."""
+    return UPLOAD_FORMATS[src.pix_fmt]
+
+
+def sharpen_shader_path(directory: str, level: float) -> str:
+    """Where the shader for `level` lives (shaders.ensure_sharpen writes it); a pure function of the two."""
+    return f"{directory.rstrip('/')}/cas-{level:.2f}.hook"
 
 
 def _quote(path: str) -> str:
@@ -266,15 +351,22 @@ def _quote(path: str) -> str:
     return path
 
 
-def _yuv_stage(look: dict) -> str:
-    tone = tone_values(look)
-    tone_opts = ":".join(f"{k}={fnum(v)}" for k, v in tone.items())
-    tone_on = any(abs(v) > 1e-4 for v in tone.values())
-    sharp_on, amount = sharp_values(look)
-    return (
-        f"colorcorrect@tone={tone_opts}:enable={int(tone_on)},"
-        f"cas@sharp=strength={fnum(amount)}:enable={int(sharp_on and amount > 0)}"
-    )
+def _yuv_stage(look: dict, backend: str, key: GraphKey | None) -> str:
+    """The CPU stages after the grade: colorcorrect (split-tone; warmth too on the CPU backend) and cas.
+
+    With a key the sharpen is in the shader and colorcorrect is in the graph only when the key says so; the empty
+    string means no CPU stage at all.
+    """
+    parts = []
+    if key is None or key.split:
+        tone = tone_values(look, warmth=backend != "vulkan")
+        tone_opts = ":".join(f"{k}={fnum(v)}" for k, v in tone.items())
+        tone_on = any(abs(v) > 1e-4 for v in tone.values())
+        parts.append(f"colorcorrect@tone={tone_opts}:enable={int(tone_on)}")
+    if key is None:
+        sharp_on, amount = sharp_values(look)
+        parts.append(f"cas@sharp=strength={fnum(amount)}:enable={int(sharp_on and amount > 0)}")
+    return ",".join(parts)
 
 
 def build_detect_graph(spec: Spec) -> str:
@@ -330,10 +422,14 @@ def build_graph(
     rect: Rect | None = None,
     blackout: bool = False,
     blur: tuple[bool, float] | None = None,
+    key: GraphKey | None = None,
 ) -> str:
     """The program `-filter_complex` string. Output: [prog] (the camera), plus [tap0..] encode branches.
 
-    [0:v] -> pre_grade -> libplacebo@grade -> hwdownload -> (blur) -> colorcorrect -> cas -> [prog] (+ taps)
+    [0:v] -> pre_grade -> libplacebo@grade -> hwdownload -> (blur) -> (colorcorrect -> cas) -> [prog] (+ taps)
+
+    On the Vulkan backend the camera goes up as 4:2:2 (4:2:0 for NV12 and YU12 sources) and comes back as 4:2:2
+    when nothing on the CPU needs whole planes. The parenthesised CPU stages are present as `_yuv_stage` says.
 
     `blur` is (on, strength) for a spec with a blur branch; the branch is always in the graph (switching it on or off
     is a command, not a new graph) and costs a few milliseconds of CPU per frame while it is.
@@ -344,27 +440,30 @@ def build_graph(
         raise GraphError("the source has no size")
     if spec.blur is not None and blur is None:
         blur = (False, 8)
+    key = key or graph_key(spec, look)
     # frame-number timestamps pair the picture with its mask (see _blur_branch)
     stamp = f"setpts=N/({fnum(src.fps)}*TB)," if spec.blur is not None else ""
+    yuv = _yuv_stage(look, spec.backend, key)
     if spec.backend == "vulkan":
         # MJPEG is decoded on the Arc by VA-API and mapped into Vulkan without leaving video memory
-        head = f"[0:v]{stamp}" + ("hwmap=derive_device=vulkan" if src.mjpeg else "format=nv12,hwupload")
-        stages = [*spec.pre_grade, _grade_filter(spec, look, rect, blackout), "hwdownload", "format=yuv444p"]
+        head = f"[0:v]{stamp}" + (
+            "hwmap=derive_device=vulkan" if src.mjpeg else f"format={upload_format(src)},hwupload"
+        )
+        # 4:4:4 when a CPU stage or the blur merge needs whole planes; otherwise the camera's own 4:2:2 comes back
+        out_format = "yuv444p" if yuv or spec.blur is not None else "yuv422p"
+        grade = _grade_filter(spec, look, rect, blackout, key, out_format)
+        stages = [*spec.pre_grade, grade, "hwdownload", f"format={out_format}"]
     else:
         if src.mjpeg:
             raise GraphError("MJPEG cameras need the Vulkan/VA-API backend (the CPU backend reads raw formats only)")
         head = f"[0:v]{stamp}null"
         stages = [*spec.pre_grade, _grade_filter(spec, look, None, blackout)]
     if spec.blur is not None and blur is not None:
-        chain = (
-            ",".join([head, *stages])
-            + ",split[fg][bgs]"
-            + _blur_branch(spec, blur[0], blur[1])
-            + ","
-            + _yuv_stage(look)
-        )
+        chain = ",".join([head, *stages]) + ",split[fg][bgs]" + _blur_branch(spec, blur[0], blur[1])
+        if yuv:
+            chain += "," + yuv
     else:
-        chain = ",".join([head, *stages, _yuv_stage(look)])
+        chain = ",".join([head, *stages, *([yuv] if yuv else [])])
     tail_in = f"{chain},format={spec.output_format}"
     if spec.taps:
         outs = ["prog"] + [f"t{i}" for i in range(len(spec.taps))]
@@ -416,6 +515,7 @@ def build_argv(
     progress_fd: int | None = None,
     blur: tuple[bool, float] | None = None,
     blur_fds: tuple[int, int] | None = None,
+    key: GraphKey | None = None,
 ) -> list[str]:
     """The whole ffmpeg command line for `spec`. stdin carries commands, stdout carries the detection JPEGs.
 
@@ -446,7 +546,7 @@ def build_argv(
     argv += list(spec.input_override) or [*input_args(spec), "-i", spec.source.device]
     if spec.blur is not None and blur_fds is not None:
         argv += mask_input_args(spec, blur_fds[1])
-    argv += ["-filter_complex", build_graph(spec, look, rect, blackout, blur)]
+    argv += ["-filter_complex", build_graph(spec, look, rect, blackout, blur, key)]
     argv += ["-filter_complex", build_detect_graph(spec)]
     if spec.blur is not None:
         argv += ["-filter_complex", build_seg_graph(spec)]

@@ -123,7 +123,7 @@ def decode_yunet(
 
     if len(outputs) != 12:
         raise ValueError(f"YuNet gives 12 output tensors, this model gave {len(outputs)}")
-    boxes, scores, eyes = [], [], []
+    boxes, scores, eyes, mouths = [], [], [], []
     for n, stride in enumerate(STRIDES):
         cols, rows = width // stride, height // stride
         cls = np.clip(np.asarray(outputs[n], dtype=np.float32).reshape(-1), 0.0, 1.0)
@@ -146,9 +146,13 @@ def decode_yunet(
         scores.append(score[keep])
         eye_rows = ((kps[keep, 1] + row) + (kps[keep, 3] + row)) / 2 * stride  # mean of the two eyes' y
         eyes.append(eye_rows)
+        mouth_rows = ((kps[keep, 7] + row) + (kps[keep, 9] + row)) / 2 * stride  # mean y of the two mouth corners
+        mouth_wide = np.abs(kps[keep, 8] - kps[keep, 6]) * stride  # corner to corner
+        mouths.append(np.stack([mouth_rows, mouth_wide], axis=1))
     if not boxes:
         return []
     all_boxes, all_scores, all_eyes = np.concatenate(boxes), np.concatenate(scores), np.concatenate(eyes)
+    all_mouths = np.concatenate(mouths)
     faces = []
     for i in nms(all_boxes, all_scores, nms_threshold, top_k):
         x, y, w, h = (float(v) for v in all_boxes[i])
@@ -157,6 +161,7 @@ def decode_yunet(
         if x1 <= x0 or y1 <= y0:
             continue
         eye = float(all_eyes[i]) / height
+        mouth = float(all_mouths[i, 0]) / height
         faces.append(
             Face(
                 x0 / width,
@@ -165,6 +170,8 @@ def decode_yunet(
                 (y1 - y0) / height,
                 float(all_scores[i]),
                 eye if y0 / height <= eye <= y1 / height else None,
+                mouth if y0 / height <= mouth <= y1 / height else None,
+                float(all_mouths[i, 1]) / width,
             )
         )
     return faces
@@ -362,6 +369,8 @@ class OpenCvDetector:
         for row in [] if rows is None else rows:
             x, y, w, h = (float(v) for v in row[:4])
             eye = (float(row[5]) + float(row[7])) / 2 / height
+            mouth = (float(row[11]) + float(row[13])) / 2 / height  # the two mouth corners
+            mouth_wide = abs(float(row[12]) - float(row[10])) / width
             x0, y0, x1, y1 = max(0.0, x), max(0.0, y), min(float(width), x + w), min(float(height), y + h)
             if x1 <= x0 or y1 <= y0:
                 continue
@@ -369,6 +378,8 @@ class OpenCvDetector:
                 Face(
                     x0 / width, y0 / height, (x1 - x0) / width, (y1 - y0) / height, float(row[14]),
                     eye if y0 / height <= eye <= y1 / height else None,
+                    mouth if y0 / height <= mouth <= y1 / height else None,
+                    mouth_wide,
                 )
             )  # fmt: skip
         self._timing.add(time.perf_counter() - started)

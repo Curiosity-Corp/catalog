@@ -331,6 +331,7 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 | `STREAMSTACK_ENGINE_SIZE` | `source` | the program camera's size: the camera's own, or `WIDTHxHEIGHT` |
 | `STREAMSTACK_ENGINE_BACKEND` | `auto` | `auto` (the GPU path when it works, else the CPU), `vulkan` or `cpu` |
 | `STREAMSTACK_ENGINE_RENDER_NODE` | | GPU render node for the engine (grade, blur); empty lets the hardware profile choose by PCI id |
+| `STREAMSTACK_ENGINE_SHARPEN` | `auto` | `auto` runs sharpen as a GPU shader (strength in steps of 0.05); `cpu` keeps the live CPU `cas` filter |
 | `STREAMSTACK_ENGINE_LUT` | | a `.cube` 3D LUT applied before the look (path without spaces) |
 | `STREAMSTACK_ENGINE_BLUR` | `auto` | background blur on the Arc through OpenVINO (`pip install 'streamstack[blur]'`); `off` removes it from the graph |
 | `STREAMSTACK_ENGINE_BLUR_DEVICE` | `auto` | the OpenVINO device for the blur: `auto` picks the discrete Arc, or an id such as `GPU.1` |

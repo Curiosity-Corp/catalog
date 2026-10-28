@@ -116,6 +116,9 @@ class ConsoleServer(ThreadingHTTPServer):
             rig.diagnostics.attach(self)
         if rig.call is not None:
             self.hub.meter_listeners.append(rig.call.on_meters)  # the talking-while-muted warning hears every frame
+        on_meters = getattr(rig.framing, "on_meters", None)
+        if on_meters is not None:
+            self.hub.meter_listeners.append(on_meters)  # speaker hand-off hears the raw microphone too
 
     @property
     def port(self) -> int:

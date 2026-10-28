@@ -119,6 +119,63 @@ def test_look_changes_send_only_the_difference_without_restarting(engine) -> Non
     assert engine.state()["pid"] == pid and engine.state()["restarts"] == 0
 
 
+@pytest.fixture
+def gpu_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(process, "KEY_SETTLE", 0.15)
+    started: list[list[str]] = []
+    spec = Spec(SOURCE, "/dev/video43", 1280, 720, shaders=str(tmp_path / "shaders"))
+    eng = process.VideoEngine(spec, dict(NEUTRAL), popen=fake_popen(tmp_path / "stdin.log", started=started))
+    eng.started = started  # type: ignore[attr-defined]
+    eng.log = tmp_path / "stdin.log"  # type: ignore[attr-defined]
+    eng.shader_dir = tmp_path / "shaders"  # type: ignore[attr-defined]
+    yield eng
+    eng.stop()
+
+
+def test_gpu_sharpen_is_baked_and_warmth_stays_a_live_command(gpu_engine) -> None:
+    gpu_engine.start()
+    assert wait_for(lambda: gpu_engine.state()["state"] == "running")
+    assert gpu_engine.state()["sharpen"] == "gpu"
+    gpu_engine.apply_look({**NEUTRAL, "warmth": 0.5})
+    assert wait_for(lambda: commands_seen(gpu_engine) == ["clibplacebo@grade -1 extra_opts temperature=-0.5"])
+    assert len(gpu_engine.started) == 1 and gpu_engine.state()["restarts"] == 0
+
+
+def test_a_new_sharpen_step_rebuilds_the_child_once_the_look_rests(gpu_engine) -> None:
+    gpu_engine.start()
+    assert wait_for(lambda: gpu_engine.state()["state"] == "running")
+    for amount in (0.1, 0.2, 0.3):  # a slider drag: three steps in quick succession
+        gpu_engine.apply_look({**NEUTRAL, "sharpen_enabled": True, "sharpen_amount": amount})
+    assert len(gpu_engine.started) == 1  # nothing rebuilt while the look is moving
+    assert wait_for(lambda: len(gpu_engine.started) == 2)
+    text = gpu_engine.started[1][gpu_engine.started[1].index("-filter_complex") + 1]
+    assert "cas-0.30.hook" in text and "cas@" not in text
+    assert (gpu_engine.shader_dir / "cas-0.30.hook").is_file()
+    assert wait_for(lambda: gpu_engine.state()["state"] == "running")
+    gpu_engine.apply_look({**NEUTRAL, "sharpen_enabled": True, "sharpen_amount": 0.31})  # same step: no rebuild
+    time.sleep(0.4)
+    assert len(gpu_engine.started) == 2
+
+
+def test_an_unwritable_shader_directory_turns_sharpening_off_not_the_picture(tmp_path: Path) -> None:
+    blocked = tmp_path / "file"
+    blocked.write_text("not a directory")
+    spec = Spec(SOURCE, "/dev/video43", 1280, 720, shaders=str(blocked / "shaders"))
+    started: list = []
+    eng = process.VideoEngine(
+        spec,
+        {**NEUTRAL, "sharpen_enabled": True, "sharpen_amount": 0.2},
+        popen=fake_popen(tmp_path / "x.log", started=started),
+    )
+    try:
+        eng.start()
+        assert wait_for(lambda: eng.state()["state"] == "running")
+        text = started[0][started[0].index("-filter_complex") + 1]
+        assert "custom_shader_path" not in text
+    finally:
+        eng.stop()
+
+
 def test_window_commands_grow_size_first_and_shrink_origin_first(engine) -> None:
     engine.start()
     assert wait_for(lambda: engine.state()["state"] == "running")
