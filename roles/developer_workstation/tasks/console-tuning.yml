@@ -103,9 +103,11 @@
       # defers the framebuffer step). Ordering against absent units is a no-op.
       After=console-setup.service systemd-vconsole-setup.service plymouth-quit-wait.service
       ConditionVirtualization=!container
-      # Display hotplug can fire in bursts; the helper is idempotent and cheap.
-      StartLimitIntervalSec=30
-      StartLimitBurst=20
+      # Display hotplug can fire in bursts, and a connector probe loop used to
+      # start this every few seconds for half an hour (2026-10-27): the helper
+      # is idempotent, so a start limit debounces it (3 runs a minute).
+      StartLimitIntervalSec=60
+      StartLimitBurst=3
 
       [Service]
       Type=oneshot

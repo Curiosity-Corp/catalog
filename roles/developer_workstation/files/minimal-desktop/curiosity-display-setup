@@ -35,7 +35,8 @@ fi
 # "M <output> <width> <height> <rate>" for each progressive mode refresh rate,
 # and "P <output> <width> <height>" for a preferred (+) progressive mode. xrandr
 # prints the + marker attached to a rate ("60.00*+") or as its own field.
-records=$(printf '%s\n' "$query" | awk '
+to_records() {
+    printf '%s\n' "$1" | awk '
     $2 == "connected" || $2 == "disconnected" {
         output = $1
         if ($2 == "connected") print "C", output
@@ -49,8 +50,9 @@ records=$(printf '%s\n' "$query" | awk '
             gsub(/[*+]/, "", rate)
             if (rate ~ /^[0-9]+(\.[0-9]+)?$/) print "M", output, size[1], size[2], rate
         }
-    }')
-
+    }'
+}
+records=$(to_records "$query")
 connected=$(printf '%s\n' "$records" | awk '$1 == "C" { print $2 }')
 if [ -z "$connected" ]; then
     warn "no connected output; leaving the display unchanged"
@@ -83,6 +85,40 @@ if [ -z "$target" ]; then
     target=$(printf '%s\n' "$connected" | head -n 1)
 fi
 
+# Optional pin (/etc/curiosity/display-guard.conf, written by the role): when the
+# chosen output is the pinned one, apply exactly the pinned mode and never a
+# lower one. A display that has just woken may list too few modes for a moment,
+# so re-probe a few times; if the pinned mode still is not there, leave a
+# working display alone rather than fall back to another resolution.
+guard_conf=${CURIOSITY_DISPLAY_GUARD_CONF:-/etc/curiosity/display-guard.conf}
+pinned=
+if [ -r "$guard_conf" ]; then
+    conf_get() { sed -n "s/^$1=//p" "$guard_conf" | head -n 1 | tr -d '[:space:]'; }
+    pin_output=$(conf_get output)
+    pin_mode=$(conf_get mode)
+    pin_rate=$(conf_get rate)
+    if [ "$pin_output" = "$target" ] && [ -n "$pin_mode" ] && [ -n "$pin_rate" ]; then
+        attempt=0
+        while :; do
+            pinned=$(printf '%s\n' "$records" | awk -v out="$target" -v mode="$pin_mode" -v rate="$pin_rate" '
+                $1 == "M" && $2 == out && ($3 "x" $4) == mode && ($5 + 0) == (rate + 0) { print mode, $5; exit }')
+            [ -n "$pinned" ] && break
+            attempt=$((attempt + 1))
+            [ "$attempt" -gt 3 ] && break
+            xrandr >/dev/null 2>&1
+            sleep "${CURIOSITY_DISPLAY_RETRY_SLEEP:-2}"
+            query=$(xrandr --query 2>&1) || break
+            records=$(to_records "$query")
+        done
+        if [ -z "$pinned" ]; then
+            if printf '%s\n' "$query" | grep -q '\*'; then
+                warn "pinned mode $pin_mode@$pin_rate is not listed for $target; leaving the display unchanged"
+                exit 0
+            fi
+            warn "pinned mode $pin_mode@$pin_rate is not listed for $target and nothing is active; using the best mode"
+        fi
+    fi
+fi
 best=$(printf '%s\n' "$records" | awk -v out="$target" '
     $1 == "P" && $2 == out && !pref_height {
         pref_width = $3
@@ -113,6 +149,9 @@ best=$(printf '%s\n' "$records" | awk -v out="$target" '
         if (best_area > 0) print best_width "x" best_height, best_rate
     }')
 
+if [ -n "$pinned" ]; then
+    best=$pinned
+fi
 if [ -n "$best" ]; then
     mode=${best% *}
     rate=${best#* }

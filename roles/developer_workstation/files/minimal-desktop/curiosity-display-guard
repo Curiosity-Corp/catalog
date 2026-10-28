@@ -1,0 +1,751 @@
+#!/usr/bin/python3
+"""Keep a pinned display output at its pinned mode, and repair it when it dies.
+
+Managed by Ansible (curiosity.workstation). Config: /etc/curiosity/display-guard.conf
+(key=value; $CURIOSITY_DISPLAY_GUARD_CONF overrides):
+
+  output=DP-4          xrandr output to keep alive
+  mode=7680x4320       the only mode it will ever apply
+  rate=60              refresh rate of that mode
+  lane_count=4         DisplayPort lanes expected to be locked (default 4)
+  tv_host=192.168.1.250  optional: LAN address of a Samsung TV (wake detector)
+  display=:0           X display (default :0)
+  xauthority=/var/run/lightdm/root/:0
+
+Usage:
+  curiosity-display-guard check [--deep] [--json]   health verdict; exit 0 ok, 1 broken
+  curiosity-display-guard repair --reason R [--force]
+                                    verify, and if broken (or --force) run the
+                                    escalation ladder once; R is hotplug,
+                                    resume, tv-wake, watchdog, manual, ...
+  curiosity-display-guard watch     the daemon: polls, detects wake edges
+                                    (TV power on the LAN, sink EDID returning,
+                                    DPMS on, input after idle) and repairs
+
+Why it exists. After the TV sleeps and wakes, the kernel may log nothing at
+all (the DP link of the active cable stays trained), so no hotplug event ever
+fires, while X still believes the output is up and the picture is dead.
+Waiting for an event is not enough: this watches state and wake edges, and
+re-applies the pinned mode with a real modeset (output off, then the mode),
+escalating to a DP link retrain and a forced hotplug re-probe.
+
+Safety rules (each one has a test):
+  * only the pinned mode is ever applied, never another resolution; when the
+    output does not list it, nothing is turned off;
+  * a bounded number of modesets per window, a minimum gap between repair
+    runs and a cool-down after a failed ladder, so it can never modeset-loop;
+  * one repair at a time (flock), so udev bursts coalesce;
+  * never reloads i915 (that would end every session); it logs and gives up.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import ctypes
+import fcntl
+import glob
+import json
+import os
+import re
+import select
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+PROG = "curiosity-display-guard"
+CONF_PATH = os.environ.get("CURIOSITY_DISPLAY_GUARD_CONF", "/etc/curiosity/display-guard.conf")
+STATE_DIR = Path(os.environ.get("CURIOSITY_DISPLAY_GUARD_STATE", "/var/lib/curiosity/display-guard"))
+SYSFS_DRM = os.environ.get("CURIOSITY_DISPLAY_GUARD_SYSFS", "/sys/class/drm")
+DEBUGFS_DRI = os.environ.get("CURIOSITY_DISPLAY_GUARD_DEBUGFS", "/sys/kernel/debug/dri")
+DEV_DIR = os.environ.get("CURIOSITY_DISPLAY_GUARD_DEV", "/dev")
+HELPER = os.environ.get("CURIOSITY_DISPLAY_SETUP", "/usr/local/bin/curiosity-display-setup")
+
+# Rate limiting. A repair "modeset" is any step that blanks the output.
+MODESET_WINDOW = 900  # seconds
+MAX_MODESETS_IN_WINDOW = 8
+MIN_GAP = 15  # seconds between repair runs that actually change something
+COOLDOWN_AFTER_FAILURE = 120
+DISCONNECT_GRACE = 90  # a disconnected output is only "dead" after this long
+SETTLE = {"hotplug": 3, "resume": 6, "tv-wake": 8, "sink-wake": 8, "dpms-on": 3, "idle-wake": 2}
+VERIFY_WAIT = 5
+FORCED_REASONS = {"resume", "tv-wake", "sink-wake", "idle-wake", "manual-force"}
+
+
+def log(message: str, **fields: Any) -> None:
+    extra = "".join(f" {key}={value}" for key, value in fields.items())
+    print(f"{PROG}: {message}{extra}", flush=True)
+
+
+def sleep(seconds: float) -> None:
+    if os.environ.get("CURIOSITY_DISPLAY_GUARD_NOSLEEP"):
+        return
+    time.sleep(seconds)
+
+
+# --------------------------------------------------------------------------- config
+
+
+@dataclass
+class Config:
+    output: str
+    mode: str
+    rate: float
+    lane_count: int = 4
+    tv_host: str = ""
+    display: str = ":0"
+    xauthority: str = ""
+
+    @property
+    def size(self) -> tuple[int, int]:
+        width, height = self.mode.split("x")
+        return int(width), int(height)
+
+
+def load_config(path: str = CONF_PATH) -> Config:
+    values: dict[str, str] = {}
+    try:
+        text = Path(path).read_text()
+    except OSError as exc:
+        raise SystemExit(f"{PROG}: cannot read {path}: {exc}")
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    try:
+        output, mode, rate = values["output"], values["mode"], float(values["rate"])
+    except (KeyError, ValueError):
+        raise SystemExit(f"{PROG}: {path} must set output, mode and a numeric rate")
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]+", output) or not re.fullmatch(r"\d+x\d+", mode):
+        raise SystemExit(f"{PROG}: invalid output or mode in {path}")
+    cfg = Config(output=output, mode=mode, rate=rate)
+    cfg.lane_count = int(values.get("lane_count", "4") or 4)
+    cfg.tv_host = values.get("tv_host", "")
+    cfg.display = values.get("display", ":0") or ":0"
+    cfg.xauthority = values.get("xauthority", "")
+    return cfg
+
+
+# --------------------------------------------------------------------------- X side
+
+
+def x_env(cfg: Config) -> dict[str, str]:
+    env = dict(os.environ)
+    env["DISPLAY"] = cfg.display
+    if cfg.xauthority and os.path.exists(cfg.xauthority):
+        env["XAUTHORITY"] = cfg.xauthority
+    return env
+
+
+def run(cmd: list[str], cfg: Config, timeout: float = 60) -> tuple[int, str]:
+    try:
+        result = subprocess.run(
+            cmd, env=x_env(cfg), capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except FileNotFoundError:
+        return 127, f"{cmd[0]}: not found"
+    except subprocess.TimeoutExpired:
+        return 124, f"{cmd[0]}: timed out after {timeout:g}s"
+    return result.returncode, (result.stdout + result.stderr).strip()
+
+
+@dataclass
+class XOutput:
+    name: str
+    connected: bool
+    active: bool = False  # has a CRTC geometry (WxH+X+Y)
+    primary: bool = False
+    current: tuple[int, int, float] | None = None  # width, height, rate of the '*' mode
+    modes: dict[tuple[int, int], list[float]] = field(default_factory=dict)
+
+
+HEADER = re.compile(r"^(\S+) (connected|disconnected)( primary)?(?: (\d+)x(\d+)\+(-?\d+)\+(-?\d+))?")
+MODE_LINE = re.compile(r"^\s+(\d+)x(\d+)\S*\s+(.*)$")
+
+
+def parse_xrandr(text: str) -> dict[str, XOutput]:
+    outputs: dict[str, XOutput] = {}
+    current: XOutput | None = None
+    for line in text.splitlines():
+        header = HEADER.match(line)
+        if header:
+            current = XOutput(
+                name=header.group(1),
+                connected=header.group(2) == "connected",
+                primary=bool(header.group(3)),
+                active=header.group(4) is not None,
+            )
+            outputs[current.name] = current
+            continue
+        mode = MODE_LINE.match(line)
+        if mode and current is not None and current.connected:
+            size = (int(mode.group(1)), int(mode.group(2)))
+            for token in mode.group(3).split():
+                rate_text = token.rstrip("*+")
+                try:
+                    rate = float(rate_text)
+                except ValueError:
+                    continue
+                current.modes.setdefault(size, []).append(rate)
+                if "*" in token:
+                    current.current = (size[0], size[1], rate)
+    return outputs
+
+
+# --------------------------------------------------------------------------- kernel side
+
+
+def connector_dir(output: str) -> str | None:
+    matches = sorted(glob.glob(f"{SYSFS_DRM}/card*-{output}"))
+    return matches[0] if matches else None
+
+
+def read_text(path: str) -> str | None:
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return None
+
+
+def dp_lane_status(conn: str, lanes: int) -> bool | None:
+    """True when every expected lane has CR, EQ and symbol lock and the lanes are aligned."""
+    aux = glob.glob(f"{conn}/drm_dp_aux*")
+    if not aux:
+        return None
+    node = f"{DEV_DIR}/{os.path.basename(aux[0])}"
+    try:
+        fd = os.open(node, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        data = os.pread(fd, 3, 0x202)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    if len(data) < 3:
+        return False
+    bits = (data[0] & 0x7, (data[0] >> 4) & 0x7, data[1] & 0x7, (data[1] >> 4) & 0x7)
+    locked = all(b == 0x7 for b in bits[:lanes])
+    return locked and bool(data[2] & 1)
+
+
+def edid_readable(conn: str) -> bool | None:
+    """Read the sink's base EDID block over DDC (I2C over AUX); None when no node."""
+    ddc = glob.glob(f"{conn}/i2c-*")
+    if not ddc:
+        return None
+    node = f"{DEV_DIR}/{os.path.basename(ddc[0])}"
+    try:
+        fd = os.open(node, os.O_RDWR)
+    except OSError:
+        return None
+    try:
+        fcntl.ioctl(fd, 0x0703, 0x50)  # I2C_SLAVE
+        os.write(fd, b"\x00")
+        block = os.read(fd, 128)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    return len(block) == 128 and block[:8] == bytes([0, 255, 255, 255, 255, 255, 255, 0]) and sum(block) % 256 == 0
+
+
+def pipe_alive(conn: str) -> bool | None:
+    """Deep check: the CRTC feeding this connector produces CRCs (scanout is running)."""
+    name = os.path.basename(conn).split("-", 1)[1]
+    for pipe_dir in sorted(glob.glob(f"{DEBUGFS_DRI}/*/crtc-*")):
+        info = read_text(os.path.join(os.path.dirname(pipe_dir), "i915_display_info"))
+        if info is None:
+            continue
+        crtc = os.path.basename(pipe_dir)
+        control = f"{pipe_dir}/crc/control"
+        data = f"{pipe_dir}/crc/data"
+        if not os.path.exists(control) or f"[CONNECTOR:" not in info or f":{name}]" not in info:
+            continue
+        try:
+            Path(control).write_text("auto")
+            fd = os.open(data, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            continue
+        try:
+            ready, _, _ = select.select([fd], [], [], 2.0)
+            return bool(ready)
+        finally:
+            os.close(fd)
+            with contextlib.suppress(OSError):
+                Path(control).write_text("none")
+        del crtc
+    return None
+
+
+def x_dpms_enabled(cfg: Config) -> bool | None:
+    rc, out = run(["xset", "q"], cfg, timeout=10)
+    if rc != 0:
+        return None
+    return "DPMS is Enabled" in out
+
+
+# --------------------------------------------------------------------------- health
+
+
+@dataclass
+class Assessment:
+    ok: bool
+    problems: list[str]
+    facts: dict[str, Any]
+
+    def summary(self) -> str:
+        facts = " ".join(f"{k}={v}" for k, v in sorted(self.facts.items()))
+        return f"{'ok' if self.ok else 'BROKEN ' + ','.join(self.problems)} {facts}".strip()
+
+
+def assess(cfg: Config, deep: bool = False) -> Assessment:
+    problems: list[str] = []
+    facts: dict[str, Any] = {}
+    rc, text = run(["xrandr", "--query"], cfg, timeout=20)
+    if rc != 0:
+        # No X (greeter not up yet, or X restarting): the display manager and the
+        # helper own that phase; there is nothing for the guard to repair.
+        return Assessment(True, [], {"x": "unavailable"})
+    outputs = parse_xrandr(text)
+    target = outputs.get(cfg.output)
+    if target is None or not target.connected:
+        problems.append("output-disconnected")
+        facts["x"] = "disconnected"
+        return Assessment(False, problems, facts)
+    facts["target_listed"] = int(cfg.rate in [r for r in target.modes.get(cfg.size, []) if abs(r - cfg.rate) < 0.5]
+                                 or any(abs(r - cfg.rate) < 0.5 for r in target.modes.get(cfg.size, [])))
+    if not target.active or target.current is None:
+        problems.append("no-mode")
+    else:
+        width, height, rate = target.current
+        facts["mode"] = f"{width}x{height}@{rate:g}"
+        if (width, height) != cfg.size:
+            problems.append("wrong-mode")
+        elif abs(rate - cfg.rate) >= 0.5:
+            problems.append("wrong-rate")
+    others = [o.name for o in outputs.values() if o.name != cfg.output and o.active]
+    if others:
+        problems.append("other-output-active")
+        facts["others"] = ",".join(others)
+    conn = connector_dir(cfg.output)
+    if conn:
+        status = read_text(f"{conn}/status")
+        enabled = read_text(f"{conn}/enabled")
+        dpms = read_text(f"{conn}/dpms")
+        facts.update(status=status, enabled=enabled, dpms=dpms)
+        if status != "connected":
+            problems.append("kernel-disconnected")
+        elif enabled != "enabled":
+            problems.append("kernel-disabled")
+        elif dpms and dpms != "On" and not x_dpms_enabled(cfg):
+            problems.append("dpms-off")
+        if enabled == "enabled" and (dpms in (None, "On")):
+            lanes = dp_lane_status(conn, cfg.lane_count)
+            facts["link"] = {True: "locked", False: "LOST", None: "unknown"}[lanes]
+            if lanes is False:
+                problems.append("link-lost")
+            facts["edid"] = {True: "ok", False: "unreadable", None: "unknown"}[edid_readable(conn)]
+            if deep:
+                alive = pipe_alive(conn)
+                facts["scanout"] = {True: "running", False: "STALLED", None: "unknown"}[alive]
+                if alive is False:
+                    problems.append("scanout-stalled")
+    return Assessment(not problems, problems, facts)
+
+
+# --------------------------------------------------------------------------- state
+
+
+def load_state() -> dict[str, Any]:
+    try:
+        return json.loads((STATE_DIR / "state.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state: dict[str, Any]) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_DIR / "state.json.tmp"
+        tmp.write_text(json.dumps(state, sort_keys=True))
+        tmp.replace(STATE_DIR / "state.json")
+    except OSError as exc:
+        log("cannot save state", error=exc)
+
+
+def modesets_in_window(state: dict[str, Any], now: float) -> int:
+    return len([t for t in state.get("modesets", []) if now - t < MODESET_WINDOW])
+
+
+def note_modeset(state: dict[str, Any], now: float) -> None:
+    state["modesets"] = [t for t in state.get("modesets", []) if now - t < MODESET_WINDOW] + [now]
+    state["last_modeset"] = now
+    save_state(state)
+
+
+# --------------------------------------------------------------------------- repair stages
+
+
+def stage_reprobe(cfg: Config) -> None:
+    """Re-read hotplug state and EDID for every connector (no modeset)."""
+    rc, out = run(["xrandr"], cfg, timeout=60)
+    log("stage reprobe", rc=rc)
+
+
+def stage_reapply(cfg: Config) -> None:
+    """A real modeset: output off, then the pinned mode through the shared helper."""
+    rc, out = run(["xrandr", "--output", cfg.output, "--off"], cfg, timeout=60)
+    log("stage reapply: output off", rc=rc, detail=out[:120])
+    sleep(2)
+    env_helper = [HELPER]
+    rc, out = run(env_helper, cfg, timeout=120)
+    log("stage reapply: helper", rc=rc, detail=out[:200])
+    after = parse_xrandr(run(["xrandr", "--query"], cfg, timeout=20)[1]).get(cfg.output)
+    if after is None or after.current is None or after.current[:2] != cfg.size:
+        # The helper leaves the display alone when it cannot find the mode; make
+        # sure the output is not left dark, with the pinned mode and nothing else.
+        rc, out = run(
+            ["xrandr", "--output", cfg.output, "--mode", cfg.mode, "--rate", f"{cfg.rate:g}", "--primary"],
+            cfg,
+            timeout=60,
+        )
+        log("stage reapply: direct pinned mode", rc=rc, detail=out[:200])
+    run(["xset", "dpms", "force", "on"], cfg, timeout=10)
+
+
+def debugfs_write(output: str, name: str, value: str) -> bool:
+    for path in glob.glob(f"{DEBUGFS_DRI}/*/{output}/{name}"):
+        try:
+            Path(path).write_text(value)
+            return True
+        except OSError as exc:
+            log("debugfs write failed", path=path, error=exc)
+    return False
+
+
+def stage_retrain(cfg: Config) -> None:
+    """Ask i915 to retrain the DisplayPort link, then modeset again on top."""
+    done = debugfs_write(cfg.output, "i915_dp_force_link_retrain", "1")
+    log("stage retrain: force link retrain", done=done)
+    sleep(3)
+    stage_reapply(cfg)
+
+
+def restore_detect(conn: str) -> bool:
+    """Write "detect" to the connector's status file; a forced "off" is a black TV.
+
+    Retried, and logged loudly when it cannot be done."""
+    for attempt in range(1, 4):
+        try:
+            Path(f"{conn}/status").write_text("detect")
+        except OSError as exc:
+            log("CRITICAL: cannot restore connector status to detect", conn=conn, attempt=attempt, error=exc)
+            sleep(1)
+        else:
+            return True
+    log("CRITICAL: connector may stay forced off", conn=conn)
+    return False
+
+
+def heal_forced_off(cfg: Config, force_check: bool = False) -> bool:
+    """Undo a forced-off connector (our own marker, or a kernel status that is not connected).
+
+    The kernel reads a forced "off" back as "disconnected", the same as a real
+    unplug, so the marker file tells them apart; at guard start any non-connected
+    status is reset (writing "detect" on an unplugged connector only re-probes it)."""
+    conn = connector_dir(cfg.output)
+    if not conn:
+        return False
+    marker = STATE_DIR / "forced-off"
+    if not (marker.exists() or (force_check and read_text(f"{conn}/status") != "connected")):
+        return False
+    log("healing: connector was left forced off; restoring detect", conn=conn)
+    if restore_detect(conn):
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as exc:
+            log("cannot remove the forced-off marker", error=exc)
+        return True
+    return False
+
+
+def stage_hotplug(cfg: Config) -> None:
+    """Emulate unplug/replug (forces a fresh detect and EDID read), then modeset."""
+    conn = connector_dir(cfg.output)
+    if conn:
+        marker = STATE_DIR / "forced-off"
+        forced = False
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            marker.write_text("1")
+            Path(f"{conn}/status").write_text("off")
+            forced = True
+            sleep(2)
+        except OSError as exc:
+            log("forced hotplug failed", error=exc)
+        finally:
+            # Always restore, also when interrupted (SIGTERM raises SystemExit below).
+            restored = restore_detect(conn)
+            if restored:
+                try:
+                    marker.unlink(missing_ok=True)
+                except OSError as exc:
+                    log("cannot remove the forced-off marker", error=exc)
+        if forced and restored:
+            sleep(3)
+    stage_reprobe(cfg)
+    stage_reapply(cfg)
+
+
+LADDER = [("reprobe", stage_reprobe, False), ("reapply", stage_reapply, True),
+          ("retrain", stage_retrain, True), ("hotplug", stage_hotplug, True)]
+
+
+def repair(cfg: Config, reason: str, force: bool = False) -> int:
+    """One repair run. 0 healthy or recovered, 1 not recovered, 2 held back by a limit."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    lock = open(STATE_DIR / "lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log("another repair is running; this trigger is coalesced", reason=reason)
+        return 0
+    try:
+        force = force or reason in FORCED_REASONS
+        state = load_state()
+        now = time.time()
+        if now - state.get("last_modeset", 0) < MIN_GAP and not force:
+            log("ignored: within the minimum gap after our own modeset", reason=reason)
+            return 0
+        if now < state.get("cooldown_until", 0):
+            log("held back: cooling down after a failed repair", reason=reason,
+                seconds=int(state["cooldown_until"] - now))
+            return 2
+        sleep(SETTLE.get(reason, 3))
+        result = assess(cfg)
+        log("assessed", reason=reason, forced=force, verdict=result.summary())
+        if result.ok and not force:
+            state["healthy_at"] = time.time()
+            save_state(state)
+            return 0
+        started = time.time()
+        if "output-disconnected" in result.problems:
+            first = state.setdefault("disconnected_since", started)
+            if started - first < DISCONNECT_GRACE:
+                log("output is disconnected; waiting before acting", reason=reason)
+                save_state(state)
+                return 0
+        state.pop("disconnected_since", None) if "output-disconnected" not in result.problems else None
+        # A wake/resume repair does not wait for kernel state to look bad (the
+        # HDMI side can be dead while DP looks fine): it starts at the link
+        # retrain, which modesets on top. A plain watchdog repair starts with
+        # the cheap re-probe.
+        first_stage = 2 if force else 0
+        for name, func, modesets in LADDER[first_stage:]:
+            now = time.time()
+            if modesets:
+                if modesets_in_window(state, now) >= MAX_MODESETS_IN_WINDOW:
+                    log("rate limit reached: not modesetting again yet", reason=reason,
+                        limit=MAX_MODESETS_IN_WINDOW, window=MODESET_WINDOW)
+                    return 2
+                if not result.facts.get("target_listed", 1):
+                    log("pinned mode not listed by the output; not turning it off", stage=name)
+                    continue
+                note_modeset(state, now)
+            log("repairing", stage=name, reason=reason)
+            func(cfg)
+            sleep(VERIFY_WAIT)
+            result = assess(cfg)
+            log("after stage", stage=name, verdict=result.summary())
+            if result.ok:
+                state.pop("cooldown_until", None)
+                state["healthy_at"] = time.time()
+                save_state(state)
+                log("recovered", stage=name, reason=reason, mode=f"{cfg.mode}@{cfg.rate:g}")
+                return 0
+        state["cooldown_until"] = time.time() + COOLDOWN_AFTER_FAILURE
+        save_state(state)
+        log("NOT RECOVERED: ladder exhausted; i915 is never reloaded automatically "
+            "(that would end every session)", reason=reason, verdict=result.summary())
+        return 1
+    finally:
+        lock.close()
+
+
+# --------------------------------------------------------------------------- wake detection
+
+
+def tv_power(host: str) -> str:
+    """'on', 'standby' or 'off' (unreachable) from the Samsung REST API (no token)."""
+    seam = os.environ.get("CURIOSITY_DISPLAY_GUARD_TV_FILE")
+    if seam:  # test seam: the file holds on, standby or off
+        return read_text(seam) or "off"
+    if not host:
+        return "off"
+    try:
+        with urllib.request.urlopen(f"http://{host}:8001/api/v2/", timeout=2) as reply:
+            data = json.load(reply)
+    except (urllib.error.URLError, OSError, ValueError):
+        return "off"
+    device = data.get("device", {}) if isinstance(data, dict) else {}
+    return "standby" if str(device.get("PowerState", "on")).lower() == "standby" else "on"
+
+
+def idle_ms() -> int | None:
+    """Milliseconds since the last input on the X display (libXss); None if unavailable."""
+    try:
+        xlib = ctypes.cdll.LoadLibrary("libX11.so.6")
+        xss = ctypes.cdll.LoadLibrary("libXss.so.1")
+        xlib.XOpenDisplay.restype = ctypes.c_void_p
+        display = xlib.XOpenDisplay(None)
+        if not display:
+            return None
+        try:
+            class Info(ctypes.Structure):
+                _fields_ = [("window", ctypes.c_ulong), ("state", ctypes.c_int), ("kind", ctypes.c_int),
+                            ("til_or_since", ctypes.c_ulong), ("idle", ctypes.c_ulong),
+                            ("event_mask", ctypes.c_ulong)]
+            xss.XScreenSaverAllocInfo.restype = ctypes.POINTER(Info)
+            info = xss.XScreenSaverAllocInfo()
+            xlib.XDefaultRootWindow.restype = ctypes.c_ulong
+            xlib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+            xss.XScreenSaverQueryInfo.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p]
+            xss.XScreenSaverQueryInfo(display, xlib.XDefaultRootWindow(display), info)
+            return int(info.contents.idle)
+        finally:
+            xlib.XCloseDisplay.argtypes = [ctypes.c_void_p]
+            xlib.XCloseDisplay(display)
+    except (OSError, AttributeError):
+        return None
+
+
+class WakeDetector:
+    """Turns polled samples into wake events. Pure, so it is unit tested."""
+
+    IDLE_AFTER_MS = 300_000
+    ACTIVE_BELOW_MS = 3_000
+
+    def __init__(self) -> None:
+        self.tv: str | None = None
+        self.edid: bool | None = None
+        self.dpms: str | None = None
+        self.idle_since_down = False
+        self.was_idle = False
+
+    def feed(self, tv: str | None, edid: bool | None, dpms: str | None, idle: int | None) -> list[str]:
+        events: list[str] = []
+        if tv is not None:
+            if self.tv in ("off", "standby") and tv == "on":
+                events.append("tv-wake")
+            if tv != "on":
+                self.idle_since_down = True
+            self.tv = tv
+        if edid is not None:
+            if self.edid is False and edid is True:
+                events.append("sink-wake")
+            self.edid = edid
+        if dpms is not None:
+            if self.dpms not in (None, "On") and dpms == "On":
+                events.append("dpms-on")
+            self.dpms = dpms
+        if idle is not None:
+            if idle >= self.IDLE_AFTER_MS:
+                if not self.was_idle:
+                    self.idle_since_down = tv != "on"
+                self.was_idle = True
+                if tv != "on":
+                    self.idle_since_down = True
+            elif self.was_idle and idle < self.ACTIVE_BELOW_MS:
+                self.was_idle = False
+                # Someone is back after a long idle. If the TV could have slept in
+                # the meantime (or cannot be watched), re-apply once.
+                if self.idle_since_down and "tv-wake" not in events:
+                    events.append("idle-wake")
+                self.idle_since_down = False
+        return events
+
+
+def _terminate(signum: int, _frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
+def watch(cfg: Config, interval: float = 5.0) -> int:
+    detector = WakeDetector()
+    pending: list[tuple[float, str]] = []
+    bad_ticks = 0
+    last_tv_poll = 0.0
+    tv: str | None = None
+    heal_forced_off(cfg, force_check=True)
+    log("watching", output=cfg.output, mode=f"{cfg.mode}@{cfg.rate:g}", tv=cfg.tv_host or "none")
+    while True:
+        now = time.time()
+        if (cfg.tv_host or os.environ.get("CURIOSITY_DISPLAY_GUARD_TV_FILE")) and now - last_tv_poll >= 5:
+            tv = tv_power(cfg.tv_host)
+            last_tv_poll = now
+        heal_forced_off(cfg)
+        conn = connector_dir(cfg.output)
+        edid = edid_readable(conn) if conn else None
+        dpms = read_text(f"{conn}/dpms") if conn else None
+        events = detector.feed(tv, edid, dpms, idle_ms())
+        for event in events:
+            log("wake edge detected", event=event)
+            if event in ("tv-wake", "sink-wake"):
+                # The TV needs time to bring its HDMI side up: re-apply twice.
+                pending += [(now + 10, event), (now + 45, event)]
+            else:
+                pending.append((now + 2, event))
+        due = [item for item in pending if item[0] <= now]
+        pending = [item for item in pending if item[0] > now]
+        for _, event in due:
+            repair(cfg, event, force=event != "dpms-on")
+        result = assess(cfg)
+        if result.ok:
+            bad_ticks = 0
+        else:
+            bad_ticks += 1
+            if bad_ticks >= 2:  # a second consecutive sample: not a modeset in flight
+                log("watchdog: output is broken", verdict=result.summary())
+                repair(cfg, "watchdog")
+                bad_ticks = 0
+        sleep(interval)
+
+
+# --------------------------------------------------------------------------- CLI
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n", 1)[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    check = sub.add_parser("check", help="health verdict")
+    check.add_argument("--deep", action="store_true", help="also read pipe CRCs (scanout)")
+    check.add_argument("--json", action="store_true")
+    fix = sub.add_parser("repair", help="verify and repair once")
+    fix.add_argument("--reason", default="manual")
+    fix.add_argument("--force", action="store_true", help="re-apply even when it looks healthy")
+    sub.add_parser("watch", help="run the daemon")
+    args = parser.parse_args(argv)
+    cfg = load_config()
+    if args.command == "check":
+        result = assess(cfg, deep=args.deep)
+        if args.json:
+            print(json.dumps({"ok": result.ok, "problems": result.problems, "facts": result.facts}))
+        else:
+            print(result.summary())
+        return 0 if result.ok else 1
+    signal.signal(signal.SIGTERM, _terminate)
+    if args.command == "repair":
+        heal_forced_off(cfg)
+        return repair(cfg, args.reason, args.force)
+    return watch(cfg)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

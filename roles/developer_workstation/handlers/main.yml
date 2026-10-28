@@ -188,3 +188,9 @@
     - _tmp_hygiene_remount is not skipped
     - _tmp_hygiene_remount.rc != 0
   listen: Remount /tmp with the managed inode cap
+
+- name: Restart the display guard
+  ansible.builtin.systemd:
+    name: curiosity-display-guard.service
+    state: restarted
+    daemon_reload: true

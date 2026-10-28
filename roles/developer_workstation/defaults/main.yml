@@ -1148,6 +1148,16 @@ minimal_desktop_display_broadcast_rgb: "{{ (hardware_profiles.get(hardware_profi
 # one connector win on that hardware without touching other hosts' lists.
 minimal_desktop_display_outputs_preferred: "{{ (hardware_profiles.get(hardware_profile, {})).get('display_outputs', []) }}"
 
+# curiosity-display-guard (derived from the hardware profile's `display_guard`
+# mapping: output, mode, rate and optional lane_count and tv_host). Empty (the
+# default) installs nothing. When set, /etc/curiosity/display-guard.conf pins
+# that output to exactly that mode: curiosity-display-setup never applies a
+# lower one, and the guard (udev hotplug, resume hook, wake detector and
+# watchdog) re-applies it after TV standby/wake, suspend, DPMS, link loss and
+# VT switches. Needs minimal_desktop_display_setup_enabled.
+minimal_desktop_display_guard: "{{ (hardware_profiles.get(hardware_profile, {})).get('display_guard', {}) }}"
+minimal_desktop_display_guard_enabled: "{{ (minimal_desktop_display_setup_enabled | bool) and (minimal_desktop_display_guard | length > 0) }}"
+
 # StreamStack call/stream studio (tasks/streamstack.yml, docs/streamstack.md).
 # Derived from the selected hardware profile's optional `streamstack` flag; set
 # `streamstack_enabled: true` in /etc/ansible/local-vars.yml on any desktop that
@@ -1597,6 +1607,17 @@ hardware_profiles:
     # use reduced blanking or custom timings here: the TV answers "mode not
     # supported". The DP-3 fallback cable only offers 8K30 (VIC 194-196).
     console_video: "DP-4:7680x4320@60"
+    # Keeps DP-4 at exactly this mode through TV standby/wake, suspend, DPMS,
+    # link loss and VT switches (curiosity-display-guard). tv_host is the TV's
+    # LAN address: its PowerState off -> on edge is the wake signal, because
+    # the active cable keeps the DP link trained while the TV sleeps and the
+    # kernel logs nothing when it wakes. Keep in step with console_video.
+    display_guard:
+      output: DP-4
+      mode: 7680x4320
+      rate: 60
+      lane_count: 4
+      tv_host: 192.168.1.250
     # Readable fbcon at 8K: 16x32 Terminus (Uni3, 512 glyphs) on VT1-9 (so the
     # higher VTs match), also persisted for early boot through console-setup.
     console_tuning:
