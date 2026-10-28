@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """Control the Samsung QN55QN700B (Tizen) TV from this workstation.
 
-The TV is the DeskMeet1 8K monitor (192.168.1.250). This drives it without the
+The TV is the DeskMeet1 8K monitor (found by its MAC; DHCP has moved it). This drives it without the
 physical remote through the interfaces Tizen exposes on the LAN:
 
   REST        http://TV:8001/api/v2/        device info, application launch
@@ -60,7 +60,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-DEFAULT_HOST = "192.168.1.250"
+sys.path.insert(0, os.environ.get("CURIOSITY_LIB", "/usr/local/lib/curiosity"))
+import curiosity_tv_locate as tvlocate  # noqa: E402  (shared with the display guard)
+
+DEFAULT_HOST = "192.168.1.5"  # fallback only: the TV is found by MAC (curiosity_tv_locate)
 DEFAULT_MAC = "70:09:71:93:5A:20"
 WOL_TARGETS = ("192.168.1.255", "255.255.255.255")
 WOL_PORT = 9
@@ -960,7 +963,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="curiosity-tv", description="Control the Samsung TV without the remote.",
         epilog="The pairing token comes from $CURIOSITY_TV_TOKEN, the 0600 cache, or Key Vault; it is never printed.",
     )
-    parser.add_argument("--host", default=os.environ.get("CURIOSITY_TV_HOST", DEFAULT_HOST), help="TV address (default %(default)s)")
+    parser.add_argument("--host", default=os.environ.get("CURIOSITY_TV_HOST"), help="TV address (default: found by --mac, falling back to " + DEFAULT_HOST + ")")
     parser.add_argument("--mac", default=os.environ.get("CURIOSITY_TV_MAC", DEFAULT_MAC), help="TV MAC for Wake-on-LAN (default %(default)s)")
     parser.add_argument("--timeout", type=positive_float, default=DEFAULT_TIMEOUT,
                         help="hard deadline for each network operation in seconds (default %(default)s)")
@@ -1013,6 +1016,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         parse_mac(args.mac)
+        if not args.host:
+            args.host = tvlocate.resolve_tv_host(DEFAULT_HOST, args.mac)
         return int(args.func(args))
     except TvError as exc:
         print(f"curiosity-tv: {redact(str(exc))}", file=sys.stderr)

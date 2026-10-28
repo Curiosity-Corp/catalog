@@ -120,6 +120,25 @@
       and optionally lane_count (1, 2 or 4), tv_host and tv_mac.
   when: minimal_desktop_display_guard_enabled | bool
 
+- name: Create the Curiosity shared library directory
+  ansible.builtin.file:
+    path: /usr/local/lib/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: minimal_desktop_display_guard_enabled | bool
+
+- name: Install the shared TV locator module
+  ansible.builtin.copy:
+    src: curiosity_tv_locate.py
+    dest: /usr/local/lib/curiosity/curiosity_tv_locate.py
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart the display guard
+  when: minimal_desktop_display_guard_enabled | bool
+
 - name: Install the display guard
   ansible.builtin.copy:
     src: minimal-desktop/curiosity-display-guard

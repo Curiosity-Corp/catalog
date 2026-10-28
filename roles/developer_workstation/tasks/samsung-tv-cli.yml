@@ -18,6 +18,22 @@
       - python3-websocket
     state: present
 
+- name: Create the Curiosity shared library directory
+  ansible.builtin.file:
+    path: /usr/local/lib/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the shared TV locator module
+  ansible.builtin.copy:
+    src: curiosity_tv_locate.py
+    dest: /usr/local/lib/curiosity/curiosity_tv_locate.py
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Install the Samsung TV remote-control CLI
   ansible.builtin.copy:
     src: curiosity-tv
