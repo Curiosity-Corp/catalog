@@ -816,6 +816,11 @@ minimal_desktop_greeter_effective: "{{ (hardware_profiles.get(hardware_profile, 
 # greeter's first XRender paint at 7680x4320 ends in an Xorg SIGBUS in
 # ValidatePicture/CompositeRects, with either greeter (catalog#122).
 minimal_desktop_xorg_accel_method: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_accel_method', '') }}"
+# The hardware profile's optional `xorg_auto_add_gpu` (true/false) sets the X
+# server flag AutoAddGPU. false keeps X on the GPU that owns the boot display
+# and stops it adding the iGPU as a second (PRIME) GPU. Empty (the default)
+# leaves X's own behaviour and removes the drop-in (catalog#122).
+minimal_desktop_xorg_auto_add_gpu: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_auto_add_gpu', '') }}"
 minimal_desktop_lightdm_minimum_vt: 8
 minimal_desktop_lightdm_vtswitch_wrapper: false
 minimal_desktop_lightdm_remove_dropins: []
@@ -1682,6 +1687,9 @@ hardware_profiles:
     # (ValidatePicture/CompositeRects SIGBUS every ~70 s, catalog#122), so the
     # modesetting driver runs without glamor acceleration.
     xorg_accel_method: none
+    # Glamor off did not stop the SIGBUS either; X also drove the iGPU as a
+    # second GPU (modeset(G0)) that has no display attached.
+    xorg_auto_add_gpu: false
     # libinput pointer speed for the G604 (confirmed by the CEO on the 8K TV).
     pointer_accel_speed: 0.6
     pipx_packages:
