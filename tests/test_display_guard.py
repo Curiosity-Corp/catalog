@@ -220,6 +220,58 @@ def test_mode_missing_never_turns_the_output_off_or_falls_back_to_4k(env: Path, 
     assert not any("3840x2160" in " ".join(c) for c in x.calls)
 
 
+def _x_without_the_pinned_output(cmds: list[list[str]]):
+    """X answers, but only the DP-3 fallback is connected (deskmeet1, 2026-10-29)."""
+
+    def run(cmd, cfg, timeout=60):
+        cmds.append(list(cmd))
+        if cmd[0] == "xrandr" and cmd[1:] in ([], ["--query"]):
+            return 0, ("Screen 0: minimum 320 x 200, current 7680 x 4320, maximum 16384 x 16384\n"
+                       "DP-3 connected primary 7680x4320+0+0 (normal left inverted right x axis y axis)\n"
+                       "   7680x4320     30.00*+\n"
+                       "DP-4 disconnected (normal left inverted right x axis y axis)\n")
+        return 0, ""
+
+    return run
+
+
+@pytest.mark.parametrize("kernel", ["missing", "disconnected"])
+def test_watchdog_does_not_probe_when_the_pinned_output_has_no_sink(
+    env: Path, monkeypatch: pytest.MonkeyPatch, kernel: str
+) -> None:
+    """Crash loop 2026-10-29: the guard's full xrandr probe killed Xorg under the greeter."""
+    if kernel == "disconnected":
+        _kernel_connector(env).joinpath("status").write_text("disconnected\n")
+    cmds: list[list[str]] = []
+    monkeypatch.setattr(guard, "run", _x_without_the_pinned_output(cmds))
+    guard.save_state({"disconnected_since": time.time() - 3600})  # grace long expired
+    for _ in range(3):
+        assert guard.repair(_cfg(), "watchdog") == 0
+    assert ["xrandr"] not in cmds
+    assert not any("--output" in c for c in cmds)
+
+
+def test_watchdog_still_repairs_when_the_kernel_sees_the_sink_but_x_does_not(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _kernel_connector(env)  # kernel: connected
+    cmds: list[list[str]] = []
+    monkeypatch.setattr(guard, "run", _x_without_the_pinned_output(cmds))
+    guard.save_state({"disconnected_since": time.time() - 3600})
+    guard.repair(_cfg(), "watchdog")
+    assert ["xrandr"] in cmds
+
+
+def test_a_wake_edge_is_not_skipped_with_the_pinned_output_missing(
+    env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(guard, "run", _x_without_the_pinned_output([]))
+    guard.save_state({"disconnected_since": time.time() - 3600})
+    guard.repair(_cfg(), "tv-wake")
+    captured = capsys.readouterr()
+    assert "no sink; not probing" not in captured.out + captured.err
+
+
 # --- rate limiting: no modeset loops --------------------------------------------
 
 

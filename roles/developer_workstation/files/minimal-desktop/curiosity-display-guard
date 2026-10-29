@@ -377,6 +377,14 @@ def assess(cfg: Config, deep: bool = False) -> Assessment:
 # --------------------------------------------------------------------------- state
 
 
+def pinned_sink_present(cfg: Config) -> bool:
+    """True when the kernel sees a sink on the pinned connector (or cannot say)."""
+    conn = connector_dir(cfg.output)
+    if conn is None:
+        return False
+    return read_text(f"{conn}/status") != "disconnected"
+
+
 def load_state() -> dict[str, Any]:
     try:
         return json.loads((STATE_DIR / "state.json").read_text())
@@ -557,6 +565,17 @@ def repair(cfg: Config, reason: str, force: bool = False) -> int:
         if result.ok and not force:
             state["healthy_at"] = time.time()
             save_state(state)
+            return 0
+        if "output-disconnected" in result.problems and not force and reason == "watchdog" \
+                and not pinned_sink_present(cfg):
+            # The pinned connector has no sink at all (deskmeet1 on 2026-10-29: the
+            # 8K60 DP-4 path is down and the TV runs on the DP-3 fallback). There is
+            # nothing to repair, and the ladder's full xrandr probe re-probes every
+            # connector under a live greeter: each one ended in an Xorg SIGBUS and
+            # a lightdm restart (17:42-18:13: 7 of 7 crashes within 1 s of a probe).
+            # A real sink returning raises a hotplug, a wake edge or a startup
+            # check, none of which this skips.
+            log("pinned output has no sink; not probing", reason=reason, output=cfg.output)
             return 0
         started = time.time()
         state["last_repair_end"] = started  # refreshed again when the ladder ends
