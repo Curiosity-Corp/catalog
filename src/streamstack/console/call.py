@@ -28,6 +28,7 @@ the inference from capture streams for as long as it is fresh.
 
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 import time
@@ -40,6 +41,7 @@ from streamstack import store as filestore
 from streamstack.callstate import AppEvidence, CallSnapshot, CallState, CaptureStream, Gathered
 from streamstack.console.audio import bool_param, number_param
 from streamstack.console.errors import ActionError
+from streamstack.saving import LatestWriter
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +137,7 @@ class CallController:
         self._clock = clock
         self._lock = threading.RLock()
         self._path = settings_path  # None: settings live in memory only (the demo rig, tests)
+        self._writer: LatestWriter[dict[str, Any]] = LatestWriter(lambda doc: filestore.write_json(self._path, doc))
         self._settings = read_settings(self._path) if self._path is not None else default_settings()
         self.monitor = monitor or callstate.CallMonitor(cfg, clock=clock)
         mw = self._settings["muted_warning"]
@@ -232,14 +235,21 @@ class CallController:
             return self._act_report_mute(params)
         raise ActionError(f"unknown call action {action!r}", 400)
 
+    def _stage(self) -> None:
+        """The settings are in effect: hand them to the writer. Call with `_lock` held, then `_save` without it."""
+        if self._path is not None:
+            self._writer.publish(copy.deepcopy(self._settings))
+
     def _save(self) -> None:
+        """Save the newest settings, outside `_lock` (issue #168: the disk never holds up the state). A failed save
+        is the person's to hear about: the setting stays in effect until the Console restarts."""
         if self._path is None:
             return
         try:
-            filestore.write_json(self._path, self._settings)
+            self._writer.flush()
         except OSError as exc:
             log.warning("cannot save %s: %s", self._path, exc)
-            raise ActionError(f"The setting could not be saved: {exc}", 409) from exc
+            raise ActionError(f"The setting is in effect but could not be saved: {exc}", 409) from exc
 
     def _act_set(self, params: dict[str, Any]) -> str | None:
         known = {"enabled", "sensitivity", "cooldown_s", "sound", "adapters"}
@@ -269,7 +279,8 @@ class CallController:
             mw = self._settings["muted_warning"]
             self._vad.set_sensitivity(mw["sensitivity"])
             self._watcher.cooldown_s = mw["cooldown_s"]
-            self._save()
+            self._stage()
+        self._save()
         return None
 
     def _act_report_mute(self, params: dict[str, Any]) -> str | None:

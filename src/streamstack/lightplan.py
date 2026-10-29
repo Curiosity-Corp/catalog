@@ -25,6 +25,7 @@ from typing import Any
 
 from streamstack import config, lighting
 from streamstack.director import daylight, settings
+from streamstack.saving import LatestWriter, Nothing
 
 FILE = "lighting-automation.json"
 VERSION = 1
@@ -311,11 +312,15 @@ class Store:
         self.path = path
         self.ephemeral = ephemeral
         self._cache: tuple[tuple[int, int, int], dict[str, Any]] | None = None
+        self._writer: LatestWriter[dict[str, Any]] = LatestWriter(self._write)
 
     def file(self) -> Path:
         return self.path or settings.config_dir() / FILE
 
     def load(self) -> dict[str, Any]:
+        pending = self._writer.pending()
+        if not isinstance(pending, Nothing):  # a change being saved reads back at once, before its fsyncs (#168)
+            return normalise(copy.deepcopy(pending))
         path = self.file()
         try:
             stat = path.stat()
@@ -332,9 +337,17 @@ class Store:
         return copy.deepcopy(data)
 
     def save(self, data: dict[str, Any]) -> None:
-        """Atomic, mode 600. Raises settings.SettingsError when the file cannot be written."""
-        settings.write_json(self.file(), {**data, "version": VERSION}, ephemeral=self.ephemeral)
-        self._cache = None
+        """Atomic, mode 600. Raises settings.SettingsError when the file cannot be written.
+
+        The change is readable (`load`) from the moment it is accepted, before the file is written (issue #168)."""
+        self._writer.publish({**copy.deepcopy(data), "version": VERSION})
+        self._writer.flush()
+
+    def _write(self, document: dict[str, Any]) -> None:
+        try:
+            settings.write_json(self.file(), document, ephemeral=self.ephemeral)
+        finally:
+            self._cache = None
 
     def update(self, section: str, patch: dict[str, Any]) -> dict[str, Any]:
         data = self.load()

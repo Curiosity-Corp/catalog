@@ -84,3 +84,27 @@ def test_run_without_playwright_says_how_to_install_it(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="pip install playwright"):
         camprobe.run(fake=True)
+
+
+def test_a_solid_card_that_drifts_in_colour_is_live_but_a_held_one_is_flat() -> None:
+    """Firefox's fake camera is one solid colour that drifts (#153): spatially flat in every frame, but moving."""
+    drifting = {"spatial_std": 0.0, "mean_range": 4.8, "luma_std": 0.3, "luma_peak": 149.7}
+    assert camprobe.passed(rows(**drifting))
+    held = {"spatial_std": 0.0, "mean_range": 0.0, "luma_std": 0.0, "luma_peak": 149.7}
+    assert failed(rows(**held)) == ["picture"]
+
+
+def test_a_frame_with_content_is_live_even_when_the_colour_never_moves() -> None:
+    assert camprobe.passed(rows(spatial_std=12.0, mean_range=0.0, luma_std=12.0, luma_peak=90.0))
+
+
+def test_a_black_warm_up_does_not_make_a_lit_feed_black_but_an_all_black_feed_still_is() -> None:
+    warmed = {"luma_mean": 3.0, "luma_peak": 110.0, "spatial_std": 30.0, "mean_range": 108.0}
+    assert camprobe.passed(rows(**warmed))
+    black = {"luma_mean": 0.0, "luma_peak": 0.4, "spatial_std": 0.0, "mean_range": 0.4}
+    assert failed(rows(**black)) == ["picture"]
+
+
+def test_picture_spread_falls_back_to_the_pooled_figure_for_an_old_report() -> None:
+    assert camprobe.picture_spread({"luma_std": 7.5}) == 7.5
+    assert camprobe.picture_spread({"spatial_std": 2.0, "mean_range": 5.0}) == 5.0

@@ -20,6 +20,7 @@ from typing import Any
 from streamstack.console.errors import ActionError
 from streamstack.deck import catalog, profile, render
 from streamstack.deck.models import BY_ID, DEFAULT_MODEL, MODELS, Model, for_device, for_grid
+from streamstack.saving import LatestWriter
 
 Notify = Callable[[str, str], None]
 Clock = Callable[[], float]
@@ -63,6 +64,10 @@ class DeckController:
         self.notify: Notify | None = None
         self.rig: Any = None  # the Rig sets this: presses run its actions
         self._lock = threading.RLock()
+        self._writer: LatestWriter[tuple[str, dict | None]] = LatestWriter(self._persist)
+        # (saved, settings, edit number) from before the running action's first edit, until `act` has saved it
+        self._unsaved: tuple[dict | None, dict, int] | None = None
+        self._edits = 0
         self._saved: dict | None = self.store.load()
         try:
             self._settings = profile.clean_settings(self.store.load_settings())
@@ -244,6 +249,45 @@ class DeckController:
     # -- actions --------------------------------------------------------------
 
     def act(self, action: str, params: dict) -> str | None:
+        """Run one action. An edit shows (the state is changed under `_lock`) before it is saved; the save follows,
+        outside the lock, so the disk never holds up `state()` or the next press (issue #168). A save that fails puts
+        the profile back as it was and tells the person."""
+        with self._lock:
+            try:
+                message = self._run(action, params)
+            except profile.ProfileError as exc:
+                raise ActionError(str(exc), 400) from exc
+            staged, self._unsaved = self._unsaved, None
+        if staged is not None:
+            try:
+                self._writer.flush()
+            except (OSError, profile.ProfileError) as exc:
+                with self._lock:
+                    if self._edits == staged[2]:  # no edit has built on this one: back to what was saved
+                        self._saved, self._settings = staged[0], staged[1]
+                        self._stack, self._armed = [], None
+                detail = str(exc) if isinstance(exc, profile.ProfileError) else f"Could not save the deck: {exc}"
+                raise ActionError(detail, 400 if isinstance(exc, profile.ProfileError) else 409) from exc
+        return message
+
+    def _stage(self, op: tuple[str, dict | None]) -> None:
+        """An edit is in effect: hand it to the writer. Called under `_lock`; `act` saves it after the lock."""
+        if self._unsaved is None:
+            self._unsaved = (self._saved, self._settings, 0)
+        self._edits += 1
+        self._unsaved = (self._unsaved[0], self._unsaved[1], self._edits)
+        self._writer.publish(op)
+
+    def _persist(self, op: tuple[str, dict | None]) -> None:
+        kind, value = op
+        if kind == "profile":
+            self.store.save(value or {})
+        elif kind == "settings":
+            self.store.save_settings(value or {})
+        else:
+            self.store.delete()
+
+    def _run(self, action: str, params: dict) -> str | None:
         handler = {
             "deck.press": self._press,
             "deck.page": self._page,
@@ -266,11 +310,7 @@ class DeckController:
         }.get(action)
         if handler is None:
             raise ActionError(f"Unknown action {action!r}.", 400)
-        with self._lock:
-            try:
-                return handler(params)
-            except profile.ProfileError as exc:
-                raise ActionError(str(exc), 400) from exc
+        return handler(params)
 
     # navigation
 
@@ -325,7 +365,7 @@ class DeckController:
         self._armed = None
         try:
             if action.startswith("deck."):
-                return self.act(action, args)
+                return self._run(action, args)  # inside this action: `act` saves once, after the lock
             return self.rig.act(action, args)
         except ActionError as exc:
             self._say("warn", exc.message)
@@ -339,7 +379,7 @@ class DeckController:
 
     def _commit(self, prof: dict) -> None:
         cleaned = profile.clean_profile(prof)
-        self.store.save(cleaned)
+        self._stage(("profile", cleaned))  # in effect now; `act` saves it after the lock (issue #168)
         self._saved = cleaned
         self._settings = dict(cleaned["settings"])
         self._armed = None
@@ -430,7 +470,7 @@ class DeckController:
             prof["settings"] = settings
             self._commit(prof)
         else:  # the default profile stays the default; only the settings are kept
-            self.store.save_settings(settings)
+            self._stage(("settings", settings))
             self._settings = settings
         return None
 
@@ -454,7 +494,7 @@ class DeckController:
         return "Deck profile imported"
 
     def _reset(self, params: dict) -> str | None:
-        self.store.delete()
+        self._stage(("reset", None))
         self._saved = None
         self._settings = dict(profile.DEFAULT_SETTINGS)
         self._stack = []
