@@ -135,9 +135,20 @@ test-py311:
 # Console browser tests against the demo rig. The Playwright image carries the browsers and runs non-root; it
 # ships no python3-venv and an externally-managed Python, so tools go into the user site. The pip package must
 # match the image tag exactly or the browser builds differ.
+#
+# Sharded (issue #172): the serial suite took 900-2100 s and, on runners with fsync stalls (infrastructure#639),
+# hit the 3600 s job timeout. `parallel: 4` runs four jobs ("e2e 1/4".."e2e 4/4"); each collects the whole suite and
+# keeps its duration-balanced quarter (tests/e2e/sharding.py reads CI_NODE_INDEX / CI_NODE_TOTAL and the per-test
+# seconds in tests/e2e/timings.json; a test missing from that file still runs, at the median weight). Each shard
+# writes its own e2e-report-N.xml and the test report merges them. tests/test_e2e_sharding.py proves every test is in
+# exactly one shard. Refresh the weights when the suite changes much: take the JUnit files of the shards of one to
+# three green pipelines (`glab api projects/2122/jobs/<id>/artifacts/e2e-report-N.xml`, or a pipeline's
+# `.../pipelines/<id>/test_report`) and run `python3 scripts/e2e_timings.py <files> [::: <next run's files>]`.
+# Nothing else `needs:` e2e by name; if one ever does, list the shards or use `needs: [{job: e2e, parallel: ...}]`.
 e2e:
   stage: source-security
   needs: []
+  parallel: 4
   image: mcr.microsoft.com/playwright/python:v1.64.0-noble
   interruptible: true
   rules: !reference [.rules-gate, rules]
@@ -149,14 +160,14 @@ e2e:
     - python3 -m pip install --user -e ".[e2e]" "playwright==1.64.0"
     - export PATH="$HOME/.local/bin:$PATH"
   script:
-    - python3 -m pytest tests/e2e --junitxml=e2e-report.xml
+    - python3 -m pytest tests/e2e --junitxml="e2e-report-${CI_NODE_INDEX}.xml"
   artifacts:
     when: always
     expire_in: 14 days
     paths:
       - e2e-artifacts/
     reports:
-      junit: e2e-report.xml
+      junit: e2e-report-*.xml
 
 # The lighting engine races a person's hand on a light, and the daylight schedule moves with the hour. This gate
 # soaks both lighting e2e files three times at each of three simulated hours (night, noon, the evening transition),

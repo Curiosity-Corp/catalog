@@ -106,9 +106,9 @@ def test_crop_commands_order_depends_on_growing() -> None:
 
 def test_raw_source_graph_uploads_to_vulkan_and_detection_is_its_own_graph() -> None:
     text = graph.build_graph(spec(), NEUTRAL)
-    assert text.startswith("[0:v]format=yuv422p,hwupload,")
+    assert text.startswith("[0:v]" + graph.lookahead_stamp(20.0) + "format=yuv422p,hwupload,")
     assert "split" not in text
-    assert "libplacebo@grade=w=1280:h=720:format=yuv444p" in text
+    assert "libplacebo@grade=w=1280:h=720:fps=20:format=yuv444p" in text
     assert "hwdownload,format=yuv444p,colorcorrect@tone" in text
     assert text.endswith("cas@sharp=strength=0:enable=0,format=yuyv422[prog]")
     detect = graph.build_detect_graph(spec())
@@ -305,12 +305,12 @@ def test_blur_controls_switch_the_merge_and_set_the_sigma() -> None:
 
 def test_a_spec_without_blur_has_no_blur_filters() -> None:
     text = graph.build_graph(spec(), NEUTRAL)
-    assert "maskedmerge" not in text and "setpts" not in text
+    assert "maskedmerge" not in text and "N/(20*TB)" not in text  # the frame-number pairing stamp is blur's
 
 
 def test_the_blur_graph_pairs_picture_and_mask_by_frame_number() -> None:
     text = graph.build_graph(blur_spec(), NEUTRAL, blur=(True, 8))
-    assert text.startswith("[0:v]setpts=N/(20*TB),")
+    assert text.startswith("[0:v]" + graph.lookahead_stamp(20.0))  # frame-number timestamps, as the mask has
     assert "[1:v]gblur=sigma=1.5[ms]" in text and "scale=1280:720" in text
     assert "[fg][bg][m]maskedmerge@blur=enable=1" in text
     assert "gblur@bg=sigma=5.3" in text and "gblur@bgw=sigma=5.3" in text  # numerator and weight at 1/4 size
@@ -401,6 +401,22 @@ def test_an_unknown_denoiser_or_the_cpu_backend_is_refused() -> None:
         graph.build_graph(spec(denoise="nlmeans", backend="cpu"), NEUTRAL)
 
 
+def test_a_vaapi_tap_uploads_and_pins_the_device_on_the_cpu_graph() -> None:
+    tap = graph.Tap("pipe:5", "hevc_vaapi", ("-low_power", "1"), upload=True)
+    cpu = spec(taps=(tap,), backend="cpu", render_node="/dev/dri/renderD129")
+    assert "[t0]format=nv12,hwupload[tap0]" in graph.build_graph(cpu, NEUTRAL)
+    argv = graph.build_argv(cpu, NEUTRAL)
+    i = argv.index("vaapi=va:/dev/dri/renderD129")
+    assert argv[i - 1] == "-init_hw_device" and argv[i + 1 : i + 3] == ["-filter_hw_device", "va"]
+    assert argv[argv.index("[tap0]") + 1 : argv.index("[tap0]") + 3] == ["-c:v", "hevc_vaapi"]
+
+
+def test_a_vaapi_tap_is_refused_on_the_vulkan_graph() -> None:
+    tap = graph.Tap("pipe:5", "hevc_vaapi", upload=True)
+    with pytest.raises(graph.GraphError, match="VA-API tap"):
+        graph.build_argv(spec(taps=(tap,)), NEUTRAL)
+
+
 def test_taps_convert_from_the_planar_picture_not_from_the_packed_output() -> None:
     """The split sits before the yuyv422 pack, so a tap goes yuv422p -> nv12 and never via the packed repack."""
     tap = graph.Tap("pipe:5", "av1_qsv")
@@ -415,3 +431,70 @@ def test_taps_convert_from_the_planar_picture_not_from_the_packed_output() -> No
 def test_no_taps_keeps_the_single_pack_at_the_end() -> None:
     assert graph.build_graph(spec(), NEUTRAL).endswith("format=yuyv422[prog]")
     assert "split" not in graph.build_graph(spec(), NEUTRAL).replace("split_", "")
+
+
+# -- the latency holds (issue #141): a regression gate that needs no GPU ---------------------------------------------
+
+
+def _libplacebo_options(text: str) -> dict[str, str]:
+    body = text.split("libplacebo@grade=", 1)[1].split(",hwdownload", 1)[0]
+    return dict(part.split("=", 1) for part in body.split(":") if "=" in part)
+
+
+@pytest.mark.parametrize("source", [CANON, CAMLINK, MJPEG])
+def test_the_graph_asks_libplacebo_for_no_lookahead(source: Source) -> None:
+    """libplacebo renders a frame only once it has seen a later one, unless the next frame's time is already in the
+    future of the target. The engine has no temporal effect, so each frame is stamped N + 0.25 frame periods, ahead of
+    libplacebo's own frame-number grid (`fps=`), and no frame mixer is requested (a mixer needs real lookahead)."""
+    text = graph.build_graph(spec(source), NEUTRAL)
+    stamp = graph.lookahead_stamp(source.fps)
+    rate = f"{source.fps:g}"
+    assert stamp in text and f"(N+{graph.fnum(graph.LOOKAHEAD_SHIFT)})/({rate}*TB)" in stamp
+    assert "settb=" in stamp  # a fraction of a frame period survives only in a fine timebase
+    assert 0 < graph.LOOKAHEAD_SHIFT < 0.5  # at 0.5 or more the previous frame would be the nearer one
+    opts = _libplacebo_options(text)
+    assert opts["fps"] == rate
+    assert not {"frame_mixer", "interpolation", "interpolation_threshold"} & opts.keys()
+    assert text.startswith("[0:v]" + stamp)  # stamped first, whatever the upload path is
+
+
+def test_the_stamp_keeps_frame_zero_at_time_zero() -> None:
+    assert "if(eq(N,0),0," in graph.lookahead_stamp(30.0)  # libplacebo shows nothing for a first frame ahead of time 0
+
+
+@pytest.mark.parametrize("source", [CANON, MJPEG])
+def test_the_blur_graph_keeps_the_no_lookahead_stamp(source: Source) -> None:
+    text = graph.build_graph(spec(source, blur=graph.BlurGraph()), NEUTRAL, blur=(True, 8))
+    assert text.startswith("[0:v]" + graph.lookahead_stamp(source.fps))
+    assert _libplacebo_options(text)["fps"] == f"{source.fps:g}"
+
+
+def test_the_cpu_backend_has_no_libplacebo_hold_to_remove() -> None:
+    text = graph.build_graph(spec(backend="cpu"), NEUTRAL)
+    assert "libplacebo" not in text and "setpts" not in text
+
+
+def _output_options(argv: list[str], target: str) -> list[str]:
+    """The options between the previous output and the `-f <format>` that writes `target`."""
+    end = argv.index(target)
+    start = max(i for i, a in enumerate(argv[:end]) if a == "-map")
+    return argv[start:end]
+
+
+def test_the_program_output_encodes_on_one_thread_and_the_input_is_unbuffered() -> None:
+    """A frame-threaded rawvideo encoder holds every frame one slot (33 ms at 30 fps)."""
+    argv = graph.build_argv(spec(), NEUTRAL)
+    program = _output_options(argv, "/dev/video43")
+    assert program[program.index("-threads") + 1] == str(graph.OUTPUT_THREADS) == "1"
+    assert "passthrough" in program  # ffmpeg keeps no frame back to pick a rate
+    head = argv[: argv.index("-filter_complex")]
+    assert head[head.index("-fflags") + 1] == "nobuffer" and head[head.index("-flags") + 1] == "low_delay"
+
+
+def test_the_detection_and_mask_outputs_encode_on_one_thread_too() -> None:
+    """A threaded detection encoder stalled the whole child for 100 ms every few frames (issue #141)."""
+    argv = graph.build_argv(blur_spec(), NEUTRAL, blur=(True, 8), blur_fds=(7, 8))
+    for target in ("pipe:1", "pipe:7"):  # detection JPEGs, the segmenter's frames
+        options = _output_options(argv, target)
+        assert options[options.index("-threads") + 1] == "1"
+    assert "-flush_packets" in _output_options(argv, "pipe:7")

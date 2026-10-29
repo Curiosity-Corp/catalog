@@ -5,6 +5,16 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-10-29
+
+### Changed
+- The video engine no longer holds frames: it adds about 8 ms at 720p30 instead of about 74 ms (pipe to pipe). Every encoder output runs on one thread and libplacebo is fed frames stamped a quarter period ahead on an fps grid, so its one-frame wait is gone; pictures are bit-identical (#141).
+- The e2e CI job is split into four parallel shards (`parallel: 4`), each running its duration-balanced quarter of `tests/e2e` from the checked-in `tests/e2e/timings.json` (`tests/e2e/sharding.py`, longest-test-first, deterministic; tests missing from the file still run at the median weight), so a stalled CI runner no longer pushes the job past the 60-minute timeout. Each shard writes its own `e2e-report-N.xml`; `tests/test_e2e_sharding.py` proves the shards partition the suite exactly. Refresh the weights with `scripts/e2e_timings.py` (#172).
+
+### Fixed
+- E2E Firefox `Page.goto` timeouts (#124): the `rig` fixture now blocks until the demo server's API answers and the console page and its whole ES-module graph (about 150 files, read from disk) have been fetched once, every file 200 and timed (`tests/e2e/readiness.py`), so the first browser never navigates onto a cold server; each browser engine is warmed once per session with a throwaway console page before the first test; and the camera probe (`camprobe.open_probe_page`) navigates at "commit" with a 60 s allowance and one retry on a new page instead of Playwright's 30 s default, which a cold Firefox on a stalled runner (fsyncs up to 41 s, infra#639) exceeded in the call-matrix test. The timings of the gate and each warm-up print in the e2e terminal summary. `tests/test_e2e_readiness.py` keeps the gate in place. Data: 5 console `Page.goto` timeouts before the ready-mark navigation of 087e2ee (3 in Firefox on the first 4 days), none in the 600 pipelines after it; the one remaining Firefox goto timeout was the camera probe's.
+- The engine's encoder table (`engine/encode.py`) now has VA-API rows (`av1_vaapi`, `hevc_vaapi`, `h264_vaapi`, low-power, one frame in flight), probed on the rig's render node with the same `hwupload` the stream path uses, so HEVC works on the Arc A380 where `hevc_qsv` fails with oneVPL 26.1. Order inside a codec is Quick Sync, VA-API, NVENC: Quick Sync joins the Vulkan graph, VA-API only the CPU graph (a VA-API tap on the Vulkan graph is refused with a clear error).
+
 ## [0.0.21] - 2026-10-29
 
 ### Fixed

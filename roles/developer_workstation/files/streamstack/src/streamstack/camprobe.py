@@ -27,6 +27,11 @@ MIN_CONTRAST = 1.0  # a picture whose luma varies by less than this, in space an
 SETTLE_SECONDS = 4.0  # how long past the sampling window the probe waits for a first frame with real content
 
 PROBE_URL = "http://localhost/streamstack-camera-probe"
+# A fresh browser's first navigation pays for its content process, profile and fonts: seconds on a healthy host, and a
+# stalled CI runner (fsync stalls of 41 s, infra#639) has run past Playwright's 30 s default (issue #124, job 1648977).
+# The first attempt gets this long, a second attempt on a new page the same again; a real failure still fails.
+NAV_TIMEOUT_MS = 60_000
+NAV_ATTEMPTS = 2
 FIREFOX_FAKE_PREFS = {"media.navigator.streams.fake": True, "media.navigator.permission.disabled": True}
 FAKE_ARGS = ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"]
 REAL_ARGS = ["--use-fake-ui-for-media-stream"]  # auto-accept the permission prompt only; the cameras stay real
@@ -215,6 +220,34 @@ def passed(rows: list[Row]) -> bool:
     return all(row.ok for row in rows)
 
 
+def open_probe_page(
+    context, timeout_error: type[Exception], *, attempts: int = NAV_ATTEMPTS, timeout_ms: int = NAV_TIMEOUT_MS
+):
+    """A page on the probe URL, ready to evaluate in.
+
+    Navigation is done at "commit" (the page is answered from memory by a route, so there is nothing to load), the
+    document is then waited for separately, and a timeout is retried once on a new page: a cold browser stalls its first
+    navigation, not its second. Raises the last timeout when every attempt timed out.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        page = context.new_page()
+        try:
+            # getUserMedia needs a secure context: http://localhost is one, and the route answers it offline.
+            page.route(
+                PROBE_URL,
+                lambda route: route.fulfill(body="<!doctype html><title>probe</title>", content_type="text/html"),
+            )
+            page.goto(PROBE_URL, wait_until="commit", timeout=timeout_ms)
+            page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+            return page
+        except timeout_error:
+            page.close()
+            if attempt >= max(1, attempts):
+                raise
+
+
 class BrowserMissing(RuntimeError):
     """The requested browser or channel is not installed here (a skip for the matrix, not a failure)."""
 
@@ -236,6 +269,7 @@ def run(
     """Launch the browser, run the probe page and return its raw report. Raises RuntimeError when it cannot run."""
     try:
         from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
         from playwright.sync_api import sync_playwright
     except ImportError as exc:  # the optional e2e extra
         raise RuntimeError(
@@ -254,13 +288,7 @@ def run(
                 instance = pw.chromium.launch(headless=True, args=args, channel=channel)
             try:
                 context = instance.new_context() if firefox else instance.new_context(permissions=["camera"])
-                page = context.new_page()
-                # getUserMedia needs a secure context: http://localhost is one, and the route answers it offline.
-                page.route(
-                    PROBE_URL,
-                    lambda route: route.fulfill(body="<!doctype html><title>probe</title>", content_type="text/html"),
-                )
-                page.goto(PROBE_URL)
+                page = open_probe_page(context, PlaywrightTimeout)
                 return page.evaluate(
                     PROBE_JS,
                     {
