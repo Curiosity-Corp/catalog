@@ -121,7 +121,7 @@ def resolve(platform: dict[str, Any], tier: dict[str, Any], index: int | None = 
     if first and audio["bitrate_kbps"]:
         # the first codec's bitrate plus audio, with 50 percent headroom for retransmits and other traffic
         uplink = round((first + audio["bitrate_kbps"]) * 1.5 / 1000, 1)
-    return {
+    plan = {
         "platform": platform["id"],
         "tier": tier["id"],
         "tier_applies": platform["tier_policy"] == "ladder",
@@ -131,3 +131,8 @@ def resolve(platform: dict[str, Any], tier: dict[str, Any], index: int | None = 
         "uplink_mbps_needed": uplink,
         "uplink_mbps_tier": tier["min_uplink_mbps"],
     }
+    if {"rtmp", "enhanced-rtmp"} & set(platform["transport"]):
+        # how an RTMP destination for this platform is set up: TLS where the ingest takes it, AAC unless the
+        # platform is known to take Opus (none is documented to yet)
+        plan["rtmp"] = {"tls": platform.get("rtmps", False), "audio": list(platform.get("rtmp_audio", ["aac"]))}
+    return plan

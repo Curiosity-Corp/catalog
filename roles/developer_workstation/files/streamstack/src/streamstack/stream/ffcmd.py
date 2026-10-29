@@ -21,7 +21,10 @@ MKV_PIPE = ["-copyts", "-f", "matroska", "-live", "1", "-cluster_time_limit", "1
 QUIET = ["-hide_banner", "-nostdin", "-loglevel", "warning", "-nostats", "-progress", "pipe:2", "-stats_period", "1"]
 SINK_QUIET = QUIET
 SINK_INPUT = ["-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "65536", "-analyzeduration", "0"]
+# Enhanced RTMP (Veovera E-RTMP) names a codec by FourCC. ffmpeg 6.1 and later carry HEVC and AV1 video, ffmpeg 8 also
+# Opus audio; `-rtmp_enhanced_codecs` lists the ones the muxer may announce. H.264 and AAC need no entry.
 ENHANCED_FOURCC = {"hevc": "hvc1", "av1": "av01"}
+ENHANCED_AUDIO_FOURCC = {"opus": "Opus"}
 
 
 @dataclass(frozen=True)
@@ -267,6 +270,42 @@ def srt_url(dest: Destination, passphrase: str = "", streamid: str = "", latency
     return f"srt://{host}:{parts.port}?" + "&".join(f"{k}={quote(v, safe='')}" for k, v in query.items())
 
 
+def rtmp_url(dest: Destination, secret: str = "") -> str:
+    """The URL ffmpeg publishes to: the destination's URL (application path) with the stream key as the last segment."""
+    return dest.url.rstrip("/") + ("/" + quote(secret, safe="") if secret else "")
+
+
+def rtmp_tls_args(dest: Destination) -> list[str]:
+    """ffmpeg's TLS options for an `rtmps://` destination; none for plain `rtmp://`.
+
+    ffmpeg's `tls_verify` defaults to off, which would send the stream key to anyone who answers on the port. The
+    certificate is therefore checked, against the host in the URL, unless the destination says `tls_verify: false`;
+    `ca_file` adds a CA bundle for a private ingest.
+    """
+    if not dest.is_tls():
+        return []
+    if not dest.tls_verify():
+        return ["-tls_verify", "0"]
+    args = ["-tls_verify", "1", "-verifyhost", urlsplit(dest.url).hostname or ""]
+    ca_file = str(dest.options.get("ca_file", ""))
+    return [*args, "-ca_file", ca_file] if ca_file else args
+
+
+def rtmp_wants_opus(dest: Destination, legacy: bool = False) -> bool:
+    """Whether this destination gets Opus (Enhanced RTMP audio) rather than AAC. Never in legacy fallback."""
+    return dest.rtmp_audio() == "opus" and not legacy and dest.options.get("mode") != "classic"
+
+
+def rtmp_enhanced_codecs(dest: Destination, codec: str, legacy: bool = False) -> list[str]:
+    """The FourCCs the muxer may announce for this destination: the video codec's, then the audio codec's."""
+    names: list[str] = []
+    if not legacy and codec in ENHANCED_FOURCC:
+        names.append(ENHANCED_FOURCC[codec])
+    if rtmp_wants_opus(dest, legacy):
+        names.append(ENHANCED_AUDIO_FOURCC["opus"])
+    return names
+
+
 def sink_argv(
     ffmpeg: str,
     dest: Destination,
@@ -275,11 +314,13 @@ def sink_argv(
     secret: str = "",
     target: str = "",
     latency_ms: int | None = None,
+    legacy: bool = False,
 ) -> list[str]:
     """The ffmpeg that reads the relay's Matroska on stdin and delivers it to `dest`. `secret` is the resolved key.
 
     `target` is the output path for file sinks (record to mp4). The key, when there is one, appears only in this
-    argv; callers must never log it unredacted.
+    argv; callers must never log it unredacted. `legacy` is the RTMP fallback: classic FLV, H.264 and AAC only,
+    for a server that did not accept Enhanced RTMP.
     """
     base = [ffmpeg, *SINK_QUIET, *SINK_INPUT, "-f", "matroska", "-i", "pipe:0", "-map", "0"]
     if dest.kind == "srt":
@@ -291,11 +332,19 @@ def sink_argv(
             srt_url(dest, passphrase, streamid, latency_ms),
         ]  # fmt: skip
     if dest.kind == "rtmp":
-        argv = [*base, "-c:v", "copy", "-c:a", "aac", "-b:a", f"{audio_kbps}k", "-ar", "48000", "-ac", "2"]
-        if codec in ENHANCED_FOURCC:
-            argv += ["-rtmp_enhanced_codecs", ENHANCED_FOURCC[codec]]
-        url = dest.url.rstrip("/") + ("/" + quote(secret, safe="") if secret else "")
-        return [*argv, "-flvflags", "no_duration_filesize", "-f", "flv", "-flush_packets", "1", url]
+        if legacy and codec != "h264":
+            raise ValueError("The legacy RTMP fallback carries H.264 only.")
+        # the relay's audio is already Opus (48 kHz stereo, 20 ms): Enhanced RTMP forwards it as it is; classic
+        # FLV has no Opus, so AAC is encoded from it
+        audio = ["-c:a", "copy"] if rtmp_wants_opus(dest, legacy) else [
+            "-c:a", "aac", "-b:a", f"{audio_kbps}k", "-ar", "48000", "-ac", "2",
+        ]  # fmt: skip
+        argv = [*base, "-c:v", "copy", *audio]
+        fourccs = rtmp_enhanced_codecs(dest, codec, legacy)
+        if fourccs:
+            argv += ["-rtmp_enhanced_codecs", ",".join(fourccs)]
+        argv += rtmp_tls_args(dest)
+        return [*argv, "-flvflags", "no_duration_filesize", "-f", "flv", "-flush_packets", "1", rtmp_url(dest, secret)]
     if dest.kind == "record":
         return [
             *base, "-c", "copy",

@@ -1,0 +1,71 @@
+streamstack 0.0.22
+rig: studio-wave-xlr (selected by overlap)
+
+Hardware
+[  ok] rig: studio-wave-xlr (selected by overlap): Studio with Elgato Wave XLR; reason: overlap; scores: studio-deck 7, studio-wave-xlr 12
+[  ok] Elgato Wave XLR: present: USB 0fd9:007d
+[  ok] Intel Arc A380: present: PCI 8086:56a5
+[  ok] Elgato Cam Link 4K: present: USB 0fd9:0067
+[  ok] Canon EOS 50D: present: USB 04a9:319b
+[  ok] Logitech Litra Beam: present: USB 046d:c901
+[  ok] Intel UHD Graphics 770: not present: optional for this rig
+[  ok] Onboard HD Audio (Raptor Lake PCH): present: PCI 8086:7a50
+[  ok] Elgato Stream Deck (original V2): not present: optional for this rig
+[  ok] grade: /dev/dri/renderD128 (Intel Corporation DG2 [Arc A380], 8086:56a5): chosen by the studio-wave-xlr rig
+[  ok] encode: /dev/dri/renderD128 (Intel Corporation DG2 [Arc A380], 8086:56a5): chosen by the studio-wave-xlr rig
+[  ok] decode: /dev/dri/renderD128 (Intel Corporation DG2 [Arc A380], 8086:56a5): chosen by the studio-wave-xlr rig
+[  ok] blur: /dev/dri/renderD128 (Intel Corporation DG2 [Arc A380], 8086:56a5): chosen by the studio-wave-xlr rig
+[  ok] encoder: av1_vaapi (av1): VA-API on /dev/dri/renderD128
+[  ok] Elgato Wave XLR: 48000 Hz s24le, 1 ch capture, no resampling: the conferencing rate, which the interface offers; the denoise stages are 48 kHz models and the PipeWire clock is fixed at 48 kHz, so 96 kHz would only add a resampler; quantum 256
+[  ok] call microphone: alsa_input.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00.mono-fallback: the configured source; chosen by STREAMSTACK_MICROPHONE
+[  ok] monitor output: alsa_output.usb-Elgato_Systems_Elgato_Wave_XLR_<serial>-00.analog-stereo
+[warn] seantech runs a second WirePlumber; their config is out of sight, so the policy cannot be checked: seantech: runs pipewire, pipewire-pulse, wireplumber (wireplumber up 4 d 18 h); linger on (their services start at boot and never stop); in group audio, video: may open every sound card and camera; their config is not readable by this user, so a drop-in cannot be checked
+       -> if you applied the policy for them, record it with STREAMSTACK_SEAT_GUARDED=seantech in ~/.config/streamstack/streamstack.env; otherwise `streamstack seat-policy script --user seantech` prints the drop-in to apply
+[  ok] Elgato Cam Link 4K: 1920x540@29.97 YUYV on /dev/video0: offers 1920x540@29.97 YUYV
+[  ok] Canon EOS 50D: /dev/video42: v4l2loopback device found by its label
+[  ok] StreamStack Camera: /dev/video43: v4l2loopback device found by its label
+
+Video
+[  ok] Canon EOS 50D (/dev/video42) is live: 1280x720 YUYV @ 30 fps
+[  ok] StreamStack Camera (/dev/video43) is live: 1280x720 YUYV @ 30 fps
+[  ok] StreamStack Camera offers 1280x720 YUYV @ 30 fps: listed by Chrome, Firefox and Zoom
+[  ok] StreamStack Camera is fed and its source is delivering
+[  ok] StreamStack Camera is also a PipeWire camera: Firefox and the camera portal list it; Chromium does with chrome://flags/#enable-webrtc-pipewire-camera
+[  ok] The engine is idle: no app is reading StreamStack Camera: no app has read the camera for 10 s It starts when an app opens the camera (woken 8 times this session).
+[  ok] Canon on USB: Canon Digital Camera
+[  ok] Elgato Cam Link on /dev/video0: 540p29.97 YUYV: offers 540p29.97 YUYV; now 1920x540 YUYV @ 29.97 fps
+[warn] Elgato Cam Link is on a USB 2 link (480 Mb/s): 1080p arrives at about 10 fps: the card needs USB 3 (5 Gb/s) for 1080p at full rate whatever mode it reports
+       -> plug it into a USB 3 port (blue or SS) directly, not through a USB 2 hub or extension cable
+[  ok] Auto-framing is ready: YuNet 2023mar, OpenVINO (Intel GPU or CPU); YuNet 2023mar at /home/mrh/.local/share/streamstack/models/face_detection_yunet_2023mar.onnx (sha256 verified)
+[  ok] kernel 7.0.0-38-generic has a v4l2loopback module
+[  ok] the newer kernel 7.0.0-42-generic has the module, so a reboot keeps the camera
+[  ok] v4l2loopback 0.15.3 is loaded (0.15.4 upstream fixes two frame-copy concurrency bugs): the distribution ships 0.15.3; if a camera freezes or tears under load, building upstream 0.15.4 with DKMS is the first thing to try
+[  ok] StreamStack Camera meets the call-app contract: 1280x720 YUYV 30 fps
+[  ok] only StreamStack feeds /dev/video43
+
+Audio
+[  ok] Cam Link HDMI audio is the camera's sound, not a call microphone: Cam Link 4K Analog Stereo
+[  ok] call microphone: Elgato Wave XLR Mono
+[  ok] microphone is delivering audio: the microphone is captured and consumed (hw_ptr and appl_ptr advance)
+[  ok] Wave XLR capture node is always processing (capture-hold rule active)
+[  ok] amixer is installed (alsa-utils)
+[  ok] default microphone is StreamStack Mic (the voice chain)
+[  ok] StreamStack Mic (processed voice) is available
+[  ok] StreamStack Mic reads the Plan's microphone
+[  ok] StreamStack Mic is a plain input source that apps list: 1 ch 48000 Hz; the default microphone
+
+Apps
+[  ok] PipeWire patchbay: installed
+[  ok] camera controls: installed
+[  ok] Canon tether: installed
+[  ok] previews: installed
+[  ok] browser for Teams web: microsoft-edge, microsoft-edge-stable, google-chrome, firefox
+[  ok] Zoom desktop client: not installed, calls use the zoom.us web client
+[  ok] seen by apps: microphone: pacat
+[  ok] auto mode: off (streamstack auto on|off)
+
+Pick these in Teams / Zoom
+  Camera:     StreamStack Camera   (graded by StreamStack; or Canon EOS 50D raw)
+  Microphone: StreamStack Mic
+  Speaker:    headphones - not the laptop speakers
+  Run `streamstack call-settings` for the in-app toggles to turn off.

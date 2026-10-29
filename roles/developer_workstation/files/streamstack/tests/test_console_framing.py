@@ -31,7 +31,7 @@ class FakeEngine:
         self.window: Rect | None = None
         self.windows: list[Rect | None] = []
         self.fail_windows = False
-        self.spec = SimpleNamespace(out_height=1080)
+        self.spec = SimpleNamespace(out_height=1080, picture=(1920, 1080))
 
     def state(self) -> dict:
         return {"crop": None if self.window is None else vars(self.window)}

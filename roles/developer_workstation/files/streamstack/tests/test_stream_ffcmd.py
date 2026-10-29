@@ -121,6 +121,63 @@ def test_classic_rtmp_has_no_enhanced_flag() -> None:
     assert "-rtmp_enhanced_codecs" not in ffcmd.sink_argv(FF, dest("rtmp"), "h264", secret="k")
 
 
+def test_enhanced_rtmp_opus_is_copied_and_announced() -> None:
+    argv = ffcmd.sink_argv(FF, dest("rtmp", options={"audio": "opus"}), "hevc", audio_kbps=96, secret="k")
+    assert value(argv, "-rtmp_enhanced_codecs") == "hvc1,Opus"
+    assert value(argv, "-c:a") == "copy" and "-b:a" not in argv and "-ar" not in argv  # the relay's Opus, as it is
+
+
+def test_opus_with_h264_announces_only_the_audio() -> None:
+    argv = ffcmd.sink_argv(FF, dest("rtmp", options={"audio": "opus", "mode": "enhanced"}), "h264", secret="k")
+    assert value(argv, "-rtmp_enhanced_codecs") == "Opus" and value(argv, "-c:a") == "copy"
+
+
+def test_legacy_fallback_is_h264_and_aac_with_no_enhanced_flag() -> None:
+    argv = ffcmd.sink_argv(FF, dest("rtmp", options={"audio": "opus"}), "h264", audio_kbps=96, secret="k", legacy=True)
+    assert "-rtmp_enhanced_codecs" not in argv
+    assert value(argv, "-c:a") == "aac" and value(argv, "-b:a") == "96k" and value(argv, "-ar") == "48000"
+    with pytest.raises(ValueError, match=r"H.264 only"):
+        ffcmd.sink_argv(FF, dest("rtmp"), "av1", legacy=True)
+
+
+def test_default_rtmp_audio_is_aac_even_for_enhanced_video() -> None:
+    argv = ffcmd.sink_argv(FF, dest("rtmp"), "av1", audio_kbps=160, secret="k")
+    assert (
+        value(argv, "-c:a") == "aac"
+        and value(argv, "-b:a") == "160k"
+        and value(argv, "-rtmp_enhanced_codecs") == "av01"
+    )
+
+
+def test_plain_rtmp_has_no_tls_options() -> None:
+    assert "-tls_verify" not in ffcmd.sink_argv(FF, dest("rtmp"), "h264", secret="k")
+
+
+def rtmps(**options: object) -> Destination:
+    return Destination.from_dict(
+        {"id": "r", "kind": "rtmp", "url": "rtmps://Live.Example.com:443/app/", "options": options}
+    )
+
+
+def test_rtmps_checks_the_certificate_against_the_host_by_default() -> None:
+    argv = ffcmd.sink_argv(FF, rtmps(), "h264", secret="k/1")
+    assert value(argv, "-tls_verify") == "1" and value(argv, "-verifyhost") == "live.example.com"
+    assert "-ca_file" not in argv
+    assert argv[-1] == "rtmps://live.example.com:443/app/k%2F1"  # scheme and host lower-cased, one slash before the key
+
+
+def test_rtmps_with_a_private_ca_and_with_verification_off() -> None:
+    assert value(ffcmd.sink_argv(FF, rtmps(ca_file="/etc/ssl/ingest.pem"), "h264"), "-ca_file") == "/etc/ssl/ingest.pem"
+    off = ffcmd.sink_argv(FF, rtmps(tls_verify=False), "h264")
+    assert value(off, "-tls_verify") == "0" and "-verifyhost" not in off
+
+
+def test_rtmps_with_enhanced_codecs_keeps_both() -> None:
+    argv = ffcmd.sink_argv(FF, rtmps(audio="opus"), "av1", secret="k")
+    assert value(argv, "-rtmp_enhanced_codecs") == "av01,Opus" and value(argv, "-tls_verify") == "1"
+    assert argv.index("-tls_verify") < len(argv) - 1 and argv[-3:-1] == ["-flush_packets", "1"]  # URL is last
+
+
 def test_record_mp4_is_fragmented() -> None:
     argv = ffcmd.sink_argv(FF, dest("record", options={"format": "mp4"}), "av1", target="/x/a.mp4")
     assert "+frag_keyframe+empty_moov+default_base_moof+skip_trailer" in argv and argv[-1] == "/x/a.mp4"

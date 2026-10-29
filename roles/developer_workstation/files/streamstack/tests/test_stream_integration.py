@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import shutil
 import socket
+import ssl
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -290,3 +293,217 @@ def test_stopping_leaves_no_process_behind(make_service, tmp_path: Path) -> None
     files = list((tmp_path / "rec").glob("frag-*.mp4"))
     assert len(files) == 1 and files[0].stat().st_size > 0
     assert {s["codec_type"] for s in stream_info(files[0])} == {"video", "audio"}
+
+
+def _ffmpeg_major() -> int:
+    if not FFMPEG:
+        return 0
+    text = subprocess.run([FFMPEG, "-hide_banner", "-version"], capture_output=True, text=True, check=False).stdout
+    match = re.search(r"ffmpeg version (\d+)\.", text)
+    return int(match.group(1)) if match else 0
+
+
+@pytest.mark.skipif(
+    not (_has("libx265", "rtmp") and _ffmpeg_major() >= 8), reason="ffmpeg 8 with libx265 and RTMP is needed"
+)
+def test_enhanced_rtmp_carries_hevc_and_opus_with_the_audio_copied(make_service, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("STREAMSTACK_TEST_KEY", LIVE_KEY)
+    port = free_port()
+    out = tmp_path / "hevc-opus.flv"
+    listener = rtmp_listener(port, out)
+    try:
+        svc = make_service()
+        svc.set(
+            {
+                "encoder": "libx265",
+                "destinations": [
+                    {
+                        "id": "enh",
+                        "kind": "rtmp",
+                        "url": f"rtmp://127.0.0.1:{port}/live",
+                        "key_ref": "env:STREAMSTACK_TEST_KEY",
+                        "options": {"audio": "opus"},
+                    }
+                ],
+            }
+        )
+        svc.start_stream()
+        assert wait_for(lambda: svc.state()["destinations"][0]["state"] == "live", 40)
+        dest = svc.state()["destinations"][0]
+        assert dest["codec"] == "hevc"
+        assert dest["rtmp"] == {
+            "enhanced": True, "legacy": False, "audio": "opus", "tls": False, "tls_verify": False,
+        }  # fmt: skip
+        time.sleep(3)
+        svc.stop_stream()
+    finally:
+        end(listener)
+    assert {s["codec_name"] for s in stream_info(out)} >= {"hevc", "opus"}
+    assert len(probe_packets(out, "a")) > 50  # Opus packets, not just the header
+
+
+class TlsIngest:
+    """An RTMPS ingest on loopback: TLS terminated here, the plain RTMP handed to an ffmpeg listener behind it.
+
+    ffmpeg cannot listen for rtmps itself, so this is the TLS half of a real ingest. `handshakes` counts completed
+    TLS handshakes and `upstream` the connections passed on (a client that rejects the certificate sends none).
+    """
+
+    def __init__(self, cert: Path, key: Path, plain_port: int) -> None:
+        self.plain_port = plain_port
+        self.handshakes = 0
+        self.upstream = 0
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(cert), str(key))
+        self._context = context
+        self._sock = socket.socket()
+        self._sock.bind(("127.0.0.1", 0))
+        self._sock.listen(8)
+        self.port: int = self._sock.getsockname()[1]
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, name="tls-ingest", daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        self._sock.close()
+        self._thread.join(timeout=5)
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn: socket.socket) -> None:
+        try:
+            tls = self._context.wrap_socket(conn, server_side=True)
+        except (ssl.SSLError, OSError):
+            conn.close()
+            return
+        self.handshakes += 1
+        try:
+            first = tls.recv(65536)  # a client that distrusts the certificate hangs up before sending anything
+            if not first:
+                return
+            with socket.create_connection(("127.0.0.1", self.plain_port), timeout=10) as upstream:
+                self.upstream += 1
+                upstream.sendall(first)
+                back = threading.Thread(target=self._pump, args=(upstream, tls), daemon=True)
+                back.start()
+                self._pump(tls, upstream)
+                back.join(timeout=5)
+        except OSError:
+            pass
+        finally:
+            tls.close()
+
+    @staticmethod
+    def _pump(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while data := src.recv(65536):
+                dst.sendall(data)
+        except OSError:
+            pass
+        try:
+            dst.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def make_certificate(directory: Path) -> tuple[Path, Path]:
+    """A throwaway self-signed certificate for 127.0.0.1 and localhost, made with the openssl command."""
+    cert, key = directory / "ingest.pem", directory / "ingest.key"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert),
+         "-days", "2", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"],
+        capture_output=True, check=True,
+    )  # fmt: skip
+    return cert, key
+
+
+TLS_GATE = pytest.mark.skipif(
+    not (_has("libx264", "rtmps") and shutil.which("openssl")), reason="ffmpeg with TLS and the openssl command"
+)
+
+
+@pytest.fixture
+def tls_ingest(tmp_path: Path) -> Iterator[Callable[[Path], tuple[TlsIngest, Path]]]:
+    """Start an ffmpeg RTMP listener and an RTMPS front for it; yields (ingest, certificate)."""
+    started: list[tuple[TlsIngest, subprocess.Popen[bytes]]] = []
+
+    def start(out: Path) -> tuple[TlsIngest, Path]:
+        cert, key = make_certificate(tmp_path)
+        plain = free_port()
+        listener = rtmp_listener(plain, out)
+        ingest = TlsIngest(cert, key, plain)
+        started.append((ingest, listener))
+        return ingest, cert
+
+    yield start
+    for ingest, listener in started:
+        ingest.close()
+        end(listener)
+
+
+def rtmps_destination(port: int, **options: object) -> dict[str, object]:
+    return {
+        "id": "tls",
+        "kind": "rtmp",
+        "url": f"rtmps://127.0.0.1:{port}/live",
+        "key_ref": "env:STREAMSTACK_TEST_KEY",
+        "options": {"mode": "classic", **options},
+    }
+
+
+@TLS_GATE
+def test_rtmps_publishes_when_the_certificate_is_trusted(make_service, tls_ingest, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("STREAMSTACK_TEST_KEY", LIVE_KEY)
+    out = tmp_path / "rtmps.flv"
+    ingest, cert = tls_ingest(out)
+    svc = make_service()
+    svc.set({"encoder": "libx264", "destinations": [rtmps_destination(ingest.port, ca_file=str(cert))]})
+    svc.start_stream()
+    assert wait_for(lambda: svc.state()["destinations"][0]["state"] == "live", 40)
+    state = svc.state()["destinations"][0]
+    assert state["rtmp"]["tls"] and state["rtmp"]["tls_verify"] and LIVE_KEY not in json.dumps(state)
+    time.sleep(3)
+    svc.stop_stream()
+    assert ingest.handshakes >= 1 and ingest.upstream >= 1
+    assert {s["codec_name"] for s in stream_info(out)} >= {"h264", "aac"}
+
+
+@TLS_GATE
+def test_rtmps_refuses_an_untrusted_certificate_and_sends_no_key(
+    make_service, tls_ingest, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("STREAMSTACK_TEST_KEY", LIVE_KEY)
+    ingest, _ = tls_ingest(tmp_path / "never.flv")
+    svc = make_service()
+    svc.set({"encoder": "libx264", "destinations": [rtmps_destination(ingest.port)]})  # verification is the default
+    svc.start_stream()
+    assert wait_for(lambda: svc.state()["destinations"][0]["last_error"] != "", 30)
+    state = svc.state()["destinations"][0]
+    assert state["state"] != "live" and "certificate" in state["last_error"].lower()
+    assert ingest.upstream == 0, "RTMP bytes (the stream key) reached a server whose certificate was not trusted"
+    assert LIVE_KEY not in json.dumps(state)
+    svc.stop_stream()
+
+
+@TLS_GATE
+def test_rtmps_with_verification_off_publishes_to_a_self_signed_server(
+    make_service, tls_ingest, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("STREAMSTACK_TEST_KEY", LIVE_KEY)
+    out = tmp_path / "insecure.flv"
+    ingest, _ = tls_ingest(out)
+    svc = make_service()
+    svc.set({"encoder": "libx264", "destinations": [rtmps_destination(ingest.port, tls_verify=False)]})
+    svc.start_stream()
+    assert wait_for(lambda: svc.state()["destinations"][0]["state"] == "live", 40)
+    assert svc.state()["destinations"][0]["rtmp"]["tls_verify"] is False
+    time.sleep(2)
+    svc.stop_stream()
+    assert "h264" in {s["codec_name"] for s in stream_info(out)}

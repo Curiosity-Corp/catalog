@@ -63,8 +63,9 @@ def probe_backend(node: str, ffmpeg: str = "ffmpeg", run: Run = subprocess.run) 
 
 MJPEG_PROBE_SIZE = "640x360"
 MJPEG_SUBSAMPLINGS = ("yuvj420p", "yuvj422p")  # what cameras send: a JPEG is 4:2:0 or 4:2:2
-STACK_PACKAGES = ("mesa-vulkan-drivers", "intel-media-va-driver", "libva2")
-CACHE_VERSION = 1
+# libplacebo does the dma-buf import that fails (#138), so its version is part of the answer
+STACK_PACKAGES = ("mesa-vulkan-drivers", "intel-media-va-driver", "libva2", "libplacebo[0-9]*")
+CACHE_VERSION = 2  # 2: a tier must also produce the right picture
 
 
 def mjpeg_cache_file() -> Path:
@@ -72,8 +73,8 @@ def mjpeg_cache_file() -> Path:
 
 
 def stack_fingerprint(node: str, ffmpeg: str = "ffmpeg", run: Run = subprocess.run) -> str:
-    """The graphics stack the answer depends on: the node, ffmpeg's version, and the Vulkan driver (mesa), VA driver
-    and libva packages where dpkg knows them. A different fingerprint means the probe runs again."""
+    """The graphics stack the answer depends on: the node, ffmpeg's version, and the Vulkan driver (mesa), VA driver,
+    libva and libplacebo packages where dpkg knows them. A different fingerprint means the probe runs again."""
     parts = [f"v{CACHE_VERSION}", node]
     commands = [[ffmpeg, "-version"], ["dpkg-query", "-W", "-f=${Package} ${Version}\\n", *STACK_PACKAGES]]
     for argv in commands:
@@ -97,9 +98,44 @@ def _reason(result: subprocess.CompletedProcess) -> str:
     return (lines[-1] if lines else f"ffmpeg exit {result.returncode}")[:200]
 
 
+MAX_PICTURE_ERROR = 4.0  # mean absolute difference (of 255) between a tier's picture and the software reference
+PROBE_FRAME_BYTES = 640 * 360 * 2  # one yuv422p frame at MJPEG_PROBE_SIZE
+IMPORT_REJECTED = (
+    "libplacebo's dma-buf import of the mapped VA-API frame is rejected by the Vulkan driver "
+    "(VK_ERROR_OUT_OF_DEVICE_MEMORY from CreateImage, which is not a memory shortage: the VA to Vulkan mapping works)"
+)
+
+
+def _mean_difference(a: bytes, b: bytes) -> float:
+    return sum(abs(x - y) for x, y in zip(a, b, strict=True)) / len(a)
+
+
+def _picture_problem(got: bytes, reference: bytes) -> str:
+    """Empty when `got` is the same picture as `reference`, else what is wrong. A tier that exits 0 can still hand
+    libplacebo an unsynchronised or empty image (an all-green frame), so a pass needs the right pixels."""
+    if len(got) != PROBE_FRAME_BYTES:
+        return f"the tier wrote {len(got)} bytes, not one {MJPEG_PROBE_SIZE} frame"
+    if len(reference) != len(got):
+        return "the reference picture has the wrong size"
+    error = _mean_difference(got, reference)
+    if error > MAX_PICTURE_ERROR:
+        return f"the tier ran but its picture differs from a software decode (mean error {error:.0f} of 255)"
+    return ""
+
+
+def _run(argv: list[str], run: Run) -> subprocess.CompletedProcess | str:
+    """The finished command, or the reason it could not be run (no ffmpeg, did not finish)."""
+    try:
+        return run(argv, capture_output=True, timeout=PROBE_TIMEOUT, check=False)
+    except FileNotFoundError:
+        return "ffmpeg is not installed"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"the MJPEG probe did not finish ({type(exc).__name__})"
+
+
 def _mjpeg_attempt(node: str, subsampling: str, directory: Path, mode: str, ffmpeg: str, run: Run) -> str:
-    """Empty when a synthetic JPEG of `subsampling` decodes on VA-API and goes through libplacebo the way `mode`
-    (zero-copy or vaapi-copy) does in the engine's graph, else why not."""
+    """Empty when a synthetic JPEG of `subsampling` decodes the way `mode` does in the engine's graph, goes through
+    libplacebo and comes out as the same picture a software decode gives; else why not."""
     jpeg = directory / f"probe-{subsampling}.jpg"
     quiet = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
     make = [
@@ -107,27 +143,66 @@ def _mjpeg_attempt(node: str, subsampling: str, directory: Path, mode: str, ffmp
         *("-f", "lavfi", "-i", f"testsrc2=s={MJPEG_PROBE_SIZE}:d=1:r=1", "-frames:v", "1"),
         *("-pix_fmt", subsampling, "-q:v", "3", str(jpeg)),
     ]
+    devices = ["-init_hw_device", f"vaapi=va:{node}", "-init_hw_device", "vulkan=vk@va", "-filter_hw_device", "vk"]
+
+    def through_libplacebo(head: str, decode: list[str]) -> list[str]:
+        return [
+            *quiet,
+            *devices,
+            *decode,
+            *("-i", str(jpeg)),
+            *("-vf", f"{head},libplacebo=format=yuv422p,hwdownload,format=yuv422p"),
+            *("-frames:v", "1", "-f", "rawvideo", "-"),
+        ]
+
     zero_copy = mode == MJPEG_VAAPI
+    upload = "format=yuv420p|yuv422p|nv12,hwupload"
     # the engine's own head: the decoded surface mapped into Vulkan, or read back and uploaded; libplacebo; read back
-    head = "hwmap=derive_device=vulkan" if zero_copy else "format=yuv420p|yuv422p|nv12,hwupload"
-    use = [
+    head = "hwmap=derive_device=vulkan" if zero_copy else upload
+    hw = ["-hwaccel", "vaapi", "-hwaccel_device", "va", *(["-hwaccel_output_format", "vaapi"] if zero_copy else [])]
+    # the picture every tier must reproduce: libavcodec decodes, then the same upload and libplacebo
+    reference = through_libplacebo(upload, [])
+    made = _run(make, run)
+    if isinstance(made, str):
+        return made
+    if made.returncode != 0:
+        return _reason(made)
+    done = _run(through_libplacebo(head, hw), run)
+    if isinstance(done, str):
+        return done
+    if done.returncode != 0:
+        return _explain_import(done, jpeg, subsampling, quiet, devices, run) if zero_copy else _reason(done)
+    expected = _run(reference, run)
+    if isinstance(expected, str):
+        return expected
+    if expected.returncode != 0:
+        return _reason(expected)
+    return _picture_problem(done.stdout, expected.stdout)
+
+
+def _explain_import(
+    failed: subprocess.CompletedProcess, jpeg: Path, subsampling: str, quiet: list[str], devices: list[str], run: Run
+) -> str:
+    """Why zero-copy failed. ffmpeg reports a libplacebo `CreateImage` failure as VK_ERROR_OUT_OF_DEVICE_MEMORY, which
+    reads like a full GPU. It is not: on the Arc stack the VA surface maps into Vulkan and reads back correctly, and
+    libplacebo then re-imports it as a dma-buf and the driver rejects that import (#138). Mapping alone is run here
+    to tell the two apart; the answer names the step that really failed."""
+    reason = _reason(failed)
+    if "VK_ERROR_OUT_OF_DEVICE_MEMORY" not in reason:
+        return reason
+    pix_fmt = "yuv420p" if subsampling == "yuvj420p" else "yuv422p"
+    mapping = [
         *quiet,
-        *("-init_hw_device", f"vaapi=va:{node}", "-init_hw_device", "vulkan=vk@va", "-filter_hw_device", "vk"),
-        *("-hwaccel", "vaapi", "-hwaccel_device", "va", *(("-hwaccel_output_format", "vaapi") if zero_copy else ())),
-        *("-i", str(jpeg)),
-        *("-vf", f"{head},libplacebo=format=yuv422p,hwdownload,format=yuv422p"),
-        *("-frames:v", "2", "-f", "null", "-"),
+        *devices,
+        *("-hwaccel", "vaapi", "-hwaccel_device", "va", "-hwaccel_output_format", "vaapi", "-i", str(jpeg)),
+        *("-vf", f"hwmap=derive_device=vulkan,hwdownload,format={pix_fmt}", "-frames:v", "1", "-f", "null", "-"),
     ]
-    for argv in (make, use):
-        try:
-            result = run(argv, capture_output=True, timeout=PROBE_TIMEOUT, check=False)
-        except FileNotFoundError:
-            return "ffmpeg is not installed"
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return f"the MJPEG probe did not finish ({type(exc).__name__})"
-        if result.returncode != 0:
-            return _reason(result)
-    return ""
+    mapped = _run(mapping, run)
+    if isinstance(mapped, str):
+        return mapped
+    if mapped.returncode != 0:
+        return f"the VA-API frame cannot be mapped into Vulkan ({_reason(mapped)})"[:300]
+    return IMPORT_REJECTED
 
 
 def probe_mjpeg(

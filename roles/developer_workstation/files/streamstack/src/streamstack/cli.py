@@ -16,6 +16,7 @@ user and never needs root.
     streamstack mic-check [s]   record a few seconds and play them back
     streamstack mic-revive      bring back a stalled or digitally silent microphone (capture-control resync,
                                 suspend/resume, card profile cycle; --reprobe adds a WirePlumber restart)
+    streamstack camera-publish  make StreamStack Camera a PipeWire camera (one WirePlumber restart, never in a call)
     streamstack default-source  make call apps' default microphone the voice chain (or the resolved microphone)
     streamstack voice [preset]  list or load a voice preset (bass, treble, pitch)
     streamstack console         the visual control surface: faders, meters, scenes, live picture
@@ -45,6 +46,7 @@ from pathlib import Path
 
 from streamstack import (
     __version__,
+    camerapublish,
     camlink,
     config,
     crash,
@@ -919,6 +921,18 @@ def _reprobe(found: Found | None) -> micwatch.ReviveResult:
     return micwatch.reprobe_wireplumber(ready=ready, say=lambda text: print(text, flush=True))
 
 
+def cmd_camera_publish(args: argparse.Namespace) -> int:
+    """Make StreamStack Camera a PipeWire camera: restart WirePlumber once so it probes the fed program node (#176)."""
+    result = camerapublish.publish(
+        load_settings(),
+        wait_fed=args.wait,
+        force=args.force,
+        say=lambda text: print(text, flush=True),
+    )
+    print(result.message, file=sys.stdout if result.ok else sys.stderr)
+    return result.code
+
+
 def cmd_mic_revive(args: argparse.Namespace) -> int:
     """Revive a stalled or digitally silent microphone: re-write the capture controls (digital silence only), suspend
     and resume the source, cycle its card profile; with --reprobe restart WirePlumber as the last resort."""
@@ -1469,6 +1483,14 @@ def build_parser() -> argparse.ArgumentParser:
     mic.add_argument("seconds", nargs="?", type=float, default=6.0)
     mic.add_argument("--raw", action="store_true", help="also record the unprocessed mic for an A/B comparison")
     mic.set_defaults(func=cmd_mic_check)
+    publish = sub.add_parser(
+        "camera-publish", help="make StreamStack Camera a PipeWire camera (Firefox, camera portal) after boot"
+    )
+    publish.add_argument("--wait", type=float, default=0.0, help="seconds to wait for the program camera to be fed")
+    publish.add_argument(
+        "--force", action="store_true", help="restart WirePlumber even when a call may be running (drops audio)"
+    )
+    publish.set_defaults(func=cmd_camera_publish)
     revive = sub.add_parser("mic-revive", help="bring back a stalled microphone")
     revive.add_argument("--force", action="store_true", help="cycle the microphone even when it looks healthy")
     revive.add_argument(

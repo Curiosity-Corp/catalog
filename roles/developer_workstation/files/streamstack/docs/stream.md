@@ -131,8 +131,9 @@ simulated uplink with shorter timings; `stream.simulate {loss_percent}` (demo on
 - `kind`: `record`, `srt`, `rtmp`, `whip`.
 - SRT `options`: `mode` (`caller` or `listener`), `latency_ms` (a number of milliseconds, default 120, or `"auto"`),
   `pbkeylen`, `streamid`. See [SRT path measurement and input](#srt-path-measurement-and-input).
-- RTMP `options.mode`: `auto` (Enhanced RTMP with the best codec; falls back to H.264 if it never connects), `enhanced`
-  (never falls back), `classic` (H.264).
+- RTMP `options.mode`: `auto` (Enhanced RTMP with the best codec; falls back to H.264 and AAC if it never connects),
+  `enhanced` (never falls back), `classic` (H.264 and AAC). The other RTMP options are `audio` (`aac` or `opus`),
+  `tls_verify` and `ca_file` (RTMPS only). See [Enhanced RTMP and RTMPS](#enhanced-rtmp-and-rtmps).
 - WHIP: `url` is the ingest endpoint (`https://` or `http://`), `key_ref` is the bearer token (optional). StreamStack
   publishes it itself (no ffmpeg muxer), so it needs the optional extra `pip install 'streamstack[whip]'`; the probe says
   when it is missing. H.264 is the default; `codec: hevc` or `av1` offers that codec instead, for servers that take it.
@@ -166,6 +167,73 @@ machine mount `/proc` with `hidepid=2`.
 
 The picture comes from `STREAMSTACK_PROGRAM_DEVICE` (default `/dev/video43`) at the size and rate of `STREAMSTACK_WIDTH`,
 `_HEIGHT` and `_FPS`.
+
+## Enhanced RTMP and RTMPS
+
+The RTMP transport is ffmpeg's FLV muxer reading the relay's Matroska on stdin: the picture is copied, never
+re-encoded, so the encoder chain that serves a recording or an SRT link serves RTMP too.
+
+**What goes on the wire.**
+
+| Mode | Video | Audio | How the server is told |
+|---|---|---|---|
+| `classic` | H.264 | AAC (encoded from the program's Opus) | plain FLV, what every server takes |
+| `auto` or `enhanced` | AV1, HEVC or H.264, best the host and the server allow | AAC (default) | FourCC `av01` or `hvc1` in `-rtmp_enhanced_codecs` (Veovera E-RTMP); H.264 needs none |
+| `auto` or `enhanced`, `audio: opus` | as above | Opus, copied from the program audio (no re-encode) | the FourCC `Opus` is added to the list |
+
+Tested here with ffmpeg 8.0.1 against ffmpeg's own RTMP listener: HEVC, AV1 and H.264 video; Opus alongside HEVC
+and alongside H.264. VP9 and the audio codecs FLAC, AC-3 and E-AC-3 are not offered (no platform asks for them).
+
+**Opus is opt-in.** No platform documents Opus ingest over RTMP today, so `audio` defaults to `aac` and the presets
+keep `aac`. `audio: opus` is for a self-hosted or relay ingest that speaks Enhanced RTMP audio (Veovera E-RTMP v2).
+It needs `mode` `auto` or `enhanced` (classic FLV cannot carry Opus) and an ffmpeg 8 or newer; the probe reports it
+as the transport `rtmp-opus`, and a stream that asks for it on an older ffmpeg is refused at start with the reason.
+
+**Multitrack is not exposed.** ffmpeg 8's FLV muxer can write E-RTMP multitrack (checked: two video tracks to a
+local listener), but StreamStack sends one program picture and one program audio per destination, so there is no
+second track to carry. What multitrack is for on a platform (Twitch's Enhanced Broadcasting renditions) needs several
+encodes of the same picture, which is a separate feature with its own encode budget
+(`STREAMSTACK_STREAM_MAX_ENCODES`). Nothing in the destination format would have to change to add it.
+
+**Falling back to legacy.** A server that does not know Enhanced RTMP drops the connection or never answers.
+In `auto` mode, when the sink has failed twice without ever going live, the destination moves to **classic FLV with
+H.264 and AAC** in one step (AV1 or HEVC and Opus together), the Console log says so, and the destination state
+carries `"moved": true` and `rtmp.legacy: true`. It does not return to Enhanced RTMP until the stream is stopped
+and started again. `enhanced` mode never falls back, and a destination whose server accepts the connection and
+only then objects to a codec is not detected (the sink was live): pin `mode: classic` or `codec: h264` there.
+If the ffmpeg build cannot announce AV1 or HEVC at all (older than 6.1), an `auto` destination streams H.264
+from the start.
+
+**The wire format of a running destination** is in its state, next to `codec`:
+`rtmp: {enhanced, legacy, audio, tls, tls_verify}`. `enhanced` says whether any Enhanced FourCC is announced.
+
+**RTMPS (TLS).** Use an `rtmps://` URL (`rtmps://a.rtmps.youtube.com/live2`, `rtmps://live.twitch.tv:443/app`);
+the port defaults to 443 and the URL still ends at the application name. The scheme and host are lower-cased and a
+trailing slash is dropped when the destination is saved, so `RTMPS://Live.Example.com/app/` works. ffmpeg's own
+default is *not* to check the server's certificate, which would hand the stream key to anything answering on the
+port; StreamStack therefore starts ffmpeg with `-tls_verify 1 -verifyhost <host>` against the system trust store.
+
+| Option (RTMPS only) | Default | Meaning |
+|---|---|---|
+| `tls_verify` | `true` | `false` accepts any certificate (a lab ingest; the destination state then shows `tls_verify: false`) |
+| `ca_file` | system store | path of a PEM bundle for a private CA |
+
+A certificate ffmpeg rejects shows up as the destination's `last_error` (`Peer certificate failed verification`),
+and no RTMP byte, so no key, is sent. A host whose ffmpeg has no TLS refuses an `rtmps://` destination at start
+(`transport rtmps` in the probe).
+
+**Changing it while running.** The control plane works as it does for the other transports:
+
+- The audio bitrate (`audio_bitrate_kbps`), the video bitrate, rate control, keyframe interval and the encoder change
+  live for a running RTMP destination; an Opus destination follows the audio swap without reconnecting.
+- The destination's own fields (`url`, `codec`, `options.mode`, `options.audio`, `tls_verify`, `ca_file`, the key)
+  cannot change while it streams: `stream.set` answers 409 "stop it before changing it". Stop the destination, edit
+  it, start it again.
+- A change of the global `codec` moves destinations as before; a destination in legacy fallback stays on H.264 and
+  AAC until it is stopped, and leaves legacy when a codec change moves it to AV1 or HEVC.
+
+The Presets page shows, per platform, whether its ingest takes RTMPS and which RTMP audio codecs (`rtmps` and
+`rtmp_audio` in `platforms.json`; see [Presets](presets.md)).
 
 ## Twitch accounts
 

@@ -159,3 +159,24 @@ def test_file_sink_reports_an_unwritable_path(tmp_path: Path) -> None:
     with pytest.raises(OSError, match="cannot write"):
         sink.open(b"H")
     assert sink.status()["state"] == "failed" and "show.mkv" in sink.status()["last_error"]
+
+
+def test_the_cause_of_a_failed_connection_is_reported_not_ffmpegs_closing_summary() -> None:
+    from streamstack.stream.proc import Child
+
+    child = Child("t", ["true"])
+    child.tail.extend(
+        [
+            "[tls @ 0x62e28cdea540] Peer certificate failed verification",
+            "[rtmps @ 0x62e28cdea480] Cannot open connection tls://127.0.0.1:19431",
+            "[out#0/flv @ 0x62e28cde6380] Error opening output rtmps://127.0.0.1:19431/live/***: Input/output error",
+            "Error opening output file rtmps://127.0.0.1:19431/live/***.",
+            "Error opening output files: Input/output error",
+        ]
+    )
+    assert child.last_error() == "Peer certificate failed verification"
+    child.tail.clear()
+    child.tail.extend(["Error opening output files: Input/output error"])
+    assert child.last_error() == "Error opening output files: Input/output error"  # nothing better to say
+    child.tail.clear()
+    assert child.last_error() == ""
