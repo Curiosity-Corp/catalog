@@ -807,6 +807,16 @@ minimal_desktop_greeter: gtk
 minimal_desktop_lightdm_minimum_vt: 8
 minimal_desktop_lightdm_vtswitch_wrapper: false
 minimal_desktop_lightdm_remove_dropins: []
+# lightdm.service ships Restart=always with no delay, so an X server that dies
+# at start (SIGBUS in the greeter's first paint, deskmeet1 2026-10-29) was
+# relaunched every ~3 s: ~20 logind greeter sessions and PAM stacks a minute,
+# a modeset of the real display each time, and the system bus pushed to its
+# match-rule limit. The drop-in waits restart_sec between attempts and gives up
+# after start_limit_burst failures inside start_limit_interval_sec; the next
+# pull (`state: started`) or a reboot tries again.
+minimal_desktop_lightdm_restart_sec: 10
+minimal_desktop_lightdm_start_limit_interval_sec: 600
+minimal_desktop_lightdm_start_limit_burst: 10
 
 # Per-user graphical sessions pinned to a virtual terminal below
 # minimal_desktop_lightdm_minimum_vt. Each item is {user, vt}. The user must be

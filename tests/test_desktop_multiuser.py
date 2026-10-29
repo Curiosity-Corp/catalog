@@ -147,6 +147,37 @@ def test_lightdm_greeter_vt_wrapper_and_service() -> None:
     )
 
 
+def test_lightdm_restart_backoff_drop_in() -> None:
+    """A crashing X server must not turn lightdm.service into a ~3 s relaunch loop."""
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["minimal_desktop_lightdm_restart_sec"] >= 5
+    assert defaults["minimal_desktop_lightdm_start_limit_burst"] >= 1
+    assert defaults["minimal_desktop_lightdm_start_limit_interval_sec"] >= (
+        defaults["minimal_desktop_lightdm_restart_sec"]
+        * defaults["minimal_desktop_lightdm_start_limit_burst"]
+    ), "the start limit window must cover the burst, or the limit never trips"
+
+    tasks = _tasks("minimal-desktop-lightdm.yml")
+    names = [task.get("name", "") for task in tasks]
+    dropin = _named(tasks, "Back off LightDM restarts")["ansible.builtin.copy"]
+    assert dropin["dest"] == "/etc/systemd/system/lightdm.service.d/10-curiosity-restart-backoff.conf"
+    unit = jinja2.Environment(undefined=jinja2.StrictUndefined).from_string(dropin["content"]).render(
+        **{key: value for key, value in defaults.items() if key.startswith("minimal_desktop_lightdm_")}
+    )
+    assert "RestartSec=10" in unit
+    assert "StartLimitBurst=10" in unit
+    assert "StartLimitIntervalSec=600" in unit
+    assert "Managed by Ansible" in unit
+
+    # The drop-in is read by the daemon-reload of the final start task, so it
+    # takes effect without restarting a display manager that is running.
+    assert names.index(_named(tasks, "Back off LightDM restarts")["name"]) < len(tasks) - 1
+    assert tasks[-1]["ansible.builtin.systemd_service"]["daemon_reload"] is True
+    assert "state" not in tasks[-1]["ansible.builtin.systemd_service"] or (
+        tasks[-1]["ansible.builtin.systemd_service"]["state"] == "started"
+    )
+
+
 def test_lightdm_xserver_wrapper_strips_only_novtswitch() -> None:
     script = (FILES / "lightdm-xserver-wrapper").read_text()
     assert subprocess.run(["sh", "-n"], input=script, text=True).returncode == 0
