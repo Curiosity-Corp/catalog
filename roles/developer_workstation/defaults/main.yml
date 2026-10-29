@@ -809,6 +809,13 @@ minimal_desktop_greeter: gtk
 # value: deskmeet-b760 pins `gtk` because slick-greeter's 7680x4320 background
 # renders end in an Xorg SIGBUS there (catalog#122).
 minimal_desktop_greeter_effective: "{{ (hardware_profiles.get(hardware_profile, {})).get('greeter', minimal_desktop_greeter) }}"
+# The hardware profile's optional `xorg_accel_method` (`none` or `glamor`) sets
+# the modesetting driver's AccelMethod for every X server on the machine,
+# LightDM's greeter included. Empty (the default) leaves the driver's own
+# choice and removes the drop-in. deskmeet-b760 sets `none`: with glamor the
+# greeter's first XRender paint at 7680x4320 ends in an Xorg SIGBUS in
+# ValidatePicture/CompositeRects, with either greeter (catalog#122).
+minimal_desktop_xorg_accel_method: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_accel_method', '') }}"
 minimal_desktop_lightdm_minimum_vt: 8
 minimal_desktop_lightdm_vtswitch_wrapper: false
 minimal_desktop_lightdm_remove_dropins: []
@@ -1671,6 +1678,10 @@ hardware_profiles:
     compositor_enabled: false
     # slick-greeter's 8K background renders crash Xorg on the Arc A380 (catalog#122).
     greeter: gtk
+    # The GTK greeter crashes Xorg the same way on the glamor render path
+    # (ValidatePicture/CompositeRects SIGBUS every ~70 s, catalog#122), so the
+    # modesetting driver runs without glamor acceleration.
+    xorg_accel_method: none
     # libinput pointer speed for the G604 (confirmed by the CEO on the 8K TV).
     pointer_accel_speed: 0.6
     pipx_packages:

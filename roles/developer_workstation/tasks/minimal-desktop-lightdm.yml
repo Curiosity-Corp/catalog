@@ -16,6 +16,7 @@
       - minimal_desktop_lightdm_start_limit_interval_sec | int >= 1
       - minimal_desktop_lightdm_start_limit_burst | string is match('^[0-9]+$')
       - minimal_desktop_lightdm_start_limit_burst | int >= 1
+      - minimal_desktop_xorg_accel_method in ['', 'none', 'glamor']
       - minimal_desktop_lightdm_remove_dropins is sequence
       - minimal_desktop_lightdm_remove_dropins is not string
       - minimal_desktop_lightdm_remove_dropins | map('string') | select('match', '^[A-Za-z0-9_.-]+[.]conf$') | list | length == minimal_desktop_lightdm_remove_dropins | length
@@ -25,6 +26,7 @@
         | length == 0
     fail_msg: >-
       minimal_desktop_greeter (or the hardware profile's greeter) must be gtk or slick,
+      the hardware profile's xorg_accel_method must be empty, none or glamor,
       minimal_desktop_lightdm_minimum_vt must be a VT number from 1 to 63,
       the minimal_desktop_lightdm restart_sec, start_limit_interval_sec and
       start_limit_burst settings must be whole numbers of at least 1, and
@@ -246,6 +248,37 @@
 
       [Service]
       RestartSec={{ minimal_desktop_lightdm_restart_sec | int }}
+
+- name: Ensure the Xorg conf.d directory exists
+  ansible.builtin.file:
+    path: /etc/X11/xorg.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Read at the next X server start; a running X server is left alone.
+- name: Set the modesetting driver's acceleration method
+  ansible.builtin.copy:
+    dest: /etc/X11/xorg.conf.d/20-curiosity-modesetting-accel.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible.
+      Section "OutputClass"
+          Identifier "curiosity-modesetting-accel"
+          MatchDriver "i915"
+          Driver "modesetting"
+          Option "AccelMethod" "{{ minimal_desktop_xorg_accel_method }}"
+      EndSection
+  when: minimal_desktop_xorg_accel_method | length > 0
+
+- name: Remove the modesetting acceleration override when none is set
+  ansible.builtin.file:
+    path: /etc/X11/xorg.conf.d/20-curiosity-modesetting-accel.conf
+    state: absent
+  when: minimal_desktop_xorg_accel_method | length == 0
 
 # Reload first: systemd still holds the display-manager.service alias it
 # loaded for gdm3, and refuses to load lightdm.service ("File exists") until
