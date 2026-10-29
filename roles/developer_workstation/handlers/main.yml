@@ -73,10 +73,17 @@
     name: logrotate.timer
     state: restarted
 
+# A tunnel restart closes every ssh session carried over Ziti, so it only runs
+# while no ssh connection is live; otherwise it stays pending (see
+# files/curiosity-ziti-safe-restart) and the pending task in ziti.yml applies it.
+# The script module runs it from the role, so no host needs it installed first.
 - name: Restart ziti-edge-tunnel
-  ansible.builtin.systemd:
-    name: "{{ ziti_service_name }}"
-    state: restarted
+  ansible.builtin.script:
+    cmd: curiosity-ziti-safe-restart
+  environment:
+    ZITI_SAFE_UNIT: "{{ ziti_service_name }}"
+  register: _ziti_safe_restart
+  changed_when: "'restarted' in _ziti_safe_restart.stdout"
 
 - name: Restart NetworkManager
   ansible.builtin.systemd:

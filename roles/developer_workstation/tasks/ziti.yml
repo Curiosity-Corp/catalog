@@ -299,6 +299,21 @@
     - _ziti_edge_tunnel_enabled_state.stdout | default('') != 'masked'
 
 # -----------------------------------------------------------------------------
+# Guarded tunnel restart
+# -----------------------------------------------------------------------------
+# Handlers that change tunnel drop-ins call "Restart ziti-edge-tunnel", which
+# runs files/curiosity-ziti-safe-restart instead of a bare restart so live ssh
+# sessions survive a run; a restart it deferred is applied here once idle.
+- name: Apply a deferred Ziti tunnel restart when no ssh connection is live
+  ansible.builtin.script:
+    cmd: curiosity-ziti-safe-restart --pending
+  environment:
+    ZITI_SAFE_UNIT: "{{ ziti_service_name }}"
+  register: _ziti_safe_restart_pending
+  changed_when: "'restarted' in _ziti_safe_restart_pending.stdout"
+  when: _ziti_edge_tunnel_enabled_state.stdout | default('') != 'masked'
+
+# -----------------------------------------------------------------------------
 # Tunnel health check
 # -----------------------------------------------------------------------------
 # curiosity-ziti-health.timer restarts the tunnel when an identity is Active but
