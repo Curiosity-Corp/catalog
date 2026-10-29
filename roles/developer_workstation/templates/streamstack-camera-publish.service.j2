@@ -1,0 +1,27 @@
+# Managed by the curiosity workstation role (streamstack task group).
+# StreamStack Camera (/dev/video{{ streamstack_program_video_nr | int }} "{{ streamstack_program_label }}") is a v4l2loopback node with exclusive_caps=1: until the
+# Console writes it, it offers only output capability. WirePlumber probes the node when udev announces it (module
+# load at boot) and never again, so PipeWire, Firefox and the camera portal do not list it until WirePlumber
+# probes it a second time. After the Console has fed the node, this one-shot asks `streamstack camera-publish` to
+# restart WirePlumber once. It refuses while an app holds the camera or captures audio (exit 3), so a call is never
+# interrupted. See StreamStack#176 and docs/camera-delivery.md in the application.
+[Unit]
+Description=Publish StreamStack Camera to PipeWire (one WirePlumber restart after the Console feeds it)
+After=graphical-session.target pipewire.service wireplumber.service streamstack-console.service
+Wants=streamstack-console.service
+{% for user in streamstack_console_users %}
+ConditionUser=|{{ user }}
+{% endfor %}
+
+[Service]
+Type=oneshot
+# A StreamStack release without `camera-publish` makes --help fail: the unit is skipped, not failed.
+ExecCondition=/usr/local/bin/streamstack camera-publish --help
+ExecStart=/usr/local/bin/streamstack camera-publish --wait 120
+# 3 = an app holds the camera or captures audio: nothing to do now, and not a failure.
+SuccessExitStatus=3
+TimeoutStartSec=180
+NoNewPrivileges=true
+
+[Install]
+WantedBy=graphical-session.target
