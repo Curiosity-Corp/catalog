@@ -22,6 +22,7 @@ from streamstack.console.arcblur import DemoArc
 from streamstack.console.canon import DemoCanon, empty_canon
 from streamstack.console.errors import ActionError
 from streamstack.presets import catalog as presets_catalog
+from streamstack.presets.luts import LUTS
 from streamstack.presets.schema import LOOK_FLAGS, LOOK_LIMITS, LOOK_NEUTRAL
 
 log = logging.getLogger(__name__)
@@ -111,15 +112,29 @@ class LookLibrary:
     def file(self) -> Path:
         return self.path or config.user_env_file().parent / "looks.json"
 
-    def user(self) -> dict[str, dict[str, float | bool]]:
+    def _read(self) -> dict[str, tuple[dict[str, float | bool], str | None]]:
+        """Saved looks as name -> (values, LUT name). The LUT is an optional "lut" string inside the entry, so a file
+        written before LUTs were kept (values only) loads unchanged, and an unknown or malformed LUT reads as none."""
         data = store.read_json(self.file(), {}, validate=store.is_object)
-        saved: dict[str, dict[str, float | bool]] = {}
-        for name, values in data.items() if isinstance(data, dict) else ():
+        saved: dict[str, tuple[dict[str, float | bool], str | None]] = {}
+        for name, entry in data.items() if isinstance(data, dict) else ():
             try:
-                saved[str(name)] = {**NEUTRAL, **validate_look(values)}
+                values = dict(entry) if isinstance(entry, dict) else entry
+                lut = values.pop("lut", None) if isinstance(values, dict) else None
+                saved[str(name)] = ({**NEUTRAL, **validate_look(values)}, lut if lut in LUTS else None)
             except ActionError:
                 continue  # a hand-edited bad entry is skipped, never fatal
         return saved
+
+    def user(self) -> dict[str, dict[str, float | bool]]:
+        return {name: values for name, (values, _lut) in self._read().items()}
+
+    def lut_of(self, name: str) -> str | None:
+        """The LUT a look uses: a built-in's from its metadata, a saved look's from what it was saved with."""
+        if name in BUILTIN_LOOKS:
+            lut = LOOK_META.get(name, {}).get("lut")
+            return str(lut) if lut in LUTS else None
+        return self._read().get(name, ({}, None))[1]
 
     def listing(self) -> list[dict]:
         items = [{"name": n, "builtin": True, "values": dict(v), **LOOK_META[n]} for n, v in BUILTIN_LOOKS.items()]
@@ -130,10 +145,10 @@ class LookLibrary:
                 "values": v,
                 "category": "yours",
                 "blurb": "Saved by you.",
-                "lut": None,
+                "lut": lut,
                 "thumb": None,
             }
-            for n, v in sorted(self.user().items())
+            for n, (v, lut) in sorted(self._read().items())
         ]
         return items
 
@@ -143,17 +158,22 @@ class LookLibrary:
             raise ActionError(f"No look called {name}.", 400)
         return dict(found)
 
+    def _entries(self) -> dict[str, dict]:
+        return {n: ({**v, "lut": lut} if lut else dict(v)) for n, (v, lut) in self._read().items()}
+
     def _write(self, looks: dict[str, dict]) -> None:
         store.write_json(self.file(), looks, mode=0o600, backup=not self.ephemeral, durable=not self.ephemeral)
 
-    def save(self, name: str, look: dict[str, float | bool]) -> None:
+    def save(self, name: str, look: dict[str, float | bool], lut: str | None = None) -> None:
         if len(name) > MAX_NAME or any(ord(c) < 32 for c in name):
             raise ActionError(f"A look name is at most {MAX_NAME} characters, without control characters.", 400)
         if name.casefold() in {n.casefold() for n in BUILTIN_LOOKS}:
             raise ActionError(f"{name} is a built-in look; pick another name.", 400)
         with self.lock:
-            looks = self.user()
+            looks = self._entries()
             looks[name] = {key: look[key] for key in NEUTRAL if key in look}
+            if lut in LUTS:
+                looks[name]["lut"] = lut
             try:
                 self._write(looks)
             except OSError as exc:
@@ -163,7 +183,7 @@ class LookLibrary:
         if name in BUILTIN_LOOKS:
             raise ActionError(f"{name} is a built-in look and cannot be deleted.", 400)
         with self.lock:
-            looks = self.user()
+            looks = self._entries()
             if name not in looks:
                 raise ActionError(f"No saved look called {name}.", 400)
             del looks[name]

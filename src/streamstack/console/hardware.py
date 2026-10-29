@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from streamstack.console.errors import ActionError
-from streamstack.hardware import camera, doctor, inventory, probe, roles, scarlett_doctor, schema
+from streamstack.hardware import camera, doctor, inventory, probe, roles, scarlett_doctor, schema, seat
 from streamstack.hardware.hotplug import Change, Monitor
 from streamstack.hardware.model import Snapshot
 from streamstack.hardware.plan import Plan, resolve
@@ -30,6 +30,7 @@ log = logging.getLogger("streamstack.console.hardware")
 
 Notify = Callable[[str, str], None]
 ScarlettCollector = Callable[[Snapshot, schema.Catalogue, str], scarlett_doctor.Evidence | None]
+SeatCollector = Callable[[frozenset[str]], seat.Evidence]
 
 OVERRIDE_KEYS = (
     "STREAMSTACK_RIG",
@@ -45,6 +46,7 @@ OVERRIDE_KEYS = (
 )
 HISTORY = 8
 SCARLETT_TTL = 30.0  # seconds a Scarlett evidence read is reused by the System page
+SEAT_TTL = 30.0  # seconds the System page reuses one read of who else runs a WirePlumber on this desk
 DEFAULT_DEMO_HOST = "dm313red"
 
 
@@ -264,6 +266,7 @@ class HardwareController:
         watch: bool = True,
         debounce: float = 1.0,
         scarlett: ScarlettCollector | None = None,
+        seats: SeatCollector | None = None,
     ) -> None:
         self.cfg = dict(cfg or {})
         self.notify: Notify = lambda level, text: None
@@ -287,6 +290,9 @@ class HardwareController:
         live = scarlett_doctor.collect if take is probe.snapshot else None
         self._scarlett: ScarlettCollector | None = scarlett or live
         self._scarlett_cache: tuple[float, Snapshot, scarlett_doctor.Evidence | None] | None = None
+        # `loginctl`, `ps` and `id` run only for the live probe (or an injected collector), at most once per TTL.
+        self._seats: SeatCollector | None = seats or (seat.collect if take is probe.snapshot else None)
+        self._seat_cache: tuple[float, seat.Evidence] | None = None
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -411,7 +417,13 @@ class HardwareController:
         if plan is None or snapshot is None:
             return []
         catalogue = self._catalogue_now()
-        return doctor.checks(plan, snapshot, catalogue, scarlett=self._scarlett_evidence(plan, snapshot, catalogue))
+        return doctor.checks(
+            plan,
+            snapshot,
+            catalogue,
+            scarlett=self._scarlett_evidence(plan, snapshot, catalogue),
+            seats=self._seat_evidence(),
+        )
 
     def _scarlett_evidence(
         self, plan: Plan, snapshot: Snapshot, catalogue: schema.Catalogue
@@ -433,6 +445,24 @@ class HardwareController:
             evidence = None
         with self._lock:
             self._scarlett_cache = (now, snapshot, evidence)
+        return evidence
+
+    def _seat_evidence(self) -> seat.Evidence | None:
+        collect = self._seats
+        if collect is None:
+            return None
+        now = time.monotonic()
+        with self._lock:
+            cached = self._seat_cache
+        if cached is not None and now - cached[0] < SEAT_TTL:
+            return cached[1]
+        try:
+            evidence = collect(seat.parse_guarded(self.cfg.get("STREAMSTACK_SEAT_GUARDED", "")))
+        except Exception as exc:  # the System page must survive a failing loginctl or ps
+            log.warning("the seat check failed: %s: %s", type(exc).__name__, exc)
+            return None
+        with self._lock:
+            self._seat_cache = (now, evidence)
         return evidence
 
     # -- actions --------------------------------------------------------------

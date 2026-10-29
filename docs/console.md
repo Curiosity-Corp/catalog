@@ -19,6 +19,16 @@ Change it first, then the code.
   100 ms (optimistic UI, then the real state), nothing destructive without an
   undo, and a failing helper (camera unplugged, mic unplugged) degrades one card,
   never the page.
+- **An edit stays on screen until the server shows it.** Every snapshot carries a
+  `seq` (the number of the build that made it) and an action's answer carries a
+  `seq` too: the first snapshot that began after the action. The page holds what
+  was just edited (deck keys, pages and layout, presets, slots, lighting
+  automation, per-light settings, camera canon) until a snapshot with that number
+  or a higher one arrives, or an `ack` event says the next snapshot was identical
+  to the last. A snapshot built before the action but delivered after its answer
+  can therefore never redraw the old value. Controls that open an endpoint or
+  start work (`telemetry.set`, stream and record start/stop, `echo.check`) have no
+  optimistic entry and show only what the server did.
 - **No new runtime dependencies.** The backend is standard-library Python like
   the rest of StreamStack; the frontend is plain ES modules, Web Components and
   CSS shipped as package data. No build step.
@@ -47,11 +57,25 @@ Change it first, then the code.
   (`{"pid", "port", "token"}`, mode 600) and opens the window. A second
   `streamstack console` finds the running server through that file and only
   opens another window.
+- The access token is never logged. Under the headless user service stdout is the systemd journal, readable by
+  other processes of the user and collected by log shippers, so the startup line is
+  `StreamStack Console: http://127.0.0.1:<port>/ (access token not logged: ...)`. `streamstack console --url`
+  prints the full tokenised address of the running Console (and exits 1 when none runs); the runtime file above
+  (mode 600) holds the same.
 - `--no-window` serves only (tests, a second screen); `--demo` uses the
   simulated rig; `--mini` opens the compact window (`#/mini`).
 - The window is `google-chrome`/`microsoft-edge`/`chromium` with
   `--app=URL --class=StreamStack --user-data-dir=$XDG_CACHE_HOME/streamstack/console-browser`,
   falling back to `xdg-open`. `STREAMSTACK_CONSOLE_BROWSER` overrides.
+- **Installable web app (#143, ADR 0006).** `static/manifest.webmanifest` (name, `display: standalone`, theme and
+  background colour, `start_url` and `scope` `/`) and the icons `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`
+  and `icon.svg` make the Console installable from Chrome, Edge or Chromium. They are served without the access token
+  (a browser fetches a manifest without credentials). Regenerate the PNGs with `python3 tools/make_console_icons.py`.
+  The launcher already opens an app-mode window (`--app=`, no tabs or address bar) whenever Chrome, Edge or Chromium
+  is on the PATH and falls back to `xdg-open`. **An installed app window needs the launcher:** the access token is new on
+  every launch and lives only in the page address, so an icon opened without the launcher shows "No access token" and
+  says to open the Console with `streamstack console` or the tray. The origin includes the port, so a different port is
+  a different installed app.
 - The tray and the desktop entry open the Console; the old menu stays as
   `streamstack-tray --menu`.
 
@@ -89,6 +113,9 @@ page URL as `?token=…`; `app.js` keeps it in memory.
 | POST | `/api/action` | `{"action": "<name>", ...params}` → `{"ok": true, "message"?: str}` or HTTP 400/409/500 `{"ok": false, "error": str}` |
 | GET | `/api/preview.mjpg?source=program\|<camera>\|camera&fps=1..15&width=160..1280` | `multipart/x-mixed-replace` JPEG stream |
 | GET | `/api/preview.jpg?source=…&width=…` | one JPEG (look thumbnails) |
+| POST | `/api/whep?source=program&width=…&fps=…` | WHEP: `Content-Type: application/sdp` offer, `201` with the SDP answer and `Location: /api/whep/<id>`; see [whep-preview.md](whep-preview.md) |
+| DELETE | `/api/whep/<id>` | end a WHEP session |
+| GET | `/api/whep` | `{available, reason, max_sessions, sessions[]}` |
 | GET | `/api/deck/palette` | the options a key can be given (`{"palette": [...]}`), built from the live rig |
 | GET | `/api/slots/profiles.json` | the time-of-day profiles, for export (`slots.import` takes it back) |
 | GET | `/api/deck/profile.json` | the deck profile, for export |
@@ -231,6 +258,19 @@ values in the engine's units.
     "status": {"state": "idle", "summary": "…", "applied": null, "held": null, "suggestion": null, "can_undo": false},
     "director": {"on": false}, "events": [{"time": "…", "level": "ok", "text": "…"}]
   },
+  "eyeline": {                         // eye-line coach, docs/auto-framing.md
+    "available": true, "unavailable_hint": null, "enabled": false,
+    "state": "off",                    // off | starting | running | no-face | unavailable
+    "reason": null, "device": null, "in_call": false,
+    "gaze": null,                      // lens | screen | down | away (null until a face is seen)
+    "pitch": null, "yaw": null,        // degrees from the calibrated lens pose; pitch is positive when the head points down
+    "calibrated": false, "baseline": null, "calibrating": false, "calibration_progress": 0,
+    "shares": {"lens": 0, "screen": 0, "down": 0, "away": 0},   // share of the last 30 s
+    "advice": {"kind": "wait", "text": "", "degrees": null, "approximate": false},  // wait | ok | lower | raise | centre
+    "eye_line": null, "eye_line_target": 0.333, "eye_line_hint": null,
+    "reminder": {"on": false, "minutes": 3, "range": [1, 30], "away_s": 0},
+    "wizard": {"viewing_cm": 60, "window_offset_cm": 6.3}
+  },
   "framing": {                         // auto-framing, docs/auto-framing.md (also shot, shots, subjects, handoff, speaking, people, speaker)
     "mode": "off",                     // off | gentle | tight | follow
     "state": "off",                    // off | starting | tracking | held | no-face | unavailable
@@ -315,6 +355,9 @@ values in the engine's units.
                              "kind": "exception",   // exception | handled | unraisable | native
                              "type": "RuntimeError", "message": "…", "version": "0.0.8"}]}
   },
+  "meetings": {                      // calendar-aware setup; see docs/meetings.md
+    "enabled": true, "lead_minutes": 2, "next": {}, "upcoming": [], "prep": {}, "sources": []
+  },
   "call": {                          // call awareness (docs/call-awareness.md)
     "available": true, "state": "in_call",   // idle | joining | in_call
     "active": true, "service": "Teams", "app": "msedge", "apps": ["msedge"], "camera": true,
@@ -326,6 +369,49 @@ values in the engine's units.
     "muted_warning": {"enabled": true, "sensitivity": "medium", "cooldown_s": 20.0, "sound": false,
                       "count": 0, "last_at": null, "talking": false,
                       "range": [5.0, 300.0], "sensitivities": ["high", "medium", "low"]},
+    "demo": false
+  },
+  "network": {                       // network quality monitor (docs/network-monitor.md)
+    "available": true, "enabled": true,
+    "rating": "good",                // good | degraded | poor | offline | unknown
+    "text": "…", "cause": "",        // why, when not good
+    "rtt_ms": 24.0, "jitter_ms": 3.0, "loss_pct": 0.0,
+    "targets": [], "gateway": null, "wifi": null, "history": [], "interval_s": 5.0,
+    "bandwidth": {"state": "idle", "at": null, "error": null, "up_mbps": null, "down_mbps": null,
+                  "verdict": "unknown", "needed_up_mbps": 3.0, "blocked": null},
+    "settings": {"targets": [], "defaults": [], "max_targets": 8},
+    "demo": false
+  },
+  "echo": {                          // the echo / speaker-bleed check (docs/echo-check.md)
+    "available": true, "state": "done",      // idle | running | done | error
+    "sink": "alsa_output.pci-0000_00_1f.3.hdmi-stereo", "started_at": "2026-10-27T10:20:00",
+    "blocked": null,                 // why a check cannot start right now (a call is on), else null
+    "result": {"at": "…", "sink": "…", "label": "Studio Monitor", "kind": "hdmi", "text": "Bleed at -34 dB from …",
+               "heard": true, "coupling_db": -34.2, "limit_db": -65.0, "delay_ms": 24.1, "coherence": 0.9,
+               "loop": false, "loop_gap_ms": null,
+               "level": "strong"},   // none | slight | moderate | strong | feedback | unmeasured
+    "results": {"<sink name>": {"at": "…", "label": "…", "level": "strong", "coupling_db": -34.2,
+                                "delay_ms": 24.1, "loop": false, "text": "…"}},   // the last result per output, kept in console-echo.json
+    "error": null, "demo": false
+  },
+  "preflight": {                     // the pre-meeting check (docs/preflight.md)
+    "available": true, "state": "done",      // idle | running | done
+    "phase": null,                   // "listening" while the person says their name, then "checking"
+    "prompt": "Say your name", "listen_s": 6.0, "budget_s": 20.0, "started_at": "…", "started_ts": 1761560000.0,
+    "result": {"at": "…", "took_s": 9.2, "score": 100, "verdict": "ready",   // ready | check | not-ready
+               "problems": 0, "text": "Everything checked is ready.",
+               "checks": [{"id": "mic", "title": "Microphone", "state": "ok", "detail": "…",   // ok | warn | fail | skip
+                           "fix": null, "measured": {}}]},   // fix: {"action", "params", "label"} or null
+    "history": [{"at": "…", "score": 100, "verdict": "ready", "checks": {"mic": "ok"}}],   // newest first, 30 kept
+    "faults": [], "demo": false
+  },
+  "safejoin": {                      // Safe join: off air until Go live (docs/safe-join.md)
+    "available": true, "mode": "warn", "modes": ["off", "warn", "safe"],
+    "auto_release_s": 0.0, "range": [0.0, 600.0],   // 0 = never go live by itself
+    "holding": false, "held": {"privacy": false, "mute": false},   // what it took and still holds
+    "service": null, "since": null, "release_in_s": null,
+    "events": [{"at": "…", "service": "Teams", "mode": "safe", "did": ["privacy on", "microphone muted"],
+                "kept": [], "notes": []}],   // newest first, 20 kept
     "demo": false
   }
 }
@@ -417,6 +503,24 @@ take seconds (studio start, mic check, auto once) return at once with
 | `call.report_mute` | `muted: bool`, `source` (1 to 40 chars) | an adapter reports the meeting app's own mute button; refused (409) until `adapters` is on |
 | `call.demo` | `app` (or null), `camera?`, `capture?`, `corked?`, `talk?`, `title?` | demo rig only: script a call app and the room (tests and the e2e suite) |
 | `call.demo_reset` | none | demo rig only: no call, default settings |
+| `network.set` | `enabled?`, `targets?` (list of `host:port` or `{host, port, kind}`, at most 8), `reset_targets?` | the network monitor settings, saved in `console-network.json` |
+| `network.bandwidth` | `confirm?` | run the bandwidth test; refused (409) during a call unless `confirm` is true, and at most once a minute |
+| `network.demo` | `rtt_ms?`, `jitter_ms?`, `loss_pct?`, `route?`, `gateway_rtt_ms?`, `gateway_loss_pct?`, `wifi?`, `up_mbps?`, `down_mbps?`, `bw_fails?` | demo rig only: script the link |
+| `network.demo_reset` | none | demo rig only: a healthy link, default settings |
+| `echo.check` | `name?` (an output; the default output when omitted) | the echo check (docs/echo-check.md): a quiet sweep on that output only, the raw microphone listens; 409 with the reason during a call, with an output test or another check running, for a muted/zero-volume output, a missing/muted/stalled microphone or a missing `pw-play`/`parecord` |
+| `echo.stop` | | stop a running check (the sound ends at once) |
+| `echo.demo` | `coupling_db?` (or null for no bleed), `delay_ms?`, `loop_gap_ms?`, `noise_db?` | demo rig only: script what the simulated microphone hears |
+| `echo.demo_reset` | | demo rig only: forget the script and every result |
+| `meetings.enable` / `meetings.settings` / `meetings.sync` / `meetings.prepare` | `on`; `lead_minutes?`, `only_online?`, `steps?`; none; `id?` | calendar-aware setup (`docs/meetings.md`) |
+| `meetings.m365.connect` / `.cancel` / `.disconnect` | `client_id?`, `tenant?` | Microsoft 365 device-code sign-in |
+| `meetings.ics.add` / `meetings.ics.remove` | `link`, `name?`; `id` | calendar links |
+| `preflight.run` | `listen?` (bool, default true) | start the pre-flight check; 409 while one is running |
+| `preflight.fix` | `check` (a check id) | run the Fix of that check's last finding, then re-judge it; 409 without a result or while running |
+| `preflight.demo_fault` | `fault` (`noise_floor`, `no_voice`, `clipping`, `no_face`, `jitter`, `gpu_busy`), `on?` | demo rig only: inject a fault |
+| `preflight.demo_reset` | none | demo rig only: no faults, no result, no history |
+| `safejoin.set` | `mode?` (`off`\|`warn`\|`safe`), `auto_release_s?` (0 to 600) | what happens when a call app opens the camera, saved in `console-safejoin.json` |
+| `safejoin.go_live` | none | release the privacy and mute Safe join took; a no-op when nothing is held |
+| `safejoin.demo_reset` | none | demo rig only: Warn mode, nothing held, no events |
 | `telemetry.set` | `on: bool` | switch the opt-in `/metrics` endpoint on or off (saved in the user env file) |
 | `telemetry.scrape_config` | | message: a Prometheus `scrape_configs` block with the scrape token; 409 while telemetry is off |
 | `telemetry.rotate_token` | | create a new scrape token; the old one stops working |
@@ -436,6 +540,11 @@ take seconds (studio start, mic check, auto once) return at once with
 | `lighting.rescan` | | look for lights now |
 | `slots.mode` / `slots.fade` / `slots.profile` / `slots.clear` / `slots.save_current` / `slots.starter` | see docs/slots.md | time-of-day profiles: settings and the six profiles |
 | `slots.apply` / `slots.undo` / `slots.resume` / `slots.dismiss` / `slots.import` / `slots.reset` | see docs/slots.md | apply a profile now, put it back, end a hold, drop a suggestion, import or reset |
+| `eyeline.enable` | `on` | turn the eye-line coach on or off (off by default; 409 when no face finder is available) |
+| `eyeline.calibrate` | | record the lens pose from about 10 samples; look into the lens first; 409 while off or without a face |
+| `eyeline.calibration.clear` | | forget the calibration |
+| `eyeline.reminder` | `on`, `minutes?` (1 to 30) | remind after this long looking away during a call |
+| `eyeline.demo.gaze` / `.reset` / `.away` | demo rig only | drive the simulated person (`gaze`, `offset`; `seconds`) |
 | `framing.mode` | `mode`: `off` \| `gentle` \| `tight` \| `follow` | auto-framing mode; 409 when the extra or model is missing |
 | `framing.shot` | `shot`: `auto` \| `close` \| `medium` \| `wide` \| `presenter` \| `desk` | shot preset; a preset other than `auto` turns framing on (Gentle) when it is off; 409 when unavailable |
 | `framing.subjects` | `subjects`: `group` \| `one` | frame everyone, or only the main face |
@@ -469,7 +578,7 @@ The `presets` snapshot block, the `presets.*` actions and `GET /api/presets/cata
 
 The `stream` snapshot block (status, uptime, bitrate, dropped frames, latency, `cpu_percent`, `gpu_percent`, encoders,
 destinations with per-destination health, recording, settings, output, last swap, events, probe) and the actions
-`stream.start`, `stream.stop`, `stream.set`, `stream.probe`, `record.start` and `record.stop` are described in
+`stream.start`, `stream.stop`, `stream.set`, `stream.probe`, `record.start`, `record.stop`, `ingest.start` and `ingest.stop` (SRT input) are described in
 [stream.md](stream.md). They answer 501 on a rig without a stream backend (`stream.status` is then `unavailable`).
 The Stream page is `#/stream` (Alt+0).
 

@@ -74,19 +74,21 @@ class PresetsController:
         return resolve(self.catalog.platform(platform), self.catalog.tier(tier))
 
     def state(self) -> dict[str, Any]:
-        with self.lock:
-            selection = self.store.selection()
-            profiles = [{**p, "builtin": True} for p in self.catalog.profiles]
-            profiles += [{"id": None, "builtin": False, **p} for p in self.store.profiles().values()]
-            return {
-                "platform": selection["platform"],
-                "tier": selection["tier"],
-                "plan": self.plan(selection["platform"], selection["tier"]),
-                "stream": {"contract": STREAM_CONTRACT, **self.stream},
-                "profile": self.profile,
-                "profiles": profiles,  # the built-ins first (with an id), then the user's own (applied by name)
-                "last_apply": self.last_apply,
-            }
+        # No `self.lock` here: it is held for the whole of an action, which saves to disk (two fsyncs) and applies a
+        # profile through five other controllers, and every window's state push waits for this method. The fields below
+        # are replaced whole by the actions, never edited in place, so a read is always one coherent value (#161).
+        selection = self.store.selection()
+        profiles = [{**p, "builtin": True} for p in self.catalog.profiles]
+        profiles += [{"id": None, "builtin": False, **p} for p in self.store.profiles().values()]
+        return {
+            "platform": selection["platform"],
+            "tier": selection["tier"],
+            "plan": self.plan(selection["platform"], selection["tier"]),
+            "stream": {"contract": STREAM_CONTRACT, **self.stream},
+            "profile": self.profile,
+            "profiles": profiles,  # the built-ins first (with an id), then the user's own (applied by name)
+            "last_apply": self.last_apply,
+        }
 
     # -- actions --------------------------------------------------------------------------------------------
 
@@ -215,11 +217,28 @@ class PresetsController:
                 steps.append(self._step("framing", lambda: self.dispatch("framing.mode", {"mode": profile["framing"]})))
             if not steps:
                 raise ActionError(f"The profile {profile['name']} has no parts to apply.", 400)
-            good = [s for s in steps if s["status"] != "failed"]
-            if not good:
+            if all(s["status"] == "failed" for s in steps):
                 raise ActionError(f"{profile['name']}: {steps[0]['message']}", 409)
-            self.profile = profile["name"]
-            self.last_apply = {"profile": profile["name"], "steps": steps, "at": round(time.time(), 1)}
+
+            # The profile is applied once its parts are: publish that before the choice is saved. The save is two
+            # fsyncs (more with the backup), tens of seconds on a starved disk, and a Console window or a test that
+            # waits for the profile to show must not wait for it (issue #167: the command palette's apply was still
+            # in flight 30 s later while the look, lights and voice had long changed). The store makes the new
+            # platform and tier readable first, then calls `publish`, so the two always show together.
+            def publish() -> None:
+                self._publish_apply(profile["name"], steps)
+
+            if profile["platform"] and profile["tier"]:
+                saved = self._save_selection(profile["platform"], profile["tier"], publish)
+                if saved is not None:
+                    steps = [saved if s["part"] == "stream" else s for s in steps]
+                    if all(s["status"] == "failed" for s in steps):
+                        self.profile, self.last_apply = None, None
+                        raise ActionError(f"{profile['name']}: {saved['message']}", 409)
+                    publish()
+            else:
+                publish()
+        good = [s for s in steps if s["status"] != "failed"]
         failed = [s for s in steps if s["status"] == "failed"]
         text = f"Profile {profile['name']}: {len(good)} of {len(steps)} parts applied"
         if failed:
@@ -228,16 +247,28 @@ class PresetsController:
                 self.notify("warn", text)
         return text
 
-    def _stream_step(self, platform: str, tier: str) -> dict[str, str | None]:
+    def _publish_apply(self, name: str, steps: list[dict[str, str | None]]) -> None:
+        """Show a profile as applied. Replaces the fields whole: `state()` reads them without the lock."""
+        self.profile = name
+        self.last_apply = {"profile": name, "steps": list(steps), "at": round(time.time(), 1)}
+
+    def _save_selection(self, platform: str, tier: str, visible: Callable[[], None]) -> dict[str, str | None] | None:
+        """Save the profile's platform and tier; `visible` runs once they can be read, before the disk is touched.
+
+        None when saved, else the stream step, failed, to put in its place."""
         try:
-            self.store.set_selection(platform, tier)
+            self.store.set_selection(platform, tier, visible=visible)
         except OSError as exc:
             return {
                 "part": "stream",
                 "label": PART_LABELS["stream"],
                 "status": "failed",
-                "message": exc.strerror or str(exc),
+                "message": f"could not save the choice: {exc.strerror or exc}",
             }
+        return None
+
+    def _stream_step(self, platform: str, tier: str) -> dict[str, str | None]:
+        """Hand the plan to the stream backend. The choice is saved afterwards, by `_apply`, off the critical path."""
         status, message = self._send_stream(platform, tier)
         return {
             "part": "stream",

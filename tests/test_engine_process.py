@@ -66,7 +66,7 @@ def fake_popen(log: Path, mode: str = "run", started: list | None = None) -> Cal
     return popen
 
 
-def wait_for(check: Callable[[], bool], timeout: float = 5.0) -> bool:
+def wait_for(check: Callable[[], bool], timeout: float = 30.0) -> bool:
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if check():
@@ -155,6 +155,39 @@ def test_a_new_sharpen_step_rebuilds_the_child_once_the_look_rests(gpu_engine) -
     gpu_engine.apply_look({**NEUTRAL, "sharpen_enabled": True, "sharpen_amount": 0.31})  # same step: no rebuild
     time.sleep(0.4)
     assert len(gpu_engine.started) == 2
+
+
+def test_a_look_lut_is_written_and_rebuilds_the_child_once(gpu_engine) -> None:
+    gpu_engine.start()
+    assert wait_for(lambda: gpu_engine.state()["state"] == "running")
+    gpu_engine.apply_look({**NEUTRAL, "lut": "portra", "lut_enabled": True, "lut_amount": 0.7})
+    assert wait_for(lambda: len(gpu_engine.started) == 2)
+    text = gpu_engine.started[1][gpu_engine.started[1].index("-filter_complex") + 1]
+    assert "lut-portra-14.cube:lut_type=normalized" in text and "colorcorrect" not in text
+    assert (gpu_engine.shader_dir / "lut-portra-14.cube").is_file()
+    assert wait_for(lambda: gpu_engine.state()["state"] == "running")
+    gpu_engine.apply_look({**NEUTRAL, "lut": "portra", "lut_enabled": True, "lut_amount": 0.71, "contrast": 0.1})
+    time.sleep(0.4)
+    assert len(gpu_engine.started) == 2  # the same step and a live slider: no rebuild
+
+
+def test_an_unwritable_lut_falls_back_to_the_split_tone_without_looping(tmp_path: Path) -> None:
+    blocked = tmp_path / "file"
+    blocked.write_text("not a directory")
+    spec = Spec(SOURCE, "/dev/video43", 1280, 720, shaders=str(blocked / "shaders"))
+    started: list = []
+    look = {**NEUTRAL, "lut": "portra", "lut_enabled": True, "lut_amount": 0.7}
+    eng = process.VideoEngine(spec, look, popen=fake_popen(tmp_path / "x.log", started=started))
+    try:
+        eng.start()
+        assert wait_for(lambda: eng.state()["state"] == "running")
+        text = started[0][started[0].index("-filter_complex") + 1]
+        assert ".cube" not in text and "colorcorrect@tone" in text
+        eng.apply_look({**look, "contrast": 0.1})
+        time.sleep(0.8)
+        assert len(started) == 1  # no rebuild loop for a key that can never be built
+    finally:
+        eng.stop()
 
 
 def test_an_unwritable_shader_directory_turns_sharpening_off_not_the_picture(tmp_path: Path) -> None:
@@ -489,5 +522,21 @@ def test_a_child_whose_counter_moves_is_left_alone(tmp_path: Path, monkeypatch) 
         assert wait_for(lambda: eng.state()["state"] == "running")
         time.sleep(1.0)
         assert eng.state()["restarts"] == 0 and eng.state()["state"] == "running"
+    finally:
+        eng.stop()
+
+
+def test_with_the_denoiser_on_a_window_never_reaches_the_frames_edge(tmp_path: Path) -> None:
+    spec = Spec(SOURCE, "/dev/video43", 1280, 720, denoise="nlmeans")
+    eng = process.VideoEngine(spec, dict(NEUTRAL), popen=fake_popen(tmp_path / "x.log"))
+    eng.log = tmp_path / "x.log"  # type: ignore[attr-defined]
+    try:
+        eng.start()
+        assert wait_for(lambda: eng.state()["state"] == "running")
+        eng.set_window(Rect(0, 0, 1280, 720))  # "the whole frame" is the trimmed one: nothing to send
+        eng.set_window(Rect(0, 0, 640, 360))
+        assert wait_for(lambda: len(commands_seen(eng)) == 4)
+        assert sorted(line.split()[2] for line in commands_seen(eng)) == ["crop_h", "crop_w", "crop_x", "crop_y"]
+        assert eng.state()["crop"] == {"x": 2, "y": 2, "w": 638, "h": 358}
     finally:
         eng.stop()

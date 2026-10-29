@@ -161,6 +161,7 @@ export async function mount(host, ctx) {
   await ctx.ensureCss(new URL('./common.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./audio.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./audio-outputs.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./audio-echo.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./audio-chain.css', import.meta.url).href);
   document.title = 'Audio · StreamStack';
   host.innerHTML = TEMPLATE;
@@ -315,7 +316,7 @@ export async function mount(host, ctx) {
       if (glyphKey.get(b) !== sig) { glyphKey.set(b, sig); b.querySelector('.p-glyph').innerHTML = eqGlyph(values); }
     });
     if (!chain.available) { R.voiceCard.setAttribute('reason', 'The voice chain plugins are not installed'); R.voiceCard.removeAttribute('fix'); }
-    else if (!chain.running) { R.voiceCard.setAttribute('reason', 'The voice chain is not running'); R.voiceCard.setAttribute('fix', 'Start studio'); }
+    else if (!chain.running) { R.voiceCard.setAttribute('reason', chain.held ? 'The voice chain was stopped from the command line and stays stopped until you start it' : 'The voice chain is not running'); R.voiceCard.setAttribute('fix', 'Start studio'); }
     else { R.voiceCard.removeAttribute('reason'); R.voiceCard.removeAttribute('fix'); }
   });
   R.voiceCard.addEventListener('fix', () => startStudio());

@@ -342,6 +342,7 @@ class Outputs:
         self._test = _idle_test()
         self._test_stop = threading.Event()
         self._test_thread: threading.Thread | None = None
+        self._save_lock = threading.Lock()  # serialises the writes of the results file; never taken under _lock
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -563,7 +564,7 @@ class Outputs:
             if entry is None or entry["result"] == "failed":
                 raise ActionError(f"Play the test on {sink['label']} first.", 409)
             self._results[sink["name"]] = {**entry, "result": "heard" if heard else "not-heard"}
-            self._save_results()
+        self._save_results()
         return None
 
     # -- the test -------------------------------------------------------------
@@ -680,7 +681,7 @@ class Outputs:
                 : max(0, len(self._results) - MAX_RESULTS)
             ]:
                 del self._results[old]
-            self._save_results()
+        self._save_results()
 
     # -- remembered results -----------------------------------------------------
 
@@ -696,13 +697,22 @@ class Outputs:
         return found
 
     def _save_results(self) -> None:
-        """Write the results (lock held); a pending one is kept as pending, the person may still judge it."""
+        """Write the results (call with `_lock` NOT held); a pending one stays pending, the person may still judge it.
+
+        The write is durable (fsync), which on a busy disk can take a long while. `_lock` guards what `state()` reads,
+        so it is held only to copy the results, never across the write: otherwise every state poll, and the test thread
+        that has to go back to idle, queue behind a slow disk (#163). `_save_lock` keeps two writes in order, so the
+        file always ends up with the newest copy.
+        """
         if self._store is None:
             return
-        try:
-            filestore.write_json(self._store, {"results": self._results})
-        except OSError as exc:
-            log.warning("cannot remember the output test results: %s", exc)
+        with self._save_lock:
+            with self._lock:
+                snapshot = {name: dict(entry) for name, entry in self._results.items()}
+            try:
+                filestore.write_json(self._store, {"results": snapshot})
+            except OSError as exc:
+                log.warning("cannot remember the output test results: %s", exc)
 
     # -- hot-plug ---------------------------------------------------------------
 

@@ -1248,6 +1248,7 @@ class DemoAudio:
         self._gain = 0.0
         self._muted = False
         self._bypass = False
+        self._held = False  # demo only: the chain was stopped on purpose (`streamstack chain stop`), see #145
         self._df_installed = True  # the demo rig has the library; audio.demo_deepfilternet takes it away
         self._chain = chainlib.ChainModel(store=None, engines=self._engines)
         self._level_t = clock()
@@ -1349,13 +1350,13 @@ class DemoAudio:
                 "outputs": self._outputs.state(),
             }
 
-    @staticmethod
-    def _demo_status() -> dict[str, Any]:
+    def _demo_status(self) -> dict[str, Any]:
         return {
-            "running": True,
+            "running": not self._held,
             "available": True,
+            "held": self._held,
             "missing": [],
-            "error": None,
+            "error": chainlib.STOPPED_MESSAGE if self._held else None,
             "source": chaingraph.NODE_NAME,
             "description": chaingraph.DESCRIPTION,
             "rate": chaingraph.RATE,
@@ -1487,6 +1488,10 @@ class DemoAudio:
                 if not self._df_installed and self._chain.engine == "deepfilternet":
                     self._chain.engine = "rnnoise"
                 self._chain.revision += 1
+            return None
+        if action == "audio.demo_chain_held":  # demo only: a chain stopped from the command line, for the e2e suite
+            with self._lock:
+                self._held = bool_param(params)
             return None
         if action == "audio.clip_clear":
             for latch in self._latches.values():

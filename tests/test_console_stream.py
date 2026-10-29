@@ -248,3 +248,100 @@ def test_demo_reports_cpu_and_gpu_only_while_encoding(rig: Rig) -> None:
     stream = rig.snapshot()["stream"]
     assert stream["cpu_percent"] > 0 and stream["encoders"][0]["gpu_percent"] > 0
     rig.act("stream.stop", {})
+
+
+def test_demo_downshifts_on_simulated_loss_and_recovers_like_the_real_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("streamstack.console.stream.time.time", lambda: clock[0])
+    demo = DemoStream()
+    demo.act("stream.set", {"platform": "youtube", "tier": "balanced", "plan": _youtube_balanced_plan()})
+    state = demo.state()
+    assert state["adapt"]["available"] and state["adapt"]["ladder"] == {"platform": "youtube", "tier": "balanced"}
+    demo.act("stream.start", {})
+    demo.act("stream.simulate", {"loss_percent": 12})
+    for _ in range(8):
+        clock[0] += 1.0
+        state = demo.state()
+    assert state["adapt"]["step"] >= 1 and state["effective"]["bitrate_kbps"] < state["settings"]["bitrate_kbps"]
+    assert state["output"]["height"] < 1080
+    demo.act("stream.simulate", {"loss_percent": 0})
+    for _ in range(80):
+        clock[0] += 1.0
+        state = demo.state()
+    assert state["adapt"]["step"] == 0 and state["effective"] == state["settings"]
+    assert state["output"]["height"] == 1080
+
+
+@pytest.mark.parametrize("loss", [-1, 101, "a lot", True, None])
+def test_demo_simulate_rejects_a_bad_loss(loss: object) -> None:
+    with pytest.raises(ActionError) as err:
+        DemoStream().act("stream.simulate", {"loss_percent": loss})
+    assert err.value.status == 400
+
+
+def test_demo_forgets_the_ladder_when_the_picture_is_changed_by_hand_and_rejects_a_bad_ladder() -> None:
+    demo = DemoStream()
+    demo.act("stream.set", {"platform": "youtube", "tier": "balanced", "plan": _youtube_balanced_plan()})
+    demo.act("stream.set", {"audio_bitrate_kbps": 96})
+    assert demo.state()["adapt"]["available"]
+    demo.act("stream.set", {"bitrate_kbps": 2000})
+    assert demo.state()["adapt"]["available"] is False
+    with pytest.raises(ActionError) as err:
+        demo.act("stream.set", {"ladder": {"platform": "nowhere", "tier": "balanced"}})
+    assert err.value.status == 400
+    with pytest.raises(ActionError):
+        demo.act("stream.set", {"adapt": "yes"})
+
+
+def _youtube_balanced_plan() -> dict:
+    from streamstack.presets import catalog, resolve
+
+    cat = catalog.load()
+    return resolve(cat.platform("youtube"), cat.tier("balanced"))
+
+
+def test_demo_srt_input_listens_then_receives_and_stops() -> None:
+    demo = DemoStream()
+    assert demo.state()["ingest"]["active"] is False
+    demo.act("ingest.start", {"port": 9100, "latency_ms": 300})
+    ingest = demo.state()["ingest"]
+    assert ingest["active"] and ingest["port"] == 9100 and ingest["latency_ms"] == 300
+    demo.act("ingest.stop", {})
+    assert demo.state()["ingest"]["active"] is False
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{}, {"port": "9100"}, {"port": True}, {"port": 9100, "latency_ms": "fast"}, {"port": 9100, "name": 5}],
+)
+def test_srt_input_rejects_bad_parameters(params: dict[str, object]) -> None:
+    with pytest.raises(ActionError) as err:
+        DemoStream().act("ingest.start", params)
+    assert err.value.status == 400
+
+
+def test_live_srt_input_validates_and_reports_state(live: tuple[StreamController, Env]) -> None:
+    controller, _env = live
+    controller.service.warm_probe()
+    controller.service.host()
+    with pytest.raises(ActionError, match="1024 to 65535") as err:
+        controller.act("ingest.start", {"port": 80})
+    assert err.value.status == 400
+    assert controller.act("ingest.stop", {}) == "SRT input is not listening."
+    ingest = controller.state()["ingest"]
+    assert ingest["active"] is False and set(ingest) == set(DemoStream().state()["ingest"])
+
+
+def test_the_rig_routes_ingest_actions_to_the_stream_controller(rig: Rig) -> None:
+    """The e2e failure of pipeline 96710: `ingest.*` never reached the controller, the Rig answered 400."""
+    assert "port 9100" in str(rig.act("ingest.start", {"port": 9100}))
+    assert rig.snapshot()["stream"]["ingest"]["active"]
+    rig.act("ingest.stop", {})
+    assert not rig.snapshot()["stream"]["ingest"]["active"]
+    bare = Rig.demo()
+    bare.stream = None
+    with pytest.raises(ActionError) as err:
+        bare.act("ingest.start", {"port": 9100})
+    assert err.value.status == 409

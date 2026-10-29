@@ -36,8 +36,12 @@ whip = ["aiortc>=1.15.0"]
 stills = ["imagecodecs>=2024.6"]
 # Global hotkeys on Wayland (streamstack.hotkeys_portal): the XDG GlobalShortcuts portal over D-Bus. X11 needs nothing.
 shortcuts = ["jeepney>=0.9"]
+# WHEP preview of the program picture in the Console (streamstack.console.whep): the same aiortc as WHIP publishing.
+whep = ["aiortc>=1.15.0"]
+# Calendar-aware setup (streamstack.meetings): the desktop keyring (Secret Service) keeps the Microsoft sign-in and private calendar links.
+calendar = ["keyring>=25"]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
-e2e = ["pytest>=8", "playwright>=1.64"]
+e2e = ["pytest>=8", "playwright>=1.64", "aiortc>=1.15.0"]  # aiortc: the WebRTC preview test needs it
 
 [project.scripts]
 streamstack = "streamstack.cli:main"

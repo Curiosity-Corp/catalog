@@ -1,0 +1,10 @@
+# ps -eo uid=,user:32=,pid=,etimes=,comm= (the pipewire family only)
+ 1001 seantech                            4355  246093 pipewire
+ 1000 mrh                                 4361  246093 pipewire
+ 1001 seantech                            4385  246093 wireplumber
+ 1001 seantech                            4388  246093 pipewire
+ 1001 seantech                            4390  246093 pipewire-pulse
+ 1000 mrh                                 4392  246093 pipewire
+ 1000 mrh                                 4397  246093 pipewire-pulse
+ 1000 mrh                              1138176   25707 wireplumber
+ 1000 mrh                              4079830    1258 pipewire

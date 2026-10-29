@@ -513,7 +513,7 @@ def call(server: ConsoleServer, method: str, path: str, body: object = None) -> 
 
 def test_api_drives_the_lights_and_reports_errors(server: ConsoleServer) -> None:
     status, body = call(server, "POST", "/api/action", {"action": "lighting.brightness", "percent": 25, "id": "all"})
-    assert (status, body) == (200, {"ok": True})
+    assert status == 200 and body["ok"] is True and isinstance(body["seq"], int)
     _, state = call(server, "GET", "/api/state")
     assert [x["brightness"] for x in state["lighting"]["lights"]] == [25, 25]
     status, body = call(server, "POST", "/api/action", {"action": "lighting.brightness", "percent": "x"})

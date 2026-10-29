@@ -23,6 +23,7 @@ CAP_HEIGHT_4K = 2160
 # Lower is better. Raw formats need no decoder; anything unlisted sits between raw and MJPEG.
 FORMAT_RANK = {"YUYV": 0, "UYVY": 0, "NV12": 0, "YU12": 1, "MJPG": 3, "H264": 4}
 DEFAULT_RANK = 2
+USB3_MBPS = 5000  # sysfs reports 480 for USB 2 High Speed, 5000 and up for USB 3
 PIN = re.compile(r"(\d+)x(\d+)(?:@([\d.]+))?(?:\s+(\w{4}))?")
 
 
@@ -90,6 +91,12 @@ class Probe:
     active: Mode | None = None  # what the driver is set to now (the engine's pick while it holds the card)
     audio: str = ""  # description of the HDMI audio source, "" when there is none
     note: str = ""
+    usb_mbps: int | None = None  # the negotiated USB link; None when it could not be read
+
+    @property
+    def usb2(self) -> bool:
+        """On a USB 2 link the card cannot carry uncompressed 1080p: frames arrive at about a third of the rate."""
+        return self.usb_mbps is not None and self.usb_mbps < USB3_MBPS
 
     @property
     def present(self) -> bool:
@@ -122,6 +129,8 @@ class Probe:
             "active": active,
             "audio": self.audio,
             "note": self.note,
+            "usb_mbps": self.usb_mbps,
+            "usb2": self.usb2,
         }
 
 
@@ -148,4 +157,5 @@ def probe(cfg: dict[str, str] | None = None, sources: dict[str, str] | None = No
         active=system.current_mode(device),
         audio=audio_desc or audio_name,
         note=note,
+        usb_mbps=system.usb_speed(device),
     )

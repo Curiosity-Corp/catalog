@@ -82,12 +82,42 @@ def test_a_failing_state_summary_does_not_lose_the_report() -> None:
     assert path is not None and json.loads(path.read_text())["state"]["error"].startswith("state summary failed")
 
 
-def test_handled_errors_are_rate_limited_per_place() -> None:
+class Clock:
+    """The limiter's clock, under the test's control: the real one made this test depend on the CI pod's speed."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_handled_errors_are_rate_limited_per_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock()
+    monkeypatch.setattr(crash, "_monotonic", clock)
     exc = OSError("disk")
     assert crash.record_exception(exc, "place-a") is not None
     assert crash.record_exception(exc, "place-a") is None
     assert crash.record_exception(exc, "place-b") is not None
     assert len(reports()) == 2
+    clock.now += crash.HANDLED_EVERY + 0.1
+    assert crash.record_exception(exc, "place-a") is not None  # the window is over, the place may report again
+
+
+def test_a_slow_write_cannot_reopen_the_window_of_a_report_still_being_filed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flake of pipeline 98297: a starved CI pod stalled the first report's write for over HANDLED_EVERY seconds."""
+    clock = Clock()
+    monkeypatch.setattr(crash, "_monotonic", clock)
+    real_write = crash.store.write_json
+
+    def stalled(*args, **kwargs):
+        clock.now += crash.HANDLED_EVERY * 3  # the disk, not the program, is slow
+        return real_write(*args, **kwargs)
+
+    exc = OSError("disk")
+    monkeypatch.setattr(crash.store, "write_json", stalled)
+    assert crash.record_exception(exc, "place-a") is not None
+    assert crash.record_exception(exc, "place-a") is None
 
 
 def test_only_the_newest_reports_are_kept() -> None:

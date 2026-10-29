@@ -22,6 +22,7 @@ A profile holds any of (a missing part means "leave it alone"):
     canon     {"exposure_comp": <the body's own choice, e.g. "+1/3">, "kelvin": 2500..10000}  (when a Canon is present)
     scene     a scene name
     blur      {"on": true|false, "strength": 1..}
+    framing   {"shot": "close"|"medium"|"wide"|"presenter"|"desk"|"auto"}  (the auto-framing shot preset)
     voice     a voice preset name
     lighting  a lighting preset name
 
@@ -41,6 +42,7 @@ from typing import Any
 
 from streamstack import config, store
 from streamstack.director import daylight
+from streamstack.framing.engine import SHOTS
 
 DOCUMENT = "streamstack.slot-profiles/1"
 SCHEMA = 1
@@ -61,12 +63,13 @@ MODE_NOTES = {
     "suggest": "StreamStack tells you the profile for the new slot is ready; you decide.",
     "auto": "The profile is applied when a call starts and when the slot changes while no call is running.",
 }
-PARTS = ("look", "canon", "scene", "blur", "voice", "lighting")
+PARTS = ("look", "canon", "scene", "blur", "framing", "voice", "lighting")
 PART_LABELS = {
     "look": "Look",
     "canon": "Canon",
     "scene": "Scene",
     "blur": "Blur",
+    "framing": "Shot",
     "voice": "Voice",
     "lighting": "Lights",
 }
@@ -189,6 +192,18 @@ def _blur(value: object) -> dict[str, Any]:
     return clean
 
 
+def _framing(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise SlotsError('framing must be an object like {"shot": "wide"}')
+    unknown = set(value) - {"shot"}
+    if unknown:
+        raise SlotsError(f"framing has no setting {sorted(unknown)[0]!r}")
+    shot = value.get("shot")
+    if shot != "auto" and shot not in SHOTS:
+        raise SlotsError(f"framing.shot must be one of: auto, {', '.join(SHOTS)}")
+    return {"shot": shot}
+
+
 def clean_profile(raw: object) -> dict[str, Any]:
     """A validated profile: only known parts, each well-formed. An empty object is a profile that does nothing."""
     if not isinstance(raw, Mapping):
@@ -204,6 +219,8 @@ def clean_profile(raw: object) -> dict[str, Any]:
         clean["canon"] = _canon(raw["canon"])
     if raw.get("blur") is not None:
         clean["blur"] = _blur(raw["blur"])
+    if raw.get("framing") is not None:
+        clean["framing"] = _framing(raw["framing"])
     return {part: clean[part] for part in PARTS if part in clean}
 
 

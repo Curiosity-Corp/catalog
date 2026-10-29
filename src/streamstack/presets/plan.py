@@ -8,6 +8,7 @@ house rules, and the result never exceeds either.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from streamstack.presets.schema import PresetError
@@ -31,13 +32,64 @@ def pick_rung(platform: dict[str, Any], tier: dict[str, Any]) -> int:
     raise PresetError(f"tier {tier['id']!r} has no rung {platform['id']!r} accepts")
 
 
-def resolve(platform: dict[str, Any], tier: dict[str, Any]) -> dict[str, Any]:
-    """The stream plan for one platform and one tier. Pure: same inputs, same plan."""
+MIN_STEP = 0.95  # a lower rung must save at least 5 percent of the bitrate, or it is not a step down
+
+
+def ladder_tier(platform: dict[str, Any], tiers: Sequence[dict[str, Any]], tier_id: str) -> dict[str, Any]:
+    """The chosen tier with its ladders continued into the lower tiers: the steps automatic downshift walks (#98).
+
+    Rung 0 is exactly what `resolve(platform, tier)` picks, the ceiling the person chose. The rungs after it are the
+    rest of that tier's ladder and then the lower tiers', each kept only when the platform accepts it and it is a real
+    step down: less picture (pixels per second) than the rung before and, with a bitrate to compare, at least 5 percent
+    less of it (after the platform's cap, on the H.264 reference ladder). A platform that
+    ignores tiers has a fixed picture and gets a single rung. The result has the shape of a tier, so
+    `resolve(platform, ladder_tier(...), index=n)` is the plan for step n.
+    """
+    ordered = sorted(tiers, key=lambda t: -t["min_uplink_mbps"])
+    chosen = next((t for t in ordered if t["id"] == tier_id), None)
+    if chosen is None:
+        raise PresetError(f"unknown tier {tier_id!r}")
+    if platform["tier_policy"] == "ignore":
+        return {**chosen, "steps": [{"tier": chosen["id"], "index": None}]}
+    steps: list[dict[str, Any]] = []
+    previous: tuple[float, float] | None = None  # pixel rate and capped bitrate of the last kept rung
+    cap = platform["bitrate_cap_kbps"]
+    constant_quality = platform["rate_control"] == "cqp"
+    for tier in ordered[ordered.index(chosen) :]:
+        first = pick_rung(platform, chosen) if tier is chosen else 0
+        for index in range(first, len(tier["ladders"]["h264"])):
+            rung = tier["ladders"]["h264"][index]
+            if rung["short_side"] > platform["max_short_side"] or rung["fps"] > platform["max_fps"]:
+                continue
+            pixel_rate = rung["short_side"] ** 2 * rung["fps"]
+            kbps = min(rung["bitrate_kbps"], cap) if cap else rung["bitrate_kbps"]
+            if previous is not None and (
+                pixel_rate >= previous[0] or (not constant_quality and kbps >= previous[1] * MIN_STEP)
+            ):
+                continue
+            steps.append({"tier": tier["id"], "index": index})
+            previous = (pixel_rate, kbps)
+    ladders = {
+        codec: [next(t for t in tiers if t["id"] == s["tier"])["ladders"][codec][s["index"]] for s in steps]
+        for codec in chosen["ladders"]
+    }
+    return {**chosen, "ladders": ladders, "steps": steps}
+
+
+def resolve(platform: dict[str, Any], tier: dict[str, Any], index: int | None = None) -> dict[str, Any]:
+    """The stream plan for one platform and one tier. Pure: same inputs, same plan.
+
+    `index` names a rung of the tier's ladders instead of the first one the platform accepts; automatic downshift uses
+    it with `ladder_tier` to ask for the plan of a lower step.
+    """
     audio = dict(platform["audio"])
     if platform["tier_policy"] == "ignore":
         short, fps, index = platform["max_short_side"], platform["max_fps"], None
     else:
-        index = pick_rung(platform, tier)
+        if index is None:
+            index = pick_rung(platform, tier)
+        elif not 0 <= index < len(tier["ladders"]["h264"]):
+            raise PresetError(f"tier {tier['id']!r} has no rung {index}")
         rung = tier["ladders"]["h264"][index]
         short, fps = rung["short_side"], rung["fps"]
     width, height = frame_size(short, platform["orientation"])

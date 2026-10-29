@@ -321,6 +321,7 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 | `STREAMSTACK_PROGRAM_DEVICE` / `_LABEL` | `/dev/video43`, `StreamStack Camera` | the program camera node the engine writes |
 | `STREAMSTACK_WIDTH`, `_HEIGHT`, `_FPS` | `1920`, `1080`, `30` | Canon bridge output, and the stream size when `STREAMSTACK_CAMLINK_MODE=off` |
 | `STREAMSTACK_CAMLINK_MODE` | `auto` | `auto`: the best mode the HDMI source offers, and the program camera follows it; `off`: keep the three settings above; `1920x1080@60 YUYV`: pin one mode (falls back to `auto` when the source does not offer it) |
+| `STREAMSTACK_SEAT_GUARDED` | empty | comma-separated users whose PipeWire/WirePlumber the owner has kept off the hardware (`streamstack seat-policy`); lets the doctor report "guarded" for a user whose home it cannot read |
 | `STREAMSTACK_CAMLINK_4K` | `false` | let `auto` pick 4K |
 | `STREAMSTACK_CAMERA_EXTERNAL` | `false` | another tool feeds the camera node |
 | `STREAMSTACK_CAMERA_LOSS` | `slate` | when the camera loses its picture: `slate` keeps StreamStack Camera fed with a "camera reconnecting" card, `hold` shows the last frame darkened, `off` writes nothing; see [docs/camera-delivery.md](docs/camera-delivery.md) |
@@ -332,9 +333,13 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 | `STREAMSTACK_ENGINE_BACKEND` | `auto` | `auto` (the GPU path when it works, else the CPU), `vulkan` or `cpu` |
 | `STREAMSTACK_ENGINE_RENDER_NODE` | | GPU render node for the engine (grade, blur); empty lets the hardware profile choose by PCI id |
 | `STREAMSTACK_ENGINE_SHARPEN` | `auto` | `auto` runs sharpen as a GPU shader (strength in steps of 0.05); `cpu` keeps the live CPU `cas` filter |
+| `STREAMSTACK_ENGINE_MJPEG_DECODE` | `auto` | How a Motion-JPEG camera is decoded: `auto` (probe once per graphics stack, first that works), `vaapi` (zero-copy into libplacebo), `vaapi-copy` (GPU decode, read back, upload) or `software` |
+| `STREAMSTACK_ENGINE_SCALER` | `lanczos` | libplacebo scaler for the crop zoom and size changes; only a scaler that `tools/bench_scalers.py` has measured is accepted (`graph.SCALERS`) |
+| `STREAMSTACK_ENGINE_DENOISE` | `off` | `nlmeans` runs `nlmeans_vulkan` on the GPU before the grade (for a noisy camera feed; about 9 ms of GPU per 720p frame, measured by `tools/bench_video_denoise.py`); the engine crops 2 px off every side to hide that filter's edge artefact |
 | `STREAMSTACK_ENGINE_LUT` | | a `.cube` 3D LUT applied before the look (path without spaces) |
 | `STREAMSTACK_ENGINE_BLUR` | `auto` | background blur on the Arc through OpenVINO (`pip install 'streamstack[blur]'`); `off` removes it from the graph |
 | `STREAMSTACK_ENGINE_BLUR_DEVICE` | `auto` | the OpenVINO device for the blur: `auto` picks the discrete Arc, or an id such as `GPU.1` |
+| `STREAMSTACK_ENGINE_BLUR_EDGE` | `normalised` | how the blurred background is made: `normalised` keeps the speaker's colour out of the blur at the edge (no halo); `plain` is the old blur of the whole picture |
 | `STREAMSTACK_CANON_BRIDGE` | `gphoto2` | `gphoto2`, `command` or `none` |
 | `STREAMSTACK_CANON_COMMAND` | | the bridge command for `command` |
 | `STREAMSTACK_CANON_OUTPUT` | `native` | `native` (camera aspect, never enlarged) or `fill` (crop to the canvas) |

@@ -14,7 +14,7 @@ from streamstack.console.presets import PresetsController
 from streamstack.presets import PresetError, catalog, resolve, schema
 from streamstack.presets import build as presets_build
 from streamstack.presets.luts import LUTS, Lut3D, build_cube
-from streamstack.presets.plan import frame_size
+from streamstack.presets.plan import frame_size, ladder_tier
 from streamstack.presets.store import ProfileStore, export_document
 from streamstack.presets.thumbs import HEIGHT, WIDTH, decode_png, grade, png, render, slug
 
@@ -169,6 +169,38 @@ def test_every_tier_is_ordered_by_bitrate_per_codec() -> None:
 
 
 # -- stream plans ----------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("platform_id", PLATFORM_IDS)
+@pytest.mark.parametrize("tier_id", TIER_IDS)
+def test_the_downshift_ladder_starts_at_the_plan_and_every_step_is_a_plan_within_the_limits(
+    platform_id: str, tier_id: str
+) -> None:
+    platform, tier = CAT.platform(platform_id), CAT.tier(tier_id)
+    ladder = ladder_tier(platform, CAT.tiers, tier_id)
+    assert ladder["steps"], "there is always at least the plan itself"
+    plans = [
+        resolve(platform, ladder, index=None if platform["tier_policy"] == "ignore" else i)
+        for i in range(len(ladder["steps"]))
+    ]
+    first = resolve(platform, tier)
+    assert plans[0]["video"]["width"] == first["video"]["width"] and plans[0]["video"]["fps"] == first["video"]["fps"]
+    for plan in plans:
+        assert plan["video"]["fps"] <= platform["max_fps"]
+        for codec in plan["video"]["codecs"]:
+            if platform["bitrate_cap_kbps"] and codec.get("bitrate_kbps"):
+                assert codec["bitrate_kbps"] <= platform["bitrate_cap_kbps"]
+
+
+def test_a_platform_that_ignores_tiers_has_one_step_and_a_bad_index_is_an_error() -> None:
+    archive = CAT.platform("archive")
+    assert archive["tier_policy"] == "ignore"
+    assert len(ladder_tier(archive, CAT.tiers, "high")["steps"]) == 1
+    youtube, tier = CAT.platform("youtube"), CAT.tier("high")
+    with pytest.raises(PresetError, match="no rung"):
+        resolve(youtube, tier, index=99)
+    with pytest.raises(PresetError, match="unknown tier"):
+        ladder_tier(youtube, CAT.tiers, "nope")
 
 
 @pytest.mark.parametrize("platform_id", PLATFORM_IDS)
@@ -568,3 +600,141 @@ def test_choose_reports_a_backend_failure(ctl: PresetsController, rec: Recorder)
 def test_unknown_action(ctl: PresetsController) -> None:
     with pytest.raises(ActionError, match="unknown action"):
         ctl.act("presets.nope", {})
+
+
+def test_a_save_in_flight_never_holds_up_a_read_and_the_new_selection_shows_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #161: the selection was read under the lock a save held through two fsyncs, so on a starved disk every
+    state push waited and the Console showed the old tier for tens of seconds."""
+    import threading
+
+    from streamstack import store as store_module
+
+    prof = make_store(tmp_path)
+    prof.set_selection("youtube", "standard")
+    inside, release = threading.Event(), threading.Event()
+    real = store_module.write_json
+
+    def slow(path: Path | str, data: object, **kw: object) -> Path:
+        inside.set()
+        assert release.wait(30)
+        return real(path, data, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store_module, "write_json", slow)
+    saver = threading.Thread(target=prof.set_selection, args=("youtube", "cellular"), daemon=True)
+    saver.start()
+    try:
+        assert inside.wait(10)
+        seen: dict[str, object] = {}
+        reader = threading.Thread(target=lambda: seen.update(prof.selection()), daemon=True)
+        reader.start()
+        reader.join(5)
+        assert not reader.is_alive(), "a read waited behind a save in flight"
+        assert seen == {"platform": "youtube", "tier": "cellular"}
+    finally:
+        release.set()
+        saver.join(10)
+    assert prof.selection() == {"platform": "youtube", "tier": "cellular"}
+
+
+# -- a slow disk never holds a presets action's result back (issue #167, the class of #161) ----------------------
+
+SAVING_ACTIONS = [
+    pytest.param("presets.platform", {"id": "kick"}, lambda s: s["platform"] == "kick", id="platform"),
+    pytest.param("presets.tier", {"id": "cellular"}, lambda s: s["tier"] == "cellular", id="tier"),
+    pytest.param(
+        "presets.profile.apply",
+        {"id": "interview"},
+        lambda s: (
+            s["profile"] == "Interview"
+            and (s["platform"], s["tier"]) == ("youtube", "high")
+            and s["last_apply"]["steps"][-1]["status"] == "ok"
+        ),
+        id="profile-apply",
+    ),
+]
+
+
+@pytest.fixture
+def stalled_disk(monkeypatch: pytest.MonkeyPatch):
+    """Every write blocks until released, as on a starved runner whose fsync takes tens of seconds."""
+    import threading
+
+    from streamstack import store as store_module
+
+    inside, release = threading.Event(), threading.Event()
+    real = store_module.write_json
+
+    def slow(path: Path | str, data: object, **kw: object) -> Path:
+        inside.set()
+        assert release.wait(30)
+        return real(path, data, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store_module, "write_json", slow)
+    yield inside, release
+    release.set()
+
+
+@pytest.mark.parametrize(("action", "params", "shown"), SAVING_ACTIONS)
+def test_an_action_shows_its_result_before_its_save_reaches_the_disk(
+    ctl: PresetsController, stalled_disk: tuple, action: str, params: dict, shown
+) -> None:
+    """Gate: every `presets.*` action that saves the choice must publish its result before the save finishes, so no
+    entry point (a card, the command palette, a key) can leave the page or a test waiting on the disk. A new saving
+    action belongs in SAVING_ACTIONS."""
+    import threading
+
+    inside, release = stalled_disk
+    actor = threading.Thread(target=ctl.act, args=(action, params), daemon=True)
+    actor.start()
+    try:
+        assert inside.wait(10), "the action never reached the disk"
+        seen: dict = {}
+        reader = threading.Thread(target=lambda: seen.update(ctl.state()), daemon=True)
+        reader.start()
+        reader.join(5)
+        assert not reader.is_alive(), "a state read waited behind the save"
+        assert shown(seen), seen
+    finally:
+        release.set()
+        actor.join(10)
+    assert shown(ctl.state())
+
+
+def test_every_saving_presets_action_is_in_the_gate() -> None:
+    saving = {"presets.platform", "presets.tier", "presets.profile.apply"}
+    assert {p.values[0] for p in SAVING_ACTIONS} == saving
+
+
+def test_apply_publishes_the_profile_even_when_the_choice_cannot_be_saved(
+    ctl: PresetsController, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from streamstack import store as store_module
+
+    def full(path: Path | str, data: object, **kw: object) -> Path:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(store_module, "write_json", full)
+    message = ctl.act("presets.profile.apply", {"id": "podcast"})
+    state = ctl.state()
+    assert state["profile"] == "Podcast" and "4 of 5" in message and "No space left" in message
+    assert state["platform"] is None, "a choice that was not saved must not show as saved"
+    assert {s["part"]: s["status"] for s in state["last_apply"]["steps"]}["stream"] == "failed"
+
+
+def test_apply_fails_when_the_only_part_that_worked_cannot_be_saved(
+    ctl: PresetsController, rec: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from streamstack import store as store_module
+
+    for action in ("video.looks.apply", "lighting.preset", "audio.preset", "framing.mode"):
+        rec.fail[action] = ActionError("down", 409)
+
+    def full(path: Path | str, data: object, **kw: object) -> Path:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(store_module, "write_json", full)
+    with pytest.raises(ActionError, match="No space left"):
+        ctl.act("presets.profile.apply", {"id": "meeting"})
+    assert ctl.state()["profile"] is None and ctl.state()["last_apply"] is None

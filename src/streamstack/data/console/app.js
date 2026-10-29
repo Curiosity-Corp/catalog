@@ -24,6 +24,7 @@ import { connect, retryNow } from './core/connection.js';
 import { startRouter, onRoute, navigate, currentRoute } from './core/router.js';
 import { registerKeys, registerCommands, installKeyboard } from './core/keys.js';
 import { registerReviveControls } from './core/revive.js';
+import { registerSafeJoinControls } from './core/safejoin.js';
 import { initTheme, toggleTheme, getTheme } from './core/theme.js';
 import { ui, setUi, onUi } from './core/ui.js';
 import * as ops from './core/ops.js';
@@ -144,10 +145,13 @@ function bindShell() {
   // top bar: what matters on every page
   const center = $('#top-center');
   const onAir = (s) => ['starting', 'live', 'degraded'].includes(s.stream.status);
-  store.subscribe((s) => [s.audio.mic.muted, s.video.privacy, s.video.virtualcam || s.video.streaming.active || onAir(s), s.video.recording.active || s.stream.recording.active, s.call.state, s.call.service], ([muted, privacy, air, rec, callState, service]) => {
+  store.subscribe((s) => [s.audio.mic.muted, s.video.privacy, s.video.virtualcam || s.video.streaming.active || onAir(s), s.video.recording.active || s.stream.recording.active, s.call.state, s.call.service, s.network.available && s.network.enabled ? s.network.rating : 'good'], ([muted, privacy, air, rec, callState, service, net]) => {
     const chips = [];
     if (callState === 'in_call' || callState === 'joining') {
       chips.push({ id: 'call', state: callState === 'in_call' ? 'ok' : 'warn', label: callState === 'in_call' ? `IN CALL${service ? ` ${service.toUpperCase()}` : ''}` : 'JOINING', icon: 'phone' });
+    }
+    if (net === 'degraded' || net === 'poor' || net === 'offline') {
+      chips.push({ id: 'net', state: net === 'degraded' ? 'warn' : 'fail', label: `NETWORK ${net.toUpperCase()}`, icon: 'wave', href: '#/system' });
     }
     if (muted) chips.push({ id: 'muted', state: 'live', label: 'MUTED', icon: 'mic-off' });
     if (privacy) chips.push({ id: 'privacy', state: 'warn', label: 'PRIVACY', icon: 'eye-off' });
@@ -155,6 +159,7 @@ function bindShell() {
     if (rec) chips.push({ id: 'rec', state: 'live', label: 'REC', icon: 'record', pulse: true });
     renderList(center, chips, (c) => c.id, () => h('ss-status-chip', {}), (el, c) => {
       el.setAttribute('state', c.state); el.setAttribute('label', c.label); el.setAttribute('icon', c.icon); el.toggleAttribute('pulse', !!c.pulse);
+      if (c.href) el.setAttribute('href', c.href); else el.removeAttribute('href');
     });
   });
 
@@ -222,6 +227,7 @@ function bindKeys() {
 
   // Shift+R and "Revive mic" work from every page, but only while the watchdog says the mic is stalled.
   registerReviveControls(ctx);
+  registerSafeJoinControls(ctx);
 
   registerCommands(() => {
     const s = store.state;

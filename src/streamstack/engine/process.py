@@ -100,6 +100,7 @@ class VideoEngine:
         self._key_timer: threading.Timer | None = None
         self._planned = False  # the next child exit is a deliberate restart: no crash back-off
         self._no_shader = False  # the sharpen shader could not be written: sharpen is off until restart
+        self._no_lut = False  # a look's LUT file could not be written: LUTs are off until restart
 
     # -- lifecycle -----------------------------------------------------------------------------------------------
 
@@ -209,6 +210,8 @@ class VideoEngine:
         key = graph.graph_key(self._spec, look)
         if key is not None and self._no_shader:
             key = replace(key, sharpen=0.0)
+        if key is not None and key.lut and self._no_lut:
+            key = replace(key, lut="", lut_steps=0, split=abs(graph.split_values(look)) > 1e-4)
         return key
 
     def _schedule_rebuild(self) -> None:
@@ -237,7 +240,7 @@ class VideoEngine:
     def _controls(self) -> dict[tuple[str, str], str]:
         controls = graph.look_controls(self._look, self._spec.backend, self._blackout, self._built_key)
         if self._spec.blur is not None and self._blur is not None:
-            controls.update(graph.blur_controls(self._blur_on, self._blur_strength))
+            controls.update(graph.blur_controls(self._blur_on, self._blur_strength, self._spec.blur.edge))
         return controls
 
     def set_window(self, rect: Rect | None) -> None:
@@ -245,8 +248,8 @@ class VideoEngine:
         with self.lock:
             if self._spec.backend != "vulkan":
                 return
-            full = Rect(0, 0, self._spec.source.width, self._spec.source.height)
-            target = rect or full
+            full = graph.safe_window(self._spec, Rect(0, 0, self._spec.source.width, self._spec.source.height))
+            target = graph.safe_window(self._spec, rect) or full
             if target == (self._rect or full):
                 return
             grow = target.w * target.h > self._sent_rect_area()
@@ -299,7 +302,7 @@ class VideoEngine:
             "state": state,
             "error": error,
             "backend": spec.backend,
-            "decode": "vaapi" if spec.source.mjpeg and spec.backend == "vulkan" else "none (raw)",
+            "decode": spec.decode_path,
             "source": spec.source.label,
             "source_mode": f"{spec.source.width}x{spec.source.height} {spec.source.fourcc}",
             "output": f"{spec.out_device} {spec.out_width}x{spec.out_height} {spec.output_format}",
@@ -520,6 +523,16 @@ class VideoEngine:
         """The baked step for a new child, with its shader on disk. A shader that cannot be written turns sharpening
         off (and says so once) instead of stopping the picture."""
         key = self._key_for(look)
+        if key is None:
+            return key
+        if key.lut:
+            try:
+                shaders.ensure_lut(spec.shaders, key.lut, key.lut_steps)
+            except (OSError, ValueError) as exc:
+                log.warning("engine: cannot write the %s LUT under %s: %s", key.lut, spec.shaders, exc)
+                self._toast("warn", f"The look's colour LUT is off: its file cannot be written ({exc}).")
+                self._no_lut = True
+                key = self._key_for(look)
         if key is None or key.sharpen <= 0:
             return key
         try:

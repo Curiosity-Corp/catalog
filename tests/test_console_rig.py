@@ -21,8 +21,14 @@ TOP_LEVEL = {
     "deck",
     "slots",
     "hotkeys",
+    "meetings",
     "diagnostics",
     "call",
+    "network",
+    "echo",
+    "eyeline",
+    "preflight",
+    "safejoin",
 }  # fmt: skip
 
 

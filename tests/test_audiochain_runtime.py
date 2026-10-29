@@ -464,3 +464,104 @@ def test_a_dragged_high_pass_corner_is_sent_once_when_it_settles(
     now[0] += 1.0
     rt.tick()
     assert not hp_sets()
+
+
+# ---------------------------------------------------------------------------
+# a deliberate `chain stop` is honoured by the Console's supervisor (#145)
+# ---------------------------------------------------------------------------
+
+
+class FakeHost:
+    """The host process: `start_host` brings it up, `stop_host` takes it down; nothing real is touched."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, running: bool = True) -> None:
+        self.running = running
+        self.starts = 0
+        monkeypatch.setattr(runtime, "host_pids", lambda conf, proc=None: [4242] if self.running else [])
+        monkeypatch.setattr(runtime, "start_host", self._start)
+        monkeypatch.setattr(runtime, "stop_host", self._stop)
+
+    def _start(self, conf: Path, log_path: Path | None = None) -> object:
+        self.running = True
+        self.starts += 1
+        return object()
+
+    def _stop(self, conf: Path, wait: float = 3.0) -> bool:
+        self.running = False
+        return True
+
+
+@pytest.fixture
+def state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    state = tmp_path / "state-home"
+    monkeypatch.setattr(config, "state_dir", lambda: state)
+    return state
+
+
+def supervising_runtime(state: Path, engines: list[str]) -> chain.ChainRuntime:
+    """The Console's runtime: it autostarts the host."""
+    rt = chain.ChainRuntime(chain.ChainModel(store=None, engines=lambda: engines), state, runner=Fake(), autostart=True)
+    rt.set_microphone("alsa_input.usb-Wave")
+    return rt
+
+
+def test_the_supervisor_revives_a_dead_host_when_nobody_stopped_it(
+    state_dir: Path, library_engines: list[str], plugins_present: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = FakeHost(monkeypatch, running=False)
+    rt = supervising_runtime(state_dir, library_engines)
+    rt.supervise()
+    assert host.starts == 1 and not rt.held
+
+
+def test_the_supervisor_leaves_a_chain_stopped_on_purpose_stopped(
+    state_dir: Path, library_engines: list[str], plugins_present: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = FakeHost(monkeypatch, running=False)
+    chain.mark_stopped(state_dir)
+    rt = supervising_runtime(state_dir, library_engines)
+    for _ in range(3):
+        rt.supervise()
+    assert host.starts == 0
+    st = rt.status()
+    assert st["held"] is True and st["running"] is False and "stopped on purpose" in st["error"]
+
+
+def test_chain_stop_while_the_console_supervises_stays_stopped_until_chain_start(
+    state_dir: Path,
+    library_engines: list[str],
+    plugins_present: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    host = FakeHost(monkeypatch, running=True)
+    monkeypatch.setattr(cli, "release_default", lambda cfg: 0)
+    rt = supervising_runtime(state_dir, library_engines)
+    assert cli.stop({}) == 0
+    assert "chain start" in capsys.readouterr().out
+    rt.supervise()  # the Console's next tick: it must not bring the host back
+    assert host.running is False and host.starts == 0 and rt.status()["held"] is True
+    cli.clear_stop_marker()  # what `chain start` does first
+    assert not chain.stopped_by_user(state_dir)
+    rt.supervise()
+    assert host.starts == 1 and rt.status()["held"] is False
+
+
+def test_chain_stop_says_the_console_keeps_it_stopped(
+    state_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    FakeHost(monkeypatch, running=True)
+    monkeypatch.setattr(cli, "release_default", lambda cfg: 0)
+    assert cli.stop({}) == 0
+    assert "Console will keep it stopped until you run `streamstack chain start`" in capsys.readouterr().out
+    assert chain.stopped_by_user(state_dir)
+
+
+def test_chain_start_clears_the_stop_marker(
+    state_dir: Path, library_engines: list[str], plugins_present: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    FakeHost(monkeypatch, running=False)
+    chain.mark_stopped(state_dir)
+    monkeypatch.setattr(cli, "_runtime", lambda cfg, **kw: supervising_runtime(state_dir, library_engines))
+    cli.start({}, wait=0, say=lambda line: None)
+    assert not chain.stopped_by_user(state_dir)

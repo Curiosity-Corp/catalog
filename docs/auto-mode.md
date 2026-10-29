@@ -264,6 +264,61 @@ the owner at an idle desk (no call; `record` refuses while a call app holds a ca
 
 Do not commit the WAVs or stills; only the numbers.
 
+### Deterministic exposure and colour match (issue #94)
+
+`streamstack.director.metering` holds the controllers that decide how far to move, as pure functions of a measurement
+(no clock, no randomness, so the same readings always give the same moves):
+
+* `meter_box` reads a face or grey-card box from an rgb24 frame, leaving out clipped pixels and counting them.
+* `ExposureController` works in stops (`2.2 * log2(target / luma)`). It has a dead band (0.15 stop), a gain of 0.7 so
+  a camera that is slow to settle cannot overshoot, and a cap of one stop per pass. It shares the correction between
+  the knobs in the order given: the Canon's exposure compensation first (thirds of a stop, before compression), then
+  the key light's brightness; a knob at its limit passes the rest on, and what nobody can give is reported as
+  `leftover` for the program look. It never adds light while more than 2% of the box is clipped.
+* `ColourController` reads a grey card: the key light goes to the persona's colour temperature first, then the
+  camera's white balance is trimmed by the card's red/blue ratio until it equals the light's temperature (the
+  cross-property match). A green or magenta card is reported, not chased.
+
+`tests/test_director_metering.py` drives both against a simulated rig (quantised Canon, key light with limits, ambient
+light, grey card): from dark and bright rooms and every white balance start the loop settles inside 0.2 stop and 150 K
+in under 20 passes, two runs give identical trajectories, a settled loop does not move, and it re-settles after the sun
+comes out. The model constants (`KELVIN_PER_STOP`, gamma) are typical values; the loop corrects what they get wrong.
+
+### The controllers in the live loop (issue #150)
+
+`auto.py` runs both controllers on the live rig (`streamstack.director.loopmeter` turns device readings into their
+inputs):
+
+* **Exposure.** When the metered luma (the face once located, otherwise the frame) leaves the persona's band, the
+  `ExposureController` aims at the middle of the band, in stops, and shares the correction: the Canon's exposure
+  compensation first, then the key lights' brightness (light output is linear in lumen; a group of lights moves
+  together and the smallest room limits it), and what neither can give is left to the program look. Each pass is
+  bounded twice: the controller (gain 0.7, at most one stop) and the governor (one Canon notch every 30 s, 12 % of a
+  light's range every 20 s). A knob the person moved by hand is held and leaves the room; with no Canon and no light
+  the program look works as it always did. A light the controller has moved is no longer eased to the persona's
+  brightness (its colour temperature still is), so the two loops never pull in opposite directions.
+* **Colour.** Set `STREAMSTACK_AUTO_GREYCARD=x,y,w,h` (fractions of the frame, for example `0.85,0.75,0.1,0.15`) to a
+  grey card in the picture. When the exposure is in band the card is read each pass and the Canon's white balance is
+  trimmed until the card is neutral, one bounded step a minute, never further than 1500 K from the light (any value in
+  the camera's range when there is no light to agree with). It waits while a key light is still moving to the persona's
+  colour temperature, and a green or magenta card is reported, not chased. With a grey card the white balance is true
+  colour; the persona's warmth then comes from the program look's warmth, not from the camera. Without a card the
+  white balance is the persona-Kelvin step it was.
+* **Opt-in.** The controllers are off by default (`STREAMSTACK_AUTO_METERING` unset or `false`): their model constants are
+  not tuned on the real Canon and Litra yet (the grey-card check in #94), and untuned closed-loop exposure on a live
+  call is worse than the old step. Set `STREAMSTACK_AUTO_METERING=true` to turn them on (it is a normal setting, in the
+  Console's director settings with the other `STREAMSTACK_AUTO_*` ones); on by default is the step after the hardware
+  tuning. With it off the director returns to the one-notch Canon step and the persona Kelvin step, and the
+  lights' brightness and the grey card are never touched by exposure or colour.
+
+Every pass is journalled (`metering` events with the error in stops, the shares and what was left over, next to the
+usual `change` events). `tests/test_auto_metering.py` runs the loop on a simulated rig of fakes (a Canon, a Litra, a
+scene model, the real governor on a fake clock): from dark and bright rooms the picture settles into the band without
+overshoot or hunting, steps stay bounded, the camera moves before the light, a settled loop does not move, and a
+disabled controller gives the old behaviour and never writes to a light.
+
+Still to be measured on hardware (checklist on #94): the model constants against the real Canon, Litra and a grey card.
+
 ## The Console link
 
 Auto mode is its own process, and the native video engine lives inside the Console, so the director changes the
