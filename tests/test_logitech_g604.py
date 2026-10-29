@@ -502,3 +502,80 @@ def test_solaar_launch_still_starts_solaar_on_a_broken_config(tmp_path: Path) ->
     assert result.returncode == 0
     assert "starting Solaar without the DPI fix" in result.stderr
     assert started.read_text().strip() == "--window=hide"
+
+
+def test_pointer_accel_speed_is_deskmeet_only_and_empty_elsewhere() -> None:
+    assert _derived("logitech_g604_accel_speed", "deskmeet-b760") == "0.6"
+    for name in set(DEFAULTS["hardware_profiles"]) - {"deskmeet-b760"} | {"no-such-profile"}:
+        assert _derived("logitech_g604_accel_speed", name) == "", name
+    tasks = (ROLE / "tasks/logitech-g604.yml").read_text()
+    assert "CURIOSITY_G604_ACCEL_SPEED='{{ logitech_g604_accel_speed }}'" in tasks
+    assert "logitech_g604_accel_speed | float >= -1" in tasks
+
+
+@pytest.mark.skipif(shutil.which("flock") is None, reason="flock is required")
+@pytest.mark.parametrize("speed", ["0.6", ""])
+def test_launcher_sets_the_accel_speed_once_per_attach(tmp_path: Path, speed: str) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    present = tmp_path / "present"
+    setprop = tmp_path / "setprop"
+    (bin_dir / "xinput").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            case "$1" in
+              set-prop)
+                # Like real xinput: the bare name matches the pointer and the
+                # floated keyboard node, so only "pointer:<name>" resolves.
+                [ "$2" = "pointer:Logitech G604" ] || exit 1
+                echo "$*" >> {setprop}; exit 0;;
+              test) exec sleep 30;;
+              list)
+                if [ "$2" = "--name-only" ]; then
+                  [ -e {present} ] && echo "Logitech G604"
+                else
+                  [ -e {present} ] && printf '    Logitech G604   id=15\\t[slave  keyboard (3)]\\n'
+                fi
+                exit 0;;
+            esac
+            exit 0
+            """
+        )
+    )
+    (bin_dir / "xbindkeys").write_text("#!/bin/sh\nexec sleep 30\n")
+    for tool in ("xinput", "xbindkeys"):
+        (bin_dir / tool).chmod(0o755)
+    conf = tmp_path / "g604.rc"
+    conf.write_text("# test\n")
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CURIOSITY_G604_CONF": str(conf),
+        "CURIOSITY_G604_INTERVAL": "0.2",
+        "CURIOSITY_G604_LOCK": str(tmp_path / "lock"),
+        "CURIOSITY_G604_ENV": "/dev/null",
+        "CURIOSITY_G604_ACCEL_SPEED": speed,
+        "DISPLAY": ":99",
+        "XDG_SESSION_TYPE": "x11",
+    }
+    launcher = subprocess.Popen(["sh", str(SCRIPT)], env=env)
+    try:
+        present.touch()
+        if speed:
+            _wait_for(setprop)
+            time.sleep(1.0)  # several polls while attached: still one call
+            assert setprop.read_text().splitlines() == ["set-prop pointer:Logitech G604 libinput Accel Speed 0.6"]
+            present.unlink()
+            time.sleep(0.6)
+            present.touch()
+            deadline = time.time() + 5
+            while len(setprop.read_text().splitlines()) < 2 and time.time() < deadline:
+                time.sleep(0.1)
+            assert len(setprop.read_text().splitlines()) == 2, "a replugged mouse gets the speed again"
+        else:
+            time.sleep(1.0)
+            assert not setprop.exists(), "no speed configured, the pointer is left alone"
+    finally:
+        launcher.terminate()
+        launcher.wait(timeout=5)

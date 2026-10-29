@@ -65,8 +65,12 @@ else
     xsetroot -solid "#1a1a2e" &
 fi
 
-# Compositor
-picom --config ~/.config/picom/picom.conf &
+# Compositor. The role leaves ~/.config/picom/compositor-disabled when the
+# hardware profile sets compositor_enabled: false (an 8K display is too slow to
+# composite); the session then runs uncomposited and picom is never started.
+if [ ! -e "$HOME/.config/picom/compositor-disabled" ]; then
+    picom --config ~/.config/picom/picom.conf &
+fi
 
 # Panel. Re-running this script in a live session must replace the panel, not
 # stack a second one. Only this user's tint2 on this DISPLAY is stopped, so a

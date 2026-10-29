@@ -1002,7 +1002,11 @@ pro_mimic_motd_news_enabled: false
 # 500: Openbox and GTK double-click interval; see minimal_desktop_double_click_ms)
 # and samsung_tv_cli (boolean, default false: install the curiosity-tv Samsung
 # TV remote-control CLI; see samsung_tv_cli_enabled)
-# and idle_lock_minutes (integer, default 10: XScreenSaver blank/lock timeout).
+# and idle_lock_minutes (integer, default 10: XScreenSaver blank/lock timeout),
+# compositor_enabled (boolean, default true: false keeps picom from starting in
+# the Openbox session; see minimal_desktop_compositor_enabled) and
+# pointer_accel_speed (number from -1 to 1, default unset: libinput `Accel Speed`
+# applied to the Logitech G604; see logitech_g604_accel_speed).
 # =============================================================================
 hardware_profile: generic
 
@@ -1124,6 +1128,19 @@ i915_pcon_frl_444_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get
 # modes: never reduced blanking or custom timings (the 8K TV rejects them).
 console_video: "{{ (hardware_profiles.get(hardware_profile, {})).get('console_video', '') }}"
 console_video_dropin_path: /etc/default/grub.d/92-curiosity-console-video.cfg
+
+# Whether the Openbox session starts the picom compositor, from the hardware
+# profile's optional `compositor_enabled` (default true, so every other machine
+# is unchanged). false makes tasks/minimal-desktop-picom.yml leave the marker
+# ~/.config/picom/compositor-disabled, which the Openbox autostart checks before
+# launching picom, so the session runs uncomposited (no picom process at all).
+minimal_desktop_compositor_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('compositor_enabled', true) | bool }}"
+
+# libinput pointer speed (`Accel Speed`, -1 to 1) for the Logitech G604, from the
+# hardware profile's optional `pointer_accel_speed`. Empty (profile key unset)
+# leaves the device alone. curiosity-g604 applies it with xinput each time the
+# mouse appears on the X display (requires logitech_g604_enabled).
+logitech_g604_accel_speed: "{{ (hardware_profiles.get(hardware_profile, {})).get('pointer_accel_speed', '') }}"
 
 # Desktop scale of the minimal desktop, from the hardware profile's
 # `display_scale`: a number from 1 to 4 in steps of 0.25 (1, 1.25, 1.5, ...),
@@ -1633,6 +1650,12 @@ hardware_profiles:
     # Windows-style 225% scaling for the 8K panel (Xft.dpi 216, Xcursor.size
     # 54): chosen by the CEO on 2026-10-27 as slightly larger than 200%.
     display_scale: 2.25
+    # No compositor on the 8K TV: picom composites the full 7680x4320 frame with
+    # vsync plus fading/opacity, which made the pointer and dense-text areas
+    # laggy on the Arc A380 (stopping picom fixed it, confirmed 2026-10-27).
+    compositor_enabled: false
+    # libinput pointer speed for the G604 (confirmed by the CEO on the 8K TV).
+    pointer_accel_speed: 0.6
     pipx_packages:
       - streamdeck-linux-gui
     # Rule names must sort before 73-seat-late so uaccess ACLs are applied;

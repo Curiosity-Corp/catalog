@@ -18,3 +18,16 @@
     owner: "{{ dw_user.name }}"
     group: "{{ dw_user.name }}"
     mode: "0644"
+
+# The Openbox autostart skips picom while this marker exists (hardware profile
+# key compositor_enabled: false). Nothing is stopped here: a picom already
+# running in a live session is left for the next login.
+- name: Mark the compositor as disabled for the Openbox autostart
+  ansible.builtin.file:
+    path: "{{ dw_user.home }}/.config/picom/compositor-disabled"
+    state: "{{ 'touch' if not (minimal_desktop_compositor_enabled | bool) else 'absent' }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.name }}"
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
