@@ -6,7 +6,7 @@
 - name: Validate LightDM settings
   ansible.builtin.assert:
     that:
-      - minimal_desktop_greeter in ['gtk', 'slick']
+      - minimal_desktop_greeter_effective in ['gtk', 'slick']
       - minimal_desktop_lightdm_minimum_vt | string is match('^[0-9]+$')
       - minimal_desktop_lightdm_minimum_vt | int >= 1
       - minimal_desktop_lightdm_minimum_vt | int <= 63
@@ -24,7 +24,7 @@
         | intersect(['10-virtual-terminal.conf', '20-openbox-session.conf', '30-greeter.conf', '40-xserver-wrapper.conf', '50-autologin.conf', '60-display-setup.conf'])
         | length == 0
     fail_msg: >-
-      minimal_desktop_greeter must be gtk or slick,
+      minimal_desktop_greeter (or the hardware profile's greeter) must be gtk or slick,
       minimal_desktop_lightdm_minimum_vt must be a VT number from 1 to 63,
       the minimal_desktop_lightdm restart_sec, start_limit_interval_sec and
       start_limit_burst settings must be whole numbers of at least 1, and
@@ -36,7 +36,7 @@
     name: slick-greeter
     state: present
     update_cache: false
-  when: minimal_desktop_greeter == 'slick'
+  when: minimal_desktop_greeter_effective == 'slick'
 
 - name: Configure LightDM GTK greeter (dark, minimal, no animations)
   ansible.builtin.copy:
@@ -62,7 +62,7 @@
       clock-format = %H:%M
       panel-position = top
       position = 50% 50%
-  when: minimal_desktop_greeter == 'gtk'
+  when: minimal_desktop_greeter_effective == 'gtk'
 
 - name: Configure LightDM slick greeter (dark, minimal)
   ansible.builtin.copy:
@@ -81,7 +81,7 @@
       show-hostname=true
       show-clock=true
       clock-format=%H:%M
-  when: minimal_desktop_greeter == 'slick'
+  when: minimal_desktop_greeter_effective == 'slick'
 
 - name: Ensure /etc/lightdm/lightdm.conf.d exists
   ansible.builtin.file:
@@ -99,7 +99,7 @@
     mode: "0644"
     content: |
       [Seat:*]
-      greeter-session={{ 'slick-greeter' if minimal_desktop_greeter == 'slick' else 'lightdm-gtk-greeter' }}
+      greeter-session={{ 'slick-greeter' if minimal_desktop_greeter_effective == 'slick' else 'lightdm-gtk-greeter' }}
 
 - name: Start the Openbox session for users who log in through LightDM
   ansible.builtin.copy:

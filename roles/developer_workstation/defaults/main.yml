@@ -804,6 +804,11 @@ minimal_desktop_idle_lock_minutes: "{{ (hardware_profiles.get(hardware_profile, 
 # minimal_desktop_lightdm_remove_dropins are deleted from
 # /etc/lightdm/lightdm.conf.d (file names only).
 minimal_desktop_greeter: gtk
+# The hardware profile's optional `greeter` (gtk or slick) wins over
+# minimal_desktop_greeter, including a host-local /etc/ansible/local-vars.yml
+# value: deskmeet-b760 pins `gtk` because slick-greeter's 7680x4320 background
+# renders end in an Xorg SIGBUS there (catalog#122).
+minimal_desktop_greeter_effective: "{{ (hardware_profiles.get(hardware_profile, {})).get('greeter', minimal_desktop_greeter) }}"
 minimal_desktop_lightdm_minimum_vt: 8
 minimal_desktop_lightdm_vtswitch_wrapper: false
 minimal_desktop_lightdm_remove_dropins: []
@@ -1664,6 +1669,8 @@ hardware_profiles:
     # vsync plus fading/opacity, which made the pointer and dense-text areas
     # laggy on the Arc A380 (stopping picom fixed it, confirmed 2026-10-27).
     compositor_enabled: false
+    # slick-greeter's 8K background renders crash Xorg on the Arc A380 (catalog#122).
+    greeter: gtk
     # libinput pointer speed for the G604 (confirmed by the CEO on the 8K TV).
     pointer_accel_speed: 0.6
     pipx_packages:
