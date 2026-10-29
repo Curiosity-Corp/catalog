@@ -37,9 +37,10 @@ STALE_SECONDS = 0.5  # a mask older than this is not applied
 SAMPLES = 90  # timing samples kept (about 3 s at 30 fps)
 RATE_WINDOW = 2.0  # seconds the measured mask rate averages over
 PIPE_BYTES = 1 << 20
-# How long the pump waits for the mask of the frame it just read. The program picture spends about 40 ms in the
-# graph (libplacebo holds a frame) before it meets its mask, so a mask that arrives within this wait costs the
-# picture nothing, and the mask belongs to the frame it is applied to instead of the one before it.
+# How long the pump waits for the mask of the frame it just read. The mask it writes is released to the picture
+# MASK_LEAD frames later (the lead, below), which reaches the graph a frame period after this one, so a wait under
+# one frame period (33 ms at 30 fps) costs the picture nothing. (Until #141 the graph itself held every picture
+# about 40 ms; the lead is what still hides the wait now that it does not.)
 MASK_WAIT = 0.02
 MASK_LEAD = 1  # masks written ahead of the picture, in frames
 

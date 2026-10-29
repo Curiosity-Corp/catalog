@@ -70,10 +70,10 @@ Failed or rejected, with the reason:
 | Vulkan to DRM derive | -38 |
 | `av1_vulkan` / `h264_vulkan` / `hevc_vulkan` | driver lacks VK_KHR_video_encode_queue |
 | In-graph VAAPI encode | the filter device is Vulkan, so the encoder cannot join the graph |
-| `hevc_qsv` | "Invalid data" on this driver stack |
+| `hevc_qsv` | "Invalid data" on this driver stack (`hevc_vaapi -low_power 1` encodes, so it is the fallback row) |
 | `av1_vaapi`, `av1_nvenc` in the probe | produce nothing here (no NVIDIA part present) |
 | dmabuf from V4L2 | not exposed by the libav demuxer, so the upload is a CPU copy |
-| libplacebo without its one-frame hold | no option removes it (about 37 ms) |
+| libplacebo without its one-frame hold | removed in the graph (#141): stamp each frame a quarter period ahead and give libplacebo `fps=`; see "Where the hold was" |
 | PipeWire camera node from ffmpeg | no ffmpeg pipewire output, no gst pipewiresink here |
 
 PipeWire: WirePlumber's V4L2 monitor exposes `/dev/video43` as a `Video/Source` node (only when the user can open
@@ -83,10 +83,13 @@ a small in-process producer and is its own issue.
 
 ## Encode tap
 
-`engine/encode.py` is a table, best codec first: av1, hevc, h264; inside a codec, Quick Sync then NVENC. Each
+`engine/encode.py` is a table, best codec first: av1, hevc, h264; inside a codec, Quick Sync, then VA-API, then NVENC. Quick Sync leads because it takes
+the system-memory frame and so joins the Vulkan graph; VA-API encoders need GPU frames, so the tap branch ends in
+`hwupload` and the graph's filter device must be VA-API (CPU graph only: `build_argv` refuses a VA-API tap on the
+Vulkan graph); it is the same GPU's way round a broken oneVPL runtime. Each
 row is probed by really encoding eight frames, because a listed encoder is not a working one. The tap shares the
 single `hwdownload`, converts to NV12 and gives the encoder system-memory frames. Probed here: av1_qsv OK,
-h264_qsv OK, hevc_qsv fails. AV2 has no row on purpose: the slot is empty until a real-time hardware encoder
+h264_qsv OK, hevc_qsv fails, hevc_vaapi OK. AV2 has no row on purpose: the slot is empty until a real-time hardware encoder
 exists, and adding it is one table row. Recording, SRT, WHIP/WebRTC, RTMP and Opus belong to `streamstack/stream`.
 
 ## Video denoise for the Canon feed (#92)
@@ -171,13 +174,55 @@ way. With no taps the graph is unchanged and the numbers are the same (29.9 agai
 | 1080p30 all looks, crop and av1_qsv tap | 117 ms | | 321 % | 29.4 | 0 |
 | Live Canon `/dev/video42`, 1280x720 at 20 | | | | 19.6 | 0 |
 
-- The engine adds about 37 ms over the floor at 720p. That is libplacebo's one-frame hold.
+- The rows above are the pre-#141 numbers (the engine added about 37 ms over the floor, which was two held frames). The #141 numbers are in the next section.
 - Detection as a second graph costs nothing; splitting inside the program graph added 40 to 80 ms.
 - Slider to picture is about 100 ms at 720p (one pipeline latency plus feed alignment). Applying the look takes
   0.06 ms. The under-50-ms target is met for apply time and not for glass-to-picture; the picture cannot change
   faster than one frame traverses the pipeline.
 - Before the GPU path, the dominant 1080p cost was `colorcorrect` and `cas`, which ran on the CPU in yuv444p
   (next section).
+
+## Where the hold was (#141)
+
+At 720p the engine used to add about 76 ms on top of a 39 ms loopback and browser leg. The 37 ms "libplacebo hold"
+turned out to be three separate holds, each one frame period (33 ms at 30 fps), and all three are gone.
+
+1. **Threaded encoders.** ffmpeg 8 frame-threads the rawvideo and MJPEG encoders, so each frame waits one encode slot
+   before it is written. `-threads 1` on every output (program, detection, segmenter) removes it. Floor: 35.0 to 1.8 ms.
+2. **libplacebo's `pl_queue`.** `advance()` wants a frame with a pts later than the target before it renders, even with
+   `frame_mixer=none`, and in non-fps mode ffmpeg sets the output pts to the frame's own pts, so the next frame is always
+   needed. The graph now stamps frame N at `(N + 0.25)` frame periods (timebase 1/90000; frame 0 stays at 0) and gives
+   libplacebo `fps=<camera fps>`. Output tick k then finds frame k already in the future and nearest, and renders at once.
+   Count-based stamps cannot drift. Any shift in (0, 0.5) works; 0.25 has the most margin. A temporal effect that needs
+   real lookahead must not use this stamp.
+3. **The detection MJPEG encoder.** Left threaded, it stalled the whole child for 100 ms or more every few frames when
+   the blur branch was on (a bistable p95 of 140 ms). Fixed by item 1.
+
+The blur graph needs mask N+1 to release picture N, so the blur feed leads the mask by one frame (`MASK_LEAD = 1`); the
+mask still lags the picture by two frames and its wait stays under one frame period.
+
+Measured pipe to pipe (a counter stamped into each frame, feed write to read, 600 frames per case, Arc A380, nothing
+live touched; ffmpeg CPU unchanged). Before is origin/main, after is this change:
+
+| Case | p50 before | p50 after | p95 before | p95 after | max before | max after |
+|---|---|---|---|---|---|---|
+| 720p30 neutral | 74.4 | 7.8 | 75.8 | 9.2 | 84.4 | 16.8 |
+| 720p30 with the blur branch | 78.2 | 10.9 | 107.6 | 13.0 | 111.1 | 18.0 |
+| 1080p30 neutral | 82.5 | 16.1 | 84.6 | 22.3 | 91.0 | 46.8 |
+| 1080p30 with the blur branch | 87.5 | 20.2 | 111.4 | 23.3 | 147.3 | 33.5 |
+
+Attribution at 720p30, p50 in ms (1080p30 in brackets): pipe floor 35.0 to 1.8 with one encoder thread (36.9 to 3.7);
+upload and download add about 3.2 (6.1); libplacebo adds about 1.9 (3.5), where it added about 35 with the hold;
+everything on, 6.9 (13.3). The 15 and 60 fps runs scale with the frame period, which confirms the holds were
+frame-period-bound. Pictures are bit-identical to origin/main (frame md5) for the neutral and graded looks.
+
+Caveat: there is no scratch v4l2loopback node the bench can write to without reloading the module (which would drop the
+live camera), so `streamstack engine bench` and `tools/latency_rig.py paths` were not run. The loopback write and the
+reader are outside these numbers; re-run the bench on hardware to confirm the end-to-end figure.
+
+The gate is GPU-free: `tests/test_engine_graph.py` asserts the stamp, the `fps=` option, and `-threads 1` on every
+rawvideo and MJPEG output, including the blur graph. Upstream option: `pl_queue` `advance()` should treat a frame with
+pts equal to the target as current when the radius is 0; that would remove the need for the stamp.
 
 ## Warmth and sharpen on the GPU (#58)
 

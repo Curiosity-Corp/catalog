@@ -16,13 +16,19 @@ import site
 import subprocess
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import readiness
+import sharding
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, expect, sync_playwright
+from playwright.sync_api import Error as PlaywrightError
 
-from support import ACTION_TIMEOUT, EXPECT_TIMEOUT, App, DiskProbe, Rig, poll
+from support import ACTION_TIMEOUT, EXPECT_TIMEOUT, HTTP_TIMEOUT, LOADED, SCALE, App, DiskProbe, Rig, poll
 
 REPO = Path(__file__).resolve().parents[2]
 ARTIFACTS = Path(os.environ.get("E2E_ARTIFACTS", REPO / "e2e-artifacts"))
@@ -67,11 +73,37 @@ if (window.EventSource) {
 
 
 PROBES: list[DiskProbe] = []
+# What the readiness gate and each browser engine's warm-up measured, printed in the terminal summary (issue #124).
+STARTUP_NOTES: list[str] = []
+READY_SECONDS = 30 * SCALE  # the demo server's API must answer within this before any test navigates
+WARM_ROUTE = "interface"  # a quiet page: no preview session, no server-side effect to undo
 
 
 def pytest_configure(config: pytest.Config) -> None:
     expect.set_options(timeout=EXPECT_TIMEOUT)
     config.addinivalue_line("markers", "cross_browser: also run this test in Firefox (the smoke subset)")
+
+
+def pytest_report_header(config: pytest.Config) -> str | None:
+    try:
+        shard = sharding.shard_from_env()
+    except sharding.ShardError as exc:
+        raise pytest.UsageError(str(exc)) from exc
+    return f"e2e shard {shard[0]} of {shard[1]} (tests/e2e/sharding.py)" if shard else None
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep this job's duration-balanced share of the suite under GitLab ``parallel: N`` (issue #172): every test is in
+    exactly one shard, tests missing from tests/e2e/timings.json included."""
+    try:
+        shard = sharding.shard_from_env()
+        if shard is None:
+            return
+        kept, dropped = sharding.select(items, *shard)
+    except sharding.ShardError as exc:
+        raise pytest.UsageError(str(exc)) from exc
+    config.hook.pytest_deselected(items=dropped)
+    items[:] = kept
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
@@ -156,7 +188,25 @@ def rig(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Rig]:
         if shown.returncode != 0 or token is None:
             pytest.fail(f"`console --url` gave no token (exit {shown.returncode}): {shown.stderr.strip()}")
         server = Rig(base=found.group(1), token=token.group(1), log=log, home=home, probe=probe)
-        server.state()  # ready: the API answers with the token
+
+        def fetch(path: str) -> tuple[int, bytes]:
+            try:
+                with urllib.request.urlopen(server.base + path, timeout=max(HTTP_TIMEOUT, 10 * SCALE)) as res:
+                    return res.status, res.read()
+            except urllib.error.HTTPError as err:
+                return err.code, err.read()
+
+        def answers() -> bool:
+            status, _ = server.request("GET", "api/state", token=server.token)
+            return status == 200
+
+        # Ready means the API answers with the token AND the page's whole module graph has been read once, so the
+        # first browser (Firefox on a stalled runner, issue #124) never pays for a cold server on its first goto.
+        try:
+            first_load = readiness.gate(fetch, answers, timeout=READY_SECONDS)
+        except readiness.NotReady as exc:
+            pytest.fail(f"{exc}\n" + "\n".join(log[-40:]))
+        STARTUP_NOTES.append(first_load.summary())
         yield server
     finally:
         probe.stop()
@@ -336,6 +386,8 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    for note in STARTUP_NOTES:
+        terminalreporter.write_line(note)
     for probe in PROBES:
         terminalreporter.write_line(probe.summary())
 
@@ -363,8 +415,33 @@ def browser(playwright_driver: Playwright, browser_name: str) -> Iterator[Browse
         instance.close()
 
 
+@pytest.fixture(scope="session")
+def warm_engine(browser: Browser, browser_name: str, rig: Rig) -> None:
+    """Open the console once in a throwaway context, so the first test's navigation is not the engine's first.
+
+    A fresh Firefox pays for its content process, profile and fonts on its first page, and on a stalled CI runner
+    that landed on whichever test ran first, as a 60 s ``Page.goto`` timeout (issue #124). The warm-up is timed and
+    reported; if it fails, the failure is recorded in the summary and the tests then report their own.
+    """
+    began = time.monotonic()
+    ctx = browser.new_context(viewport=DESKTOP, service_workers="block")
+    outcome = "ok"
+    try:
+        pg = ctx.new_page()
+        budget = LOADED * 4
+        pg.goto(f"{rig.url}#/{WARM_ROUTE}", wait_until="commit", timeout=budget)
+        expect(pg.locator("body")).to_have_attribute("data-conn", "online", timeout=budget)
+    except (PlaywrightError, AssertionError) as exc:
+        outcome = f"FAILED ({type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''})"
+    finally:
+        ctx.close()
+    STARTUP_NOTES.append(f"{browser_name} warm-up: first console load {time.monotonic() - began:.1f} s, {outcome}")
+
+
 @pytest.fixture
-def context(browser: Browser) -> Iterator[BrowserContext]:
+def context(browser: Browser, request: pytest.FixtureRequest) -> Iterator[BrowserContext]:
+    if "rig" in request.fixturenames:
+        request.getfixturevalue("warm_engine")  # the engine's first page is not a test's
     ctx = browser.new_context(viewport=DESKTOP, reduced_motion="no-preference", service_workers="block")
     ctx.add_init_script(INIT_SCRIPT)
     ctx.set_default_timeout(ACTION_TIMEOUT)

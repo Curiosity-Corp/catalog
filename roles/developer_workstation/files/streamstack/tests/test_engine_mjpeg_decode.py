@@ -110,7 +110,12 @@ def test_a_damaged_cache_is_probed_again(tmp_path: Path) -> None:
 def test_the_copy_graph_reads_the_decoders_own_frames() -> None:
     spec = Spec(MJPEG, "/dev/video43", 1920, 1080, mjpeg_decode=graph.MJPEG_VAAPI_COPY)
     text = graph.build_graph(spec, NEUTRAL)
-    assert text.startswith("[0:v]format=yuv420p|yuv422p|nv12,hwupload,libplacebo@grade=") and "hwmap" not in text
+    assert (
+        text.startswith(
+            "[0:v]" + graph.lookahead_stamp(30.0) + "format=yuv420p|yuv422p|nv12,hwupload,libplacebo@grade="
+        )
+        and "hwmap" not in text
+    )
     argv = graph.build_argv(spec, NEUTRAL)
     assert argv[argv.index("-hwaccel") : argv.index("-hwaccel") + 4] == ["-hwaccel", "vaapi", "-hwaccel_device", "va"]
     assert "-hwaccel_output_format" not in argv and "scale_vaapi" not in " ".join(argv)
@@ -120,7 +125,12 @@ def test_the_copy_graph_reads_the_decoders_own_frames() -> None:
 def test_the_software_graph_has_no_va_surfaces() -> None:
     spec = Spec(MJPEG, "/dev/video43", 1920, 1080, mjpeg_decode=graph.MJPEG_SOFTWARE)
     text = graph.build_graph(spec, NEUTRAL)
-    assert text.startswith("[0:v]format=yuv420p|yuv422p|nv12,hwupload,libplacebo@grade=") and "hwmap" not in text
+    assert (
+        text.startswith(
+            "[0:v]" + graph.lookahead_stamp(30.0) + "format=yuv420p|yuv422p|nv12,hwupload,libplacebo@grade="
+        )
+        and "hwmap" not in text
+    )
     argv = graph.build_argv(spec, NEUTRAL)
     assert "-hwaccel" not in argv and "scale_vaapi" not in " ".join(argv)
     assert "-input_format" in argv and spec.decode_path == "software"

@@ -108,3 +108,67 @@ def test_a_black_warm_up_does_not_make_a_lit_feed_black_but_an_all_black_feed_st
 def test_picture_spread_falls_back_to_the_pooled_figure_for_an_old_report() -> None:
     assert camprobe.picture_spread({"luma_std": 7.5}) == 7.5
     assert camprobe.picture_spread({"spatial_std": 2.0, "mean_range": 5.0}) == 5.0
+
+
+class _Timeout(Exception):
+    pass
+
+
+class _FakePage:
+    def __init__(self, goto_outcomes: list[Exception | None]) -> None:
+        self.outcomes = goto_outcomes
+        self.gotos: list[dict] = []
+        self.closed = False
+
+    def route(self, url, handler) -> None:
+        self.url = url
+
+    def goto(self, url, **kwargs) -> None:
+        self.gotos.append({"url": url, **kwargs})
+        outcome = self.outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+
+    def wait_for_load_state(self, state, **kwargs) -> None:
+        self.state = state
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeContext:
+    def __init__(self, outcomes: list[Exception | None]) -> None:
+        self.outcomes = outcomes
+        self.pages: list[_FakePage] = []
+
+    def new_page(self) -> _FakePage:
+        page = _FakePage([self.outcomes.pop(0)])
+        self.pages.append(page)
+        return page
+
+
+def test_a_cold_browsers_first_navigation_is_retried_on_a_new_page_and_waits_at_commit() -> None:
+    """Issue #124: the first Firefox navigation on a stalled runner timed out at 30 s and failed the matrix test."""
+    context = _FakeContext([_Timeout("stalled"), None])
+    page = camprobe.open_probe_page(context, _Timeout)
+    assert page is context.pages[1] and context.pages[0].closed and not page.closed
+    assert page.gotos == [{"url": camprobe.PROBE_URL, "wait_until": "commit", "timeout": camprobe.NAV_TIMEOUT_MS}]
+    assert camprobe.NAV_TIMEOUT_MS > 30_000, "the allowance must exceed Playwright's 30 s default that tripped in CI"
+
+
+def test_a_navigation_that_times_out_every_attempt_still_fails() -> None:
+    import pytest
+
+    context = _FakeContext([_Timeout("one"), _Timeout("two")])
+    with pytest.raises(_Timeout, match="two"):
+        camprobe.open_probe_page(context, _Timeout)
+    assert len(context.pages) == camprobe.NAV_ATTEMPTS and all(p.closed for p in context.pages)
+
+
+def test_other_errors_are_not_retried() -> None:
+    import pytest
+
+    context = _FakeContext([RuntimeError("boom")])
+    with pytest.raises(RuntimeError, match="boom"):
+        camprobe.open_probe_page(context, _Timeout)
+    assert len(context.pages) == 1

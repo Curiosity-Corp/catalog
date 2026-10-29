@@ -99,6 +99,18 @@ def test_the_best_working_codec_wins() -> None:
     assert encode.choose_encoder(probe=lambda e: e.codec == "h264").name == "h264_qsv"
 
 
+def test_vaapi_is_chosen_when_quick_sync_fails() -> None:
+    # dm313red: hevc_qsv fails on oneVPL 26.1, hevc_vaapi encodes
+    chosen = encode.choose_encoder("hevc", probe=lambda e: e.backend != "qsv")
+    assert chosen.name == "hevc_vaapi" and chosen.backend == "vaapi"
+    assert encode.choose_encoder(probe=lambda e: e.name != "av1_qsv" and e.codec == "av1").name == "av1_vaapi"
+
+
+def test_inside_a_codec_the_order_is_quick_sync_vaapi_nvenc() -> None:
+    for codec in encode.CODECS:
+        assert [e.backend for e in encode.ENCODERS if e.codec == codec] == ["qsv", "vaapi", "nvenc"]
+
+
 def test_a_codec_preference_skips_the_better_ones() -> None:
     assert encode.choose_encoder("hevc", probe=lambda e: True).codec == "hevc"
     with pytest.raises(encode.NoEncoder, match="Unknown codec"):
@@ -133,6 +145,30 @@ def test_probe_encoder_reports_a_failed_run(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(subprocess, "run", run)
     assert encode.probe_encoder(encode.ENCODERS[0]) is False
     assert "qsv=q:hw" in calls[0] and "av1_qsv" in calls[0]
+
+
+def test_probe_encoder_for_vaapi_uploads_on_the_render_node(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    enc = next(e for e in encode.ENCODERS if e.name == "hevc_vaapi")
+    assert encode.probe_encoder(enc, node="/dev/dri/renderD128") is True
+    argv = calls[0]
+    assert argv[argv.index("-init_hw_device") + 1] == "vaapi=va:/dev/dri/renderD128"
+    assert argv[argv.index("-filter_hw_device") + 1] == "va"
+    assert argv[argv.index("-vf") + 1] == "format=nv12,hwupload"
+    assert argv[argv.index("-c:v") + 1] == "hevc_vaapi" and "-low_power" in argv
+
+
+def test_a_vaapi_tap_asks_for_the_upload() -> None:
+    enc = next(e for e in encode.ENCODERS if e.name == "h264_vaapi")
+    tap = encode.tap_for(enc, "pipe:5", "mpegts", 4000)
+    assert tap.upload and tap.encoder == "h264_vaapi" and "-bf" in tap.args
+    assert not encode.tap_for(encode.ENCODERS[0], "pipe:5", "mpegts", 4000).upload
 
 
 def test_probe_encoder_survives_a_missing_ffmpeg(monkeypatch: pytest.MonkeyPatch) -> None:
