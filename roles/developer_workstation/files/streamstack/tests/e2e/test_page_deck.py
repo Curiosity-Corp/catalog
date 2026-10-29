@@ -83,7 +83,9 @@ def test_clicking_an_option_puts_it_on_the_selected_key(dk: App, rig: Rig) -> No
     free = next(i for i, k in enumerate(last["keys"]) if k["empty"])
     tap(page, cap(page, free))
     tap(page, option(page, "Mute"))
-    assert poll(rig, lambda s: s["deck"]["profile"]["pages"][4]["keys"][free]["raw"]["action"] == "audio.mute")
+    assert poll(
+        rig, lambda s: s["deck"]["profile"]["pages"][4]["keys"][free].get("raw", {}).get("action") == "audio.mute"
+    )
     assert rig.state()["deck"]["profile"]["pristine"] is False
     expect(page.locator(".dk-insp")).to_be_visible()
 
@@ -95,7 +97,9 @@ def test_dragging_an_option_onto_a_key_assigns_it(dk: App, rig: Rig) -> None:
     last = rig.state()["deck"]["profile"]["pages"][4]
     free = next(i for i, k in enumerate(last["keys"]) if k["empty"])
     drag_onto(page, option(page, "Privacy").first, cap(page, free), kind="option")
-    assert poll(rig, lambda s: s["deck"]["profile"]["pages"][4]["keys"][free]["raw"]["action"] == "video.privacy")
+    assert poll(
+        rig, lambda s: s["deck"]["profile"]["pages"][4]["keys"][free].get("raw", {}).get("action") == "video.privacy"
+    )
 
 
 def test_dragging_a_key_onto_another_swaps_them_and_onto_the_trash_clears_it(dk: App, rig: Rig) -> None:

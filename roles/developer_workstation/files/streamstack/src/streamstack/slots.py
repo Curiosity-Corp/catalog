@@ -33,6 +33,7 @@ also what a profile bundle for a fleet embeds.
 
 from __future__ import annotations
 
+import copy
 import math
 import threading
 from collections.abc import Mapping
@@ -43,6 +44,7 @@ from typing import Any
 from streamstack import config, store
 from streamstack.director import daylight
 from streamstack.framing.engine import SHOTS
+from streamstack.saving import LatestWriter, Nothing
 
 DOCUMENT = "streamstack.slot-profiles/1"
 SCHEMA = 1
@@ -284,16 +286,18 @@ class Store:
         """`ephemeral`: still atomic, but no fsync and no backup (the demo rig's profiles need no disk flush)."""
         self._path = path
         self.ephemeral = ephemeral
-        self.lock = threading.RLock()
+        self.lock = threading.RLock()  # serialises edits; held for the edit, never across the disk write
+        self._writer: LatestWriter[dict[str, Any]] = LatestWriter(self._write)
 
     @property
     def path(self) -> Path:
         return self._path or default_path()
 
     def load(self) -> dict[str, Any]:
-        with self.lock:
-            data = store.read_json(self.path, {}, validate=store.is_object)
-        return normalise(data)
+        pending = self._writer.pending()
+        if not isinstance(pending, Nothing):  # an edit being saved reads back at once, before its fsyncs (issue #168)
+            return normalise(copy.deepcopy(pending))
+        return normalise(store.read_json(self.path, {}, validate=store.is_object))
 
     def _write(self, data: dict[str, Any]) -> None:
         document = {"schema": SCHEMA, **data}
@@ -303,8 +307,9 @@ class Store:
         with self.lock:
             data = self.load()
             change(data)
-            self._write(data)
-            return data
+            self._writer.publish(copy.deepcopy(data))
+        self._writer.flush()  # outside the lock: the edit is already readable, the disk follows
+        return data
 
     def set_mode(self, mode: object) -> dict[str, Any]:
         value = check_mode(mode)

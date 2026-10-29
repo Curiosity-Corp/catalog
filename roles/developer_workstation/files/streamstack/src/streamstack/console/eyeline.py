@@ -28,6 +28,7 @@ from streamstack.console.errors import ActionError
 from streamstack.framing import detector, eyeline, health
 from streamstack.framing.engine import Face
 from streamstack.framing.eyeline import Baseline, Coach
+from streamstack.saving import LatestWriter
 
 log = logging.getLogger(__name__)
 Notify = Callable[[str, str], None]
@@ -124,6 +125,7 @@ class EyeLineController:
         self._device = cfg.get("STREAMSTACK_FRAMING_DEVICE", "auto") or "auto"
         self._period = 1.0 / FPS
         self.lock = threading.RLock()
+        self._writer: LatestWriter[dict] = LatestWriter(lambda data: store.write_json(self._state_file, data))
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -171,18 +173,25 @@ class EyeLineController:
         if self._enabled:
             self._status = "starting"
 
-    def _save(self) -> None:
-        base = self._coach.baseline
-        data = {
-            "enabled": self._enabled,
-            "reminder": self._reminder_on,
-            "minutes": self._coach.reminder_minutes,
-            "baseline": None if base is None else {"pitch": round(base.pitch, 2), "yaw": round(base.yaw, 2)},
-        }
+    def _save(self, *, report: bool = False) -> None:
+        """Save the settings as they are now. Never call it with `lock` held: the disk must not hold up `state()`
+        (issue #168). `report`: an action tells the person when the save fails, a background step only logs it."""
+        with self.lock:
+            base = self._coach.baseline
+            self._writer.publish(
+                {
+                    "enabled": self._enabled,
+                    "reminder": self._reminder_on,
+                    "minutes": self._coach.reminder_minutes,
+                    "baseline": None if base is None else {"pitch": round(base.pitch, 2), "yaw": round(base.yaw, 2)},
+                }
+            )
         try:
-            store.write_json(self._state_file, data)
+            self._writer.flush()
         except OSError as exc:
             log.warning("eye-line settings not saved to %s: %s", self._state_file, exc)
+            if report:
+                raise ActionError(f"The eye-line setting is in effect but could not be saved: {exc}", 409) from exc
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
 
@@ -229,8 +238,8 @@ class EyeLineController:
             self._coach.reset()
             self._coach.cancel_calibration()
             self._calibrating_since = None
-        self._save()
         self._wake.set()
+        self._save(report=True)
         return "Eye-line coach on" if on else "Eye-line coach off"
 
     def calibrate(self) -> str:
@@ -248,7 +257,7 @@ class EyeLineController:
             self._coach.cancel_calibration()
             self._coach.reset()
             self._calibrating_since = None
-        self._save()
+        self._save(report=True)
         return "Calibration cleared"
 
     def set_reminder(self, on: bool, minutes: int | None = None) -> str:
@@ -256,7 +265,7 @@ class EyeLineController:
             self._reminder_on = on
             if minutes is not None:
                 self._coach.reminder_minutes = minutes
-        self._save()
+        self._save(report=True)
         return "Looking-away reminder on" if on else "Looking-away reminder off"
 
     # -- state ------------------------------------------------------------------------------------------------------
@@ -419,7 +428,7 @@ class EyeLineController:
 
     def _observe(self, now: float, pose: eyeline.Pose | None) -> None:
         """One pose (or none) into the coach; the calibration and the reminder ride on the same step."""
-        remind = False
+        remind = calibrated = False
         with self.lock:
             if pose is not None:
                 self._last_face = now
@@ -428,9 +437,7 @@ class EyeLineController:
                 if self._coach.calibration_progress >= 1.0:
                     done = self._coach.finish_calibration() is not None
                     self._calibrating_since = None
-                    if done:
-                        self._save()
-                        self._toast("info", "Camera position calibrated: angles are now measured from your lens pose.")
+                    calibrated = done
                 elif self._calibrating_since is not None and now - self._calibrating_since > CALIBRATE_TIMEOUT:
                     self._coach.cancel_calibration()
                     self._calibrating_since = None
@@ -441,6 +448,9 @@ class EyeLineController:
             if self._reminder_on and self.in_call() and self._coach.reminder_due(now):
                 remind = True
                 minutes = self._coach.reminder_minutes
+        if calibrated:  # outside `lock`: the new baseline is in effect, the disk follows
+            self._toast("info", "Camera position calibrated: angles are now measured from your lens pose.")
+            self._save()
         if remind:
             self._toast("info", f"You have been looking away from the screen for {minutes} minutes. Back to the call?")
 
@@ -476,7 +486,7 @@ class DemoEyeLine(EyeLineController):
     def _load(self) -> None:
         """The demo never reads or writes the person's settings."""
 
-    def _save(self) -> None:
+    def _save(self, *, report: bool = False) -> None:
         """Nothing is kept."""
 
     def _readiness(self) -> tuple[bool, str, str]:

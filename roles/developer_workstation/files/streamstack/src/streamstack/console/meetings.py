@@ -30,6 +30,7 @@ from streamstack.console.errors import ActionError
 from streamstack.meetings import config, graph, ics
 from streamstack.meetings.model import Meeting
 from streamstack.meetings.tokens import KeyringStore, MemorySecrets, SecretError, SecretStore
+from streamstack.saving import LatestWriter
 
 Notify = Callable[[str, str], None]
 Clock = Callable[[], float]
@@ -149,6 +150,7 @@ class MeetingsController:
         self.notify: Notify | None = None
         self.rig: Any = None  # the Rig sets this: preparing runs Console actions
         self._lock = threading.RLock()
+        self._writer: LatestWriter[dict[str, Any]] = LatestWriter(lambda doc: self.store.save(doc))
         self._settings = self.store.load()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -403,10 +405,12 @@ class MeetingsController:
         self._save()
 
     def _save(self) -> None:
+        """Save the newest settings. The caller has already changed them, so the change is on screen; this is the
+        disk part, one write at a time, and the newest settings win (issue #168)."""
         with self._lock:
-            settings = copy.deepcopy(self._settings)
+            self._writer.publish(copy.deepcopy(self._settings))
         try:
-            self.store.save(settings)
+            self._writer.flush()
         except OSError as exc:
             raise ActionError(f"The meetings settings could not be saved: {exc}", 500) from exc
 
@@ -742,7 +746,7 @@ class DemoMeetings(MeetingsController):
                 self._code, self._code_error, self._graph = None, "", None
                 self._prep = {"state": "idle", "meeting": "", "time": None, "text": "", "steps": []}
                 self._events.clear()
-            self.store.save(self._settings)
+            self._save()
             self.approved, self.cloud, self.feed = False, [], {}
             self.secrets = MemorySecrets()
             self._auth = None

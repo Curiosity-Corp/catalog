@@ -12,10 +12,10 @@
 //   store.patch({ 'a.b': value }, {hold})  optimistic local write, held against server
 //                                 snapshots for `hold` ms (default 600) after the last write
 //   store.patch(..., {hold: Infinity})  hold until `settle` (an action still on its way to the server)
-//   store.settle(paths, token)  the action answered: each path is released as soon as a snapshot carries the held value,
-//                                 or after SETTLE_CEILING_MS when none ever does (a server that refused or never echoes)
-//                                 An object or list is released when a snapshot built after the action arrives (`seq`, see
-//                                 `settle`), since its copy on the server never compares equal to the patch
+//   store.settle(paths, token, {seq})  the action answered: each path is released by the first snapshot built after the
+//                                 action (`seq`, from the answer), not by one that merely equals the held value (an older
+//                                 snapshot can). Without a `seq` it is released as soon as a snapshot carries the held
+//                                 value. Either way after SETTLE_CEILING_MS when none does (a server that refused or never echoes)
 //   store.acknowledge(seq)      the server says the snapshot numbered `seq` is the same as the last one it sent
 //   store.release(paths)        drop holds (after a failed action) and re-apply the server value
 //
@@ -265,18 +265,21 @@ class Store {
    *  answer and may arrive seconds later, so a settled hold ends on agreement (a snapshot holding the same value, see
    *  `_commit`), not on a timer; SETTLE_CEILING_MS only bounds a server that never agrees. A path written again since
    *  (another token) stays with its newer writer and is never released by an older echo, so a drag cannot jump back. */
-  settle(paths, token, { agree = true, ceiling = SETTLE_CEILING_MS, seq, bySeq = false } = {}) {
+  settle(paths, token, { agree = true, ceiling = SETTLE_CEILING_MS, seq, bySeq = true } = {}) {
     const now = performance.now();
     for (const p of paths) {
       const h = this._holds.get(p);
       if (!h || h.token !== token) continue;
       const whole = h.value !== null && typeof h.value === 'object';
-      // A whole object or list was built from a stale snapshot and the server's copy carries live fields besides, so it
-      // never compares equal: it is released by the first snapshot that began after the action finished (`seq`, from
-      // the answer), which cannot predate the change. `bySeq` asks for the same for a plain value that the server does
-      // not echo back as sent (a camera that rounds it). Without a `seq` (an older server) both keep the short timer.
-      // A transient state (busy, reviving) may come and go between two snapshots and also keeps the short timer:
-      // waiting for agreement would hold the old picture for the whole ceiling.
+      // Every value is released by the first snapshot that began after the action finished (`seq`, from the answer),
+      // which cannot predate the change. Agreement by value is not enough, plain or whole: a snapshot built before the
+      // action that happens to equal the held value (the same mute pressed twice, a slider put back) released the hold
+      // early and the next snapshot showed the older value again (#169). A whole object or list never compares equal
+      // anyway (the server's copy carries live fields besides). `bySeq: false` is for a caller that must follow the
+      // value the first snapshot carries; none does today. Without a `seq` (an older server) the value keeps the old
+      // rules: agreement for a plain value, the short timer for a whole one. A transient state (busy, reviving) may
+      // come and go between two snapshots and keeps the short timer: waiting would hold the old picture for the whole
+      // ceiling.
       if (agree && typeof seq === 'number' && (whole || bySeq)) {
         h.until = now + ceiling;
         h.settled = true;

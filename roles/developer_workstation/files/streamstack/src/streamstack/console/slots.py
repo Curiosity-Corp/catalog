@@ -378,25 +378,32 @@ class SlotsController:
             expect: dict[str, Any] = {}
             for part, action, params in steps:
                 results.append(self._run_step(part, action, params, snap, data["fade_seconds"], expect))
-            if director_on:
-                results.extend(self._seed_parts(slot, profile, snap))
+            applied = {
+                "slot": slot,
+                "label": label,
+                "reason": reason,
+                "at": self._now().strftime("%H:%M:%S"),
+                "director": director_on,
+                "parts": list(results),
+                "expect": expect,
+                "settled_at": self._clock() + SETTLE_SECONDS + (data["fade_seconds"] if "lighting" in expect else 0.0),
+            }
+            # The profile shows as applied now. Seeding the Director's baseline is an fsynced write, tens of seconds
+            # on a starved disk, and comes after (issue #168): its parts join the list when it is done.
             with self._lock:
-                self._applied = {
-                    "slot": slot,
-                    "label": label,
-                    "reason": reason,
-                    "at": self._now().strftime("%H:%M:%S"),
-                    "director": director_on,
-                    "parts": results,
-                    "expect": expect,
-                    "settled_at": self._clock()
-                    + SETTLE_SECONDS
-                    + (data["fade_seconds"] if "lighting" in expect else 0.0),
-                }
+                self._applied = applied
                 self._undo = before if before and any(r["state"] == "applied" for r in results) else None
                 self._held = None
                 self._suggestion = None
                 self._watched_at = 0.0
+            if director_on:
+                seeded = self._seed_parts(slot, profile, snap)
+                if seeded:
+                    results.extend(seeded)
+                    with self._lock:
+                        if self._applied is applied:  # not undone or replaced while the baseline was being saved
+                            self._applied = {**applied, "parts": list(results)}
+                            self._undo = before if before and any(r["state"] == "applied" for r in results) else None
             return self._record(label, reason, results, director_on)
         finally:
             self._apply_lock.release()

@@ -26,6 +26,7 @@ from streamstack.console.errors import ActionError
 from streamstack.framing import detector, health, model
 from streamstack.framing.crop import Crop, Item, face_to_frame, window_to_crop
 from streamstack.framing.engine import MODES, PROFILES, SHOT_AUTO, SHOTS, SUBJECTS, Framer, resolution_zoom_cap
+from streamstack.saving import LatestWriter
 
 log = logging.getLogger(__name__)
 Notify = Callable[[str, str], None]
@@ -126,6 +127,7 @@ class FramingController:
         self._device = cfg.get("STREAMSTACK_FRAMING_DEVICE", "auto") or "auto"
         self._period = 1.0 / clean_fps(cfg)
         self.lock = threading.RLock()
+        self._writer: LatestWriter[dict] = LatestWriter(lambda data: store.write_json(self._state_file, data))
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -209,14 +211,19 @@ class FramingController:
         if isinstance(handoff, bool):
             self._handoff = handoff
 
-    def _save_mode(self) -> None:
-        try:
-            store.write_json(
-                self._state_file,
-                {"mode": self._mode, "shot": self._shot_choice, "subjects": self._subjects, "handoff": self._handoff},
+    def _save_mode(self, *, report: bool = False) -> None:
+        """Save the choices as they are now. Never call it with `lock` held: the disk must not hold up `state()`
+        (issue #168). `report`: an action tells the person when the save fails, a background step only logs it."""
+        with self.lock:
+            self._writer.publish(
+                {"mode": self._mode, "shot": self._shot_choice, "subjects": self._subjects, "handoff": self._handoff}
             )
+        try:
+            self._writer.flush()
         except OSError as exc:
             log.warning("framing mode not saved to %s: %s", self._state_file, exc)
+            if report:
+                raise ActionError(f"The framing choice is in effect but could not be saved: {exc}", 409) from exc
 
     # -- lifecycle ----------------------------------------------------------------------------------------------
 
@@ -262,8 +269,8 @@ class FramingController:
                 self._reason = None
             for framer in self._framers.values():
                 framer.set_mode(mode)
-        self._save_mode()
         self._wake.set()
+        self._save_mode(report=True)
         return f"Auto-framing: {MODE_LABELS[mode]}"
 
     def set_shot(self, shot: str) -> str:
@@ -275,8 +282,8 @@ class FramingController:
             self._shot_choice = shot
             for framer in self._framers.values():
                 framer.set_shot(shot)
-        self._save_mode()
         self._wake.set()
+        self._save_mode(report=True)
         label = "Auto" if shot == SHOT_AUTO else SHOTS[shot].label
         return f"Shot: {label}"
 
@@ -286,7 +293,7 @@ class FramingController:
             self._subjects = subjects
             for framer in self._framers.values():
                 framer.set_subjects(subjects)
-        self._save_mode()
+        self._save_mode(report=True)
         return f"Framing: {SUBJECT_LABELS[subjects]}"
 
     def set_handoff(self, on: bool) -> str:
@@ -294,7 +301,7 @@ class FramingController:
             self._handoff = bool(on)
             for framer in self._framers.values():
                 framer.set_handoff(self._handoff)
-        self._save_mode()
+        self._save_mode(report=True)
         return "Following the speaker" if on else "Not following the speaker"
 
     def on_meters(self, frame: dict, now: float | None = None) -> None:

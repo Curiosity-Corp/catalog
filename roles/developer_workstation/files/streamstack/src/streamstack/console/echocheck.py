@@ -22,6 +22,7 @@ The last result per output is remembered in `console-echo.json` (the Pre-flight 
 from __future__ import annotations
 
 import contextlib
+import copy
 import logging
 import math
 import os
@@ -38,6 +39,7 @@ from streamstack import config, echocheck, system
 from streamstack import store as filestore
 from streamstack.console.audio import number_param
 from streamstack.console.errors import ActionError
+from streamstack.saving import LatestWriter
 
 log = logging.getLogger(__name__)
 
@@ -205,6 +207,7 @@ class EchoController:
         self._clock, self._wall = clock, wall
         self._lock = threading.RLock()
         self._store = store_path
+        self._writer: LatestWriter[dict[str, Any]] = LatestWriter(lambda doc: filestore.write_json(self._store, doc))
         self._snapshot: Snapshot | None = None
         self._state = "idle"
         self._sink: str | None = None
@@ -433,13 +436,15 @@ class EchoController:
                 : max(0, len(self._results) - MAX_RESULTS)
             ]:
                 del self._results[old]
-            self._save_results()
+            if self._store is not None:
+                self._writer.publish({"results": copy.deepcopy(self._results)})
         clean = result["link"]["level"] == "ok"
         quiet = "ok" if clean else "warn"  # a clear verdict on a bad link is not good news to the person
         level = {"none": quiet, "slight": quiet, "moderate": "warn", "strong": "warn", "feedback": "error"}.get(
             result["level"], "warn"
         )
         self._tell(level, result["text"])
+        self._save_results()  # last, and outside `_lock`: the result and its toast never wait for the disk (issue #168)
 
     def _finish_error(self, message: str, *, warn: bool = False) -> None:
         with self._lock:
@@ -481,9 +486,10 @@ class EchoController:
         if self._store is None:
             return
         try:
-            filestore.write_json(self._store, {"results": self._results})
+            self._writer.flush()
         except OSError as exc:
             log.warning("cannot save %s: %s", self._store, exc)
+            self._tell("warn", f"The echo check result is shown but could not be saved: {exc.strerror or exc}")
 
 
 # ---------------------------------------------------------------------------

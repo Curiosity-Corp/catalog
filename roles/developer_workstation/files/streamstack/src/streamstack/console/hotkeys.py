@@ -30,6 +30,7 @@ from typing import Any, Protocol
 from streamstack import hotkeys
 from streamstack.console.errors import ActionError
 from streamstack.deck import catalog
+from streamstack.saving import LatestWriter
 
 Notify = Callable[[str, str], None]
 Clock = Callable[[], float]
@@ -138,6 +139,7 @@ class HotkeysController:
         self.notify: Notify | None = None
         self.rig: Any = None  # the Rig sets this: a trigger runs its actions
         self._lock = threading.RLock()
+        self._writer: LatestWriter[tuple[bool, list[dict]]] = LatestWriter(lambda doc: self.store.save(*doc))
         self._enabled, self._bindings = self.store.load()
         self._keys: KeyBackend | None = None
         self._keys_reason: str | None = None
@@ -404,18 +406,26 @@ class HotkeysController:
 
     def _commit(self, bindings: list[dict], enabled: bool | None = None) -> None:
         cleaned = hotkeys.clean_bindings(bindings)
-        on = self._enabled if enabled is None else enabled
-        try:
-            self.store.save(on, cleaned)
-        except OSError as exc:
-            raise ActionError(f"The hotkeys could not be saved: {exc}", 500) from exc
         with self._lock:
+            on = self._enabled if enabled is None else enabled
+            before = (self._bindings, self._enabled)
+            # In effect first, saved after (issue #168): the bindings show, and the keys are grabbed, before the disk.
             self._bindings, self._enabled = cleaned, on
+            self._writer.publish((on, copy.deepcopy(cleaned)))
             live = {b["id"] for b in cleaned}
             for table in (self._last_fire, self._last_extra, self._last_log, self._last_result):
                 for gone in [k for k in table if k not in live]:
                     del table[gone]
         self._sync_keys()
+        try:
+            self._writer.flush()
+        except OSError as exc:
+            with self._lock:
+                if self._bindings is cleaned:  # a save that fails changes nothing, unless a newer edit has built on it
+                    self._bindings, self._enabled = before
+                    self._writer.publish((self._enabled, copy.deepcopy(self._bindings)))
+            self._sync_keys()
+            raise ActionError(f"The hotkeys could not be saved: {exc}", 500) from exc
 
     @staticmethod
     def _find(bindings: list[dict], ident: object) -> dict:
