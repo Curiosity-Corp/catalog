@@ -186,6 +186,24 @@ def test_deskmeet_modesetting_runs_without_glamor() -> None:
     assert removal["state"] == "absent" and removal["path"] == task["dest"]
 
 
+def test_deskmeet_x_does_not_auto_add_the_igpu() -> None:
+    """catalog#122: X must not drive the display-less iGPU as a second GPU."""
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["hardware_profiles"]["deskmeet-b760"]["xorg_auto_add_gpu"] is False
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    env.filters["bool"] = lambda value: str(value).lower() in ("true", "1", "yes")
+    expr = env.from_string(defaults["minimal_desktop_xorg_auto_add_gpu"])
+    for profile, want in (("deskmeet-b760", "False"), ("other", "")):
+        ctx = {"hardware_profiles": defaults["hardware_profiles"], "hardware_profile": profile}
+        assert expr.render(**ctx) == want
+    tasks = _tasks("minimal-desktop-lightdm.yml")
+    task = _named(tasks, "Set the X server AutoAddGPU flag")["ansible.builtin.copy"]
+    rendered = env.from_string(task["content"]).render(minimal_desktop_xorg_auto_add_gpu=False)
+    assert 'Option "AutoAddGPU" "false"' in rendered and "Managed by Ansible" in rendered
+    removal = _named(tasks, "Remove the AutoAddGPU override")["ansible.builtin.file"]
+    assert removal["state"] == "absent" and removal["path"] == task["dest"]
+
+
 def test_lightdm_restart_backoff_drop_in() -> None:
     """A crashing X server must not turn lightdm.service into a ~3 s relaunch loop."""
     defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
