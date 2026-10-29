@@ -1,0 +1,57 @@
+#!/bin/sh
+# Managed by curiosity.workstation. Restart ziti-edge-tunnel only when no ssh
+# session is live, otherwise defer.
+#
+# Every ssh session an agent opens to this host over Ziti is carried by the
+# tunnel, so restarting it closes all of them at once ("Connection to <host>
+# closed by remote host"). The role restarts the tunnel only when one of its
+# systemd drop-ins changed; this wrapper makes that restart safe:
+#
+#   curiosity-ziti-safe-restart            restart now when idle, else mark the
+#                                          restart pending and exit 0
+#   curiosity-ziti-safe-restart --pending  do the pending restart if one is
+#                                          marked and the host is idle
+#
+# Idle means no established TCP connection on the sshd port. Nothing is ever
+# killed; a deferred restart is applied by the next run that finds the host
+# idle, or by the next boot (the drop-ins are read at tunnel start).
+#
+# Environment (overridable for tests):
+#   ZITI_SAFE_UNIT      unit to restart                    (ziti-edge-tunnel.service)
+#   ZITI_SAFE_PORT      sshd port                          (22)
+#   ZITI_SAFE_PENDING   marker file                        (/var/lib/curiosity/ziti-restart-pending)
+set -eu
+
+unit=${ZITI_SAFE_UNIT:-ziti-edge-tunnel.service}
+port=${ZITI_SAFE_PORT:-22}
+pending=${ZITI_SAFE_PENDING:-/var/lib/curiosity/ziti-restart-pending}
+mode=${1:-restart}
+
+log() {
+    logger -t curiosity-ziti-safe-restart -- "$*" 2>/dev/null || true
+    printf '%s\n' "$*"
+}
+
+case "$mode" in
+    restart | --pending) ;;
+    *)
+        printf 'usage: %s [--pending]\n' "$0" >&2
+        exit 2
+        ;;
+esac
+
+if [ "$mode" = "--pending" ] && [ ! -e "$pending" ]; then
+    exit 0
+fi
+
+sessions=$(ss -H -tn state established "( sport = :$port )" | wc -l)
+if [ "$sessions" -gt 0 ]; then
+    mkdir -p "$(dirname "$pending")"
+    date -u +%FT%TZ >"$pending"
+    log "deferred: $sessions ssh connection(s) are live; $unit restart is pending"
+    exit 0
+fi
+
+systemctl restart "$unit"
+rm -f "$pending"
+log "restarted $unit (no live ssh connections)"
