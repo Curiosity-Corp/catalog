@@ -525,7 +525,11 @@ def test_launcher_sets_the_accel_speed_once_per_attach(tmp_path: Path, speed: st
             f"""\
             #!/bin/sh
             case "$1" in
-              set-prop) echo "$*" >> {setprop}; exit 0;;
+              set-prop)
+                # Like real xinput: the bare name matches the pointer and the
+                # floated keyboard node, so only "pointer:<name>" resolves.
+                [ "$2" = "pointer:Logitech G604" ] || exit 1
+                echo "$*" >> {setprop}; exit 0;;
               test) exec sleep 30;;
               list)
                 if [ "$2" = "--name-only" ]; then
@@ -561,7 +565,7 @@ def test_launcher_sets_the_accel_speed_once_per_attach(tmp_path: Path, speed: st
         if speed:
             _wait_for(setprop)
             time.sleep(1.0)  # several polls while attached: still one call
-            assert setprop.read_text().splitlines() == ["set-prop Logitech G604 libinput Accel Speed 0.6"]
+            assert setprop.read_text().splitlines() == ["set-prop pointer:Logitech G604 libinput Accel Speed 0.6"]
             present.unlink()
             time.sleep(0.6)
             present.touch()

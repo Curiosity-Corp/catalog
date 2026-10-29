@@ -126,7 +126,9 @@ stop_bindings() {
 apply_accel_speed() {
     [ -n "$accel_speed" ] || return 0
     [ -z "$accel_applied" ] || return 0
-    if xinput set-prop "$device_name" "libinput Accel Speed" "$accel_speed" 2>/dev/null; then
+    # The G604 shows up twice in X (pointer, and the keyboard node this script
+    # floats), so the bare name is ambiguous and xinput refuses it.
+    if xinput set-prop "pointer:$device_name" "libinput Accel Speed" "$accel_speed" 2>/dev/null; then
         accel_applied=1
     else
         echo "curiosity-g604: could not set libinput Accel Speed to $accel_speed" >&2
