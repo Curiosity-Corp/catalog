@@ -14,7 +14,7 @@ from streamstack.console import video as console_video
 from streamstack.console.arcblur import ArcBlur
 from streamstack.console.errors import ActionError
 from streamstack.console.native import NativeVideo
-from streamstack.engine import source
+from streamstack.engine import graph, source
 from streamstack.engine.cropper import EngineCropper
 from streamstack.engine.graph import Rect, Source, Spec
 from streamstack.engine.segment import Arc
@@ -167,6 +167,57 @@ def test_applying_a_look_ramps_to_the_target(video: NativeVideo) -> None:
     assert len(engine.looks) > 4  # eased, not one jump
     mids = [look["warmth"] for look in engine.looks]
     assert mids == sorted(mids)
+
+
+def test_a_look_with_its_own_lut_gives_the_engine_the_lut_name(video: NativeVideo) -> None:
+    video.act("video.looks.apply", {"name": "Portra Portrait"})
+    engine = video.made[0]  # type: ignore[attr-defined]
+    assert wait_for(lambda: engine.look.get("lut_amount") == 0.7, timeout=5)
+    assert all(look.get("lut") == "portra" for look in engine.looks)
+    assert "lut" not in video.state()["look"]  # the sliders the UI shows stay numbers and flags only
+    video.act("video.looks.apply", {"name": "Warm Studio"})  # a look with no LUT of its own drops it
+    assert wait_for(lambda: engine.look.get("warmth") == 0.25, timeout=5)
+    assert wait_for(lambda: "lut" not in engine.look)
+
+
+def test_reset_drops_the_looks_lut(video: NativeVideo) -> None:
+    video.act("video.looks.apply", {"name": "Portra Portrait"})
+    engine = video.made[0]  # type: ignore[attr-defined]
+    assert wait_for(lambda: engine.look.get("lut_amount") == 0.7, timeout=5)
+    video.act("video.look.reset", {})
+    assert wait_for(lambda: "lut" not in engine.look and engine.look.get("contrast") == 0.0)
+
+
+def test_the_looks_lut_survives_a_restart_of_the_console(tmp_path: Path) -> None:
+    path = tmp_path / "v.json"
+    path.write_text(
+        json.dumps(
+            {
+                "active": "Canon EOS 50D",
+                "looks": {"Canon EOS 50D": {"lut_enabled": True, "lut_amount": 0.5}},
+                "luts": {"Canon EOS 50D": "portra", "Cam Link 4K": "not-a-lut", "x": 3},
+            }
+        )
+    )
+    controller = NativeVideo(dict(config.DEFAULTS), state_file=path, discover=lambda cfg: [CANON])
+    assert controller._engine_look("Canon EOS 50D")["lut"] == "portra"
+    assert "lut" not in controller._engine_look("Cam Link 4K")  # an unknown name is dropped on load
+
+
+def test_the_scaler_setting_accepts_only_a_benchmarked_name(video: NativeVideo) -> None:
+    assert video._scaler() == graph.DEFAULT_SCALER
+    video.cfg["STREAMSTACK_ENGINE_SCALER"] = "Spline36"
+    assert video._scaler() == "spline36"
+    video.cfg["STREAMSTACK_ENGINE_SCALER"] = "bogus"
+    assert video._scaler() == graph.DEFAULT_SCALER  # a warning toast, never a refusal to start
+
+
+def test_the_denoise_setting_is_off_unless_it_names_a_known_denoiser(video: NativeVideo) -> None:
+    assert video._denoise() == ""
+    video.cfg["STREAMSTACK_ENGINE_DENOISE"] = "NLMeans"
+    assert video._denoise() == "nlmeans"
+    video.cfg["STREAMSTACK_ENGINE_DENOISE"] = "bogus"
+    assert video._denoise() == ""  # a warning toast, never a refusal to start
 
 
 def test_reset_returns_to_natural(video: NativeVideo) -> None:
@@ -361,3 +412,30 @@ def test_a_failed_grab_is_none_and_is_not_cached(video: NativeVideo, monkeypatch
 
 def test_an_unknown_camera_has_no_frame(video: NativeVideo) -> None:
     assert video.frame("No Such Camera", 640) is None
+
+
+def test_a_saved_look_keeps_its_lut_and_renders_the_same(video: NativeVideo, isolated_home: Path) -> None:
+    video.act("video.looks.apply", {"name": "Portra Portrait"})
+    engine = video.made[0]  # type: ignore[attr-defined]
+    assert wait_for(lambda: engine.look.get("lut_amount") == 0.7, timeout=5)
+    video.act("video.looks.save", {"name": "My portra"})
+    path = isolated_home / ".config/streamstack/looks.json"
+    assert json.loads(path.read_text())["My portra"]["lut"] == "portra"
+    assert video.state()["looks"][-1]["lut"] == "portra"
+    video.act("video.looks.apply", {"name": "Warm Studio"})
+    assert wait_for(lambda: "lut" not in engine.look)
+    video.act("video.looks.apply", {"name": "My portra"})
+    assert wait_for(lambda: engine.look.get("lut") == "portra", timeout=5)
+
+
+def test_looks_saved_before_luts_were_kept_still_load(tmp_path: Path) -> None:
+    from streamstack.console.video import LookLibrary
+
+    path = tmp_path / "looks.json"
+    path.write_text(json.dumps({"Old": {"contrast": 0.2}, "Odd": {"contrast": 0.1, "lut": "nope"}}))
+    library = LookLibrary(path)
+    assert library.get("Old")["contrast"] == 0.2 and library.lut_of("Old") is None
+    assert library.lut_of("Odd") is None and library.lut_of("Portra Portrait") == "portra"
+    library.save("New", {"contrast": 0.4}, "noir")
+    assert library.lut_of("New") == "noir" and library.lut_of("Old") is None  # saving rewrites the others intact
+    assert library.get("Old")["contrast"] == 0.2

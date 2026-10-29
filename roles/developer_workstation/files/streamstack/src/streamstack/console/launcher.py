@@ -124,6 +124,26 @@ def window_url(url: str, mini: bool) -> str:
     return url + "#/mini" if mini else url
 
 
+def log_address(port: int, mini: bool = False) -> str:
+    """The line the Console logs when it serves: the address WITHOUT its access token.
+
+    stdout of the headless service lands in the systemd journal, which other processes of the user can read and
+    log shippers collect; the token grants control of the rig, so it is only printed by `streamstack console --url`.
+    """
+    address = window_url(f"http://127.0.0.1:{port}/", mini)
+    return f"StreamStack Console: {address} (access token not logged: `streamstack console --url`)"
+
+
+def print_url(mini: bool = False) -> int:
+    """`streamstack console --url`: the running Console's full address, token included, to stdout. Never starts one."""
+    running = read_running()
+    if not running:
+        print("streamstack: no Console is running (start it with `streamstack console`)", file=sys.stderr)
+        return 1
+    print(window_url(f"http://127.0.0.1:{running['port']}/?token={running['token']}", mini), flush=True)
+    return 0
+
+
 def app_argv(browser: list[str], url: str, mini: bool = False) -> list[str]:
     """A Chrome/Edge/Chromium app window (no tabs or address bar) with its own profile."""
     width, height = MINI_SIZE if mini else WINDOW_SIZE
@@ -168,17 +188,20 @@ def run_console(
     mini: bool = False,
     idle_exit: float | None = None,
     poll: float = 2.0,
+    url_only: bool = False,
 ) -> int:
     from streamstack.console.rig import Rig
     from streamstack.console.server import ConsoleServer
 
+    if url_only:
+        return print_url(mini)
     with startup_lock():
         running = read_running()
         if running:
             url = f"http://127.0.0.1:{running['port']}/?token={running['token']}"
             if window and not open_window(url, mini):
-                print("streamstack: no browser found; open the address below yourself", file=sys.stderr)
-            print(f"StreamStack Console: {window_url(url, mini)}", flush=True)
+                print("streamstack: no browser found; `streamstack console --url` prints the address", file=sys.stderr)
+            print(log_address(running["port"], mini), flush=True)
             return 0
         try:
             server = ConsoleServer(Rig.demo() if demo else Rig.live(), port=port)
@@ -194,9 +217,9 @@ def run_console(
     try:
         server.start()
         url = server.url()
-        print(f"StreamStack Console: {window_url(url, mini)}", flush=True)
+        print(log_address(server.port, mini), flush=True)
         if window and not open_window(url, mini):
-            print("streamstack: no browser found; open the address above yourself", file=sys.stderr)
+            print("streamstack: no browser found; `streamstack console --url` prints the address", file=sys.stderr)
         limit = WINDOW_IDLE_EXIT if idle_exit is None and window else (idle_exit or 0.0)
         while not stop.wait(poll):
             if limit and server.hub.idle_seconds() > limit:

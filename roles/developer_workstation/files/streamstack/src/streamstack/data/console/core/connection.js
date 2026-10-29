@@ -59,7 +59,7 @@ async function open() {
   clearTimeout(retryTimer);
   clearInterval(countdownTimer);
   if (!hasToken()) {
-    store.setStatus('unauthorized', { message: 'No access token in the page address. Open the Console with “streamstack console”.' });
+    store.setStatus('unauthorized', { message: 'No access token in the page address. Open the Console with “streamstack console” or from the StreamStack tray: the access token is new on every launch, so an installed app window needs the launcher to open it.' });
     return;
   }
   try {
@@ -84,6 +84,11 @@ async function open() {
     const snap = parse(ev);
     if (snap) store.applyServer(snap);
     store.setStatus('online');
+    arm();
+  });
+  es.addEventListener('ack', (ev) => {
+    const ack = parse(ev);
+    if (ack) store.acknowledge(ack.seq);
     arm();
   });
   es.addEventListener('meters', (ev) => {

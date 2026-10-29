@@ -221,3 +221,15 @@ def test_alt_9_opens_the_deck_and_the_page_is_quiet(app: App, page: Page, proble
     expect(page.locator(".dk-cap")).to_have_count(16, timeout=LOADED)
     assert page.evaluate("window.__csp") == []
     assert problems == []
+
+
+def test_a_page_rename_stays_while_snapshots_keep_arriving(dk: App, rig: Rig) -> None:
+    """#157: the new name is shown at once and not replaced by an older snapshot while the server catches up."""
+    page = dk.page
+    name = page.get_by_role("textbox", name="Page name")
+    name.fill("Keep me")
+    name.press("Enter")
+    for _ in range(10):
+        expect(page.locator(".dk-tab[aria-selected='true'], .dk-tab[data-current]").first).to_contain_text("Keep me")
+        page.wait_for_timeout(100)
+    assert poll(rig, lambda s: any(p["name"] == "Keep me" for p in s["deck"]["profile"]["pages"]))

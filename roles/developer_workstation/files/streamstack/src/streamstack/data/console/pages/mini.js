@@ -4,6 +4,7 @@
 import { h, renderList } from '../core/util.js';
 import { iconHTML } from '../components/icons.js';
 import { mountReviveBanner } from '../core/revive.js';
+import { mountSafeJoinBanner } from '../core/safejoin.js';
 import { toggleLights, toggleMute, togglePrivacy, selectScene, selectPreset } from '../core/ops.js';
 
 const TEMPLATE = `
@@ -21,6 +22,7 @@ const TEMPLATE = `
     <ss-fader data-ref="gain" orientation="horizontal" label="Gain" unit="dB" step="0.5" default="0" signed decimals="1" ticks="none" accent="green"></ss-fader>
   </div>
   <div class="revive" data-ref="revive"></div>
+  <div data-ref="safeJoin"></div>
   </div>
   <ss-pad big row solid tone="amber" icon="eye-off" label="Privacy" sub="Cut camera to Be Right Back" hotkey="P" data-ref="privacy"></ss-pad>
   <ss-card bare inline-reason data-ref="scenesCard"><div class="m-scenes" data-ref="scenes" role="group" aria-label="Scenes"></div></ss-card>
@@ -36,6 +38,7 @@ export async function mount(host, ctx) {
   const { store, actStream, flushStream } = ctx;
   await ctx.ensureCss(new URL('./mini.css', import.meta.url).href);
   await ctx.ensureCss(new URL('../core/revive.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('../core/safejoin.css', import.meta.url).href);
   document.title = 'StreamStack mini';
   host.innerHTML = TEMPLATE;
   const R = {};
@@ -52,6 +55,7 @@ export async function mount(host, ctx) {
   });
   R.mute.addEventListener('click', () => toggleMute());
   off.push(mountReviveBanner(R.revive, ctx, { compact: true }));
+  off.push(mountSafeJoinBanner(R.safeJoin, ctx));
 
   sub((s) => s.audio.gain_range, ([lo, hi]) => { R.gain.setAttribute('min', lo); R.gain.setAttribute('max', hi); });
   sub((s) => s.audio.mic.gain_db, (v) => { R.gain.value = v; });

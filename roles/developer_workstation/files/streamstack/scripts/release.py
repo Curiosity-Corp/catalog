@@ -310,8 +310,9 @@ def default_target(current: Version, changelog: str) -> Version:
 def tag_commands(version: str) -> list[str]:
     return [
         f'git commit -am "chore(release): {version}"',
-        "# merge that commit to main through its merge request, then on the merged main:",
-        f'git tag -a v{version} -m "StreamStack {version}"',
+        "# merge that commit to main through its merge request, then tag the release MR's HEAD (source) commit, never",
+        "# the merge commit: MRs merging ahead of it on the train bring changelog fragments the tag gate refuses",
+        f'git tag -a v{version} <release-MR-head-sha> -m "StreamStack {version}"',
         f"git push origin v{version}",
     ]
 
@@ -356,6 +357,21 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+def main_ancestor_problem(root: Path) -> str | None:
+    """Why the tagged commit is not on ``origin/main`` (a tag on an unmerged commit ships unreviewed code), or None."""
+    target = f"origin/{DEFAULT_BRANCH}"
+    for fetch in (
+        ("fetch", "--quiet", "--depth=200", "origin", DEFAULT_BRANCH),
+        ("fetch", "--quiet", "--unshallow", "origin"),
+    ):
+        if git_ok(root, "merge-base", "--is-ancestor", "HEAD", target):
+            return None
+        git_ok(root, *fetch)
+    if git_ok(root, "merge-base", "--is-ancestor", "HEAD", target):
+        return None
+    return f"the tagged commit is not an ancestor of {target}: merge the release MR first, then tag its head commit"
+
+
 def cmd_check_tag(args: argparse.Namespace) -> int:
     root = Path(args.root)
     version = tag_version(args.tag)
@@ -370,6 +386,10 @@ def cmd_check_tag(args: argparse.Namespace) -> int:
             f"{FRAGMENT_DIR}/ still holds {len(left)} fragment(s) ({', '.join(left[:5])}): "
             "`scripts/release.py prepare` compiles and deletes them; the release commit must not ship them"
         )
+    if args.require_main_ancestor:
+        problem = main_ancestor_problem(root)
+        if problem:
+            raise ReleaseError(problem)
     print(f"release {version}: tag, __version__ and CHANGELOG agree")
     return 0
 
@@ -516,6 +536,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     check_tag = sub.add_parser("check-tag", help="CI gate for a vX.Y.Z tag")
     check_tag.add_argument("tag")
+    check_tag.add_argument(
+        "--require-main-ancestor", action="store_true", help=f"also require the tagged commit to be on {DEFAULT_BRANCH}"
+    )
     check_tag.add_argument(
         "--owner-approved-minor",
         action="store_true",

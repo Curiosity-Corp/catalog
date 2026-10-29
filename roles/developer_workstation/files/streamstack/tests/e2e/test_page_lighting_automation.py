@@ -92,12 +92,15 @@ def test_a_key_pressed_before_the_server_answers_flips_the_click(li: App, rig: R
     tap(li.page, follow)
     expect(follow).to_have_attribute("aria-checked", "false", timeout=LOADED)
     li.press("f")
+    # The page sends the posts of one action in order: the key's post waits until the click's has been answered.
+    li.page.wait_for_timeout(500)
+    assert len(held) == 1, f"the key's post overtook the click's: saw {len(held)}"
+    held[0].continue_()
+    assert poll(rig, lambda s: auto(s)["settings"]["follow"]["enabled"] is False)
     deadline = time.monotonic() + LOADED / 1000
     while len(held) < 2 and time.monotonic() < deadline:
         li.page.wait_for_timeout(50)
-    assert len(held) == 2, f"expected the click and the key to each post once, saw {len(held)}"
-    held[0].continue_()  # one at a time: the server must see the click first and the key second
-    assert poll(rig, lambda s: auto(s)["settings"]["follow"]["enabled"] is False)
+    assert len(held) == 2, f"expected the key to post once the click was answered, saw {len(held)}"
     held[1].continue_()
     assert poll(rig, lambda s: auto(s)["settings"]["follow"]["enabled"] is True)
     li.page.unroute("**/api/action", hold_first)

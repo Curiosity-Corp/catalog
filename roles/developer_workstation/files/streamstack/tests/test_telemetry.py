@@ -186,7 +186,8 @@ def test_rotating_the_token_locks_out_the_old_one(served: ConsoleServer) -> None
 def test_a_scrape_is_not_held_up_by_a_token_write_in_flight(
     served: ConsoleServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Pipeline 95914: /metrics queued behind the fsync of a token write on a starved node. It must answer at once."""
+    """Pipeline 95914: /metrics queued behind the fsync of a token write on a starved node. It must answer at once,
+    and (pipeline 97445) a rotation in flight has already revoked the old token: no waiting on the disk."""
     from streamstack.console import diagnostics
 
     act(served, "telemetry.set", on=True)
@@ -211,9 +212,49 @@ def test_a_scrape_is_not_held_up_by_a_token_write_in_flight(
     finally:
         release.set()
         rotation.join(HTTP_TIMEOUT)
-    assert (wrong, right) == (401, 200)
+    assert (wrong, right) == (401, 401), "the old token must stop working while the new one is still being written"
     assert elapsed < 5, f"two scrapes waited {elapsed:.1f}s behind a token write"
     assert get(served, "/metrics", {"Authorization": f"Bearer {old}"})[0] == 401
+
+
+def test_rotation_revokes_the_old_token_before_the_write_and_the_new_one_works_at_once() -> None:
+    """Pipeline 97445: the old token kept answering 200 until the fsync returned. token_ok must flip at the start."""
+    from streamstack.console import diagnostics
+
+    diag = Diagnostics({})
+    old = diag._ensure_token()
+    assert diag.token_ok(old)
+    seen: dict[str, bool] = {}
+
+    def slow_write(path: Path | str, updates: dict[str, str | None], *, mode: int | None = None) -> None:
+        new = updates[diagnostics.TOKEN_KEY]
+        assert new is not None
+        seen["old_valid"], seen["new_valid"] = diag.token_ok(old), diag.token_ok(new)
+        time.sleep(0.2)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(diagnostics.store, "update_env_file", slow_write)
+        diag._ensure_token(rotate=True)
+    assert seen == {"old_valid": False, "new_valid": True}
+
+
+def test_a_failed_rotation_save_never_revives_the_old_token() -> None:
+    from streamstack.console import diagnostics
+    from streamstack.console.errors import ActionError
+
+    diag = Diagnostics({})
+    old = diag._ensure_token()
+
+    def broken_write(path: Path | str, updates: dict[str, str | None], *, mode: int | None = None) -> None:
+        raise OSError("disk full")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(diagnostics.store, "update_env_file", broken_write)
+        with pytest.raises(ActionError) as caught:
+            diag._ensure_token(rotate=True)
+    assert caught.value.status == 409 and "no longer works" in str(caught.value)
+    assert not diag.token_ok(old)
+    assert diag._read_token() not in (None, old)
 
 
 def test_the_switch_persists_and_turning_off_removes_the_endpoint(served: ConsoleServer) -> None:
@@ -223,6 +264,67 @@ def test_the_switch_persists_and_turning_off_removes_the_endpoint(served: Consol
     assert get(served, "/metrics", {"X-StreamStack-Token": "console-token"})[0] == 404
     assert act(served, "telemetry.scrape_config")["status"] == 409
     assert act(served, "telemetry.set", on="yes")["status"] == 400
+
+
+def test_the_switch_turns_over_before_the_save_finishes() -> None:
+    """Issue #161: `enabled` was set only after the token and the setting were fsynced, so on a starved disk the
+    Console showed the switch off, and /metrics answered 404, for as long as the disk took."""
+    from streamstack.console import diagnostics
+
+    diag = Diagnostics({})
+    seen: dict[str, bool] = {}
+    real = diagnostics.store.update_env_file
+
+    def slow_write(path: Path | str, updates: dict[str, str | None], *, mode: int | None = None) -> None:
+        seen["enabled_during_save"] = diag.enabled
+        real(path, updates, mode=mode)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(diagnostics.store, "update_env_file", slow_write)
+        try:
+            diag._set_enabled(True)
+        finally:
+            diag._stop_sampler()
+    assert seen.get("enabled_during_save") is True
+    assert diag.enabled
+
+
+def test_a_failed_save_turns_an_enable_back_off_and_says_so() -> None:
+    from streamstack.console import diagnostics
+    from streamstack.console.errors import ActionError
+
+    diag = Diagnostics({})
+
+    def broken_write(path: Path | str, updates: dict[str, str | None], *, mode: int | None = None) -> None:
+        raise OSError("disk full")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(diagnostics.store, "update_env_file", broken_write)
+        with pytest.raises(ActionError) as caught:
+            diag._set_enabled(True)
+    assert caught.value.status == 409 and "stays off" in str(caught.value)
+    assert not diag.enabled
+
+
+def test_a_failed_save_of_a_disable_leaves_it_off_and_says_so() -> None:
+    from streamstack.console import diagnostics
+    from streamstack.console.errors import ActionError
+
+    diag = Diagnostics({})
+    try:
+        diag._set_enabled(True)
+
+        def broken_set(key: str, value: str) -> None:
+            raise OSError("disk full")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(diagnostics.config, "set_user_setting", broken_set)
+            with pytest.raises(ActionError) as caught:
+                diag._set_enabled(False)
+    finally:
+        diag._stop_sampler()
+    assert caught.value.status == 409 and "off until the Console restarts" in str(caught.value)
+    assert not diag.enabled
 
 
 def test_actions_and_errors_are_measured(served: ConsoleServer) -> None:

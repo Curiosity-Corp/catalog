@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 METERS_HZ = 30
 STATE_POLL_SECONDS = 1.0
+SLOW_SNAPSHOT_S = 1.0  # a snapshot that takes longer is logged: every window waits for it
 STATE_MIN_GAP = 0.25  # at most four state pushes a second, however fast actions arrive
 CLIENT_QUEUE = 64
 
@@ -80,7 +81,10 @@ class Hub:
         self.poll_seconds = poll_seconds
         self._clients: set[Client] = set()
         self._lock = threading.Lock()
-        self._latest = "null"
+        self._latest = "null"  # the newest broadcast snapshot, with its `seq`
+        self._latest_body = "null"  # the same without `seq`: what "changed" is judged on
+        self._seq = 0  # snapshots begun so far (see `mark`)
+        self._ack_wanted = False
         self._have_state = False
         self._wake = threading.Event()
         self._pending = False
@@ -113,8 +117,12 @@ class Hub:
 
     def subscribe(self) -> Client:
         client = Client()
-        client.offer(sse("state", self.state_json()))
+        self.state_json()  # the first window builds the snapshot (outside the lock: it asks the whole rig)
+        # Hand over the newest snapshot and join the broadcast in one step with `refresh`: a push that lands between
+        # the two would otherwise reach neither, and a window that opened just as an action landed would show the old
+        # state until the next change (a switch that was clicked and never turned over).
         with self._lock:
+            client.offer(sse("state", self._latest))
             self._clients.add(client)
         return client
 
@@ -147,6 +155,35 @@ class Hub:
         with self._lock:
             return self._latest
 
+    def _begin(self) -> tuple[int, bool]:
+        """Number a snapshot that is about to be built, and take the pending acknowledgement request."""
+        with self._lock:
+            self._seq += 1
+            wanted, self._ack_wanted = self._ack_wanted, False
+            return self._seq, wanted
+
+    def mark(self) -> int:
+        """The number of the first snapshot that will be built after this call.
+
+        An action's answer carries it as `seq`: the Console keeps what it just did on screen until a snapshot with this
+        number or a higher one arrives, because an older snapshot (built before the action, delivered after its
+        answer) does not contain the change. A snapshot is judged by when its build began, so one that was already
+        under way when the action finished always has a lower number. A kick follows, and when that snapshot turns out
+        identical to the last one, an `ack` event carries its number instead."""
+        with self._lock:
+            self._ack_wanted = True
+            return self._seq + 1
+
+    @staticmethod
+    def with_seq(text: str, seq: int) -> str:
+        """The encoded snapshot with its number as the first key (a snapshot is always a non-empty object)."""
+        return f'{{"seq":{seq},{text[1:]}' if text.startswith("{") and text != "{}" else text
+
+    def fresh_json(self) -> str:
+        """A snapshot built now for one caller (GET /api/state), numbered but not broadcast."""
+        seq, _ = self._begin()
+        return self.with_seq(self.encode(self.rig.snapshot()), seq)
+
     def kick(self) -> None:
         """Push a fresh snapshot as soon as the rate limit allows (after an action)."""
         self._pending = True
@@ -154,12 +191,24 @@ class Hub:
 
     def refresh(self) -> bool:
         """Snapshot the rig now; broadcast it when it differs from the last one. True when it changed."""
-        text = self.encode(self.rig.snapshot())
+        seq, wanted = self._begin()
+        began = time.monotonic()
+        body = self.encode(self.rig.snapshot())
+        took = time.monotonic() - began
+        if took >= SLOW_SNAPSHOT_S:
+            print(f"streamstack console: the state snapshot took {took:.1f} s", file=sys.stderr, flush=True)
+        text = self.with_seq(body, seq)
         with self._lock:
-            if self._have_state and text == self._latest:
+            if self._have_state and body == self._latest_body:
+                if wanted:  # an action finished and nothing it touched shows: say the picture is current
+                    ack = sse("ack", json.dumps({"seq": seq}))
+                    for client in self._clients:
+                        client.offer(ack)
                 return False
-            self._latest, self._have_state = text, True
-        self._broadcast(sse("state", text))
+            self._latest, self._latest_body, self._have_state = text, body, True
+            frame = sse("state", text)
+            for client in self._clients:  # under the lock, so `subscribe` sees the new state or gets the frame
+                client.offer(frame)  # never blocks
         return True
 
     def toast(self, level: str, text: str) -> None:

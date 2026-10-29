@@ -98,6 +98,16 @@ RULES: tuple[dict, ...] = (
         "tone": "amber",
     },
     {
+        "action": "safejoin.go_live",
+        "group": "Live",
+        "label": "Go live",
+        "icon": "broadcast",
+        "hint": "Release the privacy and mute Safe join took when the call began",
+        "state": "safejoin.holding",
+        "lit_label": "Go live",
+        "tone": "amber",
+    },
+    {
         **_flag("video.record", group="Live", label="Record", icon="record", hint="Start or stop recording"),
         "state": "video.recording.active",
         "lit_label": "Recording",

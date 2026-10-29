@@ -89,6 +89,72 @@ single `hwdownload`, converts to NV12 and gives the encoder system-memory frames
 h264_qsv OK, hevc_qsv fails. AV2 has no row on purpose: the slot is empty until a real-time hardware encoder
 exists, and adding it is one table row. Recording, SRT, WHIP/WebRTC, RTMP and Opus belong to `streamstack/stream`.
 
+## Video denoise for the Canon feed (#92)
+
+`tools/bench_video_denoise.py` panned a real photo (so the temporal filters face motion) at 1280x720, added sensor-like
+noise (ffmpeg `noise`, temporal and uniform, strength 12 and 25) and scored every filter against the clean clip.
+PSNR and SSIM cut 8 px off every border, because `nlmeans_vulkan` writes garbage into its outermost row and column
+(measured: mean error 50 to 170 levels in that single row or column against 1.5 inside; the second row is normal).
+Cost is the ffmpeg process's own CPU and GPU engine time per frame (DRM fdinfo), output discarded. 60 frames each.
+
+| Noise | Filter | PSNR dB | SSIM | CPU ms/frame | GPU ms/frame |
+|---|---|---|---|---|---|
+| 12 | none | 37.41 | 0.852 | 1.1 | 0 |
+| 12 | `hqdn3d` | 41.37 | 0.940 | 4.1 | 0 |
+| 12 | `atadenoise` (temporal) | 37.91 | 0.866 | 5.7 | 0 |
+| 12 | `denoise_vaapi` 16 | 39.48 | 0.907 | 3.5 | 1.6 |
+| 12 | `denoise_vaapi` 32 | 41.93 | 0.949 | 3.4 | 1.6 |
+| 12 | `nlmeans_vulkan` s3 p3 r5 | 43.30 | 0.983 | 1.8 | 9.0 |
+| 12 | `nlmeans_vulkan` s5 p3 r7 | 39.82 | 0.978 | 2.0 | 15.0 |
+| 25 | none | 31.08 | 0.584 | 1.2 | 0 |
+| 25 | `hqdn3d` | 31.83 | 0.624 | 4.6 | 0 |
+| 25 | `atadenoise` (temporal) | 31.13 | 0.586 | 6.3 | 0 |
+| 25 | `denoise_vaapi` 16 | 31.12 | 0.589 | 3.5 | 1.5 |
+| 25 | `denoise_vaapi` 32 | 31.24 | 0.596 | 3.6 | 1.5 |
+| 25 | `nlmeans_vulkan` s3 p3 r5 | 40.02 | 0.941 | 1.6 | 9.0 |
+| 25 | `nlmeans_vulkan` s5 p3 r7 | 38.96 | 0.959 | 1.9 | 15.0 |
+
+Reading it: at heavy noise only `nlmeans_vulkan` does anything (+8.9 dB, SSIM 0.58 to 0.94); `denoise_vaapi`,
+`atadenoise` and `hqdn3d` move the picture by under 1 dB there. At light noise `denoise_vaapi` at level 32 and
+`hqdn3d` are decent, but `nlmeans_vulkan` still leads (+5.9 dB) and costs the least CPU (under 2 ms a frame, against 3.4
+to 5.7 for the others), because the work is on the GPU: 9 ms of GPU time per 720p frame, which is 27 % of the Arc at
+30 fps (about 2.25 times that at 1080p, so use it for the Canon's 720p feed or accept the load).
+
+**Choice:** `nlmeans_vulkan=s=3:p=3:r=5` is the engine's denoiser. The stronger setting (s5 p3 r7) is 66 % slower for
+less PSNR at both levels. It is opt-in, not on by default: a clean picture gains nothing and a denoiser costs detail,
+so `STREAMSTACK_ENGINE_DENOISE=nlmeans` turns it on (Vulkan backend only). The graph then runs it right after the
+upload, before the grade, and the grade crops 2 px off every side (the garbage row and column; the crop also holds for
+the framing window, see `graph.safe_window`). That is 0.3 % of the frame width. `tests/test_engine_denoise.py` runs the
+engine's graph on a GPU and checks both the noise reduction and the clean edges.
+
+Not done: a Console toggle (the setting is read at engine start), and a low-light auto switch.
+
+## Copies and conversions per frame (#95)
+
+A census of what one frame goes through, so that "no new copies" is checkable. `U` is a host-to-GPU upload, `D` a
+GPU-to-host download, `C` a CPU pixel-format conversion.
+
+| Path | Steps | Copies |
+|---|---|---|
+| Raw camera, Vulkan, no taps | upload (`format=yuv422p,hwupload`), libplacebo, `D` (`hwdownload,format=yuv422p`), pack to yuyv422 (`C`), v4l2 write | 1 U, 1 D, 1 C |
+| MJPEG camera, vaapi-copy (#137) | VA decode, decoder read-back, upload, libplacebo, `D`, `C` | 2 U-side moves (decode read-back, upload), 1 D, 1 C |
+| MJPEG camera, zero-copy | VA decode, `hwmap` to Vulkan, libplacebo, `D`, `C` | 0 U, 1 D, 1 C (not working on this stack, #138) |
+| Each encode tap, before #95 | `C` yuv422p to yuyv422 (shared), then `C` yuyv422 to nv12 per tap | 1 extra `C` per tap |
+| Each encode tap, after #95 | `C` yuv422p to nv12 per tap, split before the pack | 1 `C` per tap, none shared with the pack |
+
+What can not be removed today: the download (`D`) and the pack, because the program picture has to reach a v4l2
+loopback device in system memory as yuyv422, and libplacebo cannot output a packed format or scale_vulkan convert one
+(measured in the #95 experiments). The encoder cannot take the frame from the GPU either: Vulkan to VA-API mapping
+fails (#138; the OpenCL route is ruled out in [ADR 0008](adr/0008-opencl-on-va-api-surfaces.md)). The one free win was
+in the taps: they used to convert the already packed yuyv422 picture to nv12, so every frame was repacked to 4:2:2
+once and unpacked again. The split now sits before the pack (`split=N[pre][t0]...;[pre]format=yuyv422[prog]`), so each
+tap converts straight from the planar picture.
+
+Measured with `tools/bench_look.py --look sharp --size 1920x1080 --taps 2` (raw nv12 into the null muxer, three runs
+each, engine child only): CPU 72.8, 74.7 and 77.8 percent of one core before, 67.7, 69.7 and 68.8 after (6 points
+less on average with two taps); GPU time 241 to 269 ms per second either way; feed-to-program latency p50 82 ms either
+way. With no taps the graph is unchanged and the numbers are the same (29.9 against 29.2 percent). No copy was added.
+
 ## Measured results
 
 28-core host, v4l2loopback `max_buffers=2`, a stamped synthetic YUYV feed, reader `v4l2-ctl` on `/dev/video43`
@@ -147,6 +213,83 @@ implementation of CAS on grey content (mean 0.1 to 0.3 grey levels), not against
 
 Known difference: libplacebo's cool side is mild (a white-point shift that saturates at about 20 R and 14 B). The
 warm side matches the old `colorcorrect` closely; strongly cool looks (Tungsten Fix at -0.45) are weaker than before.
+
+## Per-look LUTs and the scaler (#93)
+
+A preset look names a generated 3D LUT (`presets/luts.py`, 12 of them). The Console gives the engine that name with
+the look (the sliders stay numbers and flags; the name is kept per camera and survives a Console restart). libplacebo
+reads a LUT at init only and has no strength option, so the engine bakes both, the same way it bakes sharpen: the
+cube is the generated one mixed with the identity at the look's LUT amount, in steps of 0.05, one `.cube` per
+(look, step) written once under the shader directory (`engine/shaders.py`). When the look or the amount crosses a
+step the supervisor waits 0.6 s for the look to rest and rebuilds the child, as for sharpen; a look applied with its
+1 s ramp therefore gets its LUT about 1.6 s after the click, and every other slider moves live. A look you save keeps its LUT name in `looks.json` (an optional `lut` string; files from before load unchanged), so
+it renders as it did. A look that names no
+LUT (or an engine without the shader directory) keeps the colorcorrect split-tone approximation; a cube that cannot
+be written falls back to it with a toast.
+
+Measured on the Arc with `ffmpeg -init_hw_device vulkan` and a test card (tests/test_engine_shaders.py runs this
+where there is a GPU): `lut_type=normalized` reproduces a reference trilinear sampler of the same cube to a mean of
+0.4 to 0.9 and at most 4.6 levels of 255 (portra, noir, teal-orange, velvia, 100 % and 50 %). The `lut_type=conversion`
+the engine used for the static `STREAMSTACK_ENGINE_LUT` is a source-to-display colourspace conversion: with a
+near-identity cube it tinted the picture green (mean 138 levels of 255 off the reference), and `native` applies the
+cube to the raw Y'CbCr values (noir: 95 levels off). Both the per-look and the static LUT now use `normalized`.
+
+Scalers: `STREAMSTACK_ENGINE_SCALER` picks the libplacebo scaler for the crop zoom and any size change (the program
+size differing from the camera's). A name can be selected only if `tools/bench_scalers.py` has measured it; the 21
+measured are `graph.SCALERS`. The tool scales a photo through the real engine path and compares with the original
+(PSNR and SSIM) and reads the GPU engine time from the DRM counters (1080p, Arc A380, GPU ms per frame):
+
+| Scaler | zoom 1.25x PSNR / GPU | zoom 2x PSNR / GPU | 2x down and back PSNR / GPU |
+|---|---|---|---|
+| ewa_lanczos (the old default) | 46.47 dB / 5.38 ms | 40.49 dB / 4.09 ms | 47.27 dB / 14.39 ms |
+| lanczos (the new default) | 46.60 dB / 3.48 ms | 40.72 dB / 2.86 ms | 47.98 dB / 8.12 ms |
+| spline36 (libplacebo's own) | 46.39 dB / 3.49 ms | 40.62 dB / 2.89 ms | 47.94 dB / 8.15 ms |
+| ewa_lanczos4sharpest | 46.70 dB / 5.90 ms | 41.14 dB / 4.70 ms | 48.67 dB / 17.47 ms |
+| bilinear | 44.65 dB / 2.43 ms | 39.20 dB / 2.13 ms | 42.74 dB / 4.77 ms |
+| oversample | 44.42 dB / 2.59 ms | 38.79 dB / 2.28 ms | 49.75 dB / 4.56 ms |
+| nearest | 41.50 dB / 2.57 ms | 37.95 dB / 2.22 ms | 46.98 dB / 5.17 ms |
+
+The default changes from `ewa_lanczos` to `lanczos`: the same picture quality (PSNR within 0.2 dB, SSIM within
+0.0005 in the zoom cases and better in the round trip) for 35 to 45 % less GPU time; at 1080p30 a zoomed or
+downscaled picture saves 60 to 190 ms of GPU time per second. At 1:1 (no zoom, same size) libplacebo does not scale
+and the setting costs nothing. The full 21-row tables are reproduced by `tools/bench_scalers.py --ratio 0.8|0.5|2`.
+
+VA-API to Vulkan and the MJPEG decode path (#137): a VA-decoded JPEG maps into Vulkan and reads back through `hwmap`
+and `hwdownload` equal to a software decode, but libplacebo cannot import the mapped frame on this stack (ffmpeg
+8.0.1, libplacebo 7.360, mesa 26.0.8, intel-media-va-driver 26.1.2, Arc A380): `vk->CreateImage ...
+VK_ERROR_OUT_OF_DEVICE_MEMORY` (libplacebo `gpu_tex.c`, the dma-buf import). A Cam Link in MJPEG mode would therefore
+have had no picture. So the engine picks the first of three ways to decode a Motion-JPEG camera that works here:
+
+| Path | Graph head | Where the decode runs |
+|---|---|---|
+| `vaapi` (zero-copy) | `-hwaccel vaapi -hwaccel_output_format vaapi`, `hwmap=derive_device=vulkan` | the GPU, no copy |
+| `vaapi-copy` | `-hwaccel vaapi` (the decoder reads the surface back itself), `format=yuv420p\|yuv422p\|nv12,hwupload` | the GPU, one read-back and one upload |
+| `software` | libavcodec (threaded by default), `format=yuv420p\|yuv422p\|nv12,hwupload` | the CPU |
+
+- `probe.probe_mjpeg` runs the engine's own head, tier by tier, on a synthetic 4:2:0 and a 4:2:2 JPEG (decode,
+  libplacebo, read back). The first tier that passes both is used. The answer is cached in `engine-mjpeg-probe.json`
+  next to the settings under a fingerprint of the node, the ffmpeg version and the mesa, VA driver and libva packages;
+  a new stack probes again, and a probe that could not run (no ffmpeg, timeout) is not kept. This stack answers
+  `vaapi-copy`, with the zero-copy failure as the reason.
+- The decoder's own read-back is used (no `-hwaccel_output_format`) rather than a `hwdownload` in the graph: a
+  `hwdownload,format=nv12` on a JPEG surface (really yuv420p) only relabels the planes and the chroma is garbage.
+- Detect and segmenter graphs use `scale` instead of `scale_vaapi` on the two fallback paths. Grade, crop and taps are
+  the same on all three.
+- The path is on the state block (`engine.decode`: `vaapi`, `vaapi-copy`, `software` or `none (raw)`; `decode_note`
+  says why zero-copy is off), in the log and a toast, in the doctor's "Video engine" line and in `streamstack engine
+  probe`. `STREAMSTACK_ENGINE_MJPEG_DECODE` (`auto`, `vaapi`, `vaapi-copy`, `software`) overrides the probe.
+
+Measured in the whole engine argv (1080p30 MJPEG source, grade, detect branch, null output, 10 s at real time, two
+runs each; one core is 100 %): software 40 to 42 % (4:2:0) and 41 to 44 % (4:2:2); vaapi-copy 33 to 35 % and 38 to 41 %.
+The copy tier saves 3 to 8 points of a core here, not the 3 to 4 times a bare decode, upload and grade graph shows (16
+to 18 % against 10 to 12 %): most of the engine's cost is shared (the read-back of the graded 4:4:4 picture, the
+conversion to the output format and the detect branch; a raw camera costs 29 % in the same measure). Zero-copy could
+not be measured on this stack.
+
+Time-boxed look at making the zero-copy import work on the Arc: nothing found; the variants, errors, versions and the
+stalled `hwmap,scale_vulkan` copy are recorded in
+issue #138 in the project tracker for a retest after driver
+updates (`streamstack engine probe` shows when the stack starts passing).
 
 ## OBS was removed (#61)
 
@@ -228,6 +371,66 @@ CPU fallback on purpose: without an Arc the Console says "Unavailable: <reason>"
 fps, inference ms, mask age). Settings are saved in `video.json`. `STREAMSTACK_ENGINE_BLUR=off` removes the branch;
 `STREAMSTACK_ENGINE_BLUR_DEVICE` picks a device. Measure again with `tools/bench_blur.py`.
 
+### Halo at the speaker's edge (#133)
+
+A plain Gaussian blur of the whole frame lets the speaker's colours bleed into the blurred background, and the
+composite shows a halo around the head and shoulders. The default (`STREAMSTACK_ENGINE_BLUR_EDGE=normalised`) blurs
+only the background: at the small size it computes `blur(picture x w) / blur(w)` per plane, where `w` is the
+background mask squared, with ffmpeg `blend` (multiply, and divide) and two `gblur`
+instances (`bg` and `bgw`, both following the strength slider). Offline experiments on a synthetic composite showed
+a large drop in the edge-band error against the plain blur; a guided-filter mask refinement was tried and rejected
+because it did not beat the normalised blur on the same data. `plain` restores the old graph.
+
+Regression test: `tests/test_engine_blur_edge.py` runs the real blur branch through ffmpeg on the CPU with a saturated
+red speaker on a blue background and a hard mask, and measures how much of the speaker's red the background pixels 4 to
+24 px outside the edge pick up: about 0.3 of it with the plain blur, under 0.02 with the normalised blur (the test fails
+above 0.05, or if the plain blur does not show at least 0.15, or if the improvement is under 5 times).
+
+Cost, measured with `tools/bench_blur.py --mode fake --edge plain|normalised` (1280x720 at 30 fps, strength 8, 20 s
+stamped runs, this host with the Arc A380; the stand-in segmenter means the OpenVINO package, which is not installed
+here, is not in the numbers, but the whole engine graph is, libplacebo on the Arc included):
+
+| edge | ffmpeg CPU (% of one core) | latency p50 / p95 | dropped |
+|---|---|---|---|
+| plain | 59.3, 61.7 (before), 60.0, 59.3, 59.2, 59.9 (after) | 77.3 / 80.3 ms | 0 |
+| normalised, as shipped in #133 | 89.9, 90.1 (issue), 89.0 (rerun) | 77.9 / 80.0 ms | 0 |
+| normalised, #148 | 63.9, 66.5, 63.8, 62.7 (mean 64.2, +7.7 % over plain) | 77.2 to 77.8 / 80.5 to 81.7 ms | 0 |
+
+#### Why the cost came down without Vulkan (#148)
+
+The extra 29 points were not the `gblur` and `blend` stages as such. Timing each stage in isolation
+(`ffmpeg -benchmark`, 300 frames of 1280x720) showed the `blend=all_expr='min(255,A*255/max(B,1))'` divide was about
+80 % of the branch's extra CPU: the expression evaluator runs per pixel, per plane, at about 44 ns each. Two changes
+took it down to +7.7 % of plain:
+
+1. The divide is the `blend` filter's own `all_mode=divide`. Its values equal the expression's to within one level
+   wherever the weight is above 0 (it returns white where the weight is exactly 0, which is under the speaker and
+   masked out). `test_divide_mode_matches_the_expression_it_replaced` checks this through ffmpeg.
+2. The weight is the same in all three planes of the mask, so its blur runs on one plane (`extractplanes=y`) and is
+   copied back to three with `mergeplanes` for the divide. (`format=gray` is not a substitute: it rescales the range
+   and made the halo come back, 0.16 of the speaker's colour; the edge test caught it.)
+
+Latency is unchanged, nothing is dropped, and `tests/test_engine_blur_edge.py` still passes.
+
+#### Why Vulkan was not used
+
+Not viable for this branch, and not needed any more:
+
+- The Vulkan filter set on this ffmpeg has `gblur_vulkan`, `avgblur_vulkan`, `scale_vulkan` and `blend_vulkan`, but
+  `blend_vulkan` only has `normal` and `multiply` (no divide), and there is no `maskedmerge_vulkan`. The divide and the
+  merge would stay on the CPU, so the picture and the weights would have to cross the PCIe/staging boundary every
+  frame in both directions.
+- The stages are at 1/4 size (320x180), where the CPU is cheap. Measured here, `hwupload,gblur_vulkan,hwdownload` on one
+  320x180 plane costs 0.154 s of CPU for 600 frames against 0.347 s for the CPU `gblur` (about 0.3 ms a frame saved)
+  and adds a synchronisation wait (0.39 s against 0.08 s of wall time for the same 600 frames). Moving the stages would
+  save under a point of one core and add latency jitter and a second code path.
+- A libplacebo custom shader takes one input, so it cannot divide two pictures.
+
+The CPU path is therefore the only path; there is no Vulkan variant to fall back from. If a future ffmpeg gains
+`blend_vulkan` divide and a Vulkan masked merge, the whole branch (not just the extra stages) is the thing to move.
+
+Still to check by a human on real recorded Canon and Cam Link clips: the look of the edge on hair and glasses.
+
 ## Idle
 
 The supervisor child is stopped, not paused, while no app reads StreamStack Camera: see
@@ -237,6 +440,7 @@ guard releases the placeholder before the child opens the node, as it does after
 
 ## Left for other issues
 
+- OpenCL filters on VA-API surfaces: investigated, not adopted ([ADR 0008](adr/0008-opencl-on-va-api-surfaces.md)).
 - Compositing the blur on the GPU (see above).
 - Hardware AV1 recording and streaming over the tap, SRT, WHIP/WebRTC, RTMP and Opus (`streamstack/stream`).
 - A native PipeWire node; a dmabuf import path if libav ever exposes it.

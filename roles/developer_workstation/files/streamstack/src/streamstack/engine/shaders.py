@@ -1,9 +1,12 @@
-"""The GPU shaders the engine hooks into libplacebo, generated from templates.
+"""The GPU shaders and look cubes the engine hands to libplacebo, generated from templates.
 
 libplacebo's ffmpeg filter takes a custom shader at init only (`custom_shader_path`; no option that a shader could
 read is settable at run time), so a shader's strength is a constant in its source and each strength is its own
 file. `ensure_sharpen` writes the file for one strength; `graph.sharpen_shader_path` says where it will be, so the
 graph text stays a pure function. Files are written once, atomically, and never changed afterwards.
+
+A look's own 3D LUT is baked the same way: libplacebo's `lut` option has no strength either, so `ensure_lut` writes
+the generated cube (presets/luts.py) mixed with the identity at the look's LUT amount, in steps of `LUT_STEP`.
 
 The sharpen shader is AMD's contrast-adaptive sharpening (FidelityFX CAS, MIT), the published algorithm, written out
 for the mpv `.hook` format libplacebo reads and run on the picture in the colour the output is encoded from. Its
@@ -19,7 +22,8 @@ import os
 import tempfile
 from pathlib import Path
 
-from streamstack.engine.graph import sharpen_shader_path
+from streamstack.engine.graph import LUT_STEP, lut_file_path, sharpen_shader_path
+from streamstack.presets import luts
 
 SHARPEN_TEMPLATE = """\
 //!HOOK OUTPUT
@@ -57,6 +61,44 @@ def sharpen_source(level: float) -> str:
     return SHARPEN_TEMPLATE.replace("@STRENGTH@", f"{level:.2f}")
 
 
+def blended_cube(name: str, steps: int) -> str:
+    """The generated cube `name` mixed with the identity at `steps * LUT_STEP` (1.0 is the cube itself).
+
+    libplacebo's `lut` option has no strength, so a look's LUT amount is baked into the cube it is given.
+    """
+    amount = min(1.0, steps * LUT_STEP)
+    if name not in luts.LUTS:
+        raise ValueError(f"no generated LUT called {name!r}")
+    if not 0 < steps <= round(1.0 / LUT_STEP):
+        raise ValueError(f"a LUT strength is 1 to {round(1.0 / LUT_STEP)} steps, not {steps}")
+    full = luts.Lut3D.parse(luts.build_cube(name))
+    size = full.size
+    last = size - 1
+    lines = [
+        f'TITLE "StreamStack {name} at {amount:.2f}"',
+        f"# {luts.LICENCE}",
+        f"LUT_3D_SIZE {size}",
+        "DOMAIN_MIN 0.0 0.0 0.0",
+        "DOMAIN_MAX 1.0 1.0 1.0",
+    ]
+    index = 0
+    for b in range(size):
+        for g in range(size):
+            for r in range(size):
+                grid = (r / last, g / last, b / last)
+                entry = full.table[index]
+                index += 1
+                mixed = [luts.clamp(grid[c] + (entry[c] - grid[c]) * amount) for c in range(3)]
+                lines.append(f"{mixed[0]:.5f} {mixed[1]:.5f} {mixed[2]:.5f}")
+    return "\n".join(lines) + "\n"
+
+
+def ensure_lut(directory: str | Path, name: str, steps: int) -> str:
+    """Make sure the blended cube for (name, steps) exists under `directory`; returns its path (OSError as below)."""
+    path = Path(lut_file_path(str(directory), name, steps))
+    return _write_once(path, blended_cube(name, steps), ".lut-")
+
+
 def ensure_sharpen(directory: str | Path, level: float) -> str:
     """Make sure the shader for `level` exists under `directory`; returns its path.
 
@@ -64,14 +106,18 @@ def ensure_sharpen(directory: str | Path, level: float) -> str:
     stage and says so).
     """
     path = Path(sharpen_shader_path(str(directory), level))
-    text = sharpen_source(level)
+    return _write_once(path, sharpen_source(level), ".cas-")
+
+
+def _write_once(path: Path, text: str, prefix: str) -> str:
+    """Write `text` at `path` atomically unless the file already holds exactly it; returns the path."""
     try:
         if path.read_text() == text:
             return str(path)
     except FileNotFoundError:
         pass
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".cas-", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=prefix, suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as handle:
             handle.write(text)

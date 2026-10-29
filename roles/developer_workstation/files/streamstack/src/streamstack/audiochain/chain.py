@@ -438,6 +438,35 @@ def structure_signature(engine: str, microphone: str | None, rate: int = graph.R
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+STOPPED_MESSAGE = (
+    "The voice chain was stopped on purpose (streamstack chain stop); streamstack chain start brings it back."
+)
+
+
+def stopped_marker(state_dir: Path) -> Path:
+    return state_dir / "audio-chain" / "stopped-by-user"
+
+
+def stopped_by_user(state_dir: Path) -> bool:
+    """True while a deliberate `streamstack chain stop` stands: no supervisor may start the host again (#145)."""
+    return stopped_marker(state_dir).exists()
+
+
+def mark_stopped(state_dir: Path) -> None:
+    """Record a deliberate stop. Raises OSError when the marker cannot be written (the caller says so)."""
+    path = stopped_marker(state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("stopped by `streamstack chain stop`; `streamstack chain start` clears this\n")
+
+
+def clear_stopped(state_dir: Path) -> None:
+    """A deliberate start: the Console may supervise the host again. A marker that is already gone is fine."""
+    try:
+        stopped_marker(state_dir).unlink()
+    except FileNotFoundError:
+        pass
+
+
 class ChainRuntime:
     """Keeps PipeWire matching a ChainModel."""
 
@@ -480,6 +509,7 @@ class ChainRuntime:
         self._next_check = 0.0
         self.error: str | None = None
         self.running = False
+        self.held = False  # stopped on purpose by `streamstack chain stop`, so nothing here starts it again
         self.missing = graph.missing_required()
 
     # -- lifecycle ----------------------------------------------------------
@@ -597,6 +627,14 @@ class ChainRuntime:
             self.release_default()
             return
         pids = runtime.host_pids(self.conf)
+        if not pids and stopped_by_user(self.state_dir):
+            # a person stopped the chain on purpose: report it, never revive it (#145)
+            with self._lock:
+                self._nodes, self._node_id, self.running, self.error = None, None, False, STOPPED_MESSAGE
+                self.held = True
+            self._default_done = False
+            return
+        self.held = False
         wanted = self.desired_signature()
         declined = self.declined()
         stale = bool(pids) and self._running_signature() != wanted and declined is None
@@ -753,6 +791,7 @@ class ChainRuntime:
                 "available": not self.missing,
                 "missing": list(self.missing),
                 "error": self.error,
+                "held": self.held,
                 "source": graph.NODE_NAME,
                 "description": graph.DESCRIPTION,
                 "rate": graph.RATE,

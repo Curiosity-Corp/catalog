@@ -1,0 +1,6 @@
+# Recorded on dm313red 2026-10-27, read-only: loginctl list-sessions --no-legend
+  1 1000 mrh      -     4146    manager - no -
+  2 1001 seantech -     4148    manager - no -
+416 1000 mrh      seat0 5722    user    - no -
+683 1000 mrh      -     3635911 user    - no -
+686 1000 mrh      -     3719764 user    - no -

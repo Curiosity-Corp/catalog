@@ -17,6 +17,7 @@ call is in progress (it does use the render node, lightly; run it `nice`d). One 
 look used before the GPU shader). Reported: the engine child's CPU as a share of one core, the GPU engine time it used
 per second (from the kernel's per-client DRM fdinfo, which needs no privilege), delivered fps, drops and the feed-to-
 program latency (the same instrument as docs/native-video-engine.md). `--png` saves a program frame to look at.
+`--taps N` adds N encode taps (a raw nv12 branch into the null muxer) to measure what a tap's conversion costs.
 
 Run it from the tree under test (`PYTHONPATH=src`): to get the "before" numbers, run this same file against a checkout
 of the earlier commit; it only uses the engine's public pieces and adapts to the ones the old code does not have.
@@ -120,6 +121,13 @@ def run(opts: argparse.Namespace) -> dict:
         extra["shaders"] = shader_dir
     elif opts.sharpen == "gpu":
         raise SystemExit("this engine has no GPU sharpen (it predates the shader): use --sharpen cpu")
+    if opts.taps:
+        if "taps" not in Spec.__dataclass_fields__:
+            raise SystemExit("this engine has no encode taps")
+        from streamstack.engine.graph import Tap
+
+        # an encode branch that costs nothing but the format conversion into it: raw nv12 into the null muxer
+        extra["taps"] = tuple(Tap("-", "rawvideo", ("-pix_fmt", "nv12"), "null") for _ in range(opts.taps))
     spec = Spec(source, "/dev/null", width, height, input_override=override, **extra)
 
     def popen(argv: list[str], **kwargs) -> subprocess.Popen:
@@ -172,6 +180,7 @@ def run(opts: argparse.Namespace) -> dict:
         "look": opts.look,
         "sharpen": opts.sharpen,
         "crop": bool(opts.crop),
+        "taps": opts.taps,
         "size": f"{width}x{height}",
         "fps_in": fps,
     }
@@ -239,6 +248,7 @@ def main() -> int:
     parser.add_argument("--look", choices=sorted(LOOKS), required=True)
     parser.add_argument("--sharpen", choices=("gpu", "cpu"), default="gpu")
     parser.add_argument("--crop", action="store_true", help="also zoom to a 1.25x window (the framing crop)")
+    parser.add_argument("--taps", type=int, default=0, help="add this many encode taps (raw nv12 into the null muxer)")
     parser.add_argument("--size", default="1280x720")
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument("--seconds", type=float, default=12.0)

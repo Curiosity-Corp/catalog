@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
 
@@ -97,6 +98,7 @@ def static_dir(tmp_path: Path) -> Path:
     (root / "index.html").write_text("<!doctype html><title>Console</title>")
     (root / "app.js").write_text("export const x = 1;\n")
     (root / "theme.css").write_text("body{}")
+    (root / "manifest.webmanifest").write_text('{"name": "Console"}')
     (root / "pages" / "icon.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
     (tmp_path / "secret.txt").write_text("top secret")
     (root / "escape").symlink_to(tmp_path / "secret.txt")
@@ -114,7 +116,12 @@ def clip(tmp_path: Path) -> Path:
 def rig(clip: Path) -> Rig:
     # A frozen clock: the demo studio's CPU figure is a function of time, and a snapshot that changes by
     # itself would make "pushed only on change" depend on how fast the test runs.
-    return Rig(FakeAudio(clip), FakeVideo(), DemoStudio(delay=0, clock=lambda: 0.0))
+    studio = DemoStudio(delay=0, clock=lambda: 0.0)
+    # The director panel reads the wall clock for its minute-resolution time block; freeze it too, or a
+    # minute rollover between two refreshes shows up as a state change.
+    frozen = datetime(2026, 1, 1, 12, 0).astimezone()
+    studio._director._now = lambda: frozen
+    return Rig(FakeAudio(clip), FakeVideo(), studio)
 
 
 @pytest.fixture
@@ -244,6 +251,9 @@ def test_static_mime_types(server: ConsoleServer) -> None:
     assert request(server, "GET", "/static/app.js")[1]["content-type"].startswith("text/javascript")
     assert request(server, "GET", "/static/theme.css")[1]["content-type"].startswith("text/css")
     assert request(server, "GET", "/static/pages/icon.svg")[1]["content-type"] == "image/svg+xml"
+    manifest = request(server, "GET", "/static/manifest.webmanifest", token=False)  # a browser fetches it without one
+    assert manifest[0] == 200
+    assert manifest[1]["content-type"] == "application/manifest+json"
 
 
 @pytest.mark.parametrize(
@@ -297,17 +307,19 @@ def test_state_snapshot_has_every_section(server: ConsoleServer) -> None:
     assert set(state) == {
         "version", "demo", "studio", "video", "audio", "auto", "framing", "health", "system", "lighting",
         "interface", "virtual", "presets", "hardware", "stream", "storage", "deck", "diagnostics", "call", "slots",
-        "hotkeys",
+        "hotkeys", "network", "echo", "meetings", "eyeline", "preflight", "safejoin", "seq",
     }  # fmt: skip
     assert state["audio"]["mic"]["gain_db"] == 0.0
     assert state["studio"]["running"] is True
 
 
 def test_action_routes_by_prefix_and_passes_params(server: ConsoleServer, rig: Rig) -> None:
-    assert post(server, {"action": "audio.gain", "db": 3.5}) == (200, {"ok": True})
+    status, answer = post(server, {"action": "audio.gain", "db": 3.5})
+    assert (status, answer["ok"]) == (200, True)
+    assert isinstance(answer["seq"], int)  # the first snapshot built after the action (see Hub.mark)
     assert rig.audio.calls == [("audio.gain", {"db": 3.5})]
     status, answer = post(server, {"action": "audio.mute", "on": True})
-    assert (status, answer) == (200, {"ok": True, "message": "done"})
+    assert (status, {k: v for k, v in answer.items() if k != "seq"}) == (200, {"ok": True, "message": "done"})
     status, answer = post(server, {"action": "studio.stop"})
     assert status == 200 and answer["message"] == "Stopping the studio..."
     state = json.loads(request(server, "GET", "/api/state")[2])
@@ -398,15 +410,56 @@ def test_events_need_the_token(server: ConsoleServer) -> None:
     assert request(server, "GET", "/api/events", token=False)[0] == 401
 
 
+def changed_paths(before: object, after: object, path: str = "") -> list[str]:
+    """The JSON paths whose values differ between two snapshots."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        return [
+            p
+            for k in sorted(before.keys() | after.keys())
+            for p in changed_paths(before.get(k), after.get(k), f"{path}/{k}")
+        ]
+    return [] if before == after else [f"{path}: {before!r} -> {after!r}"]
+
+
 def test_state_is_pushed_only_on_change(rig: Rig) -> None:
     hub = Hub(rig)
     client = hub.subscribe()
     assert frame(client, 1).startswith(b"event: state")
-    assert hub.refresh() is False
+    first = json.loads(hub._latest)
+    changed = hub.refresh()
+    # On failure, say which fields moved (a bare "True is False" cost a CI round trip with nothing to go on).
+    assert changed is False, f"the snapshot changed by itself: {changed_paths(first, json.loads(hub._latest))}"
     assert client.get(0.05) == b""
     rig.audio.gain = 2.0
     assert hub.refresh() is True
     assert b'"gain_db":2.0' in frame(client, 1)
+
+
+def test_snapshots_are_numbered_and_an_action_mark_names_the_next_one(rig: Rig) -> None:
+    hub = Hub(rig)
+    client = hub.subscribe()
+    first = json.loads(frame(client, 1).split(b"data: ", 1)[1])
+    assert first["seq"] == 1
+    mark = hub.mark()
+    assert mark == 2  # the first snapshot that begins after the action
+    rig.audio.gain = 3.0
+    assert hub.refresh() is True
+    changed = json.loads(frame(client, 1).split(b"data: ", 1)[1])
+    assert changed["seq"] >= mark
+    assert json.loads(hub.fresh_json())["seq"] > changed["seq"]  # a direct read is numbered too
+
+
+def test_an_unchanged_snapshot_after_an_action_is_acknowledged(rig: Rig) -> None:
+    hub = Hub(rig)
+    client = hub.subscribe()
+    assert frame(client, 1).startswith(b"event: state")
+    assert hub.refresh() is False and client.get(0.05) == b""  # no action: silence
+    mark = hub.mark()
+    assert hub.refresh() is False
+    ack = frame(client, 1)
+    assert ack.startswith(b"event: ack")
+    assert json.loads(ack.split(b"data: ", 1)[1])["seq"] >= mark
+    assert hub.refresh() is False and client.get(0.05) == b""  # asked for once only
 
 
 def test_state_pushes_are_rate_limited(rig: Rig) -> None:
@@ -599,7 +652,9 @@ def test_second_launch_only_opens_a_window(
     monkeypatch.setattr(Rig, "live", classmethod(lambda cls, cfg=None: pytest.fail("started a second server")))
     assert launcher.run_console(window=True, mini=True) == 0
     assert opened == [(f"http://127.0.0.1:{server.port}/?token={server.token}", True)]
-    assert f"?token={server.token}#/mini" in capsys.readouterr().out
+    out = capsys.readouterr()
+    assert f"http://127.0.0.1:{server.port}/#/mini" in out.out
+    assert server.token not in out.out + out.err  # stdout is the journal under the headless service
 
 
 def test_run_console_serves_then_cleans_up(
@@ -612,7 +667,52 @@ def test_run_console_serves_then_cleans_up(
     assert fake.audio.runtime_file_seen  # written before the rig started
     assert not launcher.runtime_file().exists()
     assert fake.audio.stopped
-    assert "StreamStack Console: http://127.0.0.1:" in capsys.readouterr().out
+    out = capsys.readouterr()
+    assert "StreamStack Console: http://127.0.0.1:" in out.out
+    assert "token" not in out.out.split("(access token not logged")[0]
+    assert "?token=" not in out.out + out.err
+
+
+def test_no_log_line_contains_the_token(
+    runtime: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The issue's guard: serve, start a second launch on the running server, and search every byte printed."""
+    fake = Rig(FakeAudio(), FakeVideo(), DemoStudio(delay=0))
+    monkeypatch.setattr(Rig, "demo", classmethod(lambda cls: fake))
+    monkeypatch.setattr(launcher, "open_window", lambda url, mini=False: False)  # no browser: the fallback line too
+    serving = threading.Thread(
+        target=launcher.run_console, kwargs={"demo": True, "window": False, "idle_exit": 1.0, "poll": 0.05}
+    )
+    serving.start()
+    try:
+        deadline = time.monotonic() + HTTP_TIMEOUT
+        running = launcher.read_running()
+        while running is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+            running = launcher.read_running()
+        assert running
+        token = running["token"]
+        assert launcher.run_console(demo=True, window=True, mini=True) == 0  # a second launch finds the server
+    finally:
+        serving.join(timeout=HTTP_TIMEOUT)
+    printed = capsys.readouterr()
+    assert len(token) >= 16
+    assert token not in printed.out + printed.err
+    assert "?token=" not in printed.out + printed.err
+
+
+def test_url_prints_the_full_address_of_the_running_console_only(
+    runtime: Path, server: ConsoleServer, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(Rig, "live", classmethod(lambda cls, cfg=None: pytest.fail("--url started a server")))
+    assert launcher.run_console(url_only=True) == 1  # nothing running
+    captured = capsys.readouterr()
+    assert captured.out == "" and "no Console is running" in captured.err
+    launcher.write_runtime(os.getpid(), server.port, server.token)
+    assert launcher.run_console(url_only=True) == 0
+    assert capsys.readouterr().out == f"http://127.0.0.1:{server.port}/?token={server.token}\n"
+    assert launcher.run_console(url_only=True, mini=True) == 0
+    assert capsys.readouterr().out.endswith("#/mini\n")
 
 
 # -- the window ---------------------------------------------------------------------
@@ -683,3 +783,51 @@ def test_the_slot_profiles_export_is_served_when_the_rig_has_them(server: Consol
     status, headers, body = request(server, "GET", "/api/slots/profiles.json")
     assert status == 200 and headers["content-type"].startswith("application/json")
     assert json.loads(body)["document"] == "streamstack.slot-profiles/1"
+
+
+def test_a_window_that_opens_as_a_push_lands_still_ends_on_the_newest_state(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`subscribe` used to read the snapshot, then join the broadcast: a push landing between the two reached the
+    window through neither, so it showed the old state until the next change (a clicked switch that stayed off)."""
+    hub = Hub(rig)
+    hub.state_json()
+    real = Hub.state_json
+
+    def with_a_push_in_the_gap(self: Hub) -> str:
+        text = real(self)
+        rig.audio.gain = 7.0  # the action lands right after the window read the snapshot
+        self.refresh()
+        return text
+
+    monkeypatch.setattr(Hub, "state_json", with_a_push_in_the_gap)
+    client = hub.subscribe()
+    last = b""
+    while chunk := client.get(0):
+        if chunk.startswith(b"event: state"):
+            last = chunk
+    assert b'"gain_db":7.0' in last
+
+
+# -- the installable web app (#143) ---------------------------------------------------
+
+
+def test_the_shipped_manifest_icons_and_link_are_consistent() -> None:
+    import struct
+
+    from streamstack import config
+
+    root = config.data_dir() / "console"
+    manifest = json.loads((root / "manifest.webmanifest").read_text())
+    assert manifest["display"] in ("standalone", "minimal-ui", "fullscreen")
+    assert manifest["start_url"].startswith(manifest["scope"])
+    assert 'rel="manifest" href="static/manifest.webmanifest"' in (root / "index.html").read_text()
+    seen = set()
+    for icon in manifest["icons"]:
+        data = (root / icon["src"]).read_bytes()
+        if icon["type"] == "image/png":
+            assert data.startswith(b"\x89PNG\r\n\x1a\n")
+            width, height = struct.unpack(">II", data[16:24])
+            assert f"{width}x{height}" == icon["sizes"]
+        seen.add((icon["sizes"], icon.get("purpose")))
+    assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= seen

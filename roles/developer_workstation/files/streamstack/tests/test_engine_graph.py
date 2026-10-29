@@ -171,6 +171,49 @@ def test_upload_format_keeps_the_cameras_chroma_layout() -> None:
     assert graph.upload_format(Source("x", "/dev/video9", "NV12", 640, 480, 30.0)) == "nv12"
 
 
+def test_look_lut_is_a_baked_cube_and_replaces_the_split_tone() -> None:
+    look = {**NEUTRAL, "lut": "portra", "lut_enabled": True, "lut_amount": 0.5}
+    key = graph.graph_key(spec(shaders="/s"), look)
+    assert key == graph.GraphKey(sharpen=0.0, split=False, lut="portra", lut_steps=10)
+    text = graph.build_graph(spec(shaders="/s"), look)
+    assert "lut=/s/lut-portra-10.cube:lut_type=normalized" in text and "colorcorrect" not in text
+
+
+def test_lut_choice_needs_a_valid_name_the_flag_and_a_strength() -> None:
+    on = {"lut": "noir", "lut_enabled": True, "lut_amount": 0.5}
+    assert graph.lut_choice(on) == ("noir", 10)
+    assert graph.lut_choice({**on, "lut_enabled": False}) == ("", 0)
+    assert graph.lut_choice({**on, "lut_amount": 0.01}) == ("", 0)
+    assert graph.lut_choice({**on, "lut_amount": 7}) == ("noir", 20)
+    assert graph.lut_choice({**on, "lut": "../etc"}) == ("", 0)
+    assert graph.lut_choice({**on, "lut": None}) == ("", 0)
+    assert graph.lut_choice({"lut_enabled": True, "lut_amount": 0.5}) == ("", 0)
+
+
+def test_a_look_without_a_lut_name_keeps_the_split_tone_approximation() -> None:
+    key = graph.graph_key(spec(shaders="/s"), {**NEUTRAL, "lut_enabled": True, "lut_amount": 0.5})
+    assert key is not None and key.split and key.lut == ""
+
+
+def test_the_static_lut_uses_the_same_lut_type() -> None:
+    text = graph.build_graph(spec(lut="/usr/share/luts/teal.cube"), NEUTRAL)
+    assert "lut=/usr/share/luts/teal.cube:lut_type=normalized" in text
+
+
+def test_blending_keeps_the_text_of_a_look_untouched() -> None:
+    mixed = graph.blend_looks({**NEUTRAL, "lut": "a"}, {**NEUTRAL, "contrast": 0.4, "lut": "b"}, 0.5)
+    assert mixed["lut"] == "b" and 0 < mixed["contrast"] < 0.4
+
+
+def test_the_scaler_is_the_specs_and_must_be_a_benchmarked_one() -> None:
+    text = graph.build_graph(spec(), NEUTRAL)
+    assert f"upscaler={graph.DEFAULT_SCALER}:downscaler={graph.DEFAULT_SCALER}" in text
+    assert "upscaler=spline36:downscaler=spline36" in graph.build_graph(spec(scaler="spline36"), NEUTRAL)
+    with pytest.raises(graph.GraphError, match="not a benchmarked scaler"):
+        graph.build_graph(spec(scaler="made-up"), NEUTRAL)
+    assert graph.DEFAULT_SCALER in graph.SCALERS
+
+
 def test_mjpeg_source_decodes_on_vaapi_and_maps_to_vulkan() -> None:
     text = graph.build_graph(spec(MJPEG), NEUTRAL)
     assert "hwmap=derive_device=vulkan" in text
@@ -220,7 +263,7 @@ def test_input_override_replaces_the_v4l2_input() -> None:
 def test_taps_split_the_program_picture_into_encoder_branches() -> None:
     tap = graph.Tap("pipe:5", "av1_qsv", ("-b:v", "6M"))
     text = graph.build_graph(spec(taps=(tap,)), NEUTRAL)
-    assert "split=2[prog][t0]" in text and "[t0]format=nv12[tap0]" in text
+    assert "split=2[pre][t0];[pre]format=yuyv422[prog]" in text and "[t0]format=nv12[tap0]" in text
     argv = graph.build_argv(spec(taps=(tap,)), NEUTRAL)
     assert argv[argv.index("[tap0]") - 1] == "-map"
     assert "av1_qsv" in argv
@@ -268,9 +311,30 @@ def test_a_spec_without_blur_has_no_blur_filters() -> None:
 def test_the_blur_graph_pairs_picture_and_mask_by_frame_number() -> None:
     text = graph.build_graph(blur_spec(), NEUTRAL, blur=(True, 8))
     assert text.startswith("[0:v]setpts=N/(20*TB),")
-    assert "[1:v]gblur=sigma=1.5,scale=1280:720" in text
+    assert "[1:v]gblur=sigma=1.5[ms]" in text and "scale=1280:720" in text
     assert "[fg][bg][m]maskedmerge@blur=enable=1" in text
-    assert "scale=320:180:flags=bilinear,gblur@bg=sigma=5.3" in text  # the background is blurred at 1/4 size
+    assert "gblur@bg=sigma=5.3" in text and "gblur@bgw=sigma=5.3" in text  # numerator and weight at 1/4 size
+
+
+def test_the_plain_blur_graph_blurs_the_background_without_a_weight() -> None:
+    plain = graph.BlurGraph(mask_width=320, mask_height=180, edge="plain")
+    text = graph.build_graph(spec(CANON, blur=plain), NEUTRAL, blur=(True, 8))
+    assert "[1:v]gblur=sigma=1.5,scale=1280:720" in text
+    assert "scale=320:180:flags=bilinear,gblur@bg=sigma=5.3" in text and "bgw" not in text
+
+
+def test_the_normalised_blur_divides_by_a_blurred_weight() -> None:
+    text = graph.build_graph(blur_spec(), NEUTRAL, blur=(True, 8))
+    assert "blend=all_mode=divide" in text and "all_expr" not in text
+    controls = graph.blur_controls(True, 8, "normalised")
+    assert controls[(graph.BLUR_WEIGHT, "sigma")] == controls[(graph.BLUR_BG, "sigma")] == "5.3"
+    assert graph.BLUR_WEIGHT not in {k[0] for k in graph.blur_controls(True, 8, "plain")}
+
+
+def test_an_unknown_blur_edge_mode_is_refused() -> None:
+    bad = graph.BlurGraph(mask_width=320, mask_height=180, edge="sharp")
+    with pytest.raises(graph.GraphError):
+        graph.build_graph(spec(CANON, blur=bad), NEUTRAL)
 
 
 def test_blur_defaults_to_off_when_the_branch_is_built_without_settings() -> None:
@@ -310,3 +374,44 @@ def test_blur_argv_without_its_pipes_is_refused() -> None:
 def test_a_spec_without_blur_has_the_same_argv_as_before() -> None:
     argv = graph.build_argv(spec(), NEUTRAL)
     assert argv.count("-filter_complex") == 2 and "rawvideo" not in argv
+
+
+def test_the_denoiser_runs_on_the_gpu_before_the_grade_and_keeps_its_edge_artefact_out_of_the_picture() -> None:
+    text = graph.build_graph(spec(denoise="nlmeans"), NEUTRAL)
+    assert text.index("nlmeans_vulkan=s=3:p=3:r=5") < text.index("libplacebo@grade")
+    assert "hwupload,nlmeans_vulkan" in text
+    # the filter's outermost row and column are garbage: the grade crops them off (1280x720 source)
+    assert "crop_x=2:crop_y=2:crop_w=1276:crop_h=716" in text
+    assert "nlmeans" not in graph.build_graph(spec(), NEUTRAL)
+    assert "crop_x" not in graph.build_graph(spec(), NEUTRAL)
+
+
+def test_a_window_stays_inside_the_trimmed_frame_when_the_denoiser_is_on() -> None:
+    on, off = spec(denoise="nlmeans"), spec()
+    assert graph.safe_window(off, None) is None
+    assert graph.safe_window(on, graph.Rect(0, 0, 1280, 720)) == graph.Rect(2, 2, 1276, 716)
+    assert graph.safe_window(on, graph.Rect(320, 180, 640, 360)) == graph.Rect(320, 180, 640, 360)
+    assert graph.safe_window(on, graph.Rect(900, 500, 380, 220)) == graph.Rect(900, 500, 378, 218)
+
+
+def test_an_unknown_denoiser_or_the_cpu_backend_is_refused() -> None:
+    with pytest.raises(graph.GraphError, match="not a known denoiser"):
+        graph.build_graph(spec(denoise="made-up"), NEUTRAL)
+    with pytest.raises(graph.GraphError, match="Vulkan backend"):
+        graph.build_graph(spec(denoise="nlmeans", backend="cpu"), NEUTRAL)
+
+
+def test_taps_convert_from_the_planar_picture_not_from_the_packed_output() -> None:
+    """The split sits before the yuyv422 pack, so a tap goes yuv422p -> nv12 and never via the packed repack."""
+    tap = graph.Tap("pipe:5", "av1_qsv")
+    text = graph.build_graph(spec(taps=(tap, tap)), NEUTRAL)
+    assert text.count("format=yuyv422") == 1
+    packed = text.index("format=yuyv422")
+    assert text.index("split=3") < packed
+    assert text.count("format=nv12") == 2
+    assert "split=3[pre][t0][t1];[pre]format=yuyv422[prog]" in text
+
+
+def test_no_taps_keeps_the_single_pack_at_the_end() -> None:
+    assert graph.build_graph(spec(), NEUTRAL).endswith("format=yuyv422[prog]")
+    assert "split" not in graph.build_graph(spec(), NEUTRAL).replace("split_", "")

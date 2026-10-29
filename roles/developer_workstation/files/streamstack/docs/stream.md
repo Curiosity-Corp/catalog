@@ -38,15 +38,74 @@ All are in `POST /api/action` form, `{"action": "...", "params": {...}}`, and re
 | `stream.probe` | `refresh?: bool` | probe encoders and transports now |
 | `record.start` | `format?: "mkv"\|"mp4"`, `name?: text` | record the program. mkv is written directly (a crash loses at most the last second); mp4 is fragmented (`frag_keyframe+empty_moov`) |
 | `record.stop` | | finish the file |
+| `replay.start` | `seconds?: 5-600` (default 30) | keep the last N seconds of the encoded program in memory (instant replay) |
+| `replay.save` | `seconds?: 5-N`, `name?: text` | write the last N seconds to `Replay-<time>.mkv` in the recordings folder |
+| `replay.stop` | | stop the buffer and free its memory |
 
 `stream.set` also takes the Presets page's contract, `{"platform": id, "tier": bandwidth-tier id, "plan": {...}}`
 (see [presets](presets.md)). The plan is translated to settings: its picture size gives the resolution `tier` (the
 largest tier whose short side fits), and its fps, rate control, key frame interval, first codec's bitrate or quality and
 audio bitrate become the matching settings. One codec in the plan pins it; several leave it to the planner. The
 bandwidth tier id is never used as a resolution tier. A rig without the stream backend answers 501, which the Presets
-page shows as "pending".
+page shows as "pending". The platform and tier also become the stream's bandwidth ladder (next section).
+
+`stream.set` also takes `adapt: true|false` (automatic downshift on or off), and `ladder: {"platform": id, "tier": id}` or
+`ladder: null` for a caller that names the ladder itself. Changing `tier`, `fps`, `bitrate_kbps` or `quality` by hand,
+without naming a ladder, forgets the ladder: the steps under a plan the person has overridden would no longer mean
+anything. Audio, codec, encoder and destination changes keep it.
 
 Errors are `ActionError` with a message and a status (400 for a bad request, 409 for a state conflict).
+
+### Bandwidth adaptation
+
+A live stream that outruns the uplink fails badly: the send queue grows, frames drop, the platform buffers and viewers
+see stalls. Sending less before that happens is the cure, so the service steps the picture down by itself and back up
+when the link is steady (`streamstack/stream/adapt.py`; pure logic, no threads or clock of its own, so every rule is a
+unit test).
+
+**The ladder.** Choosing a platform and a bandwidth tier on the Presets page sends `stream.set` with both ids and the
+plan, and the service builds the ladder with `presets.plan.ladder_tier`. Step 0 is exactly the chosen plan. Each later
+step is a plan the Presets page could have produced, with strictly less picture (pixels per second) and, where the
+platform has a bitrate, at least 5 percent fewer bits: the rest of the tier's ladder, then the lower tiers' (for
+YouTube Balanced: 1080p30 at 3.2 Mbit/s, 720p60, 720p30, 480p at 1.0, 0.8 and 0.35 Mbit/s). A platform that ignores tiers
+(the archive) has one step and never shifts. A step changes only the picture size, frame rate and bitrate (and quality
+for constant-quality plans), never the codec, encoder, key frame interval or audio, so a shift is the live "seamless" or
+"geometry" swap described above, never a codec move.
+
+**Chosen versus sent.** `settings` is what the person chose and is what is saved; `effective` is what is being sent
+(the choice with the current step applied) and is what `output` reports. The Picture card keeps showing the choice; the
+Bandwidth card says what is sent instead. Stopping the last live destination, starting a new stream, turning the
+automation off or choosing settings again all return to step 0.
+
+**What it watches**, per live destination every 2 s (recordings are not judged), as a verdict of ok, warn, congested or
+severe, where the worst destination decides:
+
+| Signal | Congested | Severe |
+|---|---|---|
+| packet loss (`whip.loss_percent`, `srt.loss_percent`, when the transport measures it) | 3 percent | 8 percent |
+| video waiting in the send queue (`queued_bytes` at the current bitrate) | 1.2 s | 4 s |
+| round trip (`rtt_ms`) | 3 times the best seen and 150 ms more | |
+| frames dropped since the last look | 5 | 60 |
+| reconnects since the last look | 1 | 2 |
+| send speed (`speed`, after 10 s connected) | below 0.9 times real time | below 0.6 |
+
+RTMP has no loss or round-trip measurement and is judged on the queue, drops, reconnects and speed alone; WHIP reports
+its own, and SRT's path measurement (`status()["srt"]`, `rtt_ms` and `loss_percent` or `probe_loss_percent`) is read the
+moment a sink provides it. A signal that is missing is not judged.
+
+**Hysteresis**, so a picture change is never twitchy: a step down needs two congested rounds in a row (a severe round
+needs one, and a link that stays severe through the whole wait steps two rungs at once); after any change nothing moves for 15 s (5 s for
+a severe link); a step up is one rung and needs 30 s of an unbroken ok verdict (a warning restarts the count); a
+step down within 90 s of a step up doubles the next calm spell required (up to 8 times as long), so a link that cannot carry a
+rung is not hammered with it, and the memory is dropped after 5 minutes of calm at the top. A swap still in flight
+delays a shift by a second (`stream.set` answers 409 in that case; the controller simply retries).
+
+**The network quality monitor.** `StreamService(uplink=callable)` takes the monitor's rating of the uplink (`good`,
+`degraded`, `poor`, `offline`). `poor` and `offline` stop a step up (the link the monitor distrusts is not the moment to
+send more) but never cause a step down alone. A rating that raises is reported as an event and ignored.
+
+State: `effective` and `adapt` (below); events say each shift and why. The demo rig runs the same controller against a
+simulated uplink with shorter timings; `stream.simulate {loss_percent}` (demo only) sets the loss it pretends to have.
 
 ### Settings
 
@@ -70,7 +129,8 @@ Errors are `ActionError` with a message and a status (400 for a bad request, 409
 ```
 
 - `kind`: `record`, `srt`, `rtmp`, `whip`.
-- SRT `options`: `mode` (`caller` or `listener`), `latency_ms` (default 120), `pbkeylen`, `streamid`.
+- SRT `options`: `mode` (`caller` or `listener`), `latency_ms` (a number of milliseconds, default 120, or `"auto"`),
+  `pbkeylen`, `streamid`. See [SRT path measurement and input](#srt-path-measurement-and-input).
 - RTMP `options.mode`: `auto` (Enhanced RTMP with the best codec; falls back to H.264 if it never connects), `enhanced`
   (never falls back), `classic` (H.264).
 - WHIP: `url` is the ingest endpoint (`https://` or `http://`), `key_ref` is the bearer token (optional). StreamStack
@@ -98,13 +158,57 @@ machine mount `/proc` with `hidepid=2`.
 |---|---|---|
 | `STREAMSTACK_STREAM_AUDIO` | `streamstack_mic` | PipeWire/Pulse source name for the program audio (falls back to `default` with a warning) |
 | `STREAMSTACK_STREAM_AUDIO_OFFSET_MS` | `0` | lip-sync trim; positive delays the sound |
-| `STREAMSTACK_RECORD_DIR` | `~/Videos/StreamStack` | where recordings go |
+| `STREAMSTACK_RECORD_DIR` | `~/Videos/StreamStack` | where recordings and replay clips go |
 | `STREAMSTACK_RECORD_RAW_MIC` | `true` | keep the unprocessed microphone as a third track of every recording (see "Crash-safe recording") |
 | `STREAMSTACK_RECORD_MIN_FREE_MB` | `1024` | free disk space a recording must leave: refused below twice this, warned at three times, ended (file saved) at this |
+| `STREAMSTACK_REPLAY_MAX_MB` | `512` | the most memory the instant replay buffer may hold |
 | `STREAMSTACK_STREAM_MAX_ENCODES` | `2` | encodes that may run at once (1 to 3) |
 
 The picture comes from `STREAMSTACK_PROGRAM_DEVICE` (default `/dev/video43`) at the size and rate of `STREAMSTACK_WIDTH`,
 `_HEIGHT` and `_FPS`.
+
+## Twitch accounts
+
+Enhanced Broadcasting (HEVC and AV1 to Twitch) is per account. When an `auto`-mode RTMP destination points at Twitch
+(`twitch.tv`, `live-video.net`) StreamStack asks Twitch, once per stream start, what the account may publish: the same
+`GetClientConfiguration` call OBS makes, with the stream key as the credential in the request body over https (the
+key is never logged, shown or kept; the cache is keyed by a hash and lasts 10 minutes, 1 minute for a failure). The
+codecs the answer lists are the only ones offered, so an account that is not enrolled streams H.264 immediately
+instead of failing to connect with AV1 and falling back after two attempts. The destination's state carries
+`account` (`known`, `codecs`, `max_bitrate_kbps`, `reason`) and the row shows a "Twitch account" chip.
+
+If Twitch cannot be asked, refuses the key, or answers in a shape this code does not know, the codec choice is the
+normal one (best codec the host can encode) with the fallback above, and the Console log says why. Pinned modes
+(`enhanced`, `classic`) and a destination codec that is not `auto` are never probed. `STREAMSTACK_TWITCH_CONFIG_URL`
+overrides the address, for tests.
+
+The call is Twitch's own, not a public contract: its answer shape was read from OBS's behaviour, so an unexpected shape
+degrades to "not known" rather than being guessed. The manual check that a real enrolled account streams AV1 is a
+human step recorded on issue #82.
+## SRT path measurement and input
+
+**Measuring the path.** While an SRT caller destination runs, StreamStack sends an SRT handshake induction packet to
+the receiver every 10 s (three probes, 50 ms apart) and times the answer. The Console shows the median round trip
+(RTT) with its minimum and maximum, the share of probes that went unanswered, and a recommended latency of
+`max(80 ms, 4 x RTT)`. The multiplier rises to 5, 6 and 7 as probe loss passes 0, 10 and 20 percent, and the result is
+capped at 8000 ms. A hint appears when the configured latency is below the recommendation.
+
+**Auto latency.** `latency_ms: "auto"` (the Auto checkbox on the destination form) uses the recommendation. SRT fixes a
+connection's latency when it is made, so "auto" is resolved each time the sink connects or reconnects, from a
+measurement no older than 30 s (a fresh probe is taken otherwise). Without any answer it uses 120 ms and says so.
+
+**What cannot be shown.** A listener-mode destination does not know where its caller is, so it cannot measure the
+path: it uses the number set and says so. ffmpeg's libsrt does not report retransmit or loss counters, so the Console
+shows only what is measurable (RTT and probe loss) rather than inventing a packet-loss figure. A receiver that drops
+the probe (a firewall) reads as 100 % probe loss; latency then stays at the default.
+
+**SRT input (remote backup recording).** The Stream page's "SRT input" card, or the actions `ingest.start`
+(`port` 1024-65535, `latency_ms` 20-8000 default 200, optional `name`, optional `key_ref` for a passphrase) and
+`ingest.stop`, starts an ffmpeg SRT listener that copies what a remote sender delivers into an MKV in the recording
+folder, with no re-encode. When the sender leaves, the file is kept and the listener waits for the next sender, which
+gets the next numbered file. A port that is already in use, or an unusable passphrase, stops the listener after three
+quick failures with the reason in the card. The passphrase is redacted from logs. State is in `stream.ingest`
+(`active`, `state` of `waiting`, `receiving`, `failed` or `stopped`, `port`, `bytes`, `file`, `files`, `callers`).
 
 ## WHIP
 
@@ -149,7 +253,7 @@ ingest.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `status` | `idle` \| `starting` \| `live` \| `degraded` \| `recording` \| `error` \| `unavailable` | `live`: every live destination is up; `degraded`: some are; `recording`: only recording; `error`: an encoder failed for good |
+| `status` | `idle` \| `starting` \| `live` \| `degraded` \| `recording` \| `replay` \| `error` \| `unavailable` | `live`: every live destination is up; `degraded`: some are; `recording`: only recording; `error`: an encoder failed for good |
 | `uptime_s` | int | seconds since the first destination started |
 | `bitrate_kbps` | number | total bitrate out of the encoders (video plus audio) |
 | `dropped_frames` | int | dropped at the sinks plus encoder drops |
@@ -159,9 +263,13 @@ ingest.
 | `encoders` | list | one per running encode: `codec`, `encoder`, `label`, `backend`, `device`, `bitrate_kbps`, `fps`, `encoder_dropped`, `cpu_percent`, `gpu_percent` (as above, per encode), `latency_ms` (measured capture to relay), `swapping`, `swaps`, `failed` (text), `destinations` (ids) |
 | `encoder` | text | the encoder names in use, comma separated; empty when idle |
 | `destinations` | list | see below |
+| `replay` | object | instant replay: `active`, `state`, `seconds` (armed length), `depth_s` (what is actually held), `bytes`, `peak_bytes`, `max_bytes`, `groups`, `evicted_for_memory`, `clips` (the last five saved) |
 | `recording` | object | `active`, `file`, `bytes`, `seconds`, `format`, and when active `state`, `last_error`, `raw_mic`, `raw_error`, `free_mb`, `minutes_left`; after a disk-guard stop `stopped` |
-| `settings` | object | the current settings (the keys above) |
-| `output` | object | `width`, `height`, `fps` actually produced |
+| `recording` | object | `active`, `file`, `bytes`, `seconds`, `format`, and when active `state`, `last_error` |
+| `settings` | object | the settings the person chose (the keys above); what is saved |
+| `effective` | object | the settings being sent: `settings` with the current downshift step applied (equal to `settings` at step 0) |
+| `adapt` | object | automatic downshift: `enabled`, `ladder` (`{platform, tier}` or null), `available` (a ladder exists), and when it does `step`, `steps` (`label`, `width`, `height`, `fps`, `bitrate_kbps`), `current`, `degraded`, `recover_in_s`, `cooldown_s`, `hold_factor`, `verdict` (`level`, `reason`) and `history` (`at`, `direction`, `from`, `to`, `reason`) |
+| `output` | object | `width`, `height`, `fps` actually produced (the effective settings) |
 | `audio` | object | `source`, `bitrate_kbps`, `ok`, `error` |
 | `last_swap` | object or null | the last live change: `codec`, `ok`, `at`, and `gap_ms` and `encoder` when it worked, or `reason` when it did not (the old encoder keeps running) |
 | `events` | list | the last eight events (`at`, `level`, `text`) |
@@ -301,3 +409,22 @@ A recording is meant to survive a bad day: a crash, a power cut, a full disk, a 
 
 Tests: `tests/test_stream_crash_safe.py` covers all of it with real ffmpeg, including a recorder killed with SIGKILL and a
 Console stopped with SIGTERM.
+
+## Instant replay
+
+`replay.start` keeps the last N seconds of the encoded program in RAM; `replay.save` writes them to a Matroska clip.
+Nothing is re-encoded: the buffer is one more relay sink, so it holds whatever the encoder chain already produces
+(AV1, HEVC or H.264) and shares that chain with a recording or a stream, at no extra encoding cost.
+
+- It keeps whole groups of pictures, so a clip starts on a keyframe: it is at least as long as asked, and at most one
+  keyframe interval (`keyint_s`, 2 s by default) longer. If the buffer is younger than the length asked for, the clip
+  is shorter and the answer says so.
+- Memory is bounded twice. Old groups are dropped as they leave the window, and `STREAMSTACK_REPLAY_MAX_MB` (default
+  512) is a hard cap that drops the oldest group first. Arming refuses a length that could not fit at the current
+  bitrate and tells you the longest one that does. If a spike makes the cap bite anyway, depth is given up, never
+  memory: `replay.evicted_for_memory` counts it and the page says so.
+- A change of codec (`stream.set` with another `codec`) starts the buffer empty, because different pictures cannot be
+  joined. Changing the picture size does the same.
+- Clips are remuxed with `ffmpeg -c copy` so they carry an index and a duration; if ffmpeg cannot do that the raw
+  Matroska is kept (it plays, and it is the same bytes a recording would hold).
+- The buffer lives only in memory: stopping the stream session or restarting StreamStack discards it.

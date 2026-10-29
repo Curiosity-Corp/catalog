@@ -34,7 +34,7 @@ import numpy as np
 from streamstack.engine import segment
 from streamstack.engine.bench import BITS, BLOCK, STAMP_ROWS, cpu_ticks
 from streamstack.engine.blurfeed import BlurFeed
-from streamstack.engine.graph import BlurGraph, Source, Spec
+from streamstack.engine.graph import BLUR_EDGES, BlurGraph, Source, Spec
 from streamstack.engine.process import VideoEngine
 
 PERIOD = 90  # frames per sweep of the fake mask
@@ -168,7 +168,8 @@ def run(opts: argparse.Namespace) -> dict:
     )
     source = Source("bench", "pipe", "YUYV", width, height, fps)
     armed = opts.mode != "off"
-    blur_graph = BlurGraph(mask_width=320, mask_height=max(2, round(320 * height / width / 2) * 2)) if armed else None
+    mask_height = max(2, round(320 * height / width / 2) * 2)
+    blur_graph = BlurGraph(mask_width=320, mask_height=mask_height, edge=opts.edge) if armed else None
     spec = Spec(source, "/dev/null", width, height, input_override=override, blur=blur_graph)
 
     def popen(argv: list[str], **kwargs) -> subprocess.Popen:
@@ -242,6 +243,7 @@ def run(opts: argparse.Namespace) -> dict:
         "fps_in": fps,
         "strength": opts.strength,
         "rate": opts.rate,
+        "edge": opts.edge,
     }
     try:
         threading.Thread(target=feeder, daemon=True).start()
@@ -354,6 +356,7 @@ def main() -> int:
     parser.add_argument("--seconds", type=float, default=15.0)
     parser.add_argument("--warmup", type=float, default=3.0)
     parser.add_argument("--strength", type=int, default=8)
+    parser.add_argument("--edge", choices=BLUR_EDGES, default="normalised", help="the blur's edge mode (#133)")
     parser.add_argument("--rate", type=int, default=1, help="mask every N-th frame")
     parser.add_argument("--image", help="feed this still picture instead of the stripe pattern")
     parser.add_argument("--series", help="write per-frame latency (counter, ms) here")

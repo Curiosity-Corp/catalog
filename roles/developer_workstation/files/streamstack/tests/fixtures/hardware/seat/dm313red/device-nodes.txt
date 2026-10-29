@@ -1,0 +1,2 @@
+crw-rw----+ root audio /dev/snd/controlC0
+crw-rw----+ root video /dev/video0

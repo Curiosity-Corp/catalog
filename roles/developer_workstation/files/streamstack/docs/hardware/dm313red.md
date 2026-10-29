@@ -41,6 +41,50 @@ Studio host with the Elgato Wave XLR. Captured 2026-10-24 12:09 local; raw captu
 - Program output: `/dev/video43` ("StreamStack Camera", v4l2loopback).
 - Loopback options: `devices=2 video_nr=42,43 card_label="Canon EOS 50D,StreamStack Camera" exclusive_caps=1,1 max_buffers=2`.
 
+## Canon 50D picture paths: the measured matrix (#129)
+
+Status: **tooling ready, nothing measured yet.** The numbers need the camera, the Cam Link and the owner at the desk
+for the camera menus, and a measurement reads the picture while nobody is on a call. Until the table below is
+filled, the working default for calls stays path A (what runs today); the README's "HDMI is sharper" remains a
+claim, not a result.
+
+| Path | What |
+| --- | --- |
+| A | USB live view through libgphoto2 into `/dev/video42` (today; 1056x704, about 20 fps by the README) |
+| B | HDMI into the Cam Link 4K as the camera sends it (live view with the AF frame and overlays, per the #120 session) |
+| C | HDMI with overlays removed (Magic Lantern "Kill Canon GUI" style option; unverified on a 50D) |
+
+Procedure (owner at the desk, no call, same static evenly lit scene for every row, ISO 800 then 1600 set on the
+camera). `tools/canon_path_matrix.py` is read-only on the device and refuses during a call:
+
+```
+python3 tools/canon_path_matrix.py capture --path A --device /dev/video42 --iso 800 --overlay no   # dry run first
+python3 tools/canon_path_matrix.py capture --path A --device /dev/video42 --iso 800 --overlay no --execute \
+    --cpu-of streamstack --latency-ms <from the #89 bench> --out paths.jsonl
+# repeat for --iso 1600, then path B with --device /dev/video0 (the Cam Link), then C if approved
+python3 tools/canon_path_matrix.py table paths.jsonl      # paste the output here
+```
+
+It records delivered fps (`v4l2-ctl --stream-mmap`, median per second), the negotiated frame, the active picture
+(ffmpeg `cropdetect`, so black bars do not count), noise (mean luma difference between consecutive frames on the
+static scene; lower is quieter, comparable only within one scene), CPU of a named process, and the overlay and
+latency the owner observed.
+
+Path C needs the owner's go-ahead: Magic Lantern runs from the SD card and is undone by removing its files from the
+card (or booting a card without them) and, if installed through the camera menu, by re-running Canon's firmware
+update; record the build and the camera firmware in `--note`. It is not verified that clean HDMI works on a 50D.
+
+| Path | ISO | Delivered fps | Frame | Active picture | Overlay | Noise | Latency ms | CPU % |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | 800 | not measured | not measured | not measured | no | not measured | not measured | not measured |
+| A | 1600 | not measured | not measured | not measured | no | not measured | not measured | not measured |
+| B | 800 | not measured | not measured | not measured | not measured | not measured | not measured | not measured |
+| B | 1600 | not measured | not measured | not measured | not measured | not measured | not measured | not measured |
+| C | 800 | not approved | | | | | | |
+
+Default for calls: path A until the table says otherwise. Quiet mode: not decided. The Camera page and presets (#96)
+follow the named paths once they exist.
+
 ## GPU and encode
 - Intel Arc A380 (DG2, `8086:56a5`, i915) is the only GPU and is `renderD128`. iHD 26.1.2, VA-API 1.23.
 - Encode on the Arc (per-node `vainfo`): H.264 High, HEVC Main and Main10 and AV1 Profile0, all low-power

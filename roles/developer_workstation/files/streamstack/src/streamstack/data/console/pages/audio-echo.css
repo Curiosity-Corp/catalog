@@ -1,0 +1,25 @@
+/* audio-echo.css — the echo check card on the Audio page's Output section. Scoped: page styles stay loaded. */
+@scope ([data-page="audio"]) {
+  .ae { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-3) var(--s-4); background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-4); box-shadow: var(--shadow-2); }
+  .ae[hidden], .ae [hidden] { display: none !important; }
+  .ae-head { display: flex; align-items: center; gap: var(--s-3); }
+  .ae-ic { flex: none; display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line-strong); color: var(--text-2); }
+  .ae-ic .icon { width: 1.3rem; height: 1.3rem; }
+  .ae-id { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+  .ae-id small { color: var(--text-3); font-size: var(--fs-xs); }
+  .ae-row { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap; }
+  .ae-sel { flex: 1; min-width: 12rem; }
+  .ae-why { margin: 0; }
+  .ae-answer { margin: 0; padding: var(--s-2) var(--s-3); border-radius: var(--r-3); border: 1px solid var(--line); background: var(--surface-2); font-size: var(--fs-sm); line-height: 1.4; }
+  .ae[data-tone="ok"] .ae-answer { border-color: color-mix(in srgb, var(--green) 55%, transparent); }
+  .ae[data-tone="warn"] .ae-answer, .ae[data-tone="ask"] .ae-answer { border-color: color-mix(in srgb, var(--amber) 55%, transparent); background: var(--amber-soft); }
+  .ae[data-tone="bad"] .ae-answer { border-color: color-mix(in srgb, var(--red) 55%, transparent); }
+  .ae-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-1); }
+  .ae-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: var(--s-3); align-items: center; font-size: var(--fs-sm); }
+  .ae-item i { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--line-strong); }
+  .ae-item[data-tone="ok"] i { background: var(--green); }
+  .ae-item[data-tone="warn"] i, .ae-item[data-tone="ask"] i { background: var(--amber); }
+  .ae-item[data-tone="bad"] i { background: var(--red); }
+  .ae-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ae-w, .ae-item time { color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; }
+}

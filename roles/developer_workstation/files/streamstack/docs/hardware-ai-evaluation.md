@@ -72,12 +72,17 @@ fps), Arc busy percent from `intel_gpu_top`, and the first-load compile time wit
 cached, which is what a restarted StreamStack pays). A backend or device that is missing (no `GPU.0`, no
 `intel_gpu_top`, an operator the plugin rejects) is listed as skipped with the reason, not as an error. Models are
 fetched with pinned URLs and SHA-256 checks, like YuNet; `python tools/bench_ai.py --list-models` prints each
-licence and checksum. Latency only: the outputs are not decoded, so this says nothing about mask or face quality.
+licence and checksum. The cost table is latency only. `--edge-quality` (with `--clip`, never generated frames) adds a
+mask comparison for the segmenters whose output it can decode: the share of the frame called person, the width of the
+soft band across the outline in frame pixels (smaller is crisper) and the overlap (IoU) with PP-HumanSeg, the segmenter
+the blur ships with. There is no ground truth, so it ranks candidates against each other and does not say which one is
+right; look at the masks too.
 
 | Candidate | Backends | File | Licence |
 | --- | --- | --- | --- |
 | MediaPipe Meet segmentation (`mediapipe-meet`) | ort-cpu, ov-cpu, ov-gpu | the background-removal plugin `mediapipe.onnx` | Apache-2.0 |
 | PP-HumanSeg (`pphumanseg`) | same | the background-removal plugin `pphumanseg_fp32.onnx` | Apache-2.0 |
+| MediaPipe selfie segmenter, landscape 144x256 (`mediapipe-selfie-landscape`) | same | `onnx-community/mediapipe_selfie_segmentation_landscape` `onnx/model.onnx` at a pinned commit (the ONNX export of Google's `selfie_segmenter_landscape`; the official `.tflite` does not load in OpenVINO, it needs a custom `Convolution2DTransposeBias` op) | Apache-2.0 |
 | SINet (`sinet`) | same | the background-removal plugin `SINet_Softmax_simple.onnx` | MIT |
 | YuNet 2023mar (`yunet-2023mar`) | same | OpenCV Zoo `face_detection_yunet_2023mar.onnx` | MIT |
 | BlazeFace (`blazeface`) | same | `garavv/blazeface-onnx` `blaze.onnx` (benchmark only) | not stated upstream; network is Apache-2.0 |
@@ -90,6 +95,24 @@ Decision gates this table settles (the thresholds are the ones fixed above, befo
 | Arc build of the blur is worth carrying (#26) | `ov-gpu` is PASS where `ort-cpu` is FAIL, or cuts CPU % at equal p95 | MET: `ov-gpu` PASS on both rigs where `ort-cpu` FAILs at Canon size; CPU 33 % to 3.5 % of one core at equal-or-better p95 (2.5 to 3.0 ms). Measured 2026-10-27, dm313red |
 | Auto-framing detector runs on Arc (#23) | `ov-gpu` p95 beats `ov-cpu` and is PASS; else `ov-cpu` stays | MET with a caveat: YuNet `ov-gpu` p95 5.4 to 6.4 ms against `ov-cpu` 8.4 to 9.0 ms (FAIL) in five of six rows, CPU 15 % against 47 % of one core. The sixth (Cam Link, run 3) failed at 10.8 ms p95 from one slow-frame burst on a busy desk. Shipped in !53. Measured 2026-10-27, dm313red |
 | DG2/A380 is usable through OpenVINO | `ov-gpu` rows are not skipped and `GPU.0` is the Arc, not the iGPU | MET on dm313red: every `ov-gpu` row ran on `GPU (Intel(R) Arc(TM) A380 Graphics (dGPU))`; OpenVINO lists a lone `GPU` there. The deskmeet1 layout (iGPU as `GPU.0`, Arc as `GPU.1`) is covered by the harness's discrete-first choice and unit tests but was not measured. Measured 2026-10-27 |
+
+### MediaPipe selfie segmenter against PP-HumanSeg (#147)
+
+Cost, measured 2026-10-28 on dm313red (OpenVINO 2026.4.1, onnxruntime 1.31.1, nice 19, generated frames at each rig's
+size, 150 timed frames, a live desk so the first row of a run is the noisiest):
+
+| Model | Backend | Canon p50 / p95 ms | Canon CPU % of 1 core | Cam Link p50 / p95 ms | Cam Link CPU % |
+| --- | --- | --- | --- | --- | --- |
+| mediapipe-selfie-landscape | ov-gpu | 1.30 / 2.05 | 2.8 | 1.34 / 1.44 | 2.6 |
+| mediapipe-selfie-landscape | ov-cpu | 0.95 / 1.09 | 5.1 | 0.97 / 1.11 | 5.2 |
+| pphumanseg (shipped) | ov-gpu | 1.98 / 2.56 | 3.1 | 2.13 / 3.05 | 4.1 |
+| pphumanseg (shipped) | ov-cpu | 6.53 / 7.23 | 37.8 | 6.14 / 6.40 | 35.5 |
+
+The selfie model is cheaper (the same 36,864 input pixels as PP-HumanSeg's 192x192, but a lighter network)
+and is the only one that runs well on the CPU, so it passes the gates on every backend. Mask quality at the edge is the
+open half: no recorded clip with a person is kept in the repository, so run
+`python tools/bench_ai.py --clip canon=canon.mkv --models pphumanseg,mediapipe-selfie-landscape --edge-quality`
+on a clip recorded with no call in progress and paste the table on #147 before switching the shipped model.
 
 ### Running it on a quiet host
 

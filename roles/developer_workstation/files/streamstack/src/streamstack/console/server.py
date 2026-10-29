@@ -20,12 +20,17 @@ from streamstack.console.diagnostics import METRICS_PATH
 from streamstack.console.errors import ActionError
 from streamstack.console.hub import Hub
 from streamstack.console.rig import Rig
+from streamstack.console.whep import MAX_SDP, WhepError, WhepService
 from streamstack.presets import catalog as presets_catalog
 
 MAX_BODY = 64 * 1024
 TOKEN_HEADER = "X-StreamStack-Token"  # noqa: S105 - a header name
 ALLOW_HOSTS_ENV = "STREAMSTACK_CONSOLE_ALLOW_HOSTS"
 PING_SECONDS = 15
+ACTION_LOG_ENV = (
+    "STREAMSTACK_CONSOLE_ACTION_LOG"  # any non-empty value: one stderr line per action (the e2e rig sets it)
+)
+SLOW_ACTION_S = 1.0  # an action that takes longer is logged even without the switch
 CSP = (
     "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; "
     "script-src 'self'; connect-src 'self'; frame-ancestors 'none'"
@@ -40,6 +45,7 @@ MIME = {
     ".css": "text/css; charset=utf-8",
     ".svg": "image/svg+xml",
     ".json": "application/json; charset=utf-8",
+    ".webmanifest": "application/manifest+json",
     ".woff2": "font/woff2",
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -107,6 +113,7 @@ class ConsoleServer(ThreadingHTTPServer):
         super().__init__((host, port), Handler)
         self.rig = rig
         self.hub = Hub(rig)
+        self.whep = WhepService(rig.frame)
         self.token = token or secrets.token_urlsafe(24)
         self.static_dir = static_dir or config.data_dir() / "console"
         self.allow_hosts = allow_hosts if allow_hosts is not None else allowed_hosts_from_env()
@@ -119,6 +126,10 @@ class ConsoleServer(ThreadingHTTPServer):
         on_meters = getattr(rig.framing, "on_meters", None)
         if on_meters is not None:
             self.hub.meter_listeners.append(on_meters)  # speaker hand-off hears the raw microphone too
+        if rig.preflight is not None:
+            self.hub.meter_listeners.append(rig.preflight.on_meters)  # the spoken prompt hears the raw microphone
+        if rig.safejoin is not None:
+            self.hub.meter_listeners.append(rig.safejoin.on_meters)  # a hold notices a manual release; the timer
 
     @property
     def port(self) -> int:
@@ -153,6 +164,7 @@ class ConsoleServer(ThreadingHTTPServer):
         """Stop everything; open SSE and MJPEG handlers notice `stopping` and return."""
         self.stopping.set()
         self.hub.stop()
+        self.whep.close()
         if self._thread:
             self.shutdown()
             self._thread.join(timeout=3)
@@ -182,6 +194,7 @@ class Handler(BaseHTTPRequestHandler):
     # -- plumbing -------------------------------------------------------------
 
     _started = False  # headers of the current request are on the wire
+    _params_seen: tuple[str, ...] = ()  # the parameter names of the action being run (for the action log)
 
     def _begin(self, status: int, content_type: str, length: int | None = None, csp: str = CSP, **extra: str) -> None:
         self._started = True
@@ -273,6 +286,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api(self, path: str, query: dict[str, list[str]]) -> None:
         method = self.command
+        if path == "/api/whep" and method == "POST":
+            return self._whep_offer(query)
+        if path.startswith("/api/whep/") and method == "DELETE":
+            return self._whep_delete(path[len("/api/whep/") :])
         if path == "/api/action":
             if method != "POST":
                 return self._error(405, "Use POST.")
@@ -282,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(405, "Use GET.")
         if path == "/api/state":
             # Fresh, not the hub's copy: a client that just acted must see its own change.
-            return self._send(200, self.server.hub.encode(self.server.rig.snapshot()).encode(), "application/json")
+            return self._send(200, self.server.hub.fresh_json().encode(), "application/json")
         if path == "/api/presets/catalog":
             return self._json(200, presets_catalog.load().as_json())
         if path == "/api/events":
@@ -291,6 +308,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._preview_still(query)
         if path == "/api/preview.mjpg":
             return self._preview_stream(query)
+        if path == "/api/whep":
+            return self._json(200, self.server.whep.snapshot())
         if path == "/api/director/sheet.jpg":
             return self._director_sheet()
         if path.startswith("/api/deck/"):
@@ -349,6 +368,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict) or not isinstance(body.get("action"), str):
             return self._error(400, 'Send an object like {"action": "audio.mute", "on": true}.')
         params = {k: v for k, v in body.items() if k != "action"}
+        self._params_seen = tuple(params)
         began = time.monotonic()
         try:
             message = self.server.rig.act(body["action"], params)
@@ -359,13 +379,24 @@ class Handler(BaseHTTPRequestHandler):
             self._observe(body["action"], began, 500)
             raise
         self._observe(body["action"], began, None)
+        seq = self.server.hub.mark()  # before the kick: the snapshot the kick makes is the first one numbered `seq`
         self.server.hub.kick()
-        self._json(200, {"ok": True, "message": message} if message else {"ok": True})
+        self._json(200, {"ok": True, "seq": seq, **({"message": message} if message else {})})
 
     def _observe(self, action: str, began: float, status: int | None) -> None:
+        seconds = time.monotonic() - began
+        if os.environ.get(ACTION_LOG_ENV) or seconds >= SLOW_ACTION_S:
+            # keys only: a value may be a stream key or a token
+            keys = ",".join(sorted(self._params_seen))
+            print(
+                f"streamstack console: action {action[:40]} -> {status or 200} in {seconds * 1000:.0f} ms"
+                f" [{keys}]{' SLOW' if seconds >= SLOW_ACTION_S else ''}",
+                file=sys.stderr,
+                flush=True,
+            )
         diagnostics = self.server.rig.diagnostics
         if diagnostics is not None:
-            diagnostics.observe_action(action, time.monotonic() - began, status)
+            diagnostics.observe_action(action, seconds, status)
 
     def _supplied_token(self, query: dict[str, list[str]]) -> str | None:
         header = self.headers.get("Authorization") or ""
@@ -423,6 +454,36 @@ class Handler(BaseHTTPRequestHandler):
         if not frame:
             return self._error(503, "No picture from this source right now.")
         self._send(200, frame, "image/jpeg")
+
+    def _whep_offer(self, query: dict[str, list[str]]) -> None:
+        """WHEP: POST an SDP offer, get 201, the answer and the session's URL in Location (docs/whep-preview.md)."""
+        self.close_connection = True  # until the body is read, the connection cannot be reused
+        if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/sdp":
+            return self._error(415, "Send Content-Type: application/sdp.")
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            return self._error(411, "Send a Content-Length.")
+        if length < 0 or length > MAX_SDP:
+            return self._error(413, f"The offer may be at most {MAX_SDP // 1024} KiB.")
+        raw = self.rfile.read(length)
+        source, width, fps = self._preview_args(query)
+        try:
+            offer = raw.decode("utf-8")
+            session_id, answer = self.server.whep.offer(offer, source, width, fps)
+        except UnicodeDecodeError:
+            return self._error(400, "The offer is not UTF-8 text.")
+        except WhepError as exc:
+            return self._error(exc.status, exc.message)
+        self.close_connection = False
+        self._send(201, answer.encode(), "application/sdp", Location=f"/api/whep/{session_id}")
+
+    def _whep_delete(self, session_id: str) -> None:
+        if not self.server.whep.delete(session_id) and not self.server.whep.valid_id(session_id):
+            return self._error(404, "No such preview session.")
+        # Ending a session that is already gone (the server dropped it when the connection failed, and the page
+        # reports the same failure) is a success: a 404 here is logged by the browser as a console error on any page.
+        self._send(200, b"", "application/sdp")
 
     def _director_sheet(self) -> None:
         sheet = self.server.rig.director_sheet()
