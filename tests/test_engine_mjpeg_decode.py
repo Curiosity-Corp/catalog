@@ -22,12 +22,24 @@ RAW = Source("Canon", "/dev/video42", "YUYV", 1280, 720, 20.0)
 NODE = "/dev/dri/renderD128"
 
 
+PICTURE = bytes(range(256)) * (probe.PROBE_FRAME_BYTES // 256)  # what a correct tier writes: the reference picture
+
+
 class FakeFfmpeg:
     """Stands in for subprocess.run: records the commands. `va_ok` is the zero-copy import, `copy_ok` the VA decode
-    with a read-back; either fails with libplacebo's own error plus ffmpeg's generic last line."""
+    with a read-back; either fails with libplacebo's own error plus ffmpeg's generic last line. `mapping_ok` is the
+    VA to Vulkan `hwmap` alone (it works on the Arc), `zero_copy_picture` what a zero-copy run that exits 0 writes."""
 
-    def __init__(self, va_ok: bool, copy_ok: bool = True) -> None:
-        self.va_ok, self.copy_ok = va_ok, copy_ok
+    def __init__(
+        self,
+        va_ok: bool,
+        copy_ok: bool = True,
+        mapping_ok: bool = True,
+        zero_copy_picture: bytes = PICTURE,
+        reference_ok: bool = True,
+    ) -> None:
+        self.va_ok, self.copy_ok, self.mapping_ok = va_ok, copy_ok, mapping_ok
+        self.zero_copy_picture, self.reference_ok = zero_copy_picture, reference_ok
         self.calls: list[list[str]] = []
 
     def __call__(self, argv: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -36,14 +48,24 @@ class FakeFfmpeg:
             return subprocess.CompletedProcess(argv, 0, b"mesa-vulkan-drivers 26.0.8\nlibva2 2.23.0\n", b"")
         if "-version" in argv:
             return subprocess.CompletedProcess(argv, 0, b"ffmpeg version 8.0.1\nbuilt with gcc\n", b"")
+        graph_text = argv[argv.index("-vf") + 1] if "-vf" in argv else ""
+        if "-hwaccel" not in argv:  # the JPEG maker and the software reference
+            if "libplacebo" in graph_text and not self.reference_ok:
+                return subprocess.CompletedProcess(argv, 1, b"", b"Error: no Vulkan device\n")
+            return subprocess.CompletedProcess(argv, 0, PICTURE if graph_text else b"", b"")
         zero_copy = "-hwaccel_output_format" in argv
-        if "-hwaccel" in argv and not (self.va_ok if zero_copy else self.copy_ok):
+        if "libplacebo" not in graph_text:  # the mapping check, no libplacebo
+            if self.mapping_ok:
+                return subprocess.CompletedProcess(argv, 0, b"", b"")
+            return subprocess.CompletedProcess(argv, 1, b"", b"Failed to map frame: -38\nConversion failed!\n")
+        if not (self.va_ok if zero_copy else self.copy_ok):
             err = b"first\nvk->CreateImage: VK_ERROR_OUT_OF_DEVICE_MEMORY\nNothing was written into output file\n"
             return subprocess.CompletedProcess(argv, 187, b"", err)
-        return subprocess.CompletedProcess(argv, 0, b"", b"")
+        return subprocess.CompletedProcess(argv, 0, self.zero_copy_picture if zero_copy else PICTURE, b"")
 
     def decodes(self, zero_copy: bool | None = None) -> int:
-        found = [c for c in self.calls if "-hwaccel" in c]
+        """VA-API decodes that go through libplacebo (the mapping-only check is not counted)."""
+        found = [c for c in self.calls if "-hwaccel" in c and "libplacebo" in c[c.index("-vf") + 1]]
         return len([c for c in found if zero_copy is None or ("-hwaccel_output_format" in c) == zero_copy])
 
 
@@ -51,7 +73,7 @@ def test_the_probe_tries_zero_copy_first_with_both_subsamplings(tmp_path: Path) 
     fake = FakeFfmpeg(va_ok=True)
     assert probe.probe_mjpeg(NODE, run=fake, cache=tmp_path / "p.json") == ("vaapi", "")
     assert fake.decodes() == 2 and fake.decodes(zero_copy=True) == 2  # 4:2:0 and 4:2:2, no further tier
-    decode = next(c for c in fake.calls if "-hwaccel" in c)
+    decode = next(c for c in fake.calls if "-hwaccel" in c and "-vf" in c)
     assert f"vaapi=va:{NODE}" in decode and "hwmap=derive_device=vulkan,libplacebo" in decode[decode.index("-vf") + 1]
 
 
@@ -60,13 +82,93 @@ def test_a_failed_import_falls_to_the_copy_tier_and_says_why(tmp_path: Path) -> 
     decode, why = probe.probe_mjpeg(NODE, run=fake, cache=tmp_path / "p.json")
     assert decode == "vaapi-copy" and "VK_ERROR_OUT_OF_DEVICE_MEMORY" in why  # the driver's line, not the last one
     assert fake.decodes(zero_copy=False) == 2
-    copy = next(c for c in fake.calls if "-hwaccel" in c and "-hwaccel_output_format" not in c)
+    copy = next(c for c in fake.calls if "-hwaccel" in c and "-hwaccel_output_format" not in c and "-vf" in c)
     assert "hwmap" not in copy[copy.index("-vf") + 1] and "hwupload" in copy[copy.index("-vf") + 1]
 
 
 def test_software_is_the_last_tier(tmp_path: Path) -> None:
     decode, why = probe.probe_mjpeg(NODE, run=FakeFfmpeg(va_ok=False, copy_ok=False), cache=tmp_path / "p.json")
     assert decode == "software" and "VK_ERROR_OUT_OF_DEVICE_MEMORY" in why
+
+
+def test_a_failed_import_is_not_reported_as_a_full_gpu(tmp_path: Path) -> None:
+    """libplacebo's CreateImage failure reads VK_ERROR_OUT_OF_DEVICE_MEMORY. When the VA to Vulkan mapping alone works
+    the probe says the dma-buf import was rejected, so nobody goes looking for a memory shortage (#138)."""
+    fake = FakeFfmpeg(va_ok=False)
+    decode, why = probe.probe_mjpeg(NODE, run=fake, cache=tmp_path / "p.json")
+    assert decode == "vaapi-copy"
+    assert why == probe.IMPORT_REJECTED and "not a memory shortage" in why and "mapping works" in why
+    mapping = [c for c in fake.calls if "-hwaccel" in c and "hwdownload,format=yuv420p" in c[c.index("-vf") + 1]]
+    assert len(mapping) == 1 and "libplacebo" not in mapping[0][mapping[0].index("-vf") + 1]
+
+
+def test_a_mapping_that_fails_is_reported_as_the_mapping(tmp_path: Path) -> None:
+    decode, why = probe.probe_mjpeg(NODE, run=FakeFfmpeg(va_ok=False, mapping_ok=False), cache=tmp_path / "p.json")
+    assert decode == "vaapi-copy"
+    assert why.startswith("the VA-API frame cannot be mapped into Vulkan") and "Failed to map frame" in why
+
+
+def test_the_mapping_check_matches_the_subsampling_that_failed(tmp_path: Path) -> None:
+    """A 4:2:2 JPEG that fails to import is mapped and read back as yuv422p, not relabelled as 4:2:0."""
+    jpeg = tmp_path / "probe-yuvj422p.jpg"
+    quiet = ["ffmpeg", "-loglevel", "error"]
+    fake = FakeFfmpeg(va_ok=False)
+    failed = subprocess.CompletedProcess([], 187, b"", b"vk->CreateImage: VK_ERROR_OUT_OF_DEVICE_MEMORY\n")
+    why = probe._explain_import(failed, jpeg, "yuvj422p", quiet, [], fake)
+    assert why == probe.IMPORT_REJECTED
+    assert "hwdownload,format=yuv422p" in fake.calls[0][fake.calls[0].index("-vf") + 1]
+
+
+def test_other_zero_copy_errors_are_reported_as_they_are(tmp_path: Path) -> None:
+    failed = subprocess.CompletedProcess([], 1, b"", b"[vf] Failed to create the filter\n")
+    fake = FakeFfmpeg(va_ok=False)
+    assert (
+        probe._explain_import(failed, tmp_path / "x.jpg", "yuvj420p", [], [], fake)
+        == "[vf] Failed to create the filter"
+    )
+    assert fake.calls == []  # nothing to tell apart: no mapping check
+
+
+def test_a_zero_copy_run_that_exits_0_with_the_wrong_picture_is_not_zero_copy(tmp_path: Path) -> None:
+    """A stack can pass the exit code and still hand libplacebo an empty image (an all-green frame from a missing
+    sync). The probe compares the picture with a software decode and falls to the copy tier."""
+    green = bytes([0x4B] * probe.PROBE_FRAME_BYTES)
+    decode, why = probe.probe_mjpeg(
+        NODE, run=FakeFfmpeg(va_ok=True, zero_copy_picture=green), cache=tmp_path / "p.json"
+    )
+    assert decode == "vaapi-copy" and "differs from a software decode" in why
+
+
+def test_a_zero_copy_run_that_writes_nothing_is_not_zero_copy(tmp_path: Path) -> None:
+    decode, why = probe.probe_mjpeg(NODE, run=FakeFfmpeg(va_ok=True, zero_copy_picture=b""), cache=tmp_path / "p.json")
+    assert decode == "vaapi-copy" and "wrote 0 bytes" in why
+
+
+def test_a_picture_within_rounding_of_the_reference_passes(tmp_path: Path) -> None:
+    near = bytes((b + 1) % 256 for b in PICTURE)
+    assert probe.probe_mjpeg(NODE, run=FakeFfmpeg(va_ok=True, zero_copy_picture=near), cache=tmp_path / "p.json") == (
+        "vaapi",
+        "",
+    )
+
+
+def test_without_a_working_reference_every_tier_fails_with_its_error(tmp_path: Path) -> None:
+    """No libplacebo on the software head means no Vulkan graph at all: software decode, with the reason."""
+    decode, why = probe.probe_mjpeg(NODE, run=FakeFfmpeg(va_ok=True, reference_ok=False), cache=tmp_path / "p.json")
+    assert decode == "software" and "no Vulkan device" in why
+
+
+def test_a_new_libplacebo_is_a_new_stack(tmp_path: Path) -> None:
+    """The failing import lives in libplacebo, so its package version is in the fingerprint the answer is kept under."""
+    seen: list[list[str]] = []
+
+    def run(argv, **kwargs):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    probe.stack_fingerprint(NODE, run=run)
+    dpkg = next(c for c in seen if c[0] == "dpkg-query")
+    assert "libplacebo[0-9]*" in dpkg
 
 
 def test_the_answer_is_kept_per_graphics_stack(tmp_path: Path) -> None:

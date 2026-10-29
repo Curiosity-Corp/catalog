@@ -5,6 +5,16 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.23] - 2026-10-29
+
+### Added
+- Enhanced RTMP now carries Opus audio (opt-in per destination), RTMPS checks the server certificate, and a server that rejects Enhanced RTMP falls back to classic H.264 and AAC in one step (#82). The Presets page shows each platform's RTMPS and RTMP audio details.
+
+### Fixed
+- The MJPEG decode probe now says why zero-copy VA-API to libplacebo fails on the Arc: libplacebo's dma-buf import is rejected by the Vulkan driver (reported as `VK_ERROR_OUT_OF_DEVICE_MEMORY`, not a memory shortage; the VA to Vulkan mapping itself works), and a tier is now chosen only when its picture matches a software decode, not just when ffmpeg exits 0 (#138).
+- StreamStack Camera now keeps its 1280x720, 30 fps contract when the camera feeding it is smaller or slower (a Cam Link capturing 720x480 at 21.8 fps, or the "Camera reconnecting" card): the picture is scaled to fit and centred on black and frames are repeated up to 30 fps, instead of renegotiating the loopback down to 480p and tripping the doctor warning (#175).
+- StreamStack Camera is now a PipeWire camera after boot: `streamstack camera-publish` restarts WirePlumber once, after the program node is fed and never while an app holds the camera or captures audio, because WirePlumber probes the exclusive_caps loopback at module load, before anything writes it (#176).
+
 ## [0.0.22] - 2026-10-29
 
 ### Changed

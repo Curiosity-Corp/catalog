@@ -207,6 +207,27 @@ class Spec:
     # the GPU, read back and uploaded again: the decoder's own transfer names the real surface format) or "software"
     # (the threaded libavcodec decoder, then hwupload). probe.probe_mjpeg picks the first that works on this stack.
     mjpeg_decode: str = MJPEG_VAAPI
+    # The call-app contract (docs/loopback-contract.md): a camera that delivers less than the program node must offer
+    # is drawn at the largest size that fits the node, centred on black (`letterbox`), and a camera slower than the
+    # contract's frame rate is repeated up to `out_fps` at the very end of the graph. 0 = the camera's own rate.
+    out_fps: float = 0.0
+    letterbox: bool = False
+
+    @property
+    def rate(self) -> float:
+        """The frame rate the program node is written at."""
+        return self.out_fps if self.out_fps > 0 else self.source.fps
+
+    @property
+    def picture(self) -> tuple[int, int]:
+        """The size the camera picture is drawn at: the whole node, or (letterbox) the largest even size that fits it
+        with the camera's own aspect ratio."""
+        if not self.letterbox or self.source.width <= 0 or self.source.height <= 0:
+            return self.out_width, self.out_height
+        scale = min(self.out_width / self.source.width, self.out_height / self.source.height)
+        width = max(2, int(self.source.width * scale) // 2 * 2)
+        height = max(2, int(self.source.height * scale) // 2 * 2)
+        return min(width, self.out_width), min(height, self.out_height)
 
     @property
     def va_mjpeg(self) -> bool:
@@ -428,9 +449,10 @@ def _grade_filter(
 ) -> str:
     grade = grade_values(look, blackout)
     if spec.backend == "vulkan":
+        pic_w, pic_h = spec.picture
         opts = [
-            f"w={spec.out_width}",
-            f"h={spec.out_height}",
+            f"w={pic_w}",
+            f"h={pic_h}",
             f"fps={fnum(spec.source.fps)}",  # the frame-number grid, see LOOKAHEAD_SHIFT
             f"format={out_format}",
             f"upscaler={spec.scaler}",
@@ -448,7 +470,8 @@ def _grade_filter(
             opts.append(f"custom_shader_path={_quote(sharpen_shader_path(spec.shaders, key.sharpen))}")
         return f"libplacebo@grade={':'.join(opts)}"
     sets = ":".join(f"{k}={fnum(v)}" for k, v in grade.items())
-    return f"scale={spec.out_width}:{spec.out_height}:flags=bicubic,format=yuv444p,eq@grade={sets}:eval=frame"
+    pic_w, pic_h = spec.picture
+    return f"scale={pic_w}:{pic_h}:flags=bicubic,format=yuv444p,eq@grade={sets}:eval=frame"
 
 
 DENOISE_NLMEANS = "nlmeans_vulkan=s=3:p=3:r=5"  # the measured pick (docs/native-video-engine.md, issue #92)
@@ -540,7 +563,7 @@ def _blur_branch(spec: Spec, on: bool, strength: float) -> str:
     blur = spec.blur
     if blur is None:
         raise GraphError("this spec has no blur branch")
-    w, h = spec.out_width, spec.out_height
+    w, h = spec.picture
     small_w, small_h = max(2, w // blur.down // 2 * 2), max(2, h // blur.down // 2 * 2)
     sigma = fnum(blur_sigma(strength))
     if blur.edge == "plain":
@@ -631,10 +654,9 @@ def build_graph(
         stages = [*spec.pre_grade, _grade_filter(spec, look, None, blackout)]
     if spec.blur is not None and blur is not None:
         chain = ",".join([head, *stages]) + ",split[fg][bgs]" + _blur_branch(spec, blur[0], blur[1])
-        if yuv:
-            chain += "," + yuv
+        chain += "".join("," + f for f in [*([yuv] if yuv else []), *output_stage(spec)])
     else:
-        chain = ",".join([head, *stages, *([yuv] if yuv else [])])
+        chain = ",".join([head, *stages, *([yuv] if yuv else []), *output_stage(spec)])
     if spec.taps:
         # split BEFORE the packing step: the taps convert from the program picture's own planar format straight to
         # nv12, instead of from the packed output format (one conversion fewer, and no 4:2:2 repack on the way)
@@ -647,6 +669,20 @@ def build_graph(
             graph += f";[t{i}]format=nv12{',hwupload' if tap.upload else ''}[tap{i}]"
         return graph
     return f"{chain},format={spec.output_format}[prog]"
+
+
+def output_stage(spec: Spec) -> list[str]:
+    """The last filters of the program picture: centre it on the node's black canvas when it is smaller, then hold
+    the contract's frame rate when the camera is slower. Empty for a camera that already fills the node."""
+    stage = []
+    pic_w, pic_h = spec.picture
+    if (pic_w, pic_h) != (spec.out_width, spec.out_height):
+        x = (spec.out_width - pic_w) // 2 // 2 * 2
+        y = (spec.out_height - pic_h) // 2 // 2 * 2
+        stage.append(f"pad={spec.out_width}:{spec.out_height}:{x}:{y}:color=black")
+    if spec.out_fps > 0 and abs(spec.out_fps - spec.source.fps) > 1e-3:
+        stage.append(f"fps={fnum(spec.out_fps)}")
+    return stage
 
 
 def lookahead_stamp(fps: float) -> str:

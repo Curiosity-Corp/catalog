@@ -10,6 +10,7 @@ from __future__ import annotations
 import atexit
 import contextlib
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -211,7 +212,23 @@ class Child:
                 self.tail.append(f"exit handler failed: {type(exc).__name__}: {exc}")
 
     def last_error(self) -> str:
+        """The line that says why the process ended: its last output, unless that is only ffmpeg's closing summary.
+
+        ffmpeg ends a failed connection with "Error opening output ...: Input/output error", after the line that
+        names the cause (`[tls @ 0x...] Peer certificate failed verification`). The cause is what the person needs.
+        """
+        for line in reversed(self.tail):
+            if not _CLOSING_SUMMARY.match(line):
+                return _LOG_PREFIX.sub("", line)
         return self.tail[-1] if self.tail else ""
+
+
+_CLOSING_SUMMARY = re.compile(
+    r"(\[out#\d+[^\]]*\] )?(Error opening (output|input)|Conversion failed|Error muxing)"
+    r"|\[\w+ @ 0x[0-9a-f]+\] Cannot open connection",
+    re.I,
+)
+_LOG_PREFIX = re.compile(r"^\[[a-z0-9_#/.-]+ @ 0x[0-9a-f]+\] ", re.I)
 
 
 class ProgressParser:

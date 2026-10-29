@@ -23,6 +23,9 @@ log = logging.getLogger(__name__)
 
 READABLE = (*RAW_FORMATS, "MJPG")
 CAMLINK_LABEL = "Cam Link 4K"
+CONTRACT_SIZE = (1280, 720)  # the least a call app is offered: "calls want 720p or 1080p" (doctor, virtualdevices)
+CONTRACT_FPS = 30.0
+CONTRACT_MIN_FPS = 24.0  # hardware/contract.py FPS[0]: below this calls stutter
 
 
 class SourceError(Exception):
@@ -97,18 +100,54 @@ def resolve(
     return Source(camera.label, camera.device, fourcc, width, height, fps)
 
 
-def output_size(cfg: dict[str, str], source: Source) -> tuple[int, int]:
-    """The program camera's size: the source's own, or STREAMSTACK_ENGINE_SIZE (for example 1920x1080)."""
+def _explicit_size(cfg: dict[str, str]) -> tuple[int, int] | None:
+    """STREAMSTACK_ENGINE_SIZE as WIDTHxHEIGHT; None for "source", "auto", empty or an unusable value."""
     wanted = (cfg.get("STREAMSTACK_ENGINE_SIZE") or "source").strip().lower()
     if wanted in ("", "source", "auto"):
-        return source.width, source.height
+        return None
     try:
         w, _, h = wanted.partition("x")
         width, height = int(w), int(h)
     except ValueError:
-        log.warning("STREAMSTACK_ENGINE_SIZE=%r is not WIDTHxHEIGHT; using the source size", wanted)
-        return source.width, source.height
+        log.warning("STREAMSTACK_ENGINE_SIZE=%r is not WIDTHxHEIGHT; using the camera's size", wanted)
+        return None
     if width < 160 or height < 90 or width % 2 or height % 2 or width > 7680 or height > 4320:
-        log.warning("STREAMSTACK_ENGINE_SIZE=%r is out of range or odd; using the source size", wanted)
-        return source.width, source.height
+        log.warning("STREAMSTACK_ENGINE_SIZE=%r is out of range or odd; using the camera's size", wanted)
+        return None
     return width, height
+
+
+@dataclass(frozen=True)
+class Output:
+    """What the program node is written at: its size, its frame rate (0 = the camera's own) and whether a camera
+    smaller than the node is centred on black instead of stretched."""
+
+    width: int
+    height: int
+    fps: float = 0.0
+    letterbox: bool = False
+
+
+def output_plan(cfg: dict[str, str], source: Source) -> Output:
+    """The program node's format for `source`, which holds the call-app contract whatever the camera delivers.
+
+    Call apps read the one format the node offers (ADR 0004, docs/loopback-contract.md). A card or a low-resolution
+    fallback (the Cam Link at 720x480 on a host whose HDMI source is 480p, 21.8 fps) must therefore not renegotiate
+    the node down: below CONTRACT_SIZE the node stays at CONTRACT_SIZE and the picture is scaled to fit and centred
+    on black, and below CONTRACT_MIN_FPS the frames are repeated up to CONTRACT_FPS. A camera at or above both is
+    passed through at its own size and rate. STREAMSTACK_ENGINE_SIZE is the operator's explicit choice and wins for
+    the size (the doctor still checks it); the frame rate floor always applies.
+    """
+    fps = 0.0 if source.fps >= CONTRACT_MIN_FPS else CONTRACT_FPS
+    explicit = _explicit_size(cfg)
+    if explicit is not None:
+        return Output(*explicit, fps=fps)
+    if source.width >= CONTRACT_SIZE[0] and source.height >= CONTRACT_SIZE[1]:
+        return Output(source.width, source.height, fps=fps)
+    return Output(*CONTRACT_SIZE, fps=fps, letterbox=True)
+
+
+def output_size(cfg: dict[str, str], source: Source) -> tuple[int, int]:
+    """The program camera's size (see `output_plan`)."""
+    plan = output_plan(cfg, source)
+    return plan.width, plan.height

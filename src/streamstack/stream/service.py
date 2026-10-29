@@ -173,7 +173,8 @@ class Active:
     sink: PipeSink | FileSink | WhipSink | ReplaySink
     started_at: float
     path: Path | None = None  # recordings
-    moved: bool = False  # already fell back from Enhanced RTMP
+    moved: bool = False  # moved to another codec chain at least once
+    legacy: bool = False  # fell back from Enhanced RTMP: classic FLV with H.264 and AAC
 
 
 def free_bytes(directory: Path) -> int:
@@ -467,6 +468,10 @@ class StreamService:
 
     def _available_for(self, dest: Destination, available: set[str]) -> set[str]:
         """The host's codecs narrowed to what this destination's account may publish, when Twitch said."""
+        if dest.kind == "rtmp" and dest.codec == "auto" and dest.options.get("mode", "auto") == "auto":
+            enhanced = self.host().transport("rtmp-enhanced")
+            if enhanced is not None and not enhanced.ok:
+                available = {"h264"} & available or available  # this ffmpeg cannot announce AV1 or HEVC over FLV
         caps = self._accounts.get(dest.id)
         if caps is None or not caps.known or dest.codec != "auto":
             return available
@@ -913,6 +918,23 @@ class StreamService:
         transport = host.transport(wanted)
         if transport is not None and not transport.ok:
             raise StreamError(f"{dest.label()} cannot start: {transport.reason}.", 409)
+        if dest.kind == "rtmp":
+            for need in self._rtmp_needs(dest):
+                missing = host.transport(need)
+                if missing is not None and not missing.ok:
+                    raise StreamError(f"{dest.label()} cannot start: {missing.reason}.", 409)
+
+    @staticmethod
+    def _rtmp_needs(dest: Destination) -> list[str]:
+        """The probed transports an RTMP destination depends on beyond plain RTMP."""
+        needs = []
+        if dest.is_tls():
+            needs.append("rtmps")
+        if dest.options.get("mode") == "enhanced" or dest.codec in ffcmd.ENHANCED_FOURCC:
+            needs.append("rtmp-enhanced")
+        if ffcmd.rtmp_wants_opus(dest):
+            needs.append("rtmp-opus")
+        return needs
 
     def _wanted_codec(self, settings: EncoderSettings) -> str:
         """The codec the settings ask for: the chosen one, or the pinned encoder's, or "auto"."""
@@ -975,11 +997,11 @@ class StreamService:
 
     # -- destinations ----------------------------------------------------------------------------------------
 
-    def _attach(self, dest: Destination, codec: str, path: Path | None = None) -> None:
+    def _attach(self, dest: Destination, codec: str, path: Path | None = None, legacy: bool = False) -> None:
         run = self._runs.get(codec) or self._start_run(codec)
         self._start_srt_link(dest)
         try:
-            sink, target = self._make_sink(dest, codec, path)
+            sink, target = self._make_sink(dest, codec, path, legacy)
         except (StreamError, OSError):
             self._stop_srt_link(dest.id)
             raise
@@ -990,7 +1012,7 @@ class StreamService:
                 self._start_raw(self.host())
             if target is not None:
                 self._mark_recording(target, dest)
-        self._active[dest.id] = Active(dest, codec, sink, self._wall(), target)
+        self._active[dest.id] = Active(dest, codec, sink, self._wall(), target, legacy=legacy)
         # a WHIP session takes a new picture size in-band (new parameter sets at the keyframe) and stays connected
         run.chain.attach(sink, restart_on_geometry=dest.kind != "whip", wants_raw=recording)
         self._event("info", f"{dest.label()} is starting ({codec.upper()}).")
@@ -1029,7 +1051,7 @@ class StreamService:
             link.stop()
 
     def _make_sink(
-        self, dest: Destination, codec: str, path: Path | None
+        self, dest: Destination, codec: str, path: Path | None, legacy: bool = False
     ) -> tuple[PipeSink | FileSink | WhipSink | ReplaySink, Path | None]:
         if dest.id == REPLAY_ID and self._pending_replay is not None:
             return self._pending_replay, None
@@ -1053,7 +1075,7 @@ class StreamService:
                 target.parent.mkdir(parents=True, exist_ok=True)
             link = self._srt.get(dest.id)
             latency = link.resolve() if link is not None else None  # fixed for this connection; "auto" is measured now
-            argv = ffcmd.sink_argv(ffmpeg, dest, codec, audio_kbps, secret, str(target or ""), latency)
+            argv = ffcmd.sink_argv(ffmpeg, dest, codec, audio_kbps, secret, str(target or ""), latency, legacy)
             return self._spawn_child(
                 f"sink-{dest.id}",
                 argv,
@@ -1469,7 +1491,8 @@ class StreamService:
                 self._swap_video(run, new)
         self._after_change()
 
-    def _move(self, active: Active, codec: str) -> None:
+    def _move(self, active: Active, codec: str, legacy: bool = False) -> None:
+        legacy = (legacy or active.legacy) and codec == "h264"  # the legacy fallback is H.264 by definition
         old_run = self._runs.get(active.codec)
         if old_run is not None:
             old_run.chain.detach(active.dest.id)
@@ -1478,7 +1501,7 @@ class StreamService:
         if isinstance(active.sink, ReplaySink):  # a different codec cannot join the old pictures: start empty
             self._pending_replay = ReplaySink(REPLAY_ID, active.sink.seconds, active.sink.max_bytes, wall=self._wall)
         try:
-            self._attach(active.dest, codec, active.path)
+            self._attach(active.dest, codec, active.path, legacy)
         finally:
             self._pending_replay = None
         self._active[active.dest.id].moved = True
@@ -1582,23 +1605,27 @@ class StreamService:
         run.chain.begin_swap(gen.id, 0)
 
     def _enhanced_fallback(self) -> None:
-        """Enhanced RTMP that never connects: the server probably cannot take AV1 or HEVC, so use H.264."""
+        """Enhanced RTMP that never connects: the server probably cannot take AV1, HEVC or Opus, so use classic
+        FLV with H.264 and AAC, which every RTMP server takes."""
         for active in list(self._active.values()):
             dest = active.dest
-            if dest.kind != "rtmp" or dest.options.get("mode", "auto") != "auto" or active.codec == "h264":
+            if dest.kind != "rtmp" or dest.options.get("mode", "auto") != "auto" or active.legacy:
                 continue
+            used = [active.codec.upper()] if active.codec != "h264" else []
+            used += ["Opus"] if ffcmd.rtmp_wants_opus(dest) else []
             sink = active.sink
-            if not isinstance(sink, PipeSink) or sink.ever_live or sink.restarts < 2 or active.moved:
+            if not used or not isinstance(sink, PipeSink) or sink.ever_live or sink.restarts < 2:
                 continue
             available = self.host().available_codecs()
             if "h264" not in available:
                 continue
             self._event(
                 "warn",
-                f"{dest.label()} did not accept {active.codec.upper()} (Enhanced RTMP); falling back to classic H.264.",
+                f"{dest.label()} did not accept {' and '.join(used)} (Enhanced RTMP); falling back to classic "
+                "H.264 and AAC.",
             )
             try:
-                self._move(active, "h264")
+                self._move(active, "h264", legacy=True)
             except StreamError as exc:
                 self._event("error", f"{dest.label()} could not fall back to H.264: {exc.message}")
                 continue
@@ -1609,6 +1636,18 @@ class StreamService:
     def state(self) -> dict[str, Any]:
         with self._lock:
             return self._state_locked()
+
+    @staticmethod
+    def _rtmp_state(dest: Destination, active: Active) -> dict[str, Any]:
+        """What this RTMP destination is carrying right now: the wire format after any fallback."""
+        opus = ffcmd.rtmp_wants_opus(dest, active.legacy)
+        return {
+            "enhanced": bool(ffcmd.rtmp_enhanced_codecs(dest, active.codec, active.legacy)),
+            "legacy": active.legacy,
+            "audio": "opus" if opus else "aac",
+            "tls": dest.is_tls(),
+            "tls_verify": dest.is_tls() and dest.tls_verify(),
+        }
 
     def _destination_state(self, dest: Destination, active: Active | None) -> dict[str, Any]:
         base: dict[str, Any] = {
@@ -1661,6 +1700,8 @@ class StreamService:
             connected_s=status["connected_s"],
             moved=active.moved,
         )
+        if dest.kind == "rtmp":
+            base["rtmp"] = self._rtmp_state(dest, active)
         if dest.kind == "whip":
             base["whip"] = whip
         account = self._accounts.get(dest.id)

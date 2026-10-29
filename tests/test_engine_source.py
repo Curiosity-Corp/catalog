@@ -90,6 +90,40 @@ def test_output_size(setting: str, expected: tuple[int, int]) -> None:
     assert source.output_size({"STREAMSTACK_ENGINE_SIZE": setting}, src) == expected
 
 
+LOW_CARD = Source("Cam Link 4K", "/dev/video0", "YUYV", 720, 480, 21.8)  # deskmeet1: HDMI source at 480p
+
+
+def test_a_480p_card_keeps_the_program_node_at_720p_30_fps_letterboxed() -> None:
+    plan = source.output_plan({"STREAMSTACK_ENGINE_SIZE": "source"}, LOW_CARD)
+    assert plan == source.Output(1280, 720, fps=30.0, letterbox=True)
+
+
+@pytest.mark.parametrize("setting", ["source", "", "auto", "junk", "1921x1080"])
+def test_every_automatic_setting_holds_the_floor(setting: str) -> None:
+    plan = source.output_plan({"STREAMSTACK_ENGINE_SIZE": setting}, LOW_CARD)
+    assert (plan.width, plan.height, plan.letterbox) == (1280, 720, True)
+
+
+def test_a_camera_at_or_above_the_contract_is_passed_through() -> None:
+    for width, height, fps in [(1280, 720, 30.0), (1920, 1080, 60.0), (3840, 2160, 24.0)]:
+        plan = source.output_plan({}, Source("c", "/dev/video0", "YUYV", width, height, fps))
+        assert plan == source.Output(width, height)
+
+
+def test_a_slow_camera_is_repeated_up_to_30_fps_but_24_fps_is_left_alone() -> None:
+    assert source.output_plan({}, Source("c", "/dev/video0", "YUYV", 1280, 720, 20.0)).fps == 30.0
+    assert source.output_plan({}, Source("c", "/dev/video0", "YUYV", 1280, 720, 24.0)).fps == 0.0
+
+
+def test_an_explicit_size_wins_but_the_frame_rate_floor_still_applies() -> None:
+    plan = source.output_plan({"STREAMSTACK_ENGINE_SIZE": "1920x1080"}, LOW_CARD)
+    assert plan == source.Output(1920, 1080, fps=30.0, letterbox=False)
+
+
+def test_output_size_follows_the_plan() -> None:
+    assert source.output_size({}, LOW_CARD) == (1280, 720)
+
+
 # -- encoders -----------------------------------------------------------------------------------------------------
 
 

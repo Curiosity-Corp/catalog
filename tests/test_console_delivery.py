@@ -141,6 +141,17 @@ def test_a_configured_engine_size_is_what_the_slate_writes(world: World) -> None
     assert slate.shown[-1][0].width == 1280 and slate.shown[-1][0].height == 720
 
 
+def test_the_slate_follows_the_node_format_not_the_slow_camera(world: World) -> None:
+    from streamstack.engine.graph import Source, Spec
+
+    card = Source("Cam Link 4K", "/dev/video0", "YUYV", 720, 480, 21.8)
+    delivery, slate, *_ = make(world)
+    delivery.note_output(Spec(card, "/dev/video43", 1280, 720, out_fps=30.0, letterbox=True))
+    delivery.cover("x")
+    shown = slate.shown[-1][0]
+    assert (shown.width, shown.height, shown.fps) == (1280, 720, 30.0)
+
+
 def test_loss_off_writes_nothing(world: World) -> None:
     delivery, slate, *_ = make(world, {"STREAMSTACK_CAMERA_LOSS": "off"})
     world.fed["/dev/video42"] = False

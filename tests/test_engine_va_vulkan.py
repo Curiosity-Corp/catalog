@@ -3,7 +3,8 @@
 These run only where ffmpeg has a VA-API device and a Vulkan device (CI has neither, so they skip there). The mapping
 itself (`hwmap` of a decoded frame into Vulkan, read back with `hwdownload`) is checked against a software decode of
 the same JPEG. The step after it, libplacebo importing the mapped frame, fails on the Arc stack this was measured on
-(`VK_ERROR_OUT_OF_DEVICE_MEMORY` from `CreateImage`); `engine/probe.py` finds that out and the engine then decodes on
+(`VK_ERROR_OUT_OF_DEVICE_MEMORY` from `CreateImage`, which is the driver rejecting the re-imported dma-buf layout, not
+a memory shortage, #138); `engine/probe.py` finds that out and the engine then decodes on
 the GPU with a read-back (or, failing that, in software). The tests below run the engine's own argv on the copy and
 software paths and on whichever path the probe selects.
 """

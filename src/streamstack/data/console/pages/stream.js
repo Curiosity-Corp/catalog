@@ -137,6 +137,15 @@ const TEMPLATE = `
           <label for="st-f-mode" data-ref="fModeLabel">Mode</label>
           <select id="st-f-mode" class="text-input" data-ref="fMode"></select>
         </div>
+        <div class="st-field" data-ref="fRtmpWrap" hidden>
+          <label for="st-f-audio">Audio</label>
+          <select id="st-f-audio" class="text-input" data-ref="fRtmpAudio">
+            <option value="aac">AAC (every server)</option>
+            <option value="opus">Opus (Enhanced RTMP servers only)</option>
+          </select>
+          <p class="hint" data-ref="fRtmpAudioHint">Opus is sent as it is, with no AAC re-encode. If the server never accepts the stream, it falls back to classic H.264 and AAC.</p>
+          <label class="st-check" data-ref="fTlsWrap" hidden><input type="checkbox" data-ref="fTlsVerify" checked> Check the server's certificate (rtmps://)</label>
+        </div>
         <div class="st-field" data-ref="fLatencyWrap" hidden>
           <label for="st-f-latency">Latency (ms)</label>
           <input id="st-f-latency" class="text-input" data-ref="fLatency" type="number" min="20" max="8000" step="10" value="120">
@@ -706,6 +715,10 @@ export async function mount(host, ctx) {
     R.fKey.placeholder = editing?.key === 'set' ? 'A key is set; type a new one to replace it' : kind === 'rtmp' ? 'Paste the stream key' : 'Optional';
     R.fKeyClearWrap.hidden = !(editing && editing.key === 'set');
     R.fModeWrap.hidden = kind !== 'srt';
+    R.fRtmpWrap.hidden = kind !== 'rtmp';
+    R.fRtmpAudio.disabled = kind === 'rtmp' && type.mode === 'classic';   // classic FLV has no Opus
+    if (R.fRtmpAudio.disabled) R.fRtmpAudio.value = 'aac';
+    R.fTlsWrap.hidden = !/^rtmps:\/\//i.test(R.fUrl.value.trim());
     R.fLatencyWrap.hidden = kind !== 'srt';
     if (kind === 'srt') {
       R.fModeLabel.textContent = 'Connection';
@@ -717,6 +730,7 @@ export async function mount(host, ctx) {
     fillCodecs(kind, R.fCodec.value || 'auto');
   }
   R.fType.addEventListener('change', syncForm);
+  R.fUrl.addEventListener('input', () => { R.fTlsWrap.hidden = !(R.fType.value.startsWith('rtmp') && /^rtmps:\/\//i.test(R.fUrl.value.trim())); });
   R.fLatencyAuto.addEventListener('change', () => { R.fLatency.disabled = R.fLatencyAuto.checked; });
 
   function openForm(d) {
@@ -733,6 +747,8 @@ export async function mount(host, ctx) {
     R.fLatencyAuto.checked = autoLatency;
     R.fLatency.disabled = autoLatency;
     fillCodecs(d ? portable(d).kind : 'rtmp', d?.codec_wanted ?? 'auto');
+    R.fRtmpAudio.value = d?.options?.audio === 'opus' ? 'opus' : 'aac';
+    R.fTlsVerify.checked = d?.options?.tls_verify !== false;
     syncForm();
     if (R.fMode.dataset.kind === 'srt') R.fMode.value = d?.options?.mode ?? 'caller';
     R.fCodec.value = d?.codec_wanted ?? 'auto';
@@ -767,7 +783,16 @@ export async function mount(host, ctx) {
     if (!name) { fail('Give the destination a name.'); R.fName.focus(); return; }
     if (!url) { fail('Enter the address of the destination.'); R.fUrl.focus(); return; }
     const options = { ...(editing?.options ?? {}) };
-    if (type.kind === 'rtmp') options.mode = type.mode;
+    if (type.kind === 'rtmp') {
+      options.mode = type.mode;
+      if (R.fRtmpAudio.value === 'opus' && type.mode !== 'classic') options.audio = 'opus'; else delete options.audio;
+      if (/^rtmps:\/\//i.test(url)) {
+        if (R.fTlsVerify.checked) delete options.tls_verify; else options.tls_verify = false;
+      } else {
+        delete options.tls_verify;
+        delete options.ca_file;
+      }
+    }
     if (type.kind === 'srt') {
       options.mode = R.fMode.value;
       options.latency_ms = R.fLatencyAuto.checked ? 'auto' : Number(R.fLatency.value) || 120;

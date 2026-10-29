@@ -89,8 +89,9 @@ def checks(
         _row(
             "warn",
             f"{label} is fed but PipeWire does not publish it as a camera",
-            f"PipeWire lists these cameras: {others}. Teams in Edge, Zoom and Chrome read {program} directly and are "
-            "unaffected; Firefox and the portal path will not list it",
-            "systemctl --user restart wireplumber (and check no WirePlumber config disables the v4l2 monitor)",
+            f"PipeWire lists these cameras: {others}. WirePlumber most likely probed {program} before anything fed it "
+            "and keeps that stale answer; Teams in Edge, Zoom and Chrome read it directly and are unaffected, "
+            "Firefox and the portal path will not list it",
+            "streamstack camera-publish (restarts WirePlumber so it probes the fed node; it waits while a call runs)",
         )
     ]

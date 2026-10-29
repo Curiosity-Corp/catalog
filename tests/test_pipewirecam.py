@@ -53,7 +53,7 @@ def test_a_published_node_is_ok_and_names_the_portal_path() -> None:
 def test_a_fed_node_pipewire_does_not_publish_warns_and_says_who_is_unaffected() -> None:
     (row,) = check(pipewirecam.video_sources(DUMP)[:1])
     assert row["state"] == "warn"
-    assert "Cam Link 4K" in row["detail"] and "Teams in Edge" in row["detail"] and "wireplumber" in row["hint"]
+    assert "Cam Link 4K" in row["detail"] and "Teams in Edge" in row["detail"] and "camera-publish" in row["hint"]
 
 
 def test_no_row_when_the_node_is_unfed_absent_or_pipewire_is_silent() -> None:
