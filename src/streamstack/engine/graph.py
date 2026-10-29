@@ -47,6 +47,27 @@ BLUR_WEIGHT = "gblur@bgw"  # the normalised blur's denominator: same sigma as BL
 BLUR_EDGES = ("normalised", "plain")  # how the background copy treats the person's edge, see _blur_branch
 BLUR_MERGE = "maskedmerge@blur"
 
+# Latency holds (issue #141, numbers in docs/native-video-engine.md). Two stages each kept one frame back until the next
+# one arrived, 33 ms apiece at 30 fps:
+#
+# 1. ffmpeg 8 runs the rawvideo and mjpeg encoders frame-threaded by default, which delays every frame by one encode
+#    slot. One encoder thread (`OUTPUT_THREADS`) on the program, detection and mask outputs writes the frame the moment
+#    it is filtered. The detection encoder matters although its picture is small: left threaded it stalled the
+#    decoder's hand-off to the other graphs for 100 ms or more every few frames, which the program picture felt once
+#    the holds below were gone (p95 140 ms with the blur branch in the graph, 13 ms with the one thread).
+# 2. libplacebo's frame queue (`pl_queue`) only renders a frame once it has seen a *later* one ("advance until the
+#    next frame is in the future"), even with no frame mixer and no interpolation. The engine has no temporal effect, so
+#    it hands the queue that later frame's timestamp up front instead of waiting for the real one: each camera frame
+#    gets the timestamp `N + LOOKAHEAD_SHIFT` (N = its frame number, in frame periods) and libplacebo renders on its own
+#    frame-number grid (`fps=<camera fps>`: output k is the frame nearest to time k). Frame k then sits just ahead of
+#    output k's target time, closer than frame k-1 is behind it, so it is the one rendered, the moment it arrives. The
+#    grid is counted in frames on both sides, never in clock time, so a camera at 29.97 or one that drops frames cannot
+#    drift out of step. Frame 0 keeps timestamp 0 (the queue shows nothing for a first frame that is ahead of time 0).
+#    A temporal effect (a frame mixer, interpolation) would need real lookahead: it must not use this stamp.
+OUTPUT_THREADS = 1
+LOOKAHEAD_SHIFT = 0.25  # in frame periods; anything in (0, 0.5) selects the new frame, the middle gives the most margin
+STAMP_TIMEBASE = 90000  # fine enough that a fraction of a frame period is not rounded away
+
 WARMTH_SPAN = 0.35  # colorcorrect shift at warmth = +-1 (CPU backend)
 SPLIT_SPAN = 0.25  # colorcorrect shift at lut_amount = 1
 # libplacebo scalers the engine may be told to use (STREAMSTACK_ENGINE_SCALER). A name is on this list only after
@@ -135,6 +156,7 @@ class Tap:
     encoder: str
     args: tuple[str, ...] = ()
     format: str = "matroska"
+    upload: bool = False  # the encoder takes GPU frames (VA-API): the branch ends in hwupload
 
 
 @dataclass(frozen=True)
@@ -409,6 +431,7 @@ def _grade_filter(
         opts = [
             f"w={spec.out_width}",
             f"h={spec.out_height}",
+            f"fps={fnum(spec.source.fps)}",  # the frame-number grid, see LOOKAHEAD_SHIFT
             f"format={out_format}",
             f"upscaler={spec.scaler}",
             f"downscaler={spec.scaler}",
@@ -581,8 +604,12 @@ def build_graph(
     if spec.blur is not None and blur is None:
         blur = (False, 8)
     key = key or graph_key(spec, look)
-    # frame-number timestamps pair the picture with its mask (see _blur_branch)
-    stamp = f"setpts=N/({fnum(src.fps)}*TB)," if spec.blur is not None else ""
+    # Vulkan: the no-lookahead stamp (see LOOKAHEAD_SHIFT). Its frame-number timestamps also pair the picture with its
+    # mask (see _blur_branch): libplacebo's output is on the same N / fps grid as the mask.
+    if spec.backend == "vulkan":
+        stamp = lookahead_stamp(src.fps)
+    else:
+        stamp = f"setpts=N/({fnum(src.fps)}*TB)," if spec.blur is not None else ""
     yuv = _yuv_stage(look, spec.backend, key)
     if spec.backend == "vulkan":
         if spec.va_mjpeg:  # decoded on the Arc by VA-API and mapped into Vulkan without leaving video memory
@@ -616,10 +643,16 @@ def build_graph(
         graph = (
             f"{chain},split={len(outs)}{labels.replace('[prog]', '[pre]', 1)};[pre]format={spec.output_format}[prog]"
         )
-        for i, _ in enumerate(spec.taps):
-            graph += f";[t{i}]format=nv12[tap{i}]"
+        for i, tap in enumerate(spec.taps):
+            graph += f";[t{i}]format=nv12{',hwupload' if tap.upload else ''}[tap{i}]"
         return graph
     return f"{chain},format={spec.output_format}[prog]"
+
+
+def lookahead_stamp(fps: float) -> str:
+    """The filters that give camera frame N the timestamp N + LOOKAHEAD_SHIFT (frame 0: 0), in frame periods."""
+    rate = fnum(fps)
+    return f"settb=1/{STAMP_TIMEBASE},setpts='if(eq(N,0),0,(N+{fnum(LOOKAHEAD_SHIFT)})/({rate}*TB))',"
 
 
 def input_args(spec: Spec) -> list[str]:
@@ -692,6 +725,12 @@ def build_argv(
         # the Quick Sync encoders open their own device: without this they take the first GPU libva finds, which on
         # a machine with an integrated GPU is not the one the graph runs on
         argv += ["-init_hw_device", f"qsv=qs:hw,child_device={spec.render_node},child_device_type=vaapi"]
+    if any(tap.upload for tap in spec.taps):
+        if spec.backend == "vulkan":
+            raise GraphError(
+                "a VA-API tap cannot join the Vulkan graph (its filter device is Vulkan): use a Quick Sync tap"
+            )
+        argv += ["-init_hw_device", f"vaapi=va:{spec.render_node}", "-filter_hw_device", "va"]
     argv += list(spec.input_override) or [*input_args(spec), "-i", spec.source.device]
     if spec.blur is not None and blur_fds is not None:
         argv += mask_input_args(spec, blur_fds[1])
@@ -706,15 +745,19 @@ def build_argv(
         "passthrough",
         "-pix_fmt",
         spec.output_format,
+        "-threads",
+        str(OUTPUT_THREADS),  # a frame-threaded rawvideo encoder holds each frame one slot, see OUTPUT_THREADS
         "-f",
         "v4l2",
         spec.out_device,
     ]
-    argv += ["-map", "[det]", "-fps_mode", "passthrough", "-c:v", "mjpeg", "-q:v", "5", "-f", "image2pipe", "pipe:1"]
+    detect = ["-map", "[det]", "-fps_mode", "passthrough", "-c:v", "mjpeg", "-q:v", "5"]
+    argv += [*detect, "-threads", str(OUTPUT_THREADS), "-f", "image2pipe", "pipe:1"]
     if spec.blur is not None and blur_fds is not None:
         argv += ["-map", "[seg]", "-fps_mode", "passthrough", "-c:v", "rawvideo", "-pix_fmt", "rgb24"]
         # -flush_packets: without it the last 12 KB of every frame waits in ffmpeg's I/O buffer for the next frame
-        argv += ["-flush_packets", "1", "-f", "rawvideo", f"pipe:{blur_fds[0]}"]
+        # one encoder thread: the same one-slot hold as the program output; here it would delay the mask loop a frame
+        argv += ["-threads", str(OUTPUT_THREADS), "-flush_packets", "1", "-f", "rawvideo", f"pipe:{blur_fds[0]}"]
     for i, tap in enumerate(spec.taps):
         argv += ["-map", f"[tap{i}]", "-c:v", tap.encoder, *tap.args, "-f", tap.format, tap.url]
     return argv

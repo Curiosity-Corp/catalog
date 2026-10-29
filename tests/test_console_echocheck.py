@@ -31,6 +31,34 @@ def wait(rig: Rig, timeout: float = 15.0) -> dict[str, Any]:
     raise AssertionError("the echo check did not finish")
 
 
+def finished(controller: EchoController, timeout: float = 15.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = controller.state()
+        if state["state"] != "running":
+            return state
+        time.sleep(0.05)
+    raise AssertionError("the echo check did not finish")
+
+
+def saved(controller: EchoController, store: Path, sink: str, timeout: float = 60.0) -> dict[str, Any]:
+    """The result for `sink` as a fresh controller reads it back from disk. The save follows the result (#168), so it
+    gets a deadline of its own rather than what is left of the run's (#173), long enough for a starved runner's fsync
+    (up to 41 s, infra#639). A miss says what the disk and the controller hold, so CI alone can tell the cause."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        remembered = EchoController(store_path=store).last_result(sink) if store.exists() else None
+        if remembered is not None:
+            return remembered
+        time.sleep(0.05)
+    on_disk = store.read_text() if store.exists() else "(no file)"
+    beside = sorted(p.name for p in store.parent.iterdir())
+    raise AssertionError(
+        f"the result for {sink} was never saved to {store}: on disk {on_disk!r}, beside it {beside}, "
+        f"in memory {sorted(controller.state()['results'])}, still to save {controller._writer.dirty}"
+    )
+
+
 @pytest.fixture
 def toasts() -> list[tuple[str, str]]:
     return []
@@ -141,16 +169,10 @@ def test_results_are_remembered(tmp_path: Path) -> None:
     first = DemoEcho(store_path=store)
     first.bind(lambda: Rig.demo().snapshot())
     first.act("echo.check", {"name": HDMI})
-    deadline = time.monotonic() + 15
-    while first.state()["state"] == "running" and time.monotonic() < deadline:
-        time.sleep(0.05)
-    while not store.exists() and time.monotonic() < deadline:  # the save follows the result (issue #168)
-        time.sleep(0.05)
-    assert store.exists()
-    again = EchoController(store_path=store)
-    remembered = again.last_result(HDMI)
-    assert remembered is not None
+    finished(first)
+    remembered = saved(first, store, HDMI)
     assert remembered["level"] == "strong"
+    again = EchoController(store_path=store)
     assert again.last_result() == remembered
 
 
@@ -296,17 +318,12 @@ def test_a_clear_verdict_on_a_bad_link_says_so_and_warns(tmp_path: Path) -> None
 
     controller.bind(snapshot)
     controller.act("echo.check", {"name": HEADSET})
-    deadline = time.monotonic() + 15
-    while controller.state()["state"] == "running" and time.monotonic() < deadline:
-        time.sleep(0.05)
-    result = controller.state()["result"]
+    result = finished(controller)["result"]
     assert result["level"] == "none"
     assert result["link"]["level"] == "caveat"
     assert "may come from it" in result["text"]
     assert toasts[-1][0] == "warn"
-    while not (tmp_path / "e.json").exists() and time.monotonic() < deadline:  # the save follows the result (#168)
-        time.sleep(0.05)
-    assert EchoController(store_path=tmp_path / "e.json").last_result(HEADSET)["link"]["level"] == "caveat"
+    assert saved(controller, tmp_path / "e.json", HEADSET)["link"]["level"] == "caveat"
 
 
 def test_a_clean_link_leaves_the_text_alone(rig: Rig) -> None:

@@ -393,8 +393,9 @@ pip install -e ".[e2e]" && playwright install --with-deps chromium firefox
 make e2e                    # E2E_BROWSERS=chromium to skip Firefox, E2E_ARTIFACTS=dir for the screenshots
 ```
 
-CI runs the same suite in the `e2e` job (pinned `mcr.microsoft.com/playwright/python` image) and keeps the
-screenshots and the JUnit report for 14 days. Page suites live in `tests/e2e/test_page_<name>.py`; slow runners can set
+CI runs the same suite in the `e2e` job (pinned `mcr.microsoft.com/playwright/python` image), split into four parallel
+shards balanced by the per-test seconds in `tests/e2e/timings.json` (`tests/e2e/sharding.py`; refresh the file with
+`scripts/e2e_timings.py`, see the comment on the job), and keeps the screenshots and each shard's JUnit report for 14 days. Page suites live in `tests/e2e/test_page_<name>.py`; slow runners can set
 `E2E_TIMEOUT_SCALE`. The demo rig's lighting engine runs on a pinned clock (`STREAMSTACK_DEMO_CLOCK`, New York, noon
 by default; `E2E_DEMO_CLOCK` overrides it), so the daylight schedule never depends on the hour or zone a run happens
 in. The `e2e-lighting` job soaks both lighting suites three times at 03:30, 12:00 and 18:30; locally,
