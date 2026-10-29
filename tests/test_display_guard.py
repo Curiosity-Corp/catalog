@@ -338,6 +338,24 @@ def test_watchdog_tick_heals_when_our_marker_says_it_was_forced_off(env: Path) -
     assert (conn / "status").read_text() == "connected"
 
 
+def test_hotplug_echo_of_our_own_probe_does_not_retrigger_a_repair(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 2026-10-28 22:14: every reprobe raised a drm uevent, which started the next
+    # hotplug repair about every 12 s. After a repair the echo must be dropped.
+    _kernel_connector(env)
+    x = FakeX(None)
+    monkeypatch.setattr(guard, "run", x.run)
+    assert guard.repair(_cfg(), "hotplug") == 0
+    first = len(x.calls)
+    assert first > 0
+    x2 = FakeX(None)
+    monkeypatch.setattr(guard, "run", x2.run)
+    for _ in range(10):
+        assert guard.repair(_cfg(), "hotplug") == 0
+    assert x2.calls == []
+    # a real wake is still honoured right after: forced reasons are not dropped
+    assert guard.repair(_cfg(), "tv-wake") in (0, 1, 2)
+
+
 # --- wake detection -------------------------------------------------------------
 
 

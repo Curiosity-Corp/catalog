@@ -77,6 +77,7 @@ HELPER = os.environ.get("CURIOSITY_DISPLAY_SETUP", "/usr/local/bin/curiosity-dis
 # Rate limiting. A repair "modeset" is any step that blanks the output.
 MODESET_WINDOW = 900  # seconds
 MAX_MODESETS_IN_WINDOW = 8
+HOTPLUG_QUIET = 60  # seconds after a repair in which hotplug/sink-wake echoes of its own probes are ignored
 MIN_GAP = 15  # seconds between repair runs that actually change something
 COOLDOWN_AFTER_FAILURE = 120
 DISCONNECT_GRACE = 90  # a disconnected output is only "dead" after this long
@@ -537,6 +538,11 @@ def repair(cfg: Config, reason: str, force: bool = False) -> int:
         if now - state.get("last_modeset", 0) < MIN_GAP and not force:
             log("ignored: within the minimum gap after our own modeset", reason=reason)
             return 0
+        if reason == "hotplug" and now - state.get("last_repair_end", 0) < HOTPLUG_QUIET:
+            # A full xrandr probe raises drm change uevents; without this the
+            # hotplug rule re-triggers a repair every ~12 s (seen 2026-10-28).
+            log("ignored: hotplug uevent right after a repair (echo of its own probe)", reason=reason)
+            return 0
         if now < state.get("cooldown_until", 0):
             log("held back: cooling down after a failed repair", reason=reason,
                 seconds=int(state["cooldown_until"] - now))
@@ -549,6 +555,7 @@ def repair(cfg: Config, reason: str, force: bool = False) -> int:
             save_state(state)
             return 0
         started = time.time()
+        state["last_repair_end"] = started  # refreshed again when the ladder ends
         if "output-disconnected" in result.problems:
             first = state.setdefault("disconnected_since", started)
             if started - first < DISCONNECT_GRACE:
@@ -579,10 +586,11 @@ def repair(cfg: Config, reason: str, force: bool = False) -> int:
             log("after stage", stage=name, verdict=result.summary())
             if result.ok:
                 state.pop("cooldown_until", None)
-                state["healthy_at"] = time.time()
+                state["last_repair_end"] = state["healthy_at"] = time.time()
                 save_state(state)
                 log("recovered", stage=name, reason=reason, mode=f"{cfg.mode}@{cfg.rate:g}")
                 return 0
+        state["last_repair_end"] = time.time()
         state["cooldown_until"] = time.time() + COOLDOWN_AFTER_FAILURE
         save_state(state)
         log("NOT RECOVERED: ladder exhausted; i915 is never reloaded automatically "
@@ -719,7 +727,11 @@ def watch(cfg: Config, interval: float = 5.0) -> int:
         edid = edid_readable(conn) if conn else None
         dpms = read_text(f"{conn}/dpms") if conn else None
         events = detector.feed(tv, edid, dpms, idle_ms())
+        quiet = now - load_state().get("last_repair_end", 0) < HOTPLUG_QUIET
         for event in events:
+            if quiet and event in ("sink-wake", "dpms-on"):
+                log("ignored: wake edge right after a repair (echo of its own probe)", event=event)
+                continue
             log("wake edge detected", event=event)
             if event in ("tv-wake", "sink-wake"):
                 # The TV needs time to bring its HDMI side up: re-apply twice.
