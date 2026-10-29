@@ -65,6 +65,9 @@ class Face:
     eye_y: float | None = None  # normalised y of the eye line when the detector reports landmarks
     mouth_y: float | None = None  # normalised y of the mouth corners (landmarks), for the speaker pick
     mouth_w: float | None = None  # corner to corner, as a share of the frame width
+    # the five YuNet landmarks in units of the picture height (x / height, y / height, so both axes share one scale):
+    # right eye, left eye, nose, right and left mouth corner as x, y pairs; None without landmarks (eyeline.py)
+    landmarks: tuple[float, ...] | None = None
 
     @property
     def cx(self) -> float:

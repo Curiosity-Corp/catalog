@@ -333,7 +333,9 @@ class Destination:
                 raise SettingsError(f"SRT mode must be one of {', '.join(SRT_MODES)}.")
             if parts.port is None:
                 raise SettingsError("An SRT URL needs a port: srt://host:port.")
-            _number("SRT latency_ms", self.options.get("latency_ms", 120), 20, 8000)
+            latency = self.options.get("latency_ms", 120)
+            if latency != "auto":  # "auto" follows the measured round trip (stream/srt.py)
+                _number("SRT latency_ms", latency, 20, 8000)
         if self.kind == "rtmp" and self.options.get("mode", "auto") not in RTMP_MODES:
             raise SettingsError(f"RTMP mode must be one of {', '.join(RTMP_MODES)}.")
         if self.kind == "rtmp" and "?" in self.url:

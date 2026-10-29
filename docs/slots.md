@@ -33,6 +33,7 @@ Every part is optional; a part left out stays as it is.
 | `lighting` | `lighting.preset` | a lighting preset; the lights **fade** there over `fade_seconds` (default 4 s) |
 | `canon` | `video.canon_set` | `exposure_comp` (a stop value the camera offers) and/or `kelvin` (2500 to 10000, in steps of 100) |
 | `blur` | `video.blur` | `{"on": true}` or `{"on": false}`, optionally `strength` |
+| `framing` | `framing.shot` | `{"shot": "wide"}`: an auto-framing shot preset (`close`, `medium`, `wide`, `presenter`, `desk`, or `auto`). Like the Shot buttons, a shot starts framing at the Gentle pace when it is off; Undo puts the old shot back and turns framing off again. Not a Director part, so it is written even while the Director runs. See docs/auto-framing.md |
 
 A profile only runs actions the Console already has, so it can do nothing a person could not do with the same
 buttons, and every change appears wherever that change normally appears.

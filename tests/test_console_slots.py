@@ -266,3 +266,57 @@ def test_the_deck_palette_offers_the_profile_keys(rig: Rig) -> None:
 
     actions = {e["action"] for e in catalog.palette(rig.snapshot())}
     assert {"slots.apply", "slots.undo", "slots.mode"} <= actions
+
+
+def test_a_profile_applies_its_framing_shot_and_undo_puts_the_old_one_back(rig: Rig) -> None:
+    assert rig.snapshot()["framing"]["mode"] == "off"
+    profile(rig, "midday", framing={"shot": "wide"})
+    act(rig, "slots.apply")
+    framing = rig.snapshot()["framing"]
+    assert framing["shot"] == "wide" and framing["mode"] != "off"  # a shot starts framing, as the Shot buttons do
+    applied = {p["part"]: p["state"] for p in block(rig)["status"]["applied"]["parts"]}
+    assert applied == {"framing": "applied"}
+    act(rig, "slots.undo")
+    framing = rig.snapshot()["framing"]
+    assert framing["shot"] == "auto" and framing["mode"] == "off"
+
+
+def test_the_shot_is_applied_when_the_slot_changes_even_with_the_director_on(rig: Rig) -> None:
+    profile(rig, "dawn", framing={"shot": "close"}, look="Golden Hour")
+    act(rig, "auto.on")
+    deadline = time.monotonic() + 5
+    while not rig.snapshot()["auto"]["running"] and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert rig.snapshot()["auto"]["running"]
+    act(rig, "slots.mode", mode="auto")
+    rig.slots.tick()
+    go(rig, "05:30")
+    assert rig.snapshot()["framing"]["shot"] == "close"  # the Director does not drive framing, so the shot is written
+
+
+def test_choosing_another_shot_by_hand_holds_the_profile(rig: Rig) -> None:
+    profile(rig, "dawn", framing={"shot": "wide"})
+    act(rig, "slots.mode", mode="auto")
+    rig.slots.tick()
+    go(rig, "05:30")
+    settle(rig)
+    act(rig, "framing.shot", shot="close")
+    rig.slots.tick()
+    held = block(rig)["status"]
+    assert held["state"] == "held" and held["held"]["part"] == "framing"
+
+
+def test_the_options_list_the_shots_and_save_current_keeps_the_shot_only_while_framing_runs(rig: Rig) -> None:
+    assert {"close", "wide", "auto"} <= set(block(rig)["options"]["shots"])
+    act(rig, "slots.save_current", slot="evening")
+    saved = next(x for x in block(rig)["slots"] if x["id"] == "evening")["profile"]
+    assert "framing" not in saved  # framing is off: nothing to remember
+    act(rig, "framing.shot", shot="presenter")
+    act(rig, "slots.save_current", slot="evening")
+    saved = next(x for x in block(rig)["slots"] if x["id"] == "evening")["profile"]
+    assert saved["framing"] == {"shot": "presenter"}
+
+
+def test_a_framing_shot_the_rig_does_not_know_is_refused_at_save_time(rig: Rig) -> None:
+    with pytest.raises(ActionError, match=r"framing\.shot must be one of"):
+        profile(rig, "evening", framing={"shot": "panorama"})

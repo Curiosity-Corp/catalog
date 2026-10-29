@@ -5,6 +5,119 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.19] - 2026-10-28
+
+### Added
+- Pre-flight check (#39): one press checks the camera, microphone, outputs, lights, network and headroom, listens to you say your name once, and gives a score out of 100 with a reason and a one-press Fix for each finding (turn the lights on, unmute, set the default output). Live page Pre-flight button and palette command, `streamstack preflight` (exit code says ready or not) and the score in `streamstack status`. See docs/preflight.md.
+- Safe join (#40): a new System setting, On call start (Off, Warn or Safe join; Warn by default). When a call app opens the camera, Warn tells you, and Safe join puts privacy on and mutes the microphone until you press Go live (banner on Live and Mini, Space, the palette or a Stream Deck key). It only takes what is not already yours, never takes it again once you went live or released it yourself, gives it back when the call ends, and keeps an event list of what it did. See docs/safe-join.md.
+- Eye-line coach (#47): an optional, off-by-default Camera popover that reads your head pose from face landmarks and tells you whether you look at the lens, the screen or the keyboard, how far the camera sits from your eye line, and, with a calibration step and a thirds-grid wizard, where to place the call window. A reminder can nudge you after minutes of looking away during a call. No picture is stored or sent.
+- Instant replay (#84): arm a buffer that keeps the last 5 to 600 seconds of the encoded program in memory and save a clip of any length up to that, after the moment happened. Nothing is re-encoded (the buffer is one more sink on the existing encoder chain), clips start on a keyframe and are remuxed with an index, and memory is capped (`STREAMSTACK_REPLAY_MAX_MB`, default 512): arming refuses a length that cannot fit, and a bitrate spike costs replay depth, never memory. New actions `replay.start`, `replay.save`, `replay.stop`, an Instant replay card on the Stream page, and a `replay` block in the stream state. See docs/stream.md.
+- The Console is an installable web app: a manifest and PNG, maskable and SVG icons are served (without the access token), and the "no access token" screen explains that an installed window must be opened by the launcher.
+- tools/bench_ai.py benchmarks the MediaPipe selfie segmenter (landscape 144x256, pinned ONNX export, Apache-2.0) next to the shipped segmenter, and `--edge-quality` compares the masks at the edge (soft-band width, overlap with PP-HumanSeg) on a recorded clip.
+- Auto mode can expose with the deterministic controllers, opt-in (`STREAMSTACK_AUTO_METERING=true`; off by default until the model constants are tuned on the real Canon and Litra, #94): the Canon's exposure compensation first, then the key lights, measured in stops with bounded steps; a grey card (`STREAMSTACK_AUTO_GREYCARD`) lets the camera's white balance follow the card.
+
+### Changed
+- Encode taps convert straight from the planar program picture to NV12, saving about 6 points of one core at 1080p30 with two taps; the per-frame copy census is in docs/native-video-engine.md (#95).
+- The normalised background blur now costs about 8 % more ffmpeg CPU than the plain blur at 720p30 (it was about 50 % more): the divide uses `blend`'s divide mode instead of an expression, and the weight is blurred on one plane. Latency is unchanged. A Vulkan version is not viable on this stack (no divide or masked merge in the Vulkan filters); the evidence is in docs/native-video-engine.md.
+- The echo check now reads the network monitor and the SRT path stats: a verdict taken while the network is degraded or a stream is stalling names the link, so a bleed is not blamed on it and a clear result is not mistaken for a clean call.
+
+### Fixed
+- A `streamstack chain stop` is no longer undone by the running Console: it leaves a stop marker the supervisor respects, the Audio page says the chain was stopped from the command line, and `streamstack chain start` restores it (#145).
+- Pressing M twice quickly could leave the microphone muted. The Console held its optimistic "muted" for a fixed 600 ms, and when the server's snapshot arrived later than that (a loaded machine) the page flipped back to "live", so the next M press sent "mute" again instead of "unmute". The page now keeps what you pressed until the server's snapshot shows it (or five seconds pass, if the server never does), and every action that updates the page ahead of the server gets the same protection (#155).
+
+  The same fault made System page settings seem not to move: the call "beep when muted" checkbox, sensitivity and cooldown were redrawn from the server value on every call update, before the server had saved the click. Those settings, and the same controls for the network monitor, hotkeys, auto-framing, time-of-day slots, the Stream Deck and lighting automation, now update the page at once and keep the value until the server agrees (#155).
+- The WebRTC program preview no longer freezes after a stall on the Console host: the video clock now keeps rising when the frame schedule restarts, so the browser no longer drops the following frames as stale (#158).
+- Fixed a flaky crash-report rate-limit test that turned main red (#159): the limiter's clock is now injectable and the test deterministic, the window runs from when a report is filed (a stalled disk no longer reopens it), `crash.uninstall` fully reverses `install`, and conftest resets the module's process-wide state around every test.
+- The clip-path test no longer fails when the random clip id happens to be all digits.
+- The Console no longer stalls a control while the disk is slow (#161). The presets selection is read without waiting for its save, and the telemetry switch turns over in memory before its token and setting are written (a failed save turns an enable back off and says so), so on a starved machine the page shows the change at once instead of after four fsyncs. Slow writes, actions and state snapshots are now logged with their timings (`STREAMSTACK_CONSOLE_ACTION_LOG=1` logs every action), and a failed end-to-end test reports the action posts, the event stream, the server log and a disk probe.
+- The release tag pipeline no longer fails on gitleaks flagging the public apt key fingerprint, on `apt-publish` lacking `gpgv`, or on the SBOM asking for the removed `auto` extra. These checks now also run on merge requests, and gitleaks blocks there too. v0.0.18 was never published; the release continues as 0.0.19.
+- uv.lock now covers the stills, shortcuts, whep and calendar extras, so the SBOM job on main passes; a unit test fails any merge request whose pyproject.toml changes without a relock.
+- Pre-flight history no longer loses runs: saves are written one at a time, newest last, and a run reports done only once it is on disk.
+- Test-only: the lighting L-key e2e waits for the page to show the lights off before pressing L again, so a press that beats the state push can no longer send the same command twice.
+- Test-only: the meetings preparation test no longer races the demo studio's 1 s start/stop timer on a starved runner (the studio now applies start and stop at once in those tests).
+
+## [0.0.18] - 2026-10-28
+
+### Added
+- Network quality monitor (#41): StreamStack probes Teams, Meet and Zoom (STUN or TCP) and your gateway every 5 seconds and rates the connection good, degraded, poor or offline, with the likely cause (Wi-Fi, local network, internet, one service). The System page has a Network card with a sparkline, an editable target list and a Test bandwidth button (it asks first during a call), the top bar shows a NETWORK chip when it is bad. See docs/network-monitor.md.
+- Calendar-aware setup (#43): StreamStack reads your next meetings from Microsoft 365 (Microsoft Graph, device-code sign-in) and from calendar links (ICS), and a couple of minutes before an online meeting it starts the studio, turns the camera on and runs the health checks. It never touches the rig during a call. Tokens and private links are kept in the desktop keyring (optional `streamstack[calendar]` extra), never in the settings file. New Meetings card on the Auto page; `docs/meetings.md`.
+- Echo check (#48): the Audio page's Output section has an Echo check card. It plays a quiet sweep on the output you pick, listens on the raw microphone and says "No bleed from Dell Monitor", "Bleed at -34 dB from Dell Monitor: use headphones or lower the volume", or that a monitor mix is feeding a feedback loop. It never plays during a call (it refuses to start, and a call that starts mid-check stops the sound at once), tests only the chosen output, never unmutes anything and never reports a silent recording as "no bleed". The last result per output is kept. See docs/echo-check.md.
+- Per-account Twitch probe (#82): for an `auto`-mode RTMP destination on Twitch, StreamStack asks Twitch which codecs the account may publish (Enhanced Broadcasting) before it starts, and offers only those, so an account that is not enrolled streams H.264 at once instead of failing with AV1 first. The key goes only to Twitch in the request body and is never logged. Unknown answers fall back to the old behaviour. See docs/stream.md.
+- SRT path measurement and SRT input (#83): an SRT caller destination now probes the receiver with an SRT handshake induction packet and shows round trip, spread and probe loss, with a recommended latency of 4 x RTT and a hint when the configured latency is lower. `latency_ms: "auto"` follows the measurement at each (re)connect. A new "SRT input" card and the `ingest.start` and `ingest.stop` actions listen for a remote sender and record it to MKV with no re-encode, re-listening after the sender leaves. ffmpeg exposes no SRT loss or retransmit counters, so none are shown. See docs/stream.md.
+- Optional GPU video denoise for noisy cameras: STREAMSTACK_ENGINE_DENOISE=nlmeans runs nlmeans_vulkan before the grade (+6 to +9 dB PSNR on a noisy Canon-like feed, 9 ms of GPU per 720p frame); tools/bench_video_denoise.py compares nlmeans_vulkan, denoise_vaapi, hqdn3d and atadenoise (#92).
+- Deterministic auto-exposure and colour-match controllers (stops, dead band, Canon then light, grey-card white balance) with simulated-rig convergence tests (#94).
+- The stream now steps its picture down by itself when the uplink cannot carry it, and back up when the link is steady. Choosing a platform and a bandwidth tier on the Presets page gives the stream a ladder of lower quality steps (the rest of the tier, then the lower tiers); packet loss, a growing send queue, dropped frames, reconnects and slow sending move it one rung at a time with hysteresis, as live swaps without reconnecting the destinations. What you chose is never changed: the new Bandwidth card on the Stream page shows the ladder, the step being sent, why it shifted and when it will try to recover, and has a switch to turn it off. `stream.set` takes `adapt` and the Presets `platform`/`tier`; the `stream` state gains `effective` and `adapt` (#98).
+- The release now includes a Debian package. `scripts/build_deb.py` builds a reproducible `streamstack_X.Y.Z_all.deb` (`make install` into `/usr`, dependencies on what the distribution provides, udev reload on install), the `deb-build` job smoke-runs it, and `deb-sign` signs `DEB-SHA256SUMS` (the package and its provenance) with Notation and the Key Vault key, as the wheel's manifest already is. The package files go to the Generic Package Registry beside the wheel and are linked from the GitLab Release. `packaging/signing-cert.pem` is the public certificate to verify with; docs/release.md has the verify commands.
+- A signed apt repository, an in-toto provenance statement and a tested update and rollback path. `scripts/apt_repo.py` indexes every published package into a flat repository (`Packages`, `Release`), `deb-sign` signs `Release` with the OpenPGP key `streamstack-apt-signing-key` held in Key Vault (`InRelease`, `Release.gpg`; the public key is `packaging/apt-public.asc`), and on a tag `apt-publish` verifies the repository the way apt does and publishes it to the Generic Package Registry at a stable URL. Every release stays in the repository, so `apt install streamstack=<older>` is the rollback. `scripts/deb_provenance.py` writes the SLSA provenance statement of the package from the CI job's variables. `tests/test_apt_repo.py` drives the real `apt-get` against a signed local repository: trust, install, update, rollback, and refusal of an unsigned repository, a changed index, a changed package and a foreign signature.
+- The Live page's program picture now arrives over WebRTC (WHEP), about a tenth of a second behind on the demo rig, with the MJPEG picture as the automatic fallback when WebRTC is unavailable or fails. It needs the new `whep` extra (`pip install 'streamstack[whep]'`); without it the Console keeps MJPEG. New routes: `POST /api/whep`, `DELETE /api/whep/<id>`, `GET /api/whep` (#103).
+- `streamstack doctor` names a USB device that is plugged in but never started (`usb-stuck`): a port stuck in the kernel's `default` state has no vendor id, so every probe saw nothing and doctor only said to plug in a microphone. It now names the port and says to plug the device straight in with a short, known-good cable (#118).
+- Motion-JPEG cameras no longer depend on libplacebo importing VA-API frames (#137). The engine probes three ways to
+  decode once per graphics stack (cached by ffmpeg, mesa, VA driver and node): zero-copy, `vaapi-copy` (VA decode, read
+  back, upload) and software. This stack gets `vaapi-copy`. The state block, log, doctor line and
+  `streamstack engine probe` say which is active; `STREAMSTACK_ENGINE_MJPEG_DECODE` overrides. In the whole engine at
+  1080p30 vaapi-copy costs 33 to 41 % of a core and software 40 to 44 %. The zero-copy findings are in #138.
+
+### Changed
+- docs/release.md now maps every launch-sequence stage to the job that fills it (including the new package jobs and the opt-in `compliance` stage), and `tests/test_release_stages.py` fails when a job of `.gitlab-ci.yml` is missing from that table or sits in the wrong stage.
+- ADR 0008 records why OpenCL filters on VA-API surfaces are not adopted for the engine, with the watch triggers to revisit it (#132).
+- Background blur no longer shows a halo of the speaker's colours at the edge: the blurred background is normalised by a blurred weight (`STREAMSTACK_ENGINE_BLUR_EDGE=plain` restores the old blur).
+
+### Fixed
+- `streamstack doctor` warns (`camlink-usb`) when the Cam Link 4K is on a USB 2 link: it reports 1080p but delivers about 10 fps over 480 Mb/s, and doctor used to call it ok. The Console snapshot carries `usb_mbps` and `usb2`; the fix is a USB 3 port, plugged in directly (#120).
+- CI: `changelog-check` now times out after 10 minutes and retries on a stuck runner, so a hung job can no longer hold the merge train for an hour.
+- Rotating the Prometheus scrape token now revokes the old token at once, before the new one is written to disk, so a slow or failing disk can no longer leave the old token working (#149).
+- WHEP program preview: a WebRTC picture that freezes while the connection still reads "connected" now falls back to MJPEG after 5 s instead of leaving a stale program picture on screen. The WHEP e2e tests are split into a functional "scene switch reaches the screen" test and a measured (not wall-clock gated on shared CI) latency report.
+  Ending a WHEP preview session the Console already dropped now answers 200 instead of 404, so a failed preview no longer logs a "Failed to load resource" console error on the page.
+- ADR numbers are unique again: the OpenCL-on-VA-API record is now ADR 0008 (the app shell keeps 0006), and a test keeps ADR numbers, titles and links consistent.
+- CI: `deb-sign` budgets the signing pod's image pull (15 minutes) apart from signing (10 minutes), so a cold node pulling the signing image can no longer fail a release tag.
+- Two quick choices of the same control (a tier picked, then moved with the arrow keys) no longer land out of order: the page sends the posts of one action in the order it made them, so the older choice cannot overwrite the newer one.
+- A Console window that opened at the moment an action landed could show the old state until the next change: the hub read the newest snapshot and only then joined the broadcast, so a push in between reached the window through neither. It showed up as a clicked switch that stayed off. The snapshot, the join and the broadcast are now one step under the hub's lock.
+- The tag pipeline's `release-verify` job runs on the full `python:3.13` image instead of the uv slim one, which has no `git`, so `check-tag --require-main-ancestor` works (v0.0.17's tag pipeline failed on it); a test guards the image.
+- Three test-only flakes: the demo network loss check accepts the 3-7 percent a small probe window can read, the server test rig freezes the director's minute clock so "state pushed only on change" cannot trip on a minute rollover, and the e2e meter-frame check waits for its first frame on a loaded runner.
+- Test isolation: the suite now runs with a throwaway `XDG_RUNTIME_DIR` (and no inherited Pulse, D-Bus or Wayland endpoint) as well as the throwaway HOME and XDG tree, so no test can reach the login's real Console socket and token, Canon bridge or audio server. A `deck.press` once reached the live Console from `test_deck_service` when the suite ran with the real runtime dir. `tests/test_isolation.py` fails if a test can see the real one.
+
+### Security
+- The Console no longer writes its access token to the journal. The startup and second-launch log lines name the address without the token, and `streamstack console --url` prints the full tokenised URL of the running Console when you need it (it exits 1 when none is running). A test fails if any log line contains the token.
+
+## [0.0.17] - 2026-10-27
+
+### Added
+- Time-of-day profiles can now hold an auto-framing shot (#46): pick Close, Medium, Wide, Presenter or Desk per part of the day, so the morning call is framed close and the evening one wide. Apply, Undo, "Use current" and the held-by-hand rule treat the shot like the look and the lights.
+- Looks that name a LUT use the real cube on the GPU (#93). The Console gives the engine the look's LUT name; the
+  cube is baked at the look's LUT amount in steps of 0.05 (written once, the child rebuilds when the look rests on a
+  new step, about 1.6 s after a look is applied), replacing the colorcorrect split-tone approximation. Golden checks
+  against a reference sampler (mean 0.4 to 0.9 of 255 levels). The static `STREAMSTACK_ENGINE_LUT` is fixed too: it
+  used libplacebo's `conversion` type, which tinted the picture; both now use `normalized`.
+- Doctor and `streamstack seat-policy` report whether a second user's lingering PipeWire/WirePlumber can open the seat user's audio and video devices, print the root script that keeps it off (WirePlumber drop-in, group removal or stop), and `tools/seat_replug_trial.py` measures the effect with Wave XLR replug cycles (#127, ADR 0007).
+- `tools/call_matrix.py` runs the camera probe through Chromium, Chrome, Edge, Teams in Edge and Firefox and prints one
+  table (a browser that is not installed is a skip); CI runs it on the browsers' own test cameras. The probe also
+  drives Firefox now (#87).
+- Camera delivery proof (#87, #89): `tools/camera_probe.py` opens headless Chromium or Edge, lists the cameras, finds
+  StreamStack Camera by label, opens it with `getUserMedia` and checks frames, motion and picture content, with the
+  not-listed failure (an unfed `exclusive_caps` node) reported plainly and the exit status for scripts; CI runs it
+  against Chromium's fake camera. `tools/latency_rig.py` measures glass-to-glass latency per path (loopback and browser,
+  engine, screen to real camera) from a CRC-protected time stamp painted into the picture, and refuses to write any
+  node but a free scratch loopback node. docs/camera-proof.md has the runbook and the list of what still needs a human
+  two-party call.
+- `tools/latency_rig.py paths` measures every delivery path that needs no person (loopback and browser, the engine at
+  720p and 1080p, and their sum) in one command and prints the table; the measured numbers are in
+  docs/camera-proof.md, and `run` and `feed` take `--size` and `--fps` (#89).
+- `tools/loopback_conformance.py` proves the v4l2loopback contract on a scratch node after a kernel update or a module
+  reload (unlisted with no writer, listed with one, contract formats, frames, unlisted again, a second writer works)
+  and refuses the program and camera nodes. The distribution's v4l2loopback 0.15.3 is now a note in doctor, not a
+  standing warning (#86).
+
+### Changed
+- `STREAMSTACK_ENGINE_SCALER` and `tools/bench_scalers.py` (#93). 21 libplacebo scalers are benchmarked (PSNR, SSIM and
+  GPU time per frame, zoom and downscale cases); only a measured one can be selected. The default is now `lanczos`
+  instead of `ewa_lanczos`: the same quality for 35 to 45 % less GPU time when the picture is zoomed or scaled.
+  A VA-API to Vulkan mapping test documents that libplacebo cannot import a VA-mapped frame on this stack (MJPEG
+  cameras), as an expected failure.
+- Releases are tagged on the release merge request's head commit instead of the merge commit (`release.py prepare` prints the command, docs/release.md explains why): other merge requests merge ahead of it on the train, and the fragments they bring made the tag gate refuse v0.0.14. `release-verify` now also requires the tagged commit to be an ancestor of `main`.\n
+
+### Fixed
+- The group-framing cost test judges the quietest of several rounds instead of one wall-clock p95, so a loaded CI runner no longer fails it while a real slowdown still does. Tests only.
+
 ## [0.0.16] - 2026-10-27
 
 v0.0.14 was never published (its release commit merged behind other merge requests whose changelog fragments were still in `changelog.d/`, so the release gate refused the tag); its changes shipped in 0.0.15.

@@ -624,3 +624,107 @@ def test_synthetic_cpu_run_end_to_end(tmp_path: Path) -> None:
         assert row["status"] == "ok" and row["compile_cached_ms"] is not None
     text = doc.read_text()
     assert "SYNTHETIC PLACEHOLDER" in text and "yunet-2023mar" in text
+
+
+# -- the MediaPipe selfie candidate and mask quality at the edge (#147) -----------------------------------------------
+
+
+def test_the_selfie_segmenter_is_a_pinned_144x256_candidate() -> None:
+    candidate = next(m for m in bench.CANDIDATES if m.spec.key == "mediapipe-selfie-landscape")
+    assert candidate.kind == "segmentation" and candidate.size == (256, 144) and candidate.person == "alpha"
+    assert "Apache-2.0" in candidate.spec.license
+    assert re.fullmatch(r"[0-9a-f]{40}", candidate.spec.url.split("/resolve/")[1].split("/")[0])  # a commit, not main
+    assert candidate.spec.sha256 == "7a0adcfdb1715d3b0ff0f61486d8a181c33f4a208343a5abfccbc6540e872d24"
+
+
+@needs_numpy
+def test_person_alpha_decodes_each_output_layout() -> None:
+    import numpy as np
+
+    softmax = np.zeros((1, 4, 5, 2), dtype=np.float32)
+    softmax[0, 1:3, 1:4, 1] = 0.9
+    assert bench.person_alpha(softmax, "last1")[1, 1] == pytest.approx(0.9)
+    logits = np.zeros((1, 4, 5, 2), dtype=np.float32)
+    logits[0, :, :, 1] = 10.0
+    assert bench.person_alpha(logits, "logits-last1").min() > 0.99
+    alpha = np.full((1, 1, 4, 5), 1.5, dtype=np.float32)
+    assert bench.person_alpha(alpha, "alpha").max() == 1.0  # clipped to a probability
+    with pytest.raises(ValueError, match="no decoder"):
+        bench.person_alpha(alpha, "unknown")
+
+
+@needs_numpy
+def test_a_soft_edge_measures_wider_than_a_crisp_one() -> None:
+    import numpy as np
+
+    xs = np.arange(200, dtype=np.float32)[None, :].repeat(100, axis=0)
+    crisp = (xs > 100).astype(np.float32)
+    soft = np.clip((xs - 90) / 20.0, 0.0, 1.0)  # a ramp 20 px wide
+    crisp_share, crisp_width = bench.edge_metrics(crisp)
+    soft_share, soft_width = bench.edge_metrics(soft)
+    assert crisp_width == 0.0 and soft_width > 10.0
+    assert crisp_share == pytest.approx(0.5, abs=0.01) and soft_share == pytest.approx(0.5, abs=0.06)
+    assert bench.edge_metrics(np.zeros((10, 10), dtype=np.float32)) == (0.0, 0.0)  # nobody there
+
+
+@needs_numpy
+def test_mask_iou_and_frame_picking() -> None:
+    import numpy as np
+
+    a = np.zeros((10, 10), dtype=bool)
+    a[:, :5] = True
+    b = np.zeros((10, 10), dtype=bool)
+    b[:, 2:7] = True
+    assert bench.mask_iou(a, a) == 1.0 and bench.mask_iou(a, b) == pytest.approx(3 / 7)
+    assert bench.mask_iou(~a & ~a & False, ~a & ~a & False) == 1.0  # two empty regions agree
+    assert bench.frames_for_quality(list(range(10)), 3) == [0, 4, 9] or bench.frames_for_quality(
+        list(range(10)), 3
+    ) == [0, 5, 9]
+    assert bench.frames_for_quality([1, 2], 5) == [1, 2] and bench.frames_for_quality([1, 2, 3], 1) == [1]
+
+
+def test_edge_quality_needs_a_clip_not_generated_frames() -> None:
+    with pytest.raises(SystemExit):
+        args("--synthetic", "--edge-quality")
+    with pytest.raises(SystemExit):
+        args("--clip", "x.mkv", "--quality-frames", "0")
+
+
+@needs_numpy
+def test_edge_quality_compares_each_model_with_the_shipped_segmenter(monkeypatch: pytest.MonkeyPatch) -> None:
+    import numpy as np
+
+    def verify(path: Path | None = None, spec: model.ModelSpec = model.YUNET) -> Path:
+        if spec.key == "sinet":
+            raise model.ModelError("the face model is missing")
+        return Path(f"/nonexistent/{spec.filename}")
+
+    def open_backend(name: str, path: Path, candidate: object, opts: object) -> object:
+        wide = candidate.spec.key == "mediapipe-selfie-landscape"  # draws the same person with a half-grown edge
+
+        def outputs(data: object) -> object:
+            alpha = np.zeros((1, 1, 24, 32), dtype=np.float32)
+            alpha[0, 0, 6:18, 8:24] = 1.0
+            if wide:
+                alpha[0, 0, 6:18, 8:24] = np.clip(np.linspace(0.0, 2.0, 16), 0, 1)[None, :]
+                return alpha
+            out = np.zeros((1, 24, 32, 2), dtype=np.float32)
+            out[0, :, :, 1] = alpha[0, 0]
+            return out
+
+        return bench.Runner(lambda data: None, 32, 24, "nchw", "fake", 1.0, None, outputs=outputs)
+
+    monkeypatch.setattr(bench.models, "verify", verify)
+    monkeypatch.setattr(bench, "open_backend", open_backend)
+    pytest.importorskip("cv2")
+    opts = args("--clip", "x.mkv", "--edge-quality", "--backends", "ort-cpu")
+    opts.cache_dir = Path("/nonexistent")
+    source = bench.Source("canon", 64, 48, [np.zeros((48, 64, 3), dtype=np.uint8)] * 3, False)
+    rows = {r.model: r for r in bench.run_edge_quality([source], opts)}
+    assert (
+        rows["pphumanseg"].iou_vs_reference == 1.0
+        and rows["pphumanseg"].edge_px < rows["mediapipe-selfie-landscape"].edge_px
+    )
+    assert 0.0 < rows["mediapipe-selfie-landscape"].iou_vs_reference < 1.0
+    table = bench.edge_table(list(rows.values()), "canon")
+    assert "mediapipe-selfie-landscape" in table and "IoU with pphumanseg" in table

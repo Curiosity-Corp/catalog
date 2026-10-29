@@ -83,6 +83,10 @@ def test_a_profile_keeps_only_known_well_formed_parts() -> None:
         {"blur": {"on": "yes"}},
         {"blur": {"on": True, "strength": 0}},
         {"blur": {"on": True, "strength": 1.5}},
+        {"framing": "wide"},
+        {"framing": {"shot": "panorama"}},
+        {"framing": {"shot": "wide", "mode": "tight"}},
+        {"framing": {}},
     ],
 )
 def test_a_bad_profile_is_refused_with_a_reason(bad: object) -> None:
@@ -162,3 +166,12 @@ def test_export_and_import_carry_the_document(tmp_path: Path) -> None:
         b.import_document({"document": "other/1"})
     with pytest.raises(slots.SlotsError):
         b.import_document("nope")
+
+
+def test_a_profile_can_hold_a_framing_shot() -> None:
+    assert slots.clean_profile({"framing": {"shot": "wide"}, "blur": {"on": True}}) == {
+        "blur": {"on": True},
+        "framing": {"shot": "wide"},
+    }
+    assert slots.clean_profile({"framing": {"shot": "auto"}}) == {"framing": {"shot": "auto"}}
+    assert slots.PART_LABELS["framing"] == "Shot"

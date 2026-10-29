@@ -7,6 +7,7 @@ user and never needs root.
     streamstack doctor          check every device and say what to pick in Teams/Zoom
     streamstack studio          start the voice chain and the Canon bridge (the Console makes the program camera)
     streamstack stop            stop the camera bridge; calls use the raw camera
+    streamstack preflight       test the whole rig before a meeting: a 0-100 score and what to fix (--json)
     streamstack status          one line (or a panel icon) for what calls receive
     streamstack auto on|off     the auto-cinematographer and auto-audio (Claude)
     streamstack cameras         every live camera and every mode it offers
@@ -27,6 +28,7 @@ user and never needs root.
     streamstack framing         auto-framing: backends, face model (--fetch downloads and verifies it)
     streamstack call-settings   the Teams and Zoom settings that match this rig
     streamstack hardware        what is plugged in and the rig it resolves to (--json, --identity)
+    streamstack seat-policy     other users' WirePlumber on this desk; `script --user NAME` prints the fix to run
     streamstack verify-install  version, packaged files and commands of this install; how to verify the signature
 """
 
@@ -172,6 +174,17 @@ def camlink_checks(probe: camlink.Probe) -> list[dict[str, str]]:
                 f"Elgato Cam Link on {probe.device}: {camlink.short_label(best) if best else 'no usable mode'}",
                 detail,
                 hint,
+            )
+        )
+    if probe.usb2:
+        items.append(
+            check(
+                "video",
+                "camlink-usb",
+                "warn",
+                f"Elgato Cam Link is on a USB 2 link ({probe.usb_mbps} Mb/s): 1080p arrives at about 10 fps",
+                "the card needs USB 3 (5 Gb/s) for 1080p at full rate whatever mode it reports",
+                "plug it into a USB 3 port (blue or SS) directly, not through a USB 2 hub or extension cable",
             )
         )
     if probe.note:
@@ -333,6 +346,19 @@ def run_checks(
             )
         )
     raw_silent = False
+    if stuck := system.stuck_usb_ports():
+        where = ", ".join(stuck)
+        checks.append(
+            check(
+                "audio",
+                "usb-stuck",
+                "warn",
+                f"a USB device on port {where} is plugged in but never started",
+                "it did not answer the computer's set-up (bad cable, port or hub), so it is invisible to everything,"
+                " an audio interface included",
+                "plug it straight into a port on the computer with a short, known-good cable",
+            )
+        )
     if mic and stall_probe:
         probe = _watch_microphone(mic)
         if stall_item := micwatch.check_item(probe.stalled, probe.detail, probe.kind):
@@ -572,6 +598,65 @@ def call_camera(cfg: dict[str, str], studio: bool) -> str:
     return "raw" if Path(camera).exists() and loopback_has_producer(camera) else "off"
 
 
+PREFLIGHT_WAIT_S = 40.0  # the Console's own budget is 20 s, plus the time to start
+
+
+def _preflight_line(link: ConsoleLink) -> str:
+    """The last pre-flight result as a status fragment ("pre-flight 92/100, 12 min ago"), or "" when there is none."""
+    try:
+        result = link.section("preflight").get("result")
+    except (ConsoleUnavailable, ConsoleRefused):
+        return ""
+    if not isinstance(result, dict) or not isinstance(result.get("score"), int):
+        return ""
+    return f"pre-flight {result['score']}/100"
+
+
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Ask the running Console for a pre-flight check and print the score and the reasons.
+
+    Exit 0 when ready, 1 when something needs a look or failed, 2 when no Console is running. Nothing is changed:
+    the fixes are buttons in the Console."""
+    link = ConsoleLink.find(timeout=10.0)
+    if link is None:
+        print("streamstack preflight: no Console is running. Start it with `streamstack console`.", file=sys.stderr)
+        return 2
+    try:
+        link.act("preflight.run", listen=not args.no_listen)
+        if not args.no_listen and not args.json:
+            print("Say your name into the microphone...", file=sys.stderr)
+        deadline = time.monotonic() + PREFLIGHT_WAIT_S
+        state: dict = {}
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            state = link.section("preflight")
+            if state.get("state") != "running":
+                break
+        else:
+            print("streamstack preflight: the check did not finish in time.", file=sys.stderr)
+            return 1
+    except ConsoleRefused as exc:
+        print(f"streamstack preflight: {exc}", file=sys.stderr)
+        return 1
+    except ConsoleUnavailable as exc:
+        print(f"streamstack preflight: {exc}", file=sys.stderr)
+        return 2
+    result = state.get("result")
+    if not isinstance(result, dict):
+        print("streamstack preflight: the check ended without a result.", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        marks = {"ok": "ok  ", "warn": "WARN", "fail": "FAIL", "skip": "skip"}
+        print(f"Pre-flight {result['score']}/100: {result['verdict']}")
+        for check in result["checks"]:
+            print(f"  {marks.get(check['state'], check['state'])}  {check['title']}: {check['detail']}")
+            if check.get("fix"):
+                print(f"        fix: {check['fix']['label']} (in the Console, or `streamstack preflight` after fixing)")
+    return 0 if result["verdict"] == "ready" else 1
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     """One line for a panel button: what calls get for camera and microphone."""
     cfg = load_settings()
@@ -580,6 +665,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     detail = f"camera for calls: {camera}; microphone: {'StreamStack Mic' if mic == 'fx' else 'raw mic'}"
     if auto_running():
         detail += "; auto-cinematographer on"
+    link = ConsoleLink.find(timeout=1.5)
+    line = _preflight_line(link) if link is not None else ""
+    if line:
+        detail += f"; {line}"
     if args.icon:
         # tint2 execp_has_icon: the icon path, then the (empty) text; the
         # details go to stderr, which tint2 shows in the tooltip.
@@ -980,7 +1069,12 @@ def cmd_console(args: argparse.Namespace) -> int:
     from streamstack.console.launcher import run_console
 
     return run_console(
-        demo=args.demo, port=args.port, window=not args.no_window, mini=args.mini, idle_exit=args.idle_exit
+        demo=args.demo,
+        port=args.port,
+        window=not args.no_window,
+        mini=args.mini,
+        idle_exit=args.idle_exit,
+        url_only=args.url,
     )
 
 
@@ -1150,6 +1244,8 @@ def cmd_engine(args: argparse.Namespace) -> int:
         gpu = f" ({choice.name or choice.pci_id or 'unknown GPU'}, by {choice.via})"
         print(f"render node: {node or 'none'}{gpu}")
         print(f"backend: {backend}" + (f" ({why})" if why else ""))
+        decode, why = probe.probe_mjpeg(node)
+        print(f"mjpeg decode: {decode}" + (f" ({why})" if why else ""))
         for candidate in encode.ENCODERS:
             print(f"encoder {candidate.name}: {'ok' if encode.probe_encoder(candidate, node=node) else 'unavailable'}")
         return 0
@@ -1268,6 +1364,42 @@ def cmd_loopback(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_seat_policy(args: argparse.Namespace) -> int:
+    """Who else runs a WirePlumber on this desk (`status`), and the commands for the owner to fix it (`script`).
+    Read-only: the script is printed, never run, because it changes another user's account or services."""
+    from streamstack.hardware import seat
+
+    guarded = seat.parse_guarded(load_settings().get("STREAMSTACK_SEAT_GUARDED", ""))
+    evidence = seat.collect(guarded)
+    if args.action == "script":
+        if not args.user:
+            print("streamstack: seat-policy script needs --user NAME (the other user)", file=sys.stderr)
+            return 2
+        try:
+            print(seat.fix_script(args.user, args.option, evidence), end="")
+        except seat.SeatError as exc:
+            print(f"streamstack: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    diagnosis = seat.diagnose(evidence)
+    if args.json:
+        print(json.dumps(diagnosis.to_dict(), indent=2))
+    else:
+        print(f"seat: {diagnosis.seat_user}")
+        if not diagnosis.guests:
+            print("no other user runs a PipeWire or WirePlumber on this desk")
+        for guest in diagnosis.guests:
+            print(f"[{guest.verdict}] {seat.describe(guest)}")
+        for error in diagnosis.errors:
+            print(f"note: {error}", file=sys.stderr)
+        if diagnosis.worst in (seat.CONTENDS, seat.UNVERIFIED, seat.LINGERING):
+            print(
+                f"recommended: {diagnosis.recommended}; "
+                "print the commands with `streamstack seat-policy script --user NAME`"
+            )
+    return 1 if diagnosis.worst in (seat.CONTENDS, seat.LINGERING) else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="streamstack", description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--version", action="version", version=f"streamstack {__version__}")
@@ -1291,6 +1423,12 @@ def build_parser() -> argparse.ArgumentParser:
     auto.add_argument("--dry-run", action="store_true", help="with once: show Claude's proposal, change nothing")
     auto.add_argument("--lines", type=int, default=8, help="with status: how many recent actions to show")
     auto.set_defaults(func=cmd_auto)
+    pre = sub.add_parser("preflight", help="test the whole rig before a meeting: a 0-100 score and what to fix")
+    pre.add_argument("--json", action="store_true", help="print the result as JSON")
+    pre.add_argument(
+        "--no-listen", action="store_true", help="skip the spoken prompt (the microphone level is not tested)"
+    )
+    pre.set_defaults(func=cmd_preflight)
     status = sub.add_parser("status", help="one-line camera/microphone state (for panel buttons)")
     status.add_argument("--short", action="store_true")
     status.add_argument("--icon", action="store_true", help="icon path for a panel button, details on stderr")
@@ -1311,7 +1449,10 @@ def build_parser() -> argparse.ArgumentParser:
     preview.set_defaults(func=cmd_preview)
     console = sub.add_parser("console", help="open the Console: faders, meters, scenes and the live picture")
     console.add_argument("--demo", action="store_true", help="a simulated rig; nothing is touched")
-    console.add_argument("--no-window", action="store_true", help="only serve; print the address")
+    console.add_argument("--no-window", action="store_true", help="only serve; log the address (without its token)")
+    console.add_argument(
+        "--url", action="store_true", help="print the running Console's full address, access token included, and exit"
+    )
     console.add_argument("--mini", action="store_true", help="the compact window to keep beside a call")
     console.add_argument("--port", type=int, default=0, help="listen port (default: any free port)")
     console.add_argument(
@@ -1390,6 +1531,16 @@ def build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--root", default="/", help="with apply: write the module files under this directory")
     loop.add_argument("--dry-run", action="store_true", help="with apply: print what would change, change nothing")
     loop.set_defaults(func=cmd_loopback)
+    seats = sub.add_parser(
+        "seat-policy", help="other users' WirePlumber on this desk: status, or the commands that keep it off the studio"
+    )
+    seats.add_argument("action", nargs="?", default="status", choices=("status", "script"))
+    seats.add_argument("--user", help="with script: the other user the policy is for")
+    seats.add_argument(
+        "--option", default="dropin", choices=("dropin", "groups", "stop"), help="with script (default dropin)"
+    )
+    seats.add_argument("--json", action="store_true", help="with status: print the diagnosis as JSON")
+    seats.set_defaults(func=cmd_seat_policy)
     deck = sub.add_parser("deck", help="Elgato Stream Deck as a control surface for the Console")
     deck.add_argument("action", nargs="?", default="status", choices=("run", "status", "enable", "disable"))
     deck.add_argument(

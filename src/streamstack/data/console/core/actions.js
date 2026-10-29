@@ -1,7 +1,7 @@
 // core/actions.js — the only way the UI changes the rig.
 //
 //   act(action, params?, {quiet?})      -> Promise<{ok, message?}|null>
-//        Applies the optimistic update at once, POSTs api/action, toasts the server's
+//        Applies the optimistic update at once, POSTs api/action (posts of one action go out in call order), toasts the server's
 //        `error` text on failure (with a one-press fix when the studio is down) and
 //        rolls the optimistic value back to the server's. Never rejects.
 //   actStream(action, params, {ms})     -> void
@@ -58,6 +58,18 @@ function chainPatch(values, s) {
   });
   if (Object.keys(out).length) out['audio.chain.custom'] = true;
   return out;
+}
+
+/** `{prefix.key: value}` for the listed params that were sent. */
+function keysOf(p, keys, prefix, convert = (k, v) => v) {
+  const out = {};
+  for (const k of keys) if (p[k] !== undefined) out[`${prefix}.${k}`] = convert(k, p[k]);
+  return out;
+}
+
+/** Same, for the params that already name a field of `group` (a settings object the server sends whole). */
+function existingKeysOf(p, group, prefix) {
+  return keysOf(p, Object.keys(p).filter((k) => k in group), prefix);
 }
 
 const NEUTRAL_LOOK = { brightness: 0, contrast: 0, gamma: 0, saturation: 0, warmth: 0 };
@@ -147,6 +159,22 @@ export const OPTIMISTIC = {
     const extra = preset.on ? { 'lighting.master.brightness': preset.brightness, 'lighting.master.kelvin': preset.kelvin } : {};
     return masterPatch(lightPatch({}, s, fields), s, { 'lighting.preset': p.name, ...extra });
   },
+  // Settings pages draw their controls from a broad slice (`call`, `framing`, `network`, ...) that changes many times a
+  // second for other reasons. Without an entry here a click was overwritten by the next snapshot, before the server had
+  // saved it, and the control seemed not to move (#155).
+  'call.set': (p) => keysOf(p, ['enabled', 'sensitivity', 'cooldown_s', 'sound'], 'call.muted_warning', (k, v) => (k === 'cooldown_s' ? Number(v) : v)),
+  'network.set': (p) => (p.enabled !== undefined ? { 'network.enabled': !!p.enabled } : {}),
+  // not 'telemetry.set': an opt-in that opens a metrics endpoint must show only what the server has done
+  'hotkeys.enable': (p) => ({ 'hotkeys.enabled': !!p.on }),
+  'framing.mode': (p) => ({ 'framing.mode': p.mode }),
+  'framing.hold': (p) => ({ 'framing.held': !!p.on }),
+  'framing.handoff': (p) => ({ 'framing.handoff': !!p.on }),
+  'framing.shot': (p) => ({ 'framing.shot': p.shot }),
+  'framing.subjects': (p) => ({ 'framing.subjects': p.subjects }),
+  'slots.mode': (p) => ({ 'slots.mode': p.mode }),
+  'deck.settings': (p) => keysOf(p, ['brightness', 'sleep_minutes'], 'deck.profile.settings', (k, v) => Number(v)),
+  'lighting.auto.follow': (p, s) => existingKeysOf(p, s.lighting.automation.settings.follow, 'lighting.automation.settings.follow'),
+  'lighting.auto.schedule': (p, s) => existingKeysOf(p, s.lighting.automation.settings.schedule, 'lighting.automation.settings.schedule'),
   'stream.set': (p) => Object.fromEntries(STREAM_SETTINGS.filter((k) => p[k] !== undefined).map((k) => [`stream.settings.${k}`, p[k]])),
   'studio.start': () => ({ 'studio.busy': true }),
   'studio.stop': () => ({ 'studio.busy': true }),
@@ -165,16 +193,36 @@ function fixFor(message) {
   return undefined;
 }
 
+// One lane per action name: a post goes out only after the previous post of the same action has answered. The server
+// handles requests on separate threads, so two overlapping posts of one action (a tier picked, then picked again with
+// the arrow keys) can reach it in the opposite order and leave the older choice standing.
+const lanes = new Map();   // action -> promise that settles when the lane's last post has answered
+
+function inOrder(action, send) {
+  const run = (lanes.get(action) || Promise.resolve()).then(send);
+  const tail = run.then(() => undefined, () => undefined);
+  lanes.set(action, tail);
+  tail.then(() => { if (lanes.get(action) === tail) lanes.delete(action); });
+  return run;
+}
+
+/** Actions whose optimistic value is a state that passes (a start in progress, a restart), not one the server keeps. */
+const TRANSIENT = new Set(['studio.start', 'studio.stop', 'audio.revive']);
+
 export async function act(action, params = {}, { quiet = false, hold } = {}) {
   const optimistic = OPTIMISTIC[action];
   let paths = [];
+  let token = 0;
   if (optimistic) {
     const patch = optimistic(params, store.state);
     paths = Object.keys(patch);
-    store.patch(patch, hold === undefined ? undefined : { hold });
+    // Held until the server has answered, however long that takes: a fixed 600 ms ran out on a loaded machine before the
+    // snapshot carrying the change arrived, the page flipped back, and the next M press toggled from the stale value.
+    token = store.patch(patch, { hold: hold === undefined ? Infinity : hold });
   }
   try {
-    const res = await postAction(action, params);
+    const res = await inOrder(action, () => postAction(action, params));
+    store.settle(paths, token, { agree: !TRANSIENT.has(action) });
     if (res && res.message && !quiet && SLOW.has(action)) toast(res.message, { level: 'info', timeout: 3500, id: `act:${action}` });
     return res;
   } catch (err) {

@@ -12,6 +12,7 @@
 import { h, renderList } from '../core/util.js';
 import { icon } from '../components/icons.js';
 import { relTime } from '../core/time.js';
+import { mountEchoPanel } from './audio-echo.js';
 import { testOutput, testAllOutputs, stopOutputTest, setDefaultOutput } from '../core/ops.js';
 
 const KIND_ICON = { hdmi: 'monitor', headphones: 'headphones', headset: 'headset', speaker: 'speaker', interface: 'audio', other: 'volume' };
@@ -85,6 +86,7 @@ const OUTPUT_TEMPLATE = `
     <p data-ref="warnText"></p>
     <ss-button size="sm" data-ref="dismiss">Dismiss</ss-button>
   </div>
+  <div class="ao-echo" data-ref="echo"></div>
   <div class="ao-strips" data-ref="strips" role="list" aria-label="Outputs"></div>
   <div class="ao-empty" data-ref="empty" hidden role="status"></div>
   <div class="ao-routes" data-ref="routes" role="group" aria-label="Routes"></div>
@@ -98,6 +100,7 @@ export function mountOutputs(root, ctx) {
   const off = [];
   const outputs = () => store.state.audio.outputs;
 
+  off.push(mountEchoPanel(R.echo, ctx));
   R.warnIc.append(icon('alert'));
   R.testAll.addEventListener('click', () => testAllOutputs());
   R.stop.addEventListener('click', () => stopOutputTest());

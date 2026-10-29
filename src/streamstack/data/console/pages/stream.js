@@ -17,6 +17,7 @@
 
 import { h, renderList } from '../core/util.js';
 import { toast } from '../core/toast.js';
+import { mountAdaptPanel } from './stream-adapt.js';
 
 const STATUS = {
   idle: { word: 'Offline', state: 'off' },
@@ -79,6 +80,29 @@ const TEMPLATE = `
       </div>
       <p class="hint st-why" data-ref="recWhy" role="status"></p>
     </ss-card>
+
+    <ss-card class="st-block" heading="Instant replay" icon="undo" data-ref="replayCard">
+      <div class="st-state" data-ref="replayState" data-state="off">
+        <span class="st-led" aria-hidden="true"></span>
+        <div class="st-headline">
+          <strong class="st-word" data-ref="replayWord" role="status">Not armed</strong>
+          <span class="st-clock" data-ref="replayDepth" hidden></span>
+        </div>
+      </div>
+      <p class="st-sub" data-ref="replaySub"></p>
+      <div class="st-go">
+        <ss-button size="lg" variant="default" icon="undo" data-ref="replayArmBtn">Arm replay</ss-button>
+        <ss-button size="lg" variant="primary" icon="save" data-ref="replaySaveBtn" hidden>Save clip</ss-button>
+        <ss-button size="lg" variant="ghost" icon="stop" data-ref="replayStopBtn" hidden>Disarm</ss-button>
+        <div class="seg" role="group" aria-label="Replay length" data-ref="replayLength">
+          <button type="button" data-seconds="15" aria-pressed="false">15 s</button>
+          <button type="button" data-seconds="30" aria-pressed="true">30 s</button>
+          <button type="button" data-seconds="60" aria-pressed="false">60 s</button>
+          <button type="button" data-seconds="120" aria-pressed="false">2 min</button>
+        </div>
+      </div>
+      <p class="hint st-why" data-ref="replayWhy" role="status"></p>
+    </ss-card>
   </section>
 
   <section class="st-meters" role="group" aria-label="Live meters" data-ref="meters"></section>
@@ -116,7 +140,8 @@ const TEMPLATE = `
         <div class="st-field" data-ref="fLatencyWrap" hidden>
           <label for="st-f-latency">Latency (ms)</label>
           <input id="st-f-latency" class="text-input" data-ref="fLatency" type="number" min="20" max="8000" step="10" value="120">
-          <p class="hint">How long the receiver may wait for a lost packet. Lower is faster and less forgiving.</p>
+          <label class="st-check"><input type="checkbox" data-ref="fLatencyAuto"> Auto: follow the measured round trip</label>
+          <p class="hint">How long the receiver may wait for a lost packet. Lower is faster and less forgiving. Auto measures the path to the receiver (a caller only) and uses about four round trips, at least 80 ms, each time it connects.</p>
         </div>
         <div class="st-field" data-ref="fCodecWrap">
           <label for="st-f-codec">Codec for this destination</label>
@@ -128,6 +153,26 @@ const TEMPLATE = `
           <ss-button variant="ghost" icon="x" data-ref="fCancel">Cancel</ss-button>
         </div>
       </form>
+    </ss-card>
+
+    <ss-card class="st-card" heading="SRT input" icon="broadcast" data-ref="ingestCard">
+      <p class="hint st-lead">Receive a stream from another machine and record it as it arrives, with no re-encode. Run it on the machine that should hold the backup.</p>
+      <div class="st-pair">
+        <div class="st-field">
+          <label for="st-ingest-port">Port</label>
+          <input id="st-ingest-port" class="text-input" data-ref="ingestPort" type="number" min="1024" max="65535" step="1" value="9000">
+        </div>
+        <div class="st-field">
+          <label for="st-ingest-key">Passphrase reference (optional)</label>
+          <input id="st-ingest-key" class="text-input" data-ref="ingestKey" type="text" placeholder="env:SRT_PASSPHRASE" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+      <p class="st-sub" data-ref="ingestSub" role="status"></p>
+      <div class="st-go">
+        <ss-button variant="default" icon="broadcast" data-ref="ingestBtn">Listen and record</ss-button>
+        <ss-button variant="danger" icon="stop" data-ref="ingestStopBtn" hidden>Stop listening</ss-button>
+      </div>
+      <p class="hint st-why" data-ref="ingestWhy" role="status"></p>
     </ss-card>
 
     <div class="st-col">
@@ -259,6 +304,7 @@ export async function mount(host, ctx) {
   const S = () => store.state.stream;
   let disposed = false;
   let recFormat = 'mkv';
+  let replaySeconds = 30;
   const busy = new Set();
 
   const live = (s = S()) => s.destinations.filter((d) => d.active && d.kind !== 'record');
@@ -267,21 +313,21 @@ export async function mount(host, ctx) {
   const available = (s = S()) => s.status !== 'unavailable';
 
   // ---------- messages from the server, kept visible (toasts vanish) ----------
-  const notes = { go: '', rec: '', live: '' };
+  const notes = { go: '', rec: '', live: '', ingest: '', replay: '' };
   const say = (key, text) => { notes[key] = text || ''; renderNotes(); };
 
   async function run(key, action, params, ok) {
     if (busy.has(key)) return null;
     busy.add(key);
-    renderHero();
+    renderHero(); renderReplay();
     const res = await act(action, params, { quiet: true });
     busy.delete(key);
     if (disposed) return res;
     if (res?.message) {
-      say(key === 'rec' ? 'rec' : 'go', res.message);
+      say(key === 'rec' ? 'rec' : key.startsWith('replay') ? 'replay' : 'go', res.message);
       if (ok) toast.success(res.message, { timeout: 3000, id: `stream:${key}` });
     }
-    renderHero();
+    renderHero(); renderReplay();
     return res;
   }
 
@@ -338,6 +384,51 @@ export async function mount(host, ctx) {
     R.recWhy.textContent = recWhy || notes.rec;
   }
 
+  function renderReplay() {
+    const s = S();
+    const rp = s.replay;
+    if (!rp) return;
+    const armed = rp.active;
+    const cap = Math.round(rp.max_bytes / 1048576);
+    R.replayState.dataset.state = armed ? 'rec' : 'off';
+    R.replayWord.textContent = armed ? 'Armed' : 'Not armed';
+    R.replayDepth.hidden = !armed;
+    R.replayDepth.textContent = armed ? `${Math.floor(rp.depth_s)} s of ${rp.seconds} s` : '';
+    R.replayCard.setAttribute('tone', armed ? 'live' : '');
+    R.replaySub.textContent = armed
+      ? `Holding ${bytes(rp.bytes)} of ${cap} MB in memory. A saved clip starts on a keyframe, so it can run up to a couple of seconds longer than asked.`
+      : `Keeps the last ${replaySeconds} s of the program in memory so a moment can be saved after it happened. Nothing is written until you save.`;
+    R.replayArmBtn.hidden = armed;
+    R.replaySaveBtn.hidden = !armed;
+    R.replayStopBtn.hidden = !armed;
+    R.replayArmBtn.toggleAttribute('disabled', !available(s));
+    R.replaySaveBtn.toggleAttribute('disabled', !(rp.depth_s > 0));
+    R.replayArmBtn.toggleAttribute('busy', busy.has('replay'));
+    R.replaySaveBtn.toggleAttribute('busy', busy.has('replaysave'));
+    R.replayStopBtn.toggleAttribute('busy', busy.has('replaystop'));
+    R.replayLength.querySelectorAll('button').forEach((b) => {
+      const seconds = armed ? rp.seconds : replaySeconds;
+      b.setAttribute('aria-pressed', String(Number(b.dataset.seconds) === seconds));
+      b.toggleAttribute('disabled', armed);
+    });
+    const evicted = armed && rp.evicted_for_memory > 0;
+    const why = !available(s) ? 'Instant replay is not part of this rig.'
+      : evicted ? `The ${cap} MB memory limit is holding the buffer to ${Math.floor(rp.depth_s)} s; lower the bitrate or raise STREAMSTACK_REPLAY_MAX_MB.`
+      : '';
+    R.replayWhy.dataset.state = why ? 'warn' : '';
+    R.replayWhy.textContent = why || notes.replay;
+  }
+
+  R.replayLength.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-seconds]');
+    if (!b || S().replay?.active) return;
+    replaySeconds = Number(b.dataset.seconds);
+    renderReplay();
+  });
+  R.replayArmBtn.addEventListener('click', () => run('replay', 'replay.start', { seconds: replaySeconds }, false));
+  R.replaySaveBtn.addEventListener('click', () => run('replaysave', 'replay.save', {}, true));
+  R.replayStopBtn.addEventListener('click', () => run('replaystop', 'replay.stop', {}, false));
+
   R.recFormat.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-format]');
     if (!b || S().recording.active) return;
@@ -348,7 +439,48 @@ export async function mount(host, ctx) {
   R.stopBtn.addEventListener('click', () => run('stop', 'stream.stop', {}, false));
   R.recBtn.addEventListener('click', () => run('rec', 'record.start', { format: recFormat }, false));
   R.recStopBtn.addEventListener('click', () => run('recstop', 'record.stop', {}, false));
-  const renderNotes = () => renderHero();
+
+  // ---------- SRT input: listen for a remote sender and record it ----------
+  const INGEST_WORDS = { waiting: 'Waiting for a sender', receiving: 'Receiving', failed: 'Could not listen', stopped: 'Stopped', idle: 'Not listening' };
+  function renderIngest() {
+    const s = S();
+    const g = s.ingest;
+    R.ingestCard.hidden = !available(s) || !g;
+    if (!g) return;
+    R.ingestCard.setAttribute('tone', g.state === 'receiving' ? 'live' : '');
+    const where = g.file ? `${baseName(g.file)} · ${bytes(g.bytes)}` : '';
+    R.ingestSub.textContent = g.active
+      ? `${INGEST_WORDS[g.state] ?? g.state} on port ${g.port}${g.encrypted ? ' (encrypted)' : ''}${where ? ` · ${where}` : ''}`
+      : INGEST_WORDS[g.state] ?? '';
+    R.ingestBtn.hidden = g.active;
+    R.ingestStopBtn.hidden = !g.active;
+    R.ingestPort.disabled = g.active;
+    R.ingestKey.disabled = g.active;
+    R.ingestBtn.toggleAttribute('busy', busy.has('ingest'));
+    R.ingestStopBtn.toggleAttribute('busy', busy.has('ingeststop'));
+    R.ingestWhy.dataset.state = g.last_error ? 'warn' : '';
+    R.ingestWhy.textContent = g.last_error || notes.ingest;
+  }
+  async function runIngest(key, action, params) {
+    if (busy.has(key)) return;
+    busy.add(key);
+    renderIngest();
+    const res = await act(action, params, { quiet: true });
+    busy.delete(key);
+    if (disposed) return;
+    notes.ingest = res?.message ?? '';
+    renderIngest();
+  }
+  R.ingestBtn.addEventListener('click', () => {
+    const params = { port: Number(R.ingestPort.value) };
+    const ref = R.ingestKey.value.trim();
+    if (ref) params.key_ref = ref;
+    runIngest('ingest', 'ingest.start', params);
+  });
+  R.ingestStopBtn.addEventListener('click', () => runIngest('ingeststop', 'ingest.stop', {}));
+  sub((s) => [s.stream.ingest, s.stream.status], renderIngest);
+  const renderNotes = () => { renderHero(); renderReplay(); };
+  sub((s) => s.stream.replay, renderReplay);
   sub((s) => [s.stream.status, s.stream.uptime_s, s.stream.output, s.stream.recording, s.stream.destinations.map((d) => [d.state, d.active, d.enabled, d.kind]), s.stream.encoders.map((e) => e.codec)], renderHero);
 
   // ---------- meters ----------
@@ -444,6 +576,7 @@ export async function mount(host, ctx) {
     if (d.url) meta.push(h('span', { class: 'st-dest-url', title: d.url }, d.url));
     meta.push(chip(d.key === 'set' ? 'Key set' : 'No key', d.key === 'set' ? 'A key is stored; it is never shown' : 'No key or passphrase is stored'));
     if (d.active && d.codec) meta.push(chip(`${CODEC_NAMES[d.codec] ?? d.codec}${d.moved ? ' (fallback)' : ''}`, 'Codec in use'));
+    if (d.active && d.account?.known) meta.push(chip(`Twitch account: ${d.account.codecs.map((c) => CODEC_NAMES[c] ?? c).join(', ')}`, 'What Twitch says this account may publish (Enhanced Broadcasting)'));
     else if (d.codec_wanted && d.codec_wanted !== 'auto') meta.push(chip(CODEC_NAMES[d.codec_wanted] ?? d.codec_wanted, 'Codec wanted'));
     row.querySelector('.st-dest-meta').replaceChildren(...meta);
     const stats = [];
@@ -451,6 +584,11 @@ export async function mount(host, ctx) {
       if (d.state === 'live') stats.push(`Connected ${clock(d.connected_s)}`);
       if (d.bitrate_kbps) stats.push(kbps(d.bitrate_kbps));
       if (d.latency_ms) stats.push(`${Math.round(d.latency_ms)} ms`);
+      if (d.kind === 'srt' && d.srt) {
+        if (d.srt.rtt_ms != null) stats.push(`RTT ${d.srt.rtt_ms} ms (${d.srt.rtt_min_ms}-${d.srt.rtt_max_ms})`);
+        if (d.srt.probe_loss_percent) stats.push(`${d.srt.probe_loss_percent}% probes lost`);
+        if (d.srt.latency_ms) stats.push(`SRT latency ${d.srt.latency_ms} ms${d.srt.auto ? ' (auto)' : ''}`);
+      }
       if (d.kind === 'whip' && d.whip?.rtt_ms != null) stats.push(`RTT ${Math.round(d.whip.rtt_ms)} ms`);
       if (d.kind === 'whip' && d.state === 'live') stats.push(`${d.whip?.loss_percent ?? 0}% loss`);
       stats.push(`${plural(d.dropped_frames, 'drop')}`);
@@ -459,7 +597,7 @@ export async function mount(host, ctx) {
     row.querySelector('.st-dest-stats').textContent = stats.join(' · ');
     const err = row.querySelector('.st-dest-error');
     const note = d.state === 'backoff' ? `Reconnecting. ${d.last_error}` : d.last_error;
-    err.textContent = d.active || d.last_error ? note : '';
+    err.textContent = d.active || d.last_error ? note || (d.kind === 'srt' ? d.srt?.hint ?? '' : '') : '';
     err.hidden = !err.textContent;
     err.dataset.state = d.state === 'failed' ? 'fail' : 'warn';
     const toggle = row.querySelector('ss-toggle');
@@ -579,6 +717,7 @@ export async function mount(host, ctx) {
     fillCodecs(kind, R.fCodec.value || 'auto');
   }
   R.fType.addEventListener('change', syncForm);
+  R.fLatencyAuto.addEventListener('change', () => { R.fLatency.disabled = R.fLatencyAuto.checked; });
 
   function openForm(d) {
     editing = d || null;
@@ -589,7 +728,10 @@ export async function mount(host, ctx) {
     R.fUrl.value = d?.url ?? '';
     R.fKey.value = '';
     R.fKeyClear.checked = false;
-    R.fLatency.value = d?.options?.latency_ms ?? 120;
+    const autoLatency = d?.options?.latency_ms === 'auto';
+    R.fLatency.value = autoLatency ? 120 : d?.options?.latency_ms ?? 120;
+    R.fLatencyAuto.checked = autoLatency;
+    R.fLatency.disabled = autoLatency;
     fillCodecs(d ? portable(d).kind : 'rtmp', d?.codec_wanted ?? 'auto');
     syncForm();
     if (R.fMode.dataset.kind === 'srt') R.fMode.value = d?.options?.mode ?? 'caller';
@@ -628,7 +770,7 @@ export async function mount(host, ctx) {
     if (type.kind === 'rtmp') options.mode = type.mode;
     if (type.kind === 'srt') {
       options.mode = R.fMode.value;
-      options.latency_ms = Number(R.fLatency.value) || 120;
+      options.latency_ms = R.fLatencyAuto.checked ? 'auto' : Number(R.fLatency.value) || 120;
     }
     const entry = {
       id: editing?.id ?? uniqueId(name, type.kind), kind: type.kind, name, url, codec: R.fCodec.value, options, enabled: editing?.enabled ?? true,
@@ -887,7 +1029,15 @@ export async function mount(host, ctx) {
   }
   sub((s) => s.stream.events, renderEvents);
 
+  // The Bandwidth card mounts in the background after the Picture card, so it never delays the page's own controls.
+  mountAdaptPanel(host, ctx).then(
+    (unmount) => { if (disposed) unmount(); else off.push(unmount); },
+    (err) => { console.error('Bandwidth panel failed to mount', err); },
+  );
+
   renderHero();
+  renderIngest();
+  renderReplay();
   renderMeters();
   renderDestinations();
   renderLive();

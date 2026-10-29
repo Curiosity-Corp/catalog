@@ -119,6 +119,9 @@ def test_all_lights_power_pad(li: App, rig: Rig) -> None:
 def test_l_key_toggles_every_light(li: App, rig: Rig) -> None:
     li.press("l")
     assert poll(rig, lambda s: not light(s, ONE)["power"] and not light(s, TWO)["power"])
+    # "L" sends the opposite of what the page believes. Wait until the page shows "off" before the second press,
+    # or a press that beats the state push sends "off" again and the lights never come back (starved runner).
+    expect(power_pad(card(li, "All lights"))).to_contain_text("off", timeout=LOADED)
     li.press("l")
     assert poll(rig, lambda s: light(s, ONE)["power"] and light(s, TWO)["power"])
 

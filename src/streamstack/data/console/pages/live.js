@@ -13,8 +13,11 @@ import { toggleLights, toggleMute, togglePrivacy, toggleBypass, toggleVirtualcam
 import { setUi, onUi, ui } from '../core/ui.js';
 import { mountReviveBanner, reviveView } from '../core/revive.js';
 import { mountFraming } from './framing.js';
+import { mountEyeBadge } from './eyeline.js';
 import { mountBlur, blurCommands } from './blur.js';
 import { mountOutputPicker } from './audio-outputs.js';
+import { mountPreflight, preflightCommands } from './preflight.js';
+import { mountSafeJoinBanner } from '../core/safejoin.js';
 
 const LOOKS = [
   { key: 'brightness', label: 'Brightness', icon: 'sun' },
@@ -34,13 +37,15 @@ const TEMPLATE = `
 <div class="cockpit">
   <div class="col col-main">
     <ss-card bare class="area-preview" data-ref="previewCard">
+      <div data-ref="safeJoin"></div>
       <div class="pv-cell">
-        <ss-preview data-ref="pv" source="program" fps="12" label="Program picture, what the audience sees">
+        <ss-preview data-ref="pv" source="program" transport="auto" fps="12" label="Program picture, what the audience sees">
           <div slot="badges" class="badges" data-ref="badges"></div>
           <span slot="corner" class="tc" data-ref="tc"></span>
           <div slot="footer" class="pv-tools">
             <ss-button size="sm" variant="ghost" icon="grid" data-ref="grid" title="Thirds grid (G)">Grid</ss-button>
             <span class="spacer"></span>
+            <ss-button size="sm" variant="ghost" icon="pulse" data-ref="preflight" title="Check that everything is ready for a meeting">Pre-flight</ss-button>
             <ss-button size="sm" icon="vcam" data-ref="vcam">Virtual camera</ss-button>
             <ss-button size="sm" icon="record" data-ref="rec">Record</ss-button>
           </div>
@@ -50,6 +55,7 @@ const TEMPLATE = `
     <ss-card bare inline-reason class="area-scenes" data-ref="scenesCard">
       <div class="scene-row"><span class="eyebrow">Scenes</span><div class="scene-pads" data-ref="scenes" role="group" aria-label="Scenes"></div></div>
       <div class="framing-row" data-ref="framingHost"></div>
+      <div class="eye-row" data-ref="eyeBadgeHost"></div>
     </ss-card>
     <ss-card inline-reason class="area-look" heading="Look" icon="sliders" data-ref="lookCard">
       <ss-button slot="actions" size="sm" variant="ghost" icon="refresh" data-ref="lookReset">Reset look</ss-button>
@@ -100,9 +106,12 @@ export async function mount(host, ctx) {
   const { store, act, actStream, flushStream, registerKeys, registerCommands } = ctx;
   await ctx.ensureCss(new URL('./live.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./framing.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./eyeline.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./blur.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./audio-outputs.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./preflight.css', import.meta.url).href);
   await ctx.ensureCss(new URL('../core/revive.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('../core/safejoin.css', import.meta.url).href);
   document.title = 'Live · StreamStack';
   host.innerHTML = TEMPLATE;
   const R = {};
@@ -110,6 +119,8 @@ export async function mount(host, ctx) {
   const off = [];
   const sub = (selector, cb) => off.push(store.subscribe(selector, cb));
   off.push(mountFraming(R.framingHost, ctx, { compact: true }));
+  off.push(mountEyeBadge(R.eyeBadgeHost, ctx));
+  off.push(mountSafeJoinBanner(R.safeJoin, ctx));
 
   for (const card of [R.voiceCard]) card.addEventListener('fix', () => startStudio());
 
@@ -222,7 +233,7 @@ export async function mount(host, ctx) {
     R.bypass.toggleAttribute('disabled', !chain.available);
     R.voiceCard.toggleAttribute('tone-warn', chain.bypass);
     if (!chain.available) R.voiceCard.setAttribute('reason', 'The voice chain plugins are not installed');
-    else if (!chain.running) { R.voiceCard.setAttribute('reason', 'The voice chain is not running'); R.voiceCard.setAttribute('fix', 'Start studio'); }
+    else if (!chain.running) { R.voiceCard.setAttribute('reason', chain.held ? 'The voice chain was stopped from the command line and stays stopped until you start it' : 'The voice chain is not running'); R.voiceCard.setAttribute('fix', 'Start studio'); }
     else { R.voiceCard.removeAttribute('reason'); R.voiceCard.removeAttribute('fix'); }
   });
   R.bypass.addEventListener('change', () => toggleBypass());
@@ -255,6 +266,12 @@ export async function mount(host, ctx) {
   off.push(mountBlur(R.blurRow, ctx, { variant: 'compact' }));
   off.push(mountOutputPicker(R.outPick, ctx));
   off.push(registerCommands(() => blurCommands(ctx)));
+
+  // ---------- pre-flight check (pages/preflight.js: a dialog; the button and the palette command open it) ----------
+  off.push(mountPreflight(host, ctx));
+  R.preflight.addEventListener('click', () => setUi('preflightOpen', (ui.preflightOpen || 0) + 1));
+  sub((s) => s.preflight.available, (on) => { R.preflight.hidden = !on; });
+  off.push(registerCommands(() => preflightCommands(ctx, () => setUi('preflightOpen', (ui.preflightOpen || 0) + 1))));
 
   // ---------- auto director ----------
   sub((s) => s.auto, (auto) => {

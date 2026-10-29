@@ -130,3 +130,10 @@ def test_the_gain_reduction_estimate_follows_the_voice_meter(ch: App, page: Page
     rig.act("audio.chain", params={"comp_threshold_db": -50, "comp_ratio": 10})
     # the demo voice speaks in phrases: within a phrase a low threshold makes the estimate leave zero
     expect(gr).not_to_have_attribute("aria-valuenow", "0.0", timeout=20_000)
+
+
+def test_a_chain_stopped_from_the_command_line_shows_it_stays_stopped(ch: App, rig: Rig) -> None:
+    rig.act("audio.demo_chain_held", on=True)
+    expect(ch.page.get_by_text("stopped on purpose", exact=False).first).to_be_visible(timeout=LOADED)
+    rig.act("audio.demo_chain_held", on=False)  # `streamstack chain start`
+    expect(ch.page.get_by_text("stopped on purpose", exact=False)).to_have_count(0, timeout=LOADED)

@@ -241,11 +241,20 @@ def audio_generation_argv(
 # -- sinks -----------------------------------------------------------------------------------------------------
 
 
-def srt_url(dest: Destination, passphrase: str = "", streamid: str = "") -> str:
+def _latency_ms(dest: Destination, override: int | None) -> int:
+    if override is not None:
+        return int(override)
+    value = dest.options.get("latency_ms", 120)
+    return 120 if value == "auto" else int(value)
+
+
+def srt_url(dest: Destination, passphrase: str = "", streamid: str = "", latency_ms: int | None = None) -> str:
+    """The srt:// URL. `latency_ms` is the latency in force (resolved from "auto" by the caller); without it the
+    destination's own number is used, and 120 when that is "auto"."""
     parts = urlsplit(dest.url)
     query = {
         "mode": dest.options.get("mode", "caller"),
-        "latency": str(int(dest.options.get("latency_ms", 120)) * 1000),  # ffmpeg takes microseconds
+        "latency": str(_latency_ms(dest, latency_ms) * 1000),  # ffmpeg takes microseconds
         "pkt_size": "1316",
     }
     if passphrase:
@@ -259,7 +268,13 @@ def srt_url(dest: Destination, passphrase: str = "", streamid: str = "") -> str:
 
 
 def sink_argv(
-    ffmpeg: str, dest: Destination, codec: str, audio_kbps: int = 128, secret: str = "", target: str = ""
+    ffmpeg: str,
+    dest: Destination,
+    codec: str,
+    audio_kbps: int = 128,
+    secret: str = "",
+    target: str = "",
+    latency_ms: int | None = None,
 ) -> list[str]:
     """The ffmpeg that reads the relay's Matroska on stdin and delivers it to `dest`. `secret` is the resolved key.
 
@@ -273,7 +288,7 @@ def sink_argv(
         return [
             *base, "-c", "copy",
             "-f", "mpegts", "-muxdelay", "0.1", "-muxpreload", "0.1", "-flush_packets", "1",
-            srt_url(dest, passphrase, streamid),
+            srt_url(dest, passphrase, streamid, latency_ms),
         ]  # fmt: skip
     if dest.kind == "rtmp":
         argv = [*base, "-c:v", "copy", "-c:a", "aac", "-b:a", f"{audio_kbps}k", "-ar", "48000", "-ac", "2"]

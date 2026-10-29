@@ -110,3 +110,15 @@ def test_the_popover_closes_with_escape_and_the_framing_popover_takes_its_place(
     page.locator('ss-button[title^="Auto-framing"]').click()
     expect(page.get_by_role("dialog", name="Auto-framing")).to_be_visible()
     expect(page.get_by_role("dialog", name="Time-of-day profiles")).to_be_hidden()
+
+
+def test_a_slot_profile_can_hold_a_camera_shot_that_apply_now_selects(app: App, rig: Rig) -> None:
+    page = app.goto("camera").page
+    dialog = open_panel(page)
+    dawn = row(dialog, "dawn")
+    expect(dawn).to_have_attribute("data-empty", "", timeout=LOADED)
+    dawn.get_by_label("Camera shot").select_option("wide")
+    poll(rig, lambda st: profile_of(rig, "dawn").get("framing") == {"shot": "wide"})
+    dawn.get_by_role("button", name="Apply", exact=True).click()
+    poll(rig, lambda st: st["framing"]["shot"] == "wide" and st["framing"]["mode"] != "off")
+    expect(dawn.get_by_label("Camera shot")).to_have_value("wide")

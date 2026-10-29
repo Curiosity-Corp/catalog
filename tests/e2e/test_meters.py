@@ -136,14 +136,16 @@ def test_lufs_readout_has_explanatory_titles(app: App) -> None:
     assert sum("Short-term" in t for t in titles) == 2
 
 
-def stream_meters(rig: Rig, seconds: float) -> list[tuple[dict[str, Any], int]]:
-    """Read the SSE stream for ``seconds`` and return every meters frame with its size on the wire."""
+def stream_meters(rig: Rig, seconds: float, grace: float = 20.0) -> list[tuple[dict[str, Any], int]]:
+    """Read the SSE stream for ``seconds`` (and, on a loaded runner, up to ``grace`` more until the first meters
+    frame lands) and return every meters frame with its size on the wire."""
     req = urllib.request.Request(rig.base + "api/events", headers={TOKEN_HEADER: rig.token})
     frames: list[tuple[dict[str, Any], int]] = []
-    end = time.monotonic() + seconds
+    start = time.monotonic()
+    end = start + seconds
     event = ""
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as res:
-        while time.monotonic() < end:
+        while time.monotonic() < end or (not frames and time.monotonic() < start + seconds + grace):
             raw = res.readline()
             if not raw:
                 break

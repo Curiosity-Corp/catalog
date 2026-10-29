@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from streamstack.engine import graph, shaders
+from streamstack.presets import luts
 
 
 def test_source_carries_the_strength_and_is_a_libplacebo_hook() -> None:
@@ -85,3 +86,75 @@ def test_the_shader_steepens_an_edge_and_more_strength_steepens_it_more(tmp_path
     plain, mild, strong = (overshoot(run_gpu(tmp_path, lvl)) for lvl in (None, 0.2, 1.0))
     assert plain <= mild <= strong
     assert strong > plain
+
+
+def test_blended_cube_is_the_identity_at_zero_and_the_cube_at_one() -> None:
+    full = luts.Lut3D.parse(shaders.blended_cube("portra", 20))
+    reference = luts.Lut3D.parse(luts.build_cube("portra"))
+    assert len(full.table) == len(reference.table)
+    flat_full = [value for row in full.table for value in row]
+    flat_reference = [value for row in reference.table for value in row]
+    assert flat_full == pytest.approx(flat_reference, abs=1e-5)
+    half = luts.Lut3D.parse(shaders.blended_cube("portra", 10))
+    last = full.size - 1
+    for index in (0, 1, full.size + 3, len(full.table) - 1):
+        r, g, b = index % full.size, (index // full.size) % full.size, index // full.size**2
+        grid = (r / last, g / last, b / last)
+        want = tuple((grid[c] + full.table[index][c]) / 2 for c in range(3))
+        assert half.table[index] == pytest.approx(want, abs=2e-5)
+
+
+@pytest.mark.parametrize("steps", [0, 21, -1])
+def test_blended_cube_refuses_a_strength_outside_the_steps(steps: int) -> None:
+    with pytest.raises(ValueError):
+        shaders.blended_cube("portra", steps)
+
+
+def test_blended_cube_refuses_an_unknown_lut() -> None:
+    with pytest.raises(ValueError):
+        shaders.blended_cube("no-such-look", 10)
+
+
+def test_ensure_lut_writes_once_at_the_path_the_graph_names(tmp_path: Path) -> None:
+    directory = tmp_path / "cubes"
+    path = shaders.ensure_lut(directory, "noir", 20)
+    assert path == graph.lut_file_path(str(directory), "noir", 20)
+    assert shaders.ensure_lut(directory, "noir", 20) == path
+    assert [p.name for p in directory.iterdir()] == ["lut-noir-20.cube"]
+
+
+def decode_rgb(tmp_path: Path, lut: str | None) -> bytes:
+    """A 96x64 test card through libplacebo (optionally with a cube), decoded to rgb24 the same way both times."""
+    extra = f":lut={lut}:{graph.LUT_TYPE}" if lut else ""
+    chain = (
+        "scale=out_color_matrix=bt709:out_range=tv,format=yuv444p,hwupload,"
+        + f"libplacebo=format=yuv444p{extra},hwdownload,format=yuv444p,"
+        + "scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24"
+    )
+    return subprocess.run(
+        [
+            *("ffmpeg", "-v", "error", "-init_hw_device", "vulkan", "-f", "lavfi"),
+            *("-i", "testsrc2=s=96x64:d=1:r=1", "-vf", chain, "-frames:v", "1", "-f", "rawvideo", "-"),
+        ],
+        capture_output=True,
+        timeout=60,
+        check=True,
+    ).stdout
+
+
+@pytest.mark.skipif(not vulkan_available(), reason="needs ffmpeg with a Vulkan device")
+@pytest.mark.parametrize(("name", "steps"), [("portra", 20), ("portra", 10), ("noir", 20), ("teal-orange", 20)])
+def test_libplacebo_applies_the_cube_like_the_reference_sampler(tmp_path: Path, name: str, steps: int) -> None:
+    """Golden check: the GPU output equals the reference trilinear sampler applied to the cube-less output."""
+    plain = decode_rgb(tmp_path, None)
+    graded = decode_rgb(tmp_path, shaders.ensure_lut(tmp_path, name, steps))
+    cube = luts.Lut3D.parse((tmp_path / f"lut-{name}-{steps:02d}.cube").read_text())
+    total, worst = 0.0, 0.0
+    for at in range(0, len(plain), 3):
+        want = cube.sample((plain[at] / 255, plain[at + 1] / 255, plain[at + 2] / 255))
+        for channel in range(3):
+            error = abs(graded[at + channel] - want[channel] * 255)
+            total += error
+            worst = max(worst, error)
+    assert total / len(plain) < 2.0 and worst < 10.0
+    assert sum(abs(a - b) for a, b in zip(plain, graded, strict=True)) / len(plain) > 1.0  # the cube did something

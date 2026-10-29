@@ -123,6 +123,26 @@ needs the `systemd-journal` group; without it the row says so and judges from th
 page re-reads the evidence at most every 30 s. `tests/fixtures/hardware/scarlett2/` holds the synthesized listings and
 log lines (derived from the driver's format strings); the capture from the real 2i2 is posted on #130 once it enumerates.
 
+## Two users on one desk (#127)
+
+`streamstack seat-policy status` (also the `hw-seat` doctor row) says whether another user's lingering PipeWire and
+WirePlumber can open the seat user's cards. `streamstack seat-policy script --user NAME [--option dropin|groups|stop]`
+prints, never runs, the root script that keeps them off (default: a WirePlumber profile drop-in). After applying it,
+set `STREAMSTACK_SEAT_GUARDED=NAME`. The decision and its reasons are in `docs/adr/0007-seat-policy.md`.
+
+Whether it cures lost-input faults is measured with `tools/seat_replug_trial.py`, a human run at an idle desk (it
+replugs the Wave XLR through sysfs and needs root; it refuses during a call and never touches the default source):
+
+```
+python3 tools/seat_replug_trial.py --label other-wp-running                      # dry run: shows what it would do
+sudo -E python3 tools/seat_replug_trial.py --execute --label other-wp-running --cycles 10 --results a.jsonl
+sudo -E python3 tools/seat_replug_trial.py --execute --label other-wp-stopped --cycles 10 --results a.jsonl \
+    --stop-other-wireplumber seantech
+sudo -E python3 tools/seat_replug_trial.py --execute --label policy-applied --cycles 10 --results a.jsonl
+```
+
+Paste the three summary lines on the issue.
+
 ## Not part of this layer
 
 The audio chain (#118) and `doctor` (#122) read the Plan; the engine, the stream and the camera setup read it as

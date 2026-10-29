@@ -1,0 +1,29 @@
+/* meetings.css — the Meetings card of the Auto page (pages/meetings.js). Scoped to the Auto page: page stylesheets stay loaded after navigation. */
+@scope ([data-page="auto"]) {
+  .mt { display: block; min-width: 0; }
+  .mt-next { margin: 0 0 var(--s-2); font-weight: 600; overflow-wrap: anywhere; }
+  .mt-list, .mt-sources, .mt-steps, .mt-events { list-style: none; margin: var(--s-2) 0; padding: 0; display: grid; gap: var(--s-2); min-width: 0; }
+  .mt-row, .mt-src { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); align-items: center; padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface-2); min-width: 0; }
+  .mt-title, .mt-src-detail { flex: 1 1 10rem; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-sm); }
+  .mt-src-detail { color: var(--text-3); }
+  .mt-badge { padding: 0.1rem 0.55rem; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600; background: var(--surface-3); color: var(--text-2); }
+  .mt-badge[data-prep="done"], .mt-badge[data-status="connected"] { color: var(--green); }
+  .mt-badge[data-prep="due"], .mt-badge[data-status="error"], .mt-badge[data-status="pending"] { color: var(--amber); }
+  .mt-mini { padding: 0.2rem 0.6rem; border-radius: var(--r-pill); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); border: 1px solid var(--line-strong); background: var(--surface-2); }
+  .mt-mini:hover { color: var(--text); background: var(--surface-3); }
+  .mt-mini[hidden] { display: none; }
+  .mt-prep { margin: var(--s-2) 0; padding: var(--s-2) var(--s-3); border-radius: var(--r-2); background: var(--surface-inset); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .mt-prep[data-state="skipped"] { color: var(--text-3); }
+  .mt-steps li[data-ok="false"] { color: var(--amber); }
+  .mt-opts { display: grid; gap: var(--s-3); margin: var(--s-3) 0; padding-top: var(--s-3); border-top: 1px solid var(--line); }
+  .mt-field { display: grid; gap: 0.2rem; max-width: 14rem; }
+  .mt-check { display: flex; gap: var(--s-2); align-items: center; font-size: var(--fs-sm); }
+  .mt-steps-set { border: 0; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+  .mt-code { margin: var(--s-2) 0; padding: var(--s-3); border-radius: var(--r-2); border: 1px solid var(--accent); background: var(--accent-soft); overflow-wrap: anywhere; }
+  .mt-add { display: grid; gap: var(--s-3); margin-top: var(--s-2); }
+  .mt-ics { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+  .mt-ics input { flex: 1 1 12rem; min-width: 0; }
+  .mt-events { font-size: var(--fs-xs); color: var(--text-3); gap: 0.2rem; }
+  .mt-events li[data-level="warn"] { color: var(--amber); }
+  .mt-events time { font-variant-numeric: tabular-nums; }
+}

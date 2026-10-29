@@ -14,7 +14,7 @@ from streamstack.console.presets import PresetsController
 from streamstack.presets import PresetError, catalog, resolve, schema
 from streamstack.presets import build as presets_build
 from streamstack.presets.luts import LUTS, Lut3D, build_cube
-from streamstack.presets.plan import frame_size
+from streamstack.presets.plan import frame_size, ladder_tier
 from streamstack.presets.store import ProfileStore, export_document
 from streamstack.presets.thumbs import HEIGHT, WIDTH, decode_png, grade, png, render, slug
 
@@ -169,6 +169,38 @@ def test_every_tier_is_ordered_by_bitrate_per_codec() -> None:
 
 
 # -- stream plans ----------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("platform_id", PLATFORM_IDS)
+@pytest.mark.parametrize("tier_id", TIER_IDS)
+def test_the_downshift_ladder_starts_at_the_plan_and_every_step_is_a_plan_within_the_limits(
+    platform_id: str, tier_id: str
+) -> None:
+    platform, tier = CAT.platform(platform_id), CAT.tier(tier_id)
+    ladder = ladder_tier(platform, CAT.tiers, tier_id)
+    assert ladder["steps"], "there is always at least the plan itself"
+    plans = [
+        resolve(platform, ladder, index=None if platform["tier_policy"] == "ignore" else i)
+        for i in range(len(ladder["steps"]))
+    ]
+    first = resolve(platform, tier)
+    assert plans[0]["video"]["width"] == first["video"]["width"] and plans[0]["video"]["fps"] == first["video"]["fps"]
+    for plan in plans:
+        assert plan["video"]["fps"] <= platform["max_fps"]
+        for codec in plan["video"]["codecs"]:
+            if platform["bitrate_cap_kbps"] and codec.get("bitrate_kbps"):
+                assert codec["bitrate_kbps"] <= platform["bitrate_cap_kbps"]
+
+
+def test_a_platform_that_ignores_tiers_has_one_step_and_a_bad_index_is_an_error() -> None:
+    archive = CAT.platform("archive")
+    assert archive["tier_policy"] == "ignore"
+    assert len(ladder_tier(archive, CAT.tiers, "high")["steps"]) == 1
+    youtube, tier = CAT.platform("youtube"), CAT.tier("high")
+    with pytest.raises(PresetError, match="no rung"):
+        resolve(youtube, tier, index=99)
+    with pytest.raises(PresetError, match="unknown tier"):
+        ladder_tier(youtube, CAT.tiers, "nope")
 
 
 @pytest.mark.parametrize("platform_id", PLATFORM_IDS)
@@ -568,3 +600,39 @@ def test_choose_reports_a_backend_failure(ctl: PresetsController, rec: Recorder)
 def test_unknown_action(ctl: PresetsController) -> None:
     with pytest.raises(ActionError, match="unknown action"):
         ctl.act("presets.nope", {})
+
+
+def test_a_save_in_flight_never_holds_up_a_read_and_the_new_selection_shows_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #161: the selection was read under the lock a save held through two fsyncs, so on a starved disk every
+    state push waited and the Console showed the old tier for tens of seconds."""
+    import threading
+
+    from streamstack import store as store_module
+
+    prof = make_store(tmp_path)
+    prof.set_selection("youtube", "standard")
+    inside, release = threading.Event(), threading.Event()
+    real = store_module.write_json
+
+    def slow(path: Path | str, data: object, **kw: object) -> Path:
+        inside.set()
+        assert release.wait(30)
+        return real(path, data, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store_module, "write_json", slow)
+    saver = threading.Thread(target=prof.set_selection, args=("youtube", "cellular"), daemon=True)
+    saver.start()
+    try:
+        assert inside.wait(10)
+        seen: dict[str, object] = {}
+        reader = threading.Thread(target=lambda: seen.update(prof.selection()), daemon=True)
+        reader.start()
+        reader.join(5)
+        assert not reader.is_alive(), "a read waited behind a save in flight"
+        assert seen == {"platform": "youtube", "tier": "cellular"}
+    finally:
+        release.set()
+        saver.join(10)
+    assert prof.selection() == {"platform": "youtube", "tier": "cellular"}

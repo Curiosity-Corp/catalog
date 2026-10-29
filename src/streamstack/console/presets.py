@@ -74,19 +74,21 @@ class PresetsController:
         return resolve(self.catalog.platform(platform), self.catalog.tier(tier))
 
     def state(self) -> dict[str, Any]:
-        with self.lock:
-            selection = self.store.selection()
-            profiles = [{**p, "builtin": True} for p in self.catalog.profiles]
-            profiles += [{"id": None, "builtin": False, **p} for p in self.store.profiles().values()]
-            return {
-                "platform": selection["platform"],
-                "tier": selection["tier"],
-                "plan": self.plan(selection["platform"], selection["tier"]),
-                "stream": {"contract": STREAM_CONTRACT, **self.stream},
-                "profile": self.profile,
-                "profiles": profiles,  # the built-ins first (with an id), then the user's own (applied by name)
-                "last_apply": self.last_apply,
-            }
+        # No `self.lock` here: it is held for the whole of an action, which saves to disk (two fsyncs) and applies a
+        # profile through five other controllers, and every window's state push waits for this method. The fields below
+        # are replaced whole by the actions, never edited in place, so a read is always one coherent value (#161).
+        selection = self.store.selection()
+        profiles = [{**p, "builtin": True} for p in self.catalog.profiles]
+        profiles += [{"id": None, "builtin": False, **p} for p in self.store.profiles().values()]
+        return {
+            "platform": selection["platform"],
+            "tier": selection["tier"],
+            "plan": self.plan(selection["platform"], selection["tier"]),
+            "stream": {"contract": STREAM_CONTRACT, **self.stream},
+            "profile": self.profile,
+            "profiles": profiles,  # the built-ins first (with an id), then the user's own (applied by name)
+            "last_apply": self.last_apply,
+        }
 
     # -- actions --------------------------------------------------------------------------------------------
 

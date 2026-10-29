@@ -13,6 +13,7 @@ import { apiUrl, postAction, ApiError } from '../core/api.js';
 import { icon, iconHTML } from '../components/icons.js';
 import { relTime, minuteKey, parseLocal } from '../core/time.js';
 import { toggleAuto } from '../core/ops.js';
+import { mountMeetings } from './meetings.js';
 
 const KINDS = {
   video: { icon: 'camera', label: 'Picture' },
@@ -224,6 +225,7 @@ export async function mount(host, ctx) {
   const { store, act, registerKeys, registerCommands } = ctx;
   await ctx.ensureCss(new URL('./common.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./auto.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./meetings.css', import.meta.url).href);
   document.title = 'Auto · StreamStack';
   host.innerHTML = TEMPLATE;
   const R = {};
@@ -543,6 +545,7 @@ export async function mount(host, ctx) {
   R.now.addEventListener('click', () => act('auto.once'));
   R.undo.addEventListener('click', () => act('auto.reset'));
   const ask = () => { if (!auto.busy) act('auto.once'); };
+  off.push(mountMeetings(host.querySelector('.aut-right'), ctx)); // calendar-aware setup: its own card at the top of the right column
   off.push(registerKeys([
     { key: 'd', desc: 'AI director on or off', group: 'Auto', run: () => toggleAuto() },
     { key: 'n', desc: 'Ask Claude to review the picture now', group: 'Auto', run: ask },

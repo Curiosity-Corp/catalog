@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 METERS_HZ = 30
 STATE_POLL_SECONDS = 1.0
+SLOW_SNAPSHOT_S = 1.0  # a snapshot that takes longer is logged: every window waits for it
 STATE_MIN_GAP = 0.25  # at most four state pushes a second, however fast actions arrive
 CLIENT_QUEUE = 64
 
@@ -113,8 +114,12 @@ class Hub:
 
     def subscribe(self) -> Client:
         client = Client()
-        client.offer(sse("state", self.state_json()))
+        self.state_json()  # the first window builds the snapshot (outside the lock: it asks the whole rig)
+        # Hand over the newest snapshot and join the broadcast in one step with `refresh`: a push that lands between
+        # the two would otherwise reach neither, and a window that opened just as an action landed would show the old
+        # state until the next change (a switch that was clicked and never turned over).
         with self._lock:
+            client.offer(sse("state", self._latest))
             self._clients.add(client)
         return client
 
@@ -154,12 +159,18 @@ class Hub:
 
     def refresh(self) -> bool:
         """Snapshot the rig now; broadcast it when it differs from the last one. True when it changed."""
+        began = time.monotonic()
         text = self.encode(self.rig.snapshot())
+        took = time.monotonic() - began
+        if took >= SLOW_SNAPSHOT_S:
+            print(f"streamstack console: the state snapshot took {took:.1f} s", file=sys.stderr, flush=True)
+        frame = sse("state", text)
         with self._lock:
             if self._have_state and text == self._latest:
                 return False
             self._latest, self._have_state = text, True
-        self._broadcast(sse("state", text))
+            for client in self._clients:  # under the lock, so `subscribe` sees the new state or gets the frame
+                client.offer(frame)  # never blocks
         return True
 
     def toast(self, level: str, text: str) -> None:

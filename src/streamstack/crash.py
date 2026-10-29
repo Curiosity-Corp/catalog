@@ -67,6 +67,7 @@ _state: dict[str, Any] = {
     "previous": None,
 }
 _handled_at: dict[str, float] = {}
+_monotonic: Callable[[], float] = time.monotonic  # the rate limiter's clock; tests swap it instead of patching `time`
 _lock = threading.Lock()
 
 
@@ -209,7 +210,7 @@ def report_exception(
 def record_exception(exc: BaseException, where: str, component: str | None = None) -> Path | None:
     """File a handled error that deserves attention, at most once per HANDLED_EVERY seconds for the same place."""
     key = f"{type(exc).__name__}@{where}"
-    now = time.monotonic()
+    now = _monotonic()
     with _lock:
         if now - _handled_at.get(key, -HANDLED_EVERY) < HANDLED_EVERY:
             return None
@@ -217,7 +218,12 @@ def record_exception(exc: BaseException, where: str, component: str | None = Non
         del_old = [k for k, t in _handled_at.items() if now - t > 600]
         for k in del_old:
             del _handled_at[k]
-    return report_exception(type(exc), exc, exc.__traceback__, kind="handled", component=component, where=where)
+    path = report_exception(type(exc), exc, exc.__traceback__, kind="handled", component=component, where=where)
+    with _lock:
+        # The window runs from when the report was filed, not from when it was claimed: a stalled disk must not use
+        # the window up before the next error arrives (a starved CI runner did exactly that, #159).
+        _handled_at[key] = _monotonic()
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -341,11 +347,13 @@ def uninstall() -> None:
         sys.excepthook, threading.excepthook, sys.unraisablehook = previous
     with contextlib.suppress(RuntimeError, ValueError):
         faulthandler.disable()
+    atexit.unregister(_remove_native_log)
     native = _state["native"]
     if native is not None:
+        _remove_native_log()
         with contextlib.suppress(OSError):
             native.close()
-    _state.update(installed=False, native=None, previous=None, provider=None)
+    _state.update(component="streamstack", installed=False, native=None, previous=None, provider=None)
 
 
 # ---------------------------------------------------------------------------
@@ -397,5 +405,7 @@ def clear_reports() -> int:
 
 
 def reset_for_tests() -> None:
-    """Forget what `record_exception` rate-limited on."""
+    """Forget what `record_exception` rate-limited on, and put the clock back."""
+    global _monotonic
     _handled_at.clear()
+    _monotonic = time.monotonic

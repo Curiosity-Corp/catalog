@@ -91,6 +91,25 @@ def test_record_and_stop(st: App, rig: Rig) -> None:
     expect(page.locator("[data-ref='recordWord']")).to_have_text("Not recording")
 
 
+def test_instant_replay_arms_saves_a_clip_and_disarms(st: App, rig: Rig) -> None:
+    page = st.page
+    word_ = page.locator("[data-ref='replayWord']")
+    expect(word_).to_have_text("Not armed")
+    expect(page.get_by_role("button", name="Save clip")).to_be_hidden()
+    page.get_by_role("group", name="Replay length").get_by_role("button", name="60 s").click()
+    tap(page, page.get_by_role("button", name="Arm replay"))
+    state = poll(rig, lambda s: s["stream"]["replay"]["active"] and s)
+    assert state["stream"]["replay"]["seconds"] == 60 and state["stream"]["status"] == "replay"
+    expect(word_).to_have_text("Armed")
+    expect(page.locator("[data-ref='replaySub']")).to_contain_text("in memory")
+    expect(page.get_by_role("group", name="Replay length").get_by_role("button", name="30 s")).to_be_disabled()
+    tap(page, page.get_by_role("button", name="Save clip"))
+    expect(page.locator("[data-ref='replayWhy']")).to_contain_text("Replay-1.mkv")
+    tap(page, page.get_by_role("button", name="Disarm"))
+    poll(rig, lambda s: not s["stream"]["replay"]["active"] and s)
+    expect(word_).to_have_text("Not armed")
+
+
 def test_top_bar_shows_on_air_and_rec(st: App, rig: Rig) -> None:
     go_live(st, rig)
     rig.act("record.start", format="mkv")
@@ -424,3 +443,38 @@ def test_phone_tab_bar_fits_ten_pages(st: App, page: Page) -> None:
         "(el) => el.scrollWidth > el.clientWidth"
     ), "the tab bar neither fits nor scrolls"
     expect(rail.get_by_role("link", name="Stream")).to_have_attribute("aria-current", "page")
+
+
+def test_srt_destination_shows_the_measured_path_while_live(st: App, rig: Rig) -> None:
+    go_live(st, rig)
+    stats = dest(st.page, "Backup SRT").locator(".st-dest-stats")
+    expect(stats).to_contain_text("RTT ")
+    expect(stats).to_contain_text("SRT latency ")
+
+
+def test_srt_destination_can_follow_the_measured_latency(st: App, rig: Rig) -> None:
+    page = st.page
+    tap(page, page.get_by_role("button", name="Add destination"))
+    page.get_by_label("Type").select_option("srt")
+    page.get_by_label("Name").fill("Auto SRT")
+    page.get_by_label("URL").fill("srt://studio.test:9000")
+    page.get_by_label("Auto: follow the measured round trip").check()
+    expect(page.get_by_label("Latency (ms)")).to_be_disabled()
+    page.get_by_role("button", name="Save destination").click()
+    state = poll(rig, lambda s: any(d["name"] == "Auto SRT" for d in s["stream"]["destinations"]) and s)
+    srt = next(d for d in state["stream"]["destinations"] if d["name"] == "Auto SRT")
+    assert srt["options"]["latency_ms"] == "auto"
+
+
+def test_srt_input_listens_receives_and_stops(st: App, rig: Rig) -> None:
+    page = st.page
+    card = page.locator("[data-ref='ingestCard']")
+    expect(card).to_contain_text("Not listening")
+    page.locator("[data-ref='ingestPort']").fill("9100")
+    tap(page, page.get_by_role("button", name="Listen and record"))
+    state = poll(rig, lambda s: s["stream"]["ingest"]["active"] and s)
+    assert state["stream"]["ingest"]["port"] == 9100
+    expect(card.locator("[data-ref='ingestSub']")).to_contain_text("on port 9100")
+    tap(page, page.get_by_role("button", name="Stop listening"))
+    poll(rig, lambda s: not s["stream"]["ingest"]["active"] and s)
+    expect(page.get_by_role("button", name="Listen and record")).to_be_visible()

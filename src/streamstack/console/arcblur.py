@@ -30,7 +30,7 @@ from streamstack import blur
 from streamstack.console import blur as blurctl
 from streamstack.engine import segment
 from streamstack.engine.blurfeed import BlurFeed
-from streamstack.engine.graph import BlurGraph
+from streamstack.engine.graph import BLUR_EDGES, BlurGraph
 from streamstack.engine.segment import Arc, Segmenter
 from streamstack.framing.model import ModelError
 from streamstack.hardware import roles
@@ -75,9 +75,13 @@ class ArcBlur:
         self.on = False
         self.strength = blur.DEFAULT_STRENGTH
         self.rate = blur.DEFAULT_RATE
-        self.graph = BlurGraph()
+        self.graph = BlurGraph(edge=self._edge())
 
     # -- availability --------------------------------------------------------------------------------------------
+
+    def _edge(self) -> str:
+        wanted = (self._cfg.get("STREAMSTACK_ENGINE_BLUR_EDGE") or "normalised").strip().lower()
+        return wanted if wanted in BLUR_EDGES else "normalised"
 
     @property
     def switched_off(self) -> bool:

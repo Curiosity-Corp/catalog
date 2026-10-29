@@ -192,14 +192,33 @@ class Diagnostics:
             return self._token
 
     def _ensure_token(self, rotate: bool = False) -> str:
+        """The scrape token, created on first use. A rotation revokes the old token before it persists the new one.
+
+        The write is flock + atomic replace + fsync (seconds on a starved disk) and can fail. Waiting for it would
+        leave the old token answering for that whole time, and for good when the write fails, which is the wrong
+        way round for a security control: the new token goes live in memory first, the old one is dead from that
+        moment, and only then is it saved. If the process dies before the save lands, the request was never
+        answered, so nobody was told the old token was revoked. If the save fails, the new token still stands
+        until the Console restarts and the error says so: the old token is never revived by a failed rotation."""
         with self._token_lock:
             token = None if rotate else self._read_token()
-            if token is None:
-                token = secrets.token_urlsafe(24)
-                try:
-                    store.update_env_file(config.secrets_file(), {TOKEN_KEY: token}, mode=0o600)
-                except (OSError, ValueError) as exc:
-                    raise ActionError(f"Could not save the scrape token: {exc}", 409) from exc
+            if token is not None:
+                return token
+            token = secrets.token_urlsafe(24)
+            if rotate:
+                with self._cache_lock:
+                    self._token = token
+            try:
+                store.update_env_file(config.secrets_file(), {TOKEN_KEY: token}, mode=0o600)
+            except (OSError, ValueError) as exc:
+                if rotate:
+                    raise ActionError(
+                        f"The old scrape token no longer works, but the new one could not be saved ({exc}). "
+                        "It stays valid until the Console restarts; create another to retry saving it.",
+                        409,
+                    ) from exc
+                raise ActionError(f"Could not save the scrape token: {exc}", 409) from exc
+            if not rotate:
                 with self._cache_lock:
                     self._token = token
             return token
@@ -253,21 +272,37 @@ class Diagnostics:
         raise ActionError(f"Unknown action {action!r}.", 400)
 
     def _set_enabled(self, on: bool) -> str:
+        """Flip the switch, then save it.
+
+        Saving is a token write and a settings write, four fsyncs between them: seconds on a starved disk, during which
+        the Console showed the switch still off and /metrics still answered 404 (issue #161, the e2e switch that never
+        turned over). The decision takes effect first, in memory, as a token rotation does (#149); the save follows.
+        A save that fails turns an enable back off (the owner is told it did not take) and leaves a disable off until
+        the Console restarts (the owner is told the setting still says on), never the other way round.
+        """
         with self._lock:
             if on == self._enabled:
                 return "Telemetry is already " + ("on." if on else "off.")
-            if on:
-                self._ensure_token()
-            try:
-                config.set_user_setting(ENABLE_KEY, "true" if on else "false")
-            except (OSError, ValueError) as exc:
-                raise ActionError(f"Could not save the setting: {exc}", 409) from exc
             self._enabled = on
             if on:
                 self._start_sampler()
             else:
                 self._stop_sampler()
                 self._reset_series()
+            try:
+                if on:
+                    self._ensure_token()
+                config.set_user_setting(ENABLE_KEY, "true" if on else "false")
+            except (OSError, ValueError, ActionError) as exc:
+                detail = exc.message if isinstance(exc, ActionError) else str(exc)
+                if on:
+                    self._enabled = False
+                    self._stop_sampler()
+                    self._reset_series()
+                    raise ActionError(f"Telemetry stays off: could not save the setting: {detail}", 409) from exc
+                raise ActionError(
+                    f"Telemetry is off until the Console restarts, but the setting could not be saved: {detail}", 409
+                ) from exc
         return "Telemetry is on. Nothing leaves this computer; /metrics answers a token." if on else "Telemetry is off."
 
     def _reset_series(self) -> None:

@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO
 
@@ -97,6 +98,7 @@ def static_dir(tmp_path: Path) -> Path:
     (root / "index.html").write_text("<!doctype html><title>Console</title>")
     (root / "app.js").write_text("export const x = 1;\n")
     (root / "theme.css").write_text("body{}")
+    (root / "manifest.webmanifest").write_text('{"name": "Console"}')
     (root / "pages" / "icon.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
     (tmp_path / "secret.txt").write_text("top secret")
     (root / "escape").symlink_to(tmp_path / "secret.txt")
@@ -114,7 +116,12 @@ def clip(tmp_path: Path) -> Path:
 def rig(clip: Path) -> Rig:
     # A frozen clock: the demo studio's CPU figure is a function of time, and a snapshot that changes by
     # itself would make "pushed only on change" depend on how fast the test runs.
-    return Rig(FakeAudio(clip), FakeVideo(), DemoStudio(delay=0, clock=lambda: 0.0))
+    studio = DemoStudio(delay=0, clock=lambda: 0.0)
+    # The director panel reads the wall clock for its minute-resolution time block; freeze it too, or a
+    # minute rollover between two refreshes shows up as a state change.
+    frozen = datetime(2026, 1, 1, 12, 0).astimezone()
+    studio._director._now = lambda: frozen
+    return Rig(FakeAudio(clip), FakeVideo(), studio)
 
 
 @pytest.fixture
@@ -244,6 +251,9 @@ def test_static_mime_types(server: ConsoleServer) -> None:
     assert request(server, "GET", "/static/app.js")[1]["content-type"].startswith("text/javascript")
     assert request(server, "GET", "/static/theme.css")[1]["content-type"].startswith("text/css")
     assert request(server, "GET", "/static/pages/icon.svg")[1]["content-type"] == "image/svg+xml"
+    manifest = request(server, "GET", "/static/manifest.webmanifest", token=False)  # a browser fetches it without one
+    assert manifest[0] == 200
+    assert manifest[1]["content-type"] == "application/manifest+json"
 
 
 @pytest.mark.parametrize(
@@ -297,7 +307,7 @@ def test_state_snapshot_has_every_section(server: ConsoleServer) -> None:
     assert set(state) == {
         "version", "demo", "studio", "video", "audio", "auto", "framing", "health", "system", "lighting",
         "interface", "virtual", "presets", "hardware", "stream", "storage", "deck", "diagnostics", "call", "slots",
-        "hotkeys",
+        "hotkeys", "network", "echo", "meetings", "eyeline", "preflight", "safejoin",
     }  # fmt: skip
     assert state["audio"]["mic"]["gain_db"] == 0.0
     assert state["studio"]["running"] is True
@@ -599,7 +609,9 @@ def test_second_launch_only_opens_a_window(
     monkeypatch.setattr(Rig, "live", classmethod(lambda cls, cfg=None: pytest.fail("started a second server")))
     assert launcher.run_console(window=True, mini=True) == 0
     assert opened == [(f"http://127.0.0.1:{server.port}/?token={server.token}", True)]
-    assert f"?token={server.token}#/mini" in capsys.readouterr().out
+    out = capsys.readouterr()
+    assert f"http://127.0.0.1:{server.port}/#/mini" in out.out
+    assert server.token not in out.out + out.err  # stdout is the journal under the headless service
 
 
 def test_run_console_serves_then_cleans_up(
@@ -612,7 +624,52 @@ def test_run_console_serves_then_cleans_up(
     assert fake.audio.runtime_file_seen  # written before the rig started
     assert not launcher.runtime_file().exists()
     assert fake.audio.stopped
-    assert "StreamStack Console: http://127.0.0.1:" in capsys.readouterr().out
+    out = capsys.readouterr()
+    assert "StreamStack Console: http://127.0.0.1:" in out.out
+    assert "token" not in out.out.split("(access token not logged")[0]
+    assert "?token=" not in out.out + out.err
+
+
+def test_no_log_line_contains_the_token(
+    runtime: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The issue's guard: serve, start a second launch on the running server, and search every byte printed."""
+    fake = Rig(FakeAudio(), FakeVideo(), DemoStudio(delay=0))
+    monkeypatch.setattr(Rig, "demo", classmethod(lambda cls: fake))
+    monkeypatch.setattr(launcher, "open_window", lambda url, mini=False: False)  # no browser: the fallback line too
+    serving = threading.Thread(
+        target=launcher.run_console, kwargs={"demo": True, "window": False, "idle_exit": 1.0, "poll": 0.05}
+    )
+    serving.start()
+    try:
+        deadline = time.monotonic() + HTTP_TIMEOUT
+        running = launcher.read_running()
+        while running is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+            running = launcher.read_running()
+        assert running
+        token = running["token"]
+        assert launcher.run_console(demo=True, window=True, mini=True) == 0  # a second launch finds the server
+    finally:
+        serving.join(timeout=HTTP_TIMEOUT)
+    printed = capsys.readouterr()
+    assert len(token) >= 16
+    assert token not in printed.out + printed.err
+    assert "?token=" not in printed.out + printed.err
+
+
+def test_url_prints_the_full_address_of_the_running_console_only(
+    runtime: Path, server: ConsoleServer, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(Rig, "live", classmethod(lambda cls, cfg=None: pytest.fail("--url started a server")))
+    assert launcher.run_console(url_only=True) == 1  # nothing running
+    captured = capsys.readouterr()
+    assert captured.out == "" and "no Console is running" in captured.err
+    launcher.write_runtime(os.getpid(), server.port, server.token)
+    assert launcher.run_console(url_only=True) == 0
+    assert capsys.readouterr().out == f"http://127.0.0.1:{server.port}/?token={server.token}\n"
+    assert launcher.run_console(url_only=True, mini=True) == 0
+    assert capsys.readouterr().out.endswith("#/mini\n")
 
 
 # -- the window ---------------------------------------------------------------------
@@ -683,3 +740,51 @@ def test_the_slot_profiles_export_is_served_when_the_rig_has_them(server: Consol
     status, headers, body = request(server, "GET", "/api/slots/profiles.json")
     assert status == 200 and headers["content-type"].startswith("application/json")
     assert json.loads(body)["document"] == "streamstack.slot-profiles/1"
+
+
+def test_a_window_that_opens_as_a_push_lands_still_ends_on_the_newest_state(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`subscribe` used to read the snapshot, then join the broadcast: a push landing between the two reached the
+    window through neither, so it showed the old state until the next change (a clicked switch that stayed off)."""
+    hub = Hub(rig)
+    hub.state_json()
+    real = Hub.state_json
+
+    def with_a_push_in_the_gap(self: Hub) -> str:
+        text = real(self)
+        rig.audio.gain = 7.0  # the action lands right after the window read the snapshot
+        self.refresh()
+        return text
+
+    monkeypatch.setattr(Hub, "state_json", with_a_push_in_the_gap)
+    client = hub.subscribe()
+    last = b""
+    while chunk := client.get(0):
+        if chunk.startswith(b"event: state"):
+            last = chunk
+    assert b'"gain_db":7.0' in last
+
+
+# -- the installable web app (#143) ---------------------------------------------------
+
+
+def test_the_shipped_manifest_icons_and_link_are_consistent() -> None:
+    import struct
+
+    from streamstack import config
+
+    root = config.data_dir() / "console"
+    manifest = json.loads((root / "manifest.webmanifest").read_text())
+    assert manifest["display"] in ("standalone", "minimal-ui", "fullscreen")
+    assert manifest["start_url"].startswith(manifest["scope"])
+    assert 'rel="manifest" href="static/manifest.webmanifest"' in (root / "index.html").read_text()
+    seen = set()
+    for icon in manifest["icons"]:
+        data = (root / icon["src"]).read_bytes()
+        if icon["type"] == "image/png":
+            assert data.startswith(b"\x89PNG\r\n\x1a\n")
+            width, height = struct.unpack(">II", data[16:24])
+            assert f"{width}x{height}" == icon["sizes"]
+        seen.add((icon["sizes"], icon.get("purpose")))
+    assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= seen
