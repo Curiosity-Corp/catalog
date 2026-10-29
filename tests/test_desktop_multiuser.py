@@ -117,7 +117,7 @@ def test_lightdm_greeter_vt_wrapper_and_service() -> None:
 
     tasks = _tasks("minimal-desktop-lightdm.yml")
     assert _named(tasks, "Configure LightDM GTK greeter")["when"] == (
-        "minimal_desktop_greeter == 'gtk'"
+        "minimal_desktop_greeter_effective == 'gtk'"
     )
     slick = _named(tasks, "Configure LightDM slick greeter")
     assert slick["ansible.builtin.copy"]["dest"] == "/etc/lightdm/slick-greeter.conf"
@@ -144,6 +144,56 @@ def test_lightdm_greeter_vt_wrapper_and_service() -> None:
     assert not any(
         task.get("ansible.builtin.file", {}).get("path") == "/usr/local/bin/lightdm-xserver-wrapper"
         for task in tasks
+    )
+
+
+def test_deskmeet_greeter_is_gtk_even_when_local_vars_ask_for_slick() -> None:
+    """catalog#122: slick-greeter at 8K crashes Xorg on deskmeet1; the profile must win."""
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["hardware_profiles"]["deskmeet-b760"]["greeter"] == "gtk"
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    expr = env.from_string(defaults["minimal_desktop_greeter_effective"])
+    for profile, local, want in (("deskmeet-b760", "slick", "gtk"), ("other", "slick", "slick")):
+        ctx = {
+            "hardware_profiles": defaults["hardware_profiles"],
+            "hardware_profile": profile,
+            "minimal_desktop_greeter": local,
+        }
+        assert expr.render(**ctx) == want
+    tasks = _tasks("minimal-desktop-lightdm.yml")
+    text = (TASKS / "minimal-desktop-lightdm.yml").read_text()
+    assert "minimal_desktop_greeter ==" not in text
+    assert "greeter_effective" in _named(tasks, "Select the LightDM greeter")["ansible.builtin.copy"]["content"]
+
+
+def test_lightdm_restart_backoff_drop_in() -> None:
+    """A crashing X server must not turn lightdm.service into a ~3 s relaunch loop."""
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["minimal_desktop_lightdm_restart_sec"] >= 5
+    assert defaults["minimal_desktop_lightdm_start_limit_burst"] >= 1
+    assert defaults["minimal_desktop_lightdm_start_limit_interval_sec"] >= (
+        defaults["minimal_desktop_lightdm_restart_sec"]
+        * defaults["minimal_desktop_lightdm_start_limit_burst"]
+    ), "the start limit window must cover the burst, or the limit never trips"
+
+    tasks = _tasks("minimal-desktop-lightdm.yml")
+    names = [task.get("name", "") for task in tasks]
+    dropin = _named(tasks, "Back off LightDM restarts")["ansible.builtin.copy"]
+    assert dropin["dest"] == "/etc/systemd/system/lightdm.service.d/10-curiosity-restart-backoff.conf"
+    unit = jinja2.Environment(undefined=jinja2.StrictUndefined).from_string(dropin["content"]).render(
+        **{key: value for key, value in defaults.items() if key.startswith("minimal_desktop_lightdm_")}
+    )
+    assert "RestartSec=10" in unit
+    assert "StartLimitBurst=10" in unit
+    assert "StartLimitIntervalSec=600" in unit
+    assert "Managed by Ansible" in unit
+
+    # The drop-in is read by the daemon-reload of the final start task, so it
+    # takes effect without restarting a display manager that is running.
+    assert names.index(_named(tasks, "Back off LightDM restarts")["name"]) < len(tasks) - 1
+    assert tasks[-1]["ansible.builtin.systemd_service"]["daemon_reload"] is True
+    assert "state" not in tasks[-1]["ansible.builtin.systemd_service"] or (
+        tasks[-1]["ansible.builtin.systemd_service"]["state"] == "started"
     )
 
 

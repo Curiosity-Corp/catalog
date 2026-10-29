@@ -6,10 +6,16 @@
 - name: Validate LightDM settings
   ansible.builtin.assert:
     that:
-      - minimal_desktop_greeter in ['gtk', 'slick']
+      - minimal_desktop_greeter_effective in ['gtk', 'slick']
       - minimal_desktop_lightdm_minimum_vt | string is match('^[0-9]+$')
       - minimal_desktop_lightdm_minimum_vt | int >= 1
       - minimal_desktop_lightdm_minimum_vt | int <= 63
+      - minimal_desktop_lightdm_restart_sec | string is match('^[0-9]+$')
+      - minimal_desktop_lightdm_restart_sec | int >= 1
+      - minimal_desktop_lightdm_start_limit_interval_sec | string is match('^[0-9]+$')
+      - minimal_desktop_lightdm_start_limit_interval_sec | int >= 1
+      - minimal_desktop_lightdm_start_limit_burst | string is match('^[0-9]+$')
+      - minimal_desktop_lightdm_start_limit_burst | int >= 1
       - minimal_desktop_lightdm_remove_dropins is sequence
       - minimal_desktop_lightdm_remove_dropins is not string
       - minimal_desktop_lightdm_remove_dropins | map('string') | select('match', '^[A-Za-z0-9_.-]+[.]conf$') | list | length == minimal_desktop_lightdm_remove_dropins | length
@@ -18,8 +24,10 @@
         | intersect(['10-virtual-terminal.conf', '20-openbox-session.conf', '30-greeter.conf', '40-xserver-wrapper.conf', '50-autologin.conf', '60-display-setup.conf'])
         | length == 0
     fail_msg: >-
-      minimal_desktop_greeter must be gtk or slick,
-      minimal_desktop_lightdm_minimum_vt must be a VT number from 1 to 63, and
+      minimal_desktop_greeter (or the hardware profile's greeter) must be gtk or slick,
+      minimal_desktop_lightdm_minimum_vt must be a VT number from 1 to 63,
+      the minimal_desktop_lightdm restart_sec, start_limit_interval_sec and
+      start_limit_burst settings must be whole numbers of at least 1, and
       minimal_desktop_lightdm_remove_dropins must list plain *.conf file names
       that this role does not manage itself.
 
@@ -28,7 +36,7 @@
     name: slick-greeter
     state: present
     update_cache: false
-  when: minimal_desktop_greeter == 'slick'
+  when: minimal_desktop_greeter_effective == 'slick'
 
 - name: Configure LightDM GTK greeter (dark, minimal, no animations)
   ansible.builtin.copy:
@@ -54,7 +62,7 @@
       clock-format = %H:%M
       panel-position = top
       position = 50% 50%
-  when: minimal_desktop_greeter == 'gtk'
+  when: minimal_desktop_greeter_effective == 'gtk'
 
 - name: Configure LightDM slick greeter (dark, minimal)
   ansible.builtin.copy:
@@ -73,7 +81,7 @@
       show-hostname=true
       show-clock=true
       clock-format=%H:%M
-  when: minimal_desktop_greeter == 'slick'
+  when: minimal_desktop_greeter_effective == 'slick'
 
 - name: Ensure /etc/lightdm/lightdm.conf.d exists
   ansible.builtin.file:
@@ -91,7 +99,7 @@
     mode: "0644"
     content: |
       [Seat:*]
-      greeter-session={{ 'slick-greeter' if minimal_desktop_greeter == 'slick' else 'lightdm-gtk-greeter' }}
+      greeter-session={{ 'slick-greeter' if minimal_desktop_greeter_effective == 'slick' else 'lightdm-gtk-greeter' }}
 
 - name: Start the Openbox session for users who log in through LightDM
   ansible.builtin.copy:
@@ -213,6 +221,31 @@
     cmd: systemctl set-default graphical.target
   when: _systemd_default_target.stdout | trim != 'graphical.target'
   changed_when: true
+
+- name: Ensure the lightdm.service drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/lightdm.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Applied by the daemon-reload of the start task below: systemd rereads
+# RestartSec and the start limit without restarting a running display manager.
+- name: Back off LightDM restarts so a crashing X server cannot loop every few seconds
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/lightdm.service.d/10-curiosity-restart-backoff.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible.
+      [Unit]
+      StartLimitIntervalSec={{ minimal_desktop_lightdm_start_limit_interval_sec | int }}
+      StartLimitBurst={{ minimal_desktop_lightdm_start_limit_burst | int }}
+
+      [Service]
+      RestartSec={{ minimal_desktop_lightdm_restart_sec | int }}
 
 # Reload first: systemd still holds the display-manager.service alias it
 # loaded for gdm3, and refuses to load lightdm.service ("File exists") until

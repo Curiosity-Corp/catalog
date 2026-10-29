@@ -446,6 +446,9 @@ LightDM autologin, remains primary-account or system-wide; set
 | `minimal_desktop_lightdm_minimum_vt` | `8` | First VT LightDM may use. |
 | `minimal_desktop_lightdm_vtswitch_wrapper` | `false` | Installs `/usr/local/bin/lightdm-xserver-wrapper`, which drops `-novtswitch` so Ctrl+Alt+Fn keeps working. |
 | `minimal_desktop_lightdm_remove_dropins` | `[]` | File names to delete from `/etc/lightdm/lightdm.conf.d`. |
+| `minimal_desktop_lightdm_restart_sec` | `10` | `RestartSec` of the `lightdm.service` drop-in. The packaged unit restarts with no delay, so an X server that dies at start was relaunched every ~3 s. |
+| `minimal_desktop_lightdm_start_limit_burst` | `10` | Failures inside the interval after which systemd stops restarting LightDM. The next pull (`state: started`) or a reboot tries again. |
+| `minimal_desktop_lightdm_start_limit_interval_sec` | `600` | Window for the start limit (must cover burst x restart_sec). |
 
 The role starts the Openbox user session, selects the greeter explicitly, and
 keeps `lightdm.service` enabled and running. It does not restart LightDM, so
