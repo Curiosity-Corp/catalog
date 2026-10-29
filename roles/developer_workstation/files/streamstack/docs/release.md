@@ -1,8 +1,9 @@
 # Releasing StreamStack
 
 A release is a `vX.Y.Z` tag. CI builds the wheel and sdist, writes a CycloneDX SBOM, signs a checksum manifest
-over all of them, publishes to the project's package registries and creates the GitLab Release. Nothing is built or
-signed on a workstation.
+over all of them, builds the Debian package with its provenance statement, signs that and a signed apt repository,
+publishes to the project's package registries and creates the GitLab Release. Nothing is built or signed on a
+workstation.
 
 ## Versioning rule
 
@@ -35,13 +36,24 @@ than `0.0.8`, so installing a `0.0.x` release over one of them needs `--force` (
    when `gitleaks` is installed). Secret scanning only blocks on tags, and tags are immutable (the server refuses to
    delete or move one), so a finding found on the tag pipeline costs a version number: v0.0.8 and v0.0.9 were
    burned this way.
-4. Commit (`chore(release): X.Y.Z`), merge that commit to `main` through its merge request, then tag the merged
-   commit and push the tag:
+4. Commit (`chore(release): X.Y.Z`) and merge it to `main` through its merge request, then tag the **release MR's
+   head (source) commit**, not the merge commit, and push the tag:
 
    ```bash
-   git tag -a vX.Y.Z -m "StreamStack X.Y.Z"
+   git tag -a vX.Y.Z <release-MR-head-sha> -m "StreamStack X.Y.Z"
    git push origin vX.Y.Z
    ```
+
+   Other merge requests merge ahead of the release on the train and bring their changelog fragments, so the merge
+   commit can hold fragments the tag gate refuses (v0.0.14 was burned that way). The head commit is `main` at
+   `prepare` time plus the compiled changelog, so its code and CHANGELOG agree exactly; the fragments that landed in
+   between simply roll into the next release. Before pushing, run `python3 scripts/release.py check-tag vX.Y.Z
+   --require-main-ancestor` in a checkout of that commit: it must be an ancestor of `origin/main`, with no fragments.
+   **Burned versions** (their tags exist, nothing was published; the changes shipped in the next release):
+   v0.0.8 and v0.0.9 (secret scan on the tag), v0.0.14 (fragments left in the tag's tree), v0.0.17 (`release-verify`
+   had no `git` in its image; the release MR now runs `release-verify-mr` first) and v0.0.18 (three tag-only
+   blockers: gitleaks flagged the public `APT_KEY_FINGERPRINT`, `apt-publish` had no `gpgv`, and `python-sbom`
+   asked uv for the removed `auto` extra). Look at the tag-only jobs' rules before you tag, not after.
 5. Watch the tag pipeline (`glab ci view`). On success the release is on the Releases page and
    `scripts/install-release.sh X.Y.Z` installs it.
 
@@ -62,6 +74,7 @@ echo 'What changed for the user, and why (#140).' > changelog.d/140.security.md
 
 Gates:
 
+- **The release MR** (title `chore(release): X.Y.Z`) runs `release-verify-mr`: the tag job's image and `check-tag vX.Y.Z` against the MR's source head, the commit you will tag, so a tag-only failure (fragments left, a tool missing from the image) shows up before the tag exists. Only `--require-main-ancestor` has to wait for the merge.
 - **Merge requests** run `changelog-check` (`scripts/release.py check-fragments`). It fails a merge request that
   edits `CHANGELOG.md`, that changes `src/` without adding a fragment, or that adds a malformed fragment. Release
   commits (`chore(release): ...`) are exempt. An explicit opt-out is the `skip-changelog` merge request label, or a
@@ -74,20 +87,38 @@ Gates:
 The pipeline is the org's launch-sequence `python-package` template (pinned to a release tag in `.gitlab-ci.yml`)
 plus StreamStack's own jobs. On a tag every gate runs again before anything is published.
 
+Every stage of the launch-sequence `python-package` pipeline, the job that fills it and what that job proves. A
+stage that is green on a tag pipeline is the definition of done for a release (#102); `tests/test_release_stages.py`
+fails when this table and `.gitlab-ci.yml` drift apart.
+
 | Stage | Job | What it does |
 | --- | --- | --- |
-| preflight | `release-verify` | tag == `streamstack.__version__`, `CHANGELOG.md` has a non-empty `## [X.Y.Z]` section, no fragments left in `changelog.d/`, patch-only rule |
-| preflight | `changelog-check` | merge requests only: a `src/` change adds a changelog fragment, `CHANGELOG.md` is not edited directly |
-| preflight | `lint`, `test` | ruff, and the unit tests on Python 3.13 |
-| source-security | `sast`, `e2e` | semgrep and gitleaks (blocking on tags), the Console browser suite |
+| .pre | `offboarded-identity-guard` | refuses commits by offboarded identities |
+| preflight | `release-verify` (tags), `lint`, `test`, `pipeline-canary`, `changelog-check` (merge requests) | tag == `streamstack.__version__`, `CHANGELOG.md` has a non-empty `## [X.Y.Z]` section, patch-only rule, no fragments left in `changelog.d/`; ruff; the unit tests on Python 3.13; the launch-sequence sentinel, an always-green job that shows the template loaded; an MR adds a changelog fragment when it changes `src/` |
+| source-security | `sast`, `e2e`, `e2e-lighting` x3 | semgrep and gitleaks (blocking on tags), the Console browser suite, the lighting soak at night, noon and the evening transition |
+| source-evidence | `source-evidence` | a structured evidence report of the source assurance controls, hashed and Notation-signed (Kubernetes Job) |
 | supply-chain | `lockfile-verify`, `dependency-scan`, `scorecard` | the wheel has no runtime dependencies (asserted), dependency and repository posture scans |
-| build | `python-build`, `package` | wheel and sdist from the tagged commit, `dist/SHA256SUMS` re-verified, `twine check`; `package` installs a separately built wheel and runs `streamstack verify-install` |
-| supply-chain-vex | `python-sbom` | CycloneDX 1.6 SBOM of what the wheel installs with the `auto` and `framing` extras |
-| artifact-security, policy-gate | `python-vuln-scan`, `python-license`, `pip-audit`, `test-py311` | grype over the SBOM (fails on a fixable high or critical), licence policy, PyPA audit, Python 3.11 tests |
-| attest | `python-sign` | signs `RELEASE-SHA256SUMS` (below) |
-| artifact-promote | `python-publish` | uploads exactly the built files to the project's PyPI registry; uploads the signed manifest, signature and SBOM to the Generic Package Registry |
+| build | `python-build`, `package`, `deb-build`, `dfn-ladspa-image` | wheel and sdist from the tagged commit with `dist/SHA256SUMS` re-verified and `twine check`; `package` installs a separately built wheel and runs `streamstack verify-install`; `deb-build` builds the reproducible `.deb`, its provenance statement and `DEB-SHA256SUMS`, runs the extracted launcher and the apt tests (signatures, tampering, update, rollback); `dfn-ladspa-image` builds the DeepFilterNet plugin (main, when its recipe changes; docs/audio-chain.md) |
+| supply-chain-vex | `python-sbom`, `apt-index` | CycloneDX 1.6 SBOM of what the wheel installs with the `auto`, `framing` and `whip` extras; the apt repository index of every published package plus this build |
+| supply-chain-evidence | `supply-chain-evidence` | the same for the supply-chain controls (lockfile, base images, dependency scan, scorecard, VEX) |
+| artifact-security | `python-vuln-scan`, `pip-audit`, `test-py311` | grype over the SBOM (fails on a fixable high or critical), the PyPA advisory audit, the unit tests on the oldest supported Python (3.11) |
+| policy-gate | `python-license` | licence policy over the SBOM |
+| attest | `python-sign`, `deb-sign` | Notation signature over `RELEASE-SHA256SUMS`; Notation signature over `DEB-SHA256SUMS` and the OpenPGP signature over the apt `Release` file (below) |
+| artifact-promote | `python-publish`, `apt-publish` (tags), `dfn-ladspa-package`, `dfn-ladspa-verify` | the built files to the project's PyPI registry, the signed manifest, signature and SBOM to the Generic Package Registry; the verified apt repository to `streamstack-apt/stable` and the package files to `streamstack-release/X.Y.Z`; the plugin to `streamstack-ladspa/<version>`, fetched back and run (main, when its recipe changes) |
+| compliance | `defectdojo` | opt-in at the organisation level (below) |
 | release-create | `release-notes`, `release-assets`, `release` | notes are the CHANGELOG section of the tag; wheel and sdist also go to the Generic Package Registry; the GitLab Release links all of it |
+| release-evidence | `release-evidence` | the same for the release lifecycle (release, notes, archive, bundle signatures) |
 | pipeline-attestation | `pipeline-attestation` | in-toto statement over the built files |
+
+`compliance` holds one job, the DefectDojo import. The template makes it opt-in: it exists only where the organisation
+has set `DEFECTDOJO_URL` and `DEFECTDOJO_API_TOKEN` as group variables, which Curiosity-Corp has not done. Without them the
+stage has no job, which GitLab shows as nothing rather than as a skipped or red job, and the v0.0.12 tag pipeline is
+green in every other stage. Enabling it is an organisation decision, not a StreamStack change; once the variables exist
+the job appears and the table needs no edit.
+
+The gate that keeps main green: merge trains are on, so every merge request is tested as it would merge (a
+merged-results pipeline, `refs/merge-requests/N/merge`) before it lands, and `hyperharness ship` waits for main to be
+green. The cheap gates run on those pipelines; the heavy ones (build, SBOM, scans, signing) run on main and tags.
 
 Merges to `main` run the same jobs up to and including `python-sign`, so signing and the SBOM are proven on every
 merge; only `python-publish` and the release jobs need a tag.
@@ -99,7 +130,9 @@ For release `X.Y.Z`:
 - PyPI registry: `https://$STREAMSTACK_GITLAB_HOST/api/v4/projects/2122/packages/pypi/simple` (wheel and sdist)
 - Generic Package Registry, package `streamstack-release`, version `X.Y.Z`:
   `streamstack-X.Y.Z-py3-none-any.whl`, `streamstack-X.Y.Z.tar.gz`, `SHA256SUMS`, `RELEASE-SHA256SUMS`,
-  `RELEASE-SHA256SUMS.cose.sig`, `python-sbom.cdx.json`
+  `RELEASE-SHA256SUMS.cose.sig`, `python-sbom.cdx.json`, and the package files `streamstack_X.Y.Z_all.deb`,
+  `DEB-SHA256SUMS`, `DEB-SHA256SUMS.cose.sig`, `deb-provenance.intoto.json`
+- Generic Package Registry, package `streamstack-apt`, version `stable`: the apt repository (below)
 
 The project is private: every download needs a GitLab token (`PRIVATE-TOKEN` header).
 
@@ -123,6 +156,21 @@ option for the day the org gets a Fulcio.
 
 What is signed is `RELEASE-SHA256SUMS`: the `sha256sum` lines of the wheel and sdist plus the SBOM's. One signature
 over that file therefore covers all three; verify the signature, then the checksums, and every byte is verified.
+
+The Debian package is signed by a second route, because apt does not read Notation: the repository's `Release` file
+carries an OpenPGP signature (`InRelease`, `Release.gpg`) made with the key `streamstack-apt-signing-key` in the same
+Key Vault (`omlab-secrets`). `deb-sign` fetches it inside the signing Job's own pod, signs, checks the result with
+`gpgv` and discards the key with the pod; it never reaches the runner or a log. The public half is committed as
+`packaging/apt-public.asc` (fingerprint `F3AA 4E82 E815 D695 089D  B4D2 456B DF83 CAB0 C1E8`), the Notation
+certificate as `packaging/signing-cert.pem`; both are public key material. The fingerprint is committed as
+`packaging/apt-public.fingerprint`, which `deb-sign` reads, and a test keeps it equal to the committed key. It is not a
+CI variable because a `KEY: <hex>` line in `.gitlab-ci.yml` trips gitleaks on the tag pipeline. To rotate the repository key, generate a new one, store it under the same secret name, commit the new
+public key and its fingerprint in `packaging/apt-public.fingerprint` in one merge request.
+
+`DEB-SHA256SUMS` lists the package and `deb-provenance.intoto.json`, an in-toto v1 statement (SLSA provenance v1) built
+by `scripts/deb_provenance.py` from the CI job's own variables: the source repository and commit, the pipeline and job
+that built it, the build script and the package's sha256 as the subject. Notation signs `DEB-SHA256SUMS`, so one
+signature covers the package and where it came from.
 
 ## Verify a release
 
@@ -218,3 +266,51 @@ existing tag ref. The first tag pipeline additionally exercises the Notation job
 upload and the release creation; after it, run `scripts/install-release.sh --verify-only X.Y.Z` and
 `streamstack verify-install` to prove the artifacts end to end, and record the signing certificate's SHA-256
 fingerprint here.
+
+## The Debian package and the apt repository
+
+`scripts/build_deb.py` builds `streamstack_X.Y.Z_all.deb` from `make install DESTDIR=... PREFIX=/usr`, the same files
+the self-contained `make install` puts down, with a `Depends` list of what the distribution provides
+(python3, python3-gi, ffmpeg, v4l-utils and the audio tools), the udev and module configuration, and a `postinst` that
+reloads udev. The build is reproducible: the same commit gives the same bytes (`SOURCE_DATE_EPOCH` is the commit time,
+files are root-owned, mode-normalised and xz-compressed), and a test proves it.
+
+The repository is a flat apt repository at one stable URL, served from the project's Generic Package Registry, so a
+workstation's apt line never changes while the files behind it do. Every released package stays in it: `apt install
+streamstack=0.0.11` is the rollback. The files are `Packages`, `Packages.gz`, `Release`, `InRelease`, `Release.gpg`
+and every `.deb`. On a tag, `apt-publish` first checks the repository exactly as apt will (both signatures, `Release`
+against `Packages`, `Packages` against every file) and only then uploads, `.deb` files first and the signed index last.
+A published version is never overwritten.
+
+Set up a machine (the project is private, so apt needs a GitLab token, kept in a root-only file):
+
+```bash
+H="$STREAMSTACK_GITLAB_HOST"            # your GitLab host
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo gpg --dearmor -o /etc/apt/keyrings/streamstack.gpg packaging/apt-public.asc
+echo "machine $H login streamstack password <a read_api or deploy token>" | sudo tee /etc/apt/auth.conf.d/streamstack.conf
+sudo chmod 600 /etc/apt/auth.conf.d/streamstack.conf
+echo "deb [signed-by=/etc/apt/keyrings/streamstack.gpg] https://$H/api/v4/projects/2122/packages/generic/streamstack-apt/stable ./" |
+  sudo tee /etc/apt/sources.list.d/streamstack.list
+sudo apt update && sudo apt install streamstack
+```
+
+Update with `sudo apt update && sudo apt install --only-upgrade streamstack`. Roll back to the previous release with
+`sudo apt install --allow-downgrades streamstack=<older version>`; `apt-cache policy streamstack` lists what the
+repository holds. `tests/test_apt_repo.py` runs all of this against a signed local repository with the real `apt-get`:
+trust and install, update of an older install, rollback of the newest, refusal of an unsigned repository, of a changed
+index, a changed package and a signature by another key.
+
+Verify the package files without apt (`H` and the token as above; `PRIVATE-TOKEN` is the header GitLab expects):
+
+```bash
+B="https://$H/api/v4/projects/2122/packages/generic/streamstack-release/X.Y.Z"
+for f in streamstack_X.Y.Z_all.deb DEB-SHA256SUMS DEB-SHA256SUMS.cose.sig deb-provenance.intoto.json; do
+  curl -fsSL -H "PRIVATE-TOKEN: $TOKEN" -O "$B/$f"
+done
+# the trust store and policy from "Verify a release", with packaging/signing-cert.pem
+notation blob verify --policy-name streamstack --signature DEB-SHA256SUMS.cose.sig DEB-SHA256SUMS
+sha256sum --check DEB-SHA256SUMS
+```
+
+`DEB-SHA256SUMS` covers the package and the provenance statement; the statement's subject digest is the package's.

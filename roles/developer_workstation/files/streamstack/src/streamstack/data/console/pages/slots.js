@@ -3,7 +3,7 @@
 //   mountSlots(el, ctx)  ->  cleanup
 //
 // One profile per part of the day (night, dawn, morning, midday, afternoon, evening): a look, a scene, a voice preset,
-// a lighting preset, the camera's exposure compensation and background blur. A strip shows the day split into those
+// a lighting preset, the camera's exposure compensation, background blur and the auto-framing shot. A strip shows the day split into those
 // slots with a marker for now; a mode switch says whether profiles apply by themselves, only suggest, or stay off.
 // Everything comes from `state.slots` (docs/slots.md) and goes out as `slots.*` actions; the only local state is the
 // open select a person is working in, which is never overwritten while it has focus.
@@ -33,6 +33,7 @@ export function profileOf(row) {
   if (Object.keys(canon).length) profile.canon = canon;
   if (row.blur.value === 'on') profile.blur = { on: true };
   else if (row.blur.value === 'off') profile.blur = { on: false };
+  if (row.framing.value) profile.framing = { shot: row.framing.value };
   return profile;
 }
 
@@ -111,6 +112,7 @@ export function mountSlots(el, ctx) {
       lighting: select('Lights', 'lighting'),
       exposure: select('Exposure compensation', 'exposure'),
       blur: select('Background blur', 'blur'),
+      framing: select('Camera shot', 'framing'),
     };
     row.blur.replaceChildren(
       h('option', { value: '' }, 'Keep as it is'),
@@ -171,6 +173,8 @@ export function mountSlots(el, ctx) {
       r.exposure.disabled = !s.options.canon.present || s.options.canon.exposure_readonly;
       r.blur.disabled = !s.options.blur;
       if (document.activeElement !== r.blur) r.blur.value = p.blur ? (p.blur.on ? 'on' : 'off') : '';
+      fill(r.framing, s.options.shots ?? [], p.framing?.shot);
+      r.framing.disabled = !(s.options.shots ?? []).length;
       r.clear.disabled = slot.empty;
       r.now.disabled = slot.empty;
     });

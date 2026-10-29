@@ -68,11 +68,13 @@ from streamstack.director import (
     faces,
     judge,
     limits,
+    loopmeter,
     observe,
     pilot,
     prompt,
     status,
 )
+from streamstack.director import metering as meter
 
 API_MODEL = "claude-sonnet-5-5"
 LOG_MAX_BYTES = 2_000_000
@@ -657,6 +659,16 @@ class Auto:
         self.faces, self.faces_row = faces.install(cfg)
         self.last_error = ""
         self.report: dict = {}
+        # The deterministic controllers (#150). `metered` is the lights whose brightness they have taken over: the
+        # persona's brightness easing leaves those alone, so the two never pull a light in opposite directions.
+        self.metering_on = config.truthy(cfg["STREAMSTACK_AUTO_METERING"])
+        self.exposure = meter.ExposureController(target=120.0)
+        self.colour: meter.ColourController | None = None
+        self.metered: set[str] = set()
+        self.card, problem = loopmeter.parse_card_box(cfg["STREAMSTACK_AUTO_GREYCARD"])
+        if problem:
+            log("greycard-ignored", reason=problem)
+        self.colour_note = ""
 
     def _registry(self) -> actuators.Registry:
         """Everything auto mode can drive, behind one interface (see director.actuators)."""
@@ -790,8 +802,10 @@ class Auto:
                     continue
                 if target:
                     self._expose(link, source, look, target, stats, band, metering)
-                elif index == 0 and config.truthy(self.cfg["STREAMSTACK_AUTO_PERSONA_LOOK"]):
-                    self._ease(source, look)
+                elif index == 0:
+                    self.colour_tick(frame)  # the exposure is in band: only now is the card worth reading
+                    if config.truthy(self.cfg["STREAMSTACK_AUTO_PERSONA_LOOK"]):
+                        self._ease(source, look)
         except Exception as exc:
             log("video-error", error=str(exc))
             self.drop()
@@ -841,7 +855,182 @@ class Auto:
         return (actuator, targets[0], current) if targets and current else None
 
     def canon_exposure(self, look: dict, target: dict, stats: dict, band: tuple, metering: str) -> bool:
-        """Let the camera's own exposure compensation do the exposing; True when it took this pass.
+        """Expose with the camera and the key light; True when that took this pass (the program look then waits).
+
+        With `STREAMSTACK_AUTO_METERING=true` the move is measured in stops and shared between the camera and the
+        light (`metered_exposure`); by default (off) it is the one-notch step (`canon_notch`).
+        """
+        if self.metering_on:
+            return self.metered_exposure(stats, band, metering)
+        return self.canon_notch(look, target, stats, band, metering)
+
+    def key_lights(self) -> tuple[devices.LitraActuator, dict[str, dict]] | None:
+        """(the Litra actuator, {light: {lumen, kelvin}} of the lights that are on), or None without a usable one."""
+        actuator = self.registry.find("litra")
+        if not isinstance(actuator, devices.LitraActuator) or not actuator.availability().ok:
+            return None
+        readings = {t: r for t in actuator.targets() if (r := actuator.read(t))}
+        return (actuator, readings) if readings else None
+
+    def metered_exposure(self, stats: dict, band: tuple, metering: str) -> bool:
+        """One pass of the exposure controller: the camera first, the key light for what it cannot give.
+
+        The error is measured in stops against the middle of the persona's band and moved at 0.7 of it, so the picture
+        settles instead of hunting. A pass never moves more than one device step (the governor's step and interval
+        limits), a person's own setting is left alone, and what neither device can give is left to the program look
+        (False, which is also what an idle pass returns). Returns True when the pass was spent on the devices.
+        """
+        reading = loopmeter.exposure_reading(stats)
+        if reading is None:
+            return False
+        knobs: list[meter.Knob] = []
+        camera = self.canon()
+        if camera is not None and "exposure_comp" in camera[2]:
+            actuator, name, current = camera
+            self.watch("canon-exposure", name, current)
+            param = actuator.param("exposure_comp")
+            knob = loopmeter.canon_knob(
+                current,
+                param.low if param.low is not None else -1.0,
+                param.high if param.high is not None else 1.0,
+                param.step or 0.34,
+                self.governor.is_held("canon-exposure", name, "exposure_comp"),
+            )
+            if knob:
+                knobs.append(knob)
+        lights = self.key_lights()
+        light_group: dict[str, dict] = {}
+        if lights is not None:
+            lit, readings = lights
+            for label, now in readings.items():
+                self.watch("litra", label, now)
+            if not any(self.governor.is_held("litra", label, "lumen") for label in readings):
+                bounds = {
+                    label: (p.low, p.high)
+                    for label in readings
+                    if (p := lit.param("lumen", label)) and p.low is not None and p.high is not None
+                }
+                knob = loopmeter.light_knob({k: v["lumen"] for k, v in readings.items()}, bounds)
+                if knob:
+                    knobs.append(knob)
+                    light_group = readings
+        if not knobs:
+            return False
+        self.exposure.target = (band[0] + band[1]) / 2
+        move = self.exposure.plan(reading, knobs)
+        log(
+            "metering",
+            what="exposure",
+            metering=metering,
+            error=round(move.error, 3),
+            shares=move.shares,
+            leftover=move.leftover,
+            settled=move.settled,
+            dry_run=self.dry_run,
+        )
+        if move.idle:
+            return False
+        average = stats.get("YAVG", 0.0)
+        side = "above" if average > band[1] else "below"
+        reason = (
+            f"The {metering} was {average:.0f} luma, {side} the {band[0]:.0f}-{band[1]:.0f} band for "
+            f"{self.pilot.persona['name']}: {move.error:+.2f} stops from its middle"
+        )
+        self.last_error = ""
+        if "canon" in move.shares and camera is not None:
+            actuator, name, current = camera
+            self.drive(
+                "canon-exposure",
+                name,
+                current,
+                {"exposure_comp": current["exposure_comp"] + move.shares["canon"]},
+                {},
+                "local",
+                f"{reason}; the camera's own exposure compensation moves first",
+            )
+        if "light" in move.shares and lights is not None:
+            for label, now in light_group.items():
+                changes = self.drive(
+                    "litra",
+                    label,
+                    now,
+                    {"lumen": round(loopmeter.lumen_after(now["lumen"], move.shares["light"]))},
+                    {},
+                    "local",
+                    f"{reason}; the camera had no more to give, so the key light takes the rest"
+                    if "canon" not in move.shares
+                    else f"{reason}; the key light adds to the camera's share",
+                )
+                if changes and not self.dry_run:
+                    self.metered.add(label)
+        return not self.last_error
+
+    def colour_tick(self, frame: Path) -> None:
+        """Trim the camera's white balance until the grey card in the frame reads neutral (the ColourController).
+
+        Only with a grey card set (`STREAMSTACK_AUTO_GREYCARD`), the controllers on and a Canon with a white balance
+        the director may move. The key light goes to the persona's colour temperature on its own schedule
+        (`light_tick`); the card is read once it has arrived, and the camera is never moved further than the
+        controller's offset from the light. A green or magenta card is reported once, not chased.
+        """
+        found = self.canon()
+        if not self.colour_active() or found is None or "kelvin" not in found[2]:
+            return
+        actuator, name, current = found
+        self.watch("canon-exposure", name, current)
+        if self.governor.is_held("canon-exposure", name, "kelvin"):
+            return
+        card = loopmeter.read_card(frame, self.card)
+        if card is None:
+            self._colour_say("the grey card could not be read from the still")
+            return
+        lights = self.key_lights()
+        light_now = None
+        goal = self.pilot.light_goal()
+        if lights is not None:
+            light_now = sum(r["kelvin"] for r in lights[1].values()) / len(lights[1])
+            if any(self.governor.is_held("litra", label, "kelvin") for label in lights[1]):
+                goal = None  # the person owns the light's colour: it is the reference as it is
+        param = actuator.param("kelvin")
+        wb_range = (param.low or 3200.0, param.high or 6500.0)
+        if self.colour is None:
+            self.colour = meter.ColourController(light_kelvin=light_now or current["kelvin"], wb_range=wb_range)
+        anchor = goal[1] if lights is not None and goal is not None else light_now
+        if anchor is None:
+            anchor = float(self.pilot.persona["picture"]["warmth_k"])
+            self.colour.max_offset = wb_range[1] - wb_range[0]  # no light to agree with: any white balance in range
+        else:
+            self.colour.max_offset = 1500.0
+        self.colour.light_kelvin = float(anchor)
+        move = self.colour.plan(card, current["kelvin"], light_now)
+        self._colour_say(move.note)
+        log(
+            "metering",
+            what="colour",
+            warm=round(move.warm, 3),
+            tint=round(move.tint, 3),
+            wb_kelvin=move.wb_kelvin,
+            settled=move.settled,
+            note=move.note,
+            dry_run=self.dry_run,
+        )
+        if move.wb_kelvin is None:
+            return
+        side = "warm" if move.warm > 0 else "cool"
+        reason = f"The grey card read {side} ({move.warm:+.2f} stops red over blue): white balance towards the light"
+        self.drive("canon-exposure", name, current, {"kelvin": move.wb_kelvin}, {}, "local", reason)
+
+    def colour_active(self) -> bool:
+        """Whether the grey-card colour match owns the camera's white balance."""
+        return self.metering_on and self.card is not None
+
+    def _colour_say(self, note: str) -> None:
+        if note and note != self.colour_note:
+            log("metering-note", note=note)
+        self.colour_note = note
+
+    def canon_notch(self, look: dict, target: dict, stats: dict, band: tuple, metering: str) -> bool:
+        """The one-notch step: exposure compensation a third of a stop at a time; True when it took the pass.
 
         The Canon is the first choice because it works on the sensor, before the picture is compressed: raising the
         exposure in the picture afterwards lifts noise too. The program look finishes the job when the camera is at its
@@ -918,6 +1107,8 @@ class Auto:
                 for k, v in wanted.items()
                 if abs(v - current[k]) >= (devices.LIGHT_EPS_LUMEN if k == "lumen" else devices.LIGHT_EPS_KELVIN)
             }
+            if light in self.metered and self.metering_on:
+                wanted.pop("lumen", None)  # the exposure controller owns this light's brightness now
             if wanted:
                 self.drive("litra", light, current, wanted, {}, origin, f"Easing towards {why}")
 
@@ -926,7 +1117,7 @@ class Auto:
         wanted, origin, reason = self.pilot.ease(look)
         if "warmth" in wanted:
             found = self.canon()
-            if found is not None and "kelvin" in found[2]:
+            if found is not None and "kelvin" in found[2] and not self.colour_active():
                 del wanted["warmth"]  # the camera's own Kelvin is doing the white balance
         if wanted:
             self.drive("program-look", source, look, wanted, {}, origin, reason, seconds=2.0)
@@ -1052,7 +1243,8 @@ class Auto:
                 held = self.held("program-look", source, look)
                 audio, audio_reason = self.listen()
                 findings = self.assess(seen, audio, audio_reason)
-                self.canon_white_balance(judge.aggregate_frames((seen.analysis or {}).get("frames", [])))
+                if not self.colour_active():  # the grey card owns the white balance when there is one
+                    self.canon_white_balance(judge.aggregate_frames((seen.analysis or {}).get("frames", [])))
                 self.keep(source, look, held)
                 presets = voicechain.preset_names()
                 preset = voicechain.current_preset() or ""

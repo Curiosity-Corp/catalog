@@ -86,6 +86,12 @@ def test_decode_places_the_box_from_the_grid_cell_and_normalises_it() -> None:
     assert face.mouth_y is not None and face.y < face.mouth_y < face.y + face.h
     assert face.mouth_y == pytest.approx((6 + 0.3) * 16 / height, abs=1e-4)
     assert face.mouth_w == pytest.approx(0.4 * 16 / width, abs=1e-4)
+    # the landmarks come out in units of the picture height: right eye, left eye, nose, right and left mouth corner
+    assert face.landmarks is not None and len(face.landmarks) == 10
+    assert face.landmarks[0] == pytest.approx((10 - 0.3) * 16 / height, abs=1e-4)  # right eye x
+    assert face.landmarks[1] == pytest.approx((6 - 0.2) * 16 / height, abs=1e-4)  # right eye y
+    assert face.landmarks[4] == pytest.approx(10 * 16 / height, abs=1e-4)  # nose x
+    assert face.landmarks[9] == pytest.approx((6 + 0.3) * 16 / height, abs=1e-4)  # left mouth corner y
 
 
 @needs_numpy

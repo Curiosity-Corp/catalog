@@ -216,9 +216,11 @@ def test_engine_probe_command_reports_backend_and_encoders(monkeypatch, capsys) 
     monkeypatch.setattr(roles, "LivePlan", NoPlan)
     monkeypatch.setattr(roles, "generic_node", lambda *a, **kw: "/dev/dri/renderD128")
     monkeypatch.setattr(probe, "probe_backend", lambda node, *a, **kw: ("vulkan", ""))
+    monkeypatch.setattr(probe, "probe_mjpeg", lambda node, *a, **kw: ("software", "libplacebo: import failed"))
     monkeypatch.setattr(encode, "probe_encoder", lambda e, ffmpeg="ffmpeg", node="": e.name == "av1_qsv")
     assert cli.main(["engine", "probe"]) == 0
     out = capsys.readouterr().out
     assert "backend: vulkan" in out
+    assert "mjpeg decode: software (libplacebo: import failed)" in out
     assert "encoder av1_qsv: ok" in out
     assert "encoder h264_qsv: unavailable" in out

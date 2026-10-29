@@ -813,7 +813,7 @@ def test_clip_path_rejects_anything_but_known_ids(rig: Rig, ctl: AudioController
         "",
         "../" + good,
         good + "/../x",
-        good.upper(),
+        "A" + good[1:],  # an uppercase variant; good.upper() equals good when the id is all digits
         good[:-1],
         good + "0",
         "0123456789abcdef",
@@ -1516,3 +1516,13 @@ def test_demo_mic_check_step_needs_a_running_check() -> None:
     with pytest.raises(ActionError) as err:
         demo.act("audio.demo_check_step", {})
     assert err.value.status == 409
+
+
+def test_demo_chain_stopped_from_the_command_line_is_reported_as_held() -> None:
+    demo = DemoAudio()
+    assert demo.state()["chain"]["held"] is False
+    demo.act("audio.demo_chain_held", {"on": True})
+    chain = demo.state()["chain"]
+    assert chain["held"] is True and chain["running"] is False and "stopped on purpose" in chain["error"]
+    demo.act("audio.demo_chain_held", {"on": False})
+    assert demo.state()["chain"]["running"] is True

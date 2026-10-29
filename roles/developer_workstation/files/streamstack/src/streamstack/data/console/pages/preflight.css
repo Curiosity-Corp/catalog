@@ -1,0 +1,42 @@
+/* preflight.css — the pre-flight dialog on the Live page. Scoped: page stylesheets stay loaded after navigation. */
+@scope ([data-page="live"]) {
+  .pf { width: min(34rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--r-4); background: var(--surface-1); color: var(--text); box-shadow: var(--shadow-3, var(--shadow-2)); }
+  .pf::backdrop { background: rgba(0, 0, 0, 0.55); }
+  .pf[open] { display: flex; flex-direction: column; }
+  .pf-head, .pf-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-3) var(--s-4); }
+  .pf-head { border-bottom: 1px solid var(--line); }
+  .pf-head h2 { margin: 0; font-size: var(--fs-lg); }
+  .pf-foot { border-top: 1px solid var(--line); justify-content: flex-end; }
+  .pf-body { display: grid; gap: var(--s-3); padding: var(--s-4); overflow-y: auto; }
+  .pf-intro { margin: 0; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.45; }
+  .pf [hidden] { display: none !important; }
+  .pf-listen { display: grid; gap: var(--s-2); padding: var(--s-3); border-radius: var(--r-3); background: var(--accent-soft); border: 1px solid var(--accent); }
+  .pf-say { font-size: var(--fs-lg); }
+  .pf-bar { height: 0.4rem; border-radius: var(--r-pill); background: var(--line-strong); overflow: hidden; }
+  .pf-bar i { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: transform 0.2s linear; }
+  .pf-score { display: flex; align-items: baseline; gap: var(--s-3); flex-wrap: wrap; }
+  .pf-num { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .pf-verdict { font-weight: 700; }
+  .pf-when { margin-left: auto; font-size: var(--fs-xs); color: var(--text-3); }
+  .pf-score[data-tone="ok"] .pf-num, .pf-score[data-tone="ok"] .pf-verdict { color: var(--green); }
+  .pf-score[data-tone="warn"] .pf-num, .pf-score[data-tone="warn"] .pf-verdict { color: var(--amber); }
+  .pf-score[data-tone="bad"] .pf-num, .pf-score[data-tone="bad"] .pf-verdict { color: var(--red); }
+  .pf-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+  .pf-checks.stale { opacity: 0.5; }
+  .pf-check { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-3); border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line); }
+  .pf-dot { flex: none; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--text-3); }
+  .pf-check[data-state="ok"] .pf-dot { background: var(--green); }
+  .pf-check[data-state="warn"] .pf-dot { background: var(--amber); }
+  .pf-check[data-state="fail"] .pf-dot { background: var(--red); }
+  .pf-text { flex: 1; min-width: 0; display: grid; gap: 0.1rem; }
+  .pf-detail { font-size: var(--fs-xs); color: var(--text-2); }
+  .pf-state { font-size: var(--fs-xs); color: var(--text-3); }
+  .pf-hist h3 { margin: 0 0 var(--s-2); font-size: var(--fs-xs); color: var(--text-3); font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; }
+  .pf-hist ol { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--s-2); flex-wrap: wrap; }
+  .pf-hist li { display: grid; justify-items: center; font-size: var(--fs-xs); color: var(--text-3); }
+  .pf-hist li b { font-size: var(--fs-md); color: var(--text); }
+  .pf-hist li[data-tone="ok"] b { color: var(--green); }
+  .pf-hist li[data-tone="warn"] b { color: var(--amber); }
+  .pf-hist li[data-tone="bad"] b { color: var(--red); }
+  @media (prefers-reduced-motion: reduce) { .pf-bar i { transition: none; } }
+}

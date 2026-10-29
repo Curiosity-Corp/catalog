@@ -298,4 +298,43 @@ def test_health_checks_cache_the_scarlett_evidence_and_survive_a_failing_collect
     assert hw.health_checks() and len(calls) == 2
     hw._scarlett_cache = None
     assert hw.health_checks() and len(calls) == 3  # the OSError was logged, the rows still came back
+
+
+def test_health_checks_carry_the_seat_row_and_cache_the_read(tmp_path: Path) -> None:
+    """#127: who else runs a WirePlumber is read at most once per TTL, and a failing collector never breaks the page."""
+    from streamstack.hardware import seat
+
+    machine = studio_wave(FakeMachine(tmp_path))
+    reads: list[frozenset[str]] = []
+
+    def collect(guarded: frozenset[str]) -> seat.Evidence:
+        reads.append(guarded)
+        if len(reads) == 3:
+            raise OSError("loginctl gone")
+        return seat.Evidence(
+            me="mrh",
+            sessions=(seat.Session("1", 1000, "mrh", "seat0", "user"),),
+            active_session="1",
+            linger=frozenset({"mrh", "bob"}),
+            processes=(seat.AudioProcess(1001, "bob", 7, 4000, "wireplumber"),),
+            groups={"bob": ("audio",)},
+            dropins={"bob": seat.DROPIN_NONE},
+            guarded=guarded,
+        )
+
+    hw = HardwareController(
+        {"STREAMSTACK_RIG": "studio-wave-xlr", "STREAMSTACK_SEAT_GUARDED": "x"},
+        take=machine.snapshot,
+        watch=False,
+        seats=collect,
+    )
+    hw.start()
+    wait_for(lambda: hw.plan() is not None, "first probe")
+    rows = [r for r in hw.health_checks() if r["id"] == "hw-seat"]
+    assert len(rows) == 1 and rows[0]["state"] == "warn" and "bob" in rows[0]["title"]
+    assert hw.health_checks() and reads == [frozenset({"x"})]
+    hw._seat_cache = None
+    assert hw.health_checks() and len(reads) == 2
+    hw._seat_cache = None
+    assert not [r for r in hw.health_checks() if r["id"] == "hw-seat"] and len(reads) == 3
     hw.stop()

@@ -68,6 +68,14 @@ OBS_BG_URL = f"https://raw.githubusercontent.com/royshil/obs-backgroundremoval/{
 OBS_BG_SOURCE = "https://github.com/royshil/obs-backgroundremoval/tree/main/data/models"
 
 
+HF_SELFIE_COMMIT = "2497d5bec26c626c7b3c4edc6e1fefc21b64f6c3"
+HF_SELFIE_URL = (
+    f"https://huggingface.co/onnx-community/mediapipe_selfie_segmentation_landscape/resolve/{HF_SELFIE_COMMIT}/onnx/"
+)
+REFERENCE_MODEL = "pphumanseg"  # the segmenter the blur ships with (#22, #60): the one candidates are compared with
+SOFT_LOW, SOFT_HIGH = 0.1, 0.9  # a mask value between these is "edge": neither clearly person nor clearly background
+
+
 class BenchError(Exception):
     """A usage problem the operator can fix (bad clip, no frames, bad arguments)."""
 
@@ -87,6 +95,7 @@ class BenchModel:
     scale: float  # multiplier applied to 0..255 pixels (1/255 for unit range, 1 for raw bytes)
     rgb: bool  # False feeds BGR as captured
     note: str
+    person: str = ""  # how the person probability is read from the output (see person_alpha); "" = not decoded
 
 
 def _obs_bg(key: str, name: str, filename: str, sha256: str, size: int, licence: str, source: str) -> models.ModelSpec:
@@ -119,6 +128,26 @@ CANDIDATES: tuple[BenchModel, ...] = (
         1 / 255,
         True,
         "the model obs-backgroundremoval 1.4.1 selects by default (docs: Design 2)",
+        "logits-last1",
+    ),
+    BenchModel(
+        models.ModelSpec(
+            key="mediapipe-selfie-landscape",
+            name="MediaPipe selfie segmenter (landscape, 144x256)",
+            filename="mediapipe_selfie_segmentation_landscape_2497d5b.onnx",
+            url=HF_SELFIE_URL + "model.onnx",
+            sha256="7a0adcfdb1715d3b0ff0f61486d8a181c33f4a208343a5abfccbc6540e872d24",
+            size=462338,
+            license="Apache-2.0 (Copyright Google LLC; ONNX export by the onnx-community)",
+            source="https://huggingface.co/onnx-community/mediapipe_selfie_segmentation_landscape",
+        ),
+        SEGMENTATION,
+        (256, 144),
+        "nchw",
+        1 / 255,
+        True,
+        "MediaPipe's selfie_segmenter_landscape as an ONNX export: NCHW 1x3x144x256 in, one alpha plane out",
+        "alpha",
     ),
     BenchModel(
         _obs_bg(
@@ -136,6 +165,7 @@ CANDIDATES: tuple[BenchModel, ...] = (
         1 / 255,
         True,
         "PaddlePaddle PP-HumanSeg as shipped by obs-backgroundremoval",
+        "last1",
     ),
     BenchModel(
         _obs_bg(
@@ -413,6 +443,7 @@ class Runner:
     compile_cached_ms: float | None
     close: Callable[[], None] = lambda: None
     pci_device_id: str | None = None  # the GPU's PCI device id (lower-case hex, no 0x), for the intel_gpu_top filter
+    outputs: Callable[[Any], Any] | None = None  # the first output tensor for a preprocessed frame (edge quality)
 
 
 def _ms_since(start: float) -> float:
@@ -448,7 +479,10 @@ def open_ort_cpu(path: Path, bench: BenchModel, opts: argparse.Namespace) -> Run
     def run(data: Any) -> None:
         session.run(None, {first: data, **extras})
 
-    return Runner(run, width, height, layout, "CPUExecutionProvider", compile_ms, None)
+    def outputs(data: Any) -> Any:
+        return session.run(None, {first: data, **extras})[0]
+
+    return Runner(run, width, height, layout, "CPUExecutionProvider", compile_ms, None, outputs=outputs)
 
 
 def _ov_core() -> Any:
@@ -522,7 +556,13 @@ def open_openvino(path: Path, bench: BenchModel, opts: argparse.Namespace, devic
             pci_id = f"{int(str(core.get_property(wanted, 'GPU_DEVICE_ID')), 16):04x}"
         except Exception as exc:  # an older runtime has no such property; intel_gpu_top then samples its default GPU
             print(f"bench_ai: no PCI id for {wanted}: {exc}", file=sys.stderr)
-    return Runner(run, width, height, layout, f"{wanted} ({full_name})", cold_ms, cached_ms, pci_device_id=pci_id)
+
+    def outputs(data: Any) -> Any:
+        return request.infer({names[0]: data, **extras})[compiled.output(0)]
+
+    return Runner(
+        run, width, height, layout, f"{wanted} ({full_name})", cold_ms, cached_ms, pci_device_id=pci_id, outputs=outputs
+    )
 
 
 def open_backend(name: str, path: Path, bench: BenchModel, opts: argparse.Namespace) -> Runner:
@@ -711,6 +751,158 @@ def run_matrix(sources: Sequence[Source], opts: argparse.Namespace) -> list[Row]
                 # placeholders never pass or fail a gate; a measured rig-size run does
                 row.gate = "n/a" if row.synthetic and not opts.measured else verdict
     return rows
+
+
+# -- mask quality at the edge (issue #147) -------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class EdgeRow:
+    """What one model drew on one rig's frames, judged without ground truth: how soft its edge is and how much it
+    agrees with the shipped segmenter. This ranks candidates against each other; it is not an accuracy figure."""
+
+    source: str
+    model: str
+    backend: str
+    frames: int = 0
+    person_pct: float | None = None  # share of the frame the model calls person (alpha above 0.5)
+    edge_px: float | None = None  # mean width of the soft band across the outline, in frame pixels (smaller = crisper)
+    edge_pct: float | None = None  # the same as a percentage of the frame width, so rigs compare
+    iou_vs_reference: float | None = None  # overlap with REFERENCE_MODEL's person region (1 = identical)
+    status: str = "ok"
+    reason: str = ""
+
+
+def person_alpha(output: Any, how: str) -> Any:
+    """The person probability (2-D, 0..1) from a model's first output tensor; `how` is the BenchModel.person code."""
+    np = _numpy()
+    data = np.asarray(output, dtype=np.float32)
+    if how == "last1":  # [1, H, W, 2] softmax: background, person
+        alpha = data[0, :, :, 1]
+    elif how == "logits-last1":  # [1, H, W, 2] logits: softmax over the pair, then the person channel
+        pair = data[0]
+        shifted = np.exp(pair - pair.max(axis=-1, keepdims=True))
+        alpha = shifted[..., 1] / shifted.sum(axis=-1)
+    elif how == "alpha":  # [1, 1, H, W] already a person alpha
+        alpha = data[0, 0]
+    else:
+        raise ValueError(f"no decoder for {how!r}")
+    return np.clip(alpha, 0.0, 1.0)
+
+
+def upsample_alpha(alpha: Any, width: int, height: int) -> Any:
+    """The mask at the frame's size, bilinear, as the engine grows it before blending; needs OpenCV."""
+    cv2 = _cv2()
+    if cv2 is None:
+        raise BenchError("mask quality needs OpenCV (pip install -e '.[bench]')")
+    return cv2.resize(alpha, (width, height), interpolation=cv2.INTER_LINEAR)
+
+
+def edge_metrics(alpha: Any) -> tuple[float, float]:
+    """(person share of the frame, mean soft-band width across the outline in pixels) of a frame-size alpha."""
+    np = _numpy()
+    person = alpha > 0.5
+    share = float(person.mean())
+    outline = np.zeros_like(person)
+    outline[:, 1:] |= person[:, 1:] != person[:, :-1]
+    outline[1:, :] |= person[1:, :] != person[:-1, :]
+    length = int(outline.sum())
+    soft = int(((alpha > SOFT_LOW) & (alpha < SOFT_HIGH)).sum())
+    return share, (soft / length if length else 0.0)
+
+
+def mask_iou(a: Any, b: Any) -> float:
+    """Intersection over union of two person regions; two empty regions agree completely."""
+    np = _numpy()
+    union = int(np.logical_or(a, b).sum())
+    return 1.0 if union == 0 else float(np.logical_and(a, b).sum()) / union
+
+
+def frames_for_quality(frames: Sequence[Any], count: int) -> list[Any]:
+    """Up to `count` frames spread evenly over the clip."""
+    if len(frames) <= count:
+        return list(frames)
+    return [frames[round(i * (len(frames) - 1) / (count - 1))] for i in range(count)] if count > 1 else [frames[0]]
+
+
+def run_edge_quality(sources: Sequence[Source], opts: argparse.Namespace) -> list[EdgeRow]:
+    """Run every decodable segmenter over a few frames per rig and compare it with the shipped one."""
+    np = _numpy()
+    selected = [
+        m for m in CANDIDATES if m.kind == SEGMENTATION and m.person and (not opts.models or m.spec.key in opts.models)
+    ]
+    if REFERENCE_MODEL not in {m.spec.key for m in selected}:
+        selected = [m for m in CANDIDATES if m.spec.key == REFERENCE_MODEL] + selected
+    backend = opts.backends[0] if opts.backends else "ort-cpu"
+    rows: list[EdgeRow] = []
+    for source in sources:
+        picked = frames_for_quality(source.frames, opts.quality_frames)
+        regions: dict[str, list[Any]] = {}
+        results: dict[str, EdgeRow] = {}
+        for bench in selected:
+            row = EdgeRow(source.label, bench.spec.key, backend)
+            results[bench.spec.key] = row
+            try:
+                path = models.fetch(bench.spec) if opts.fetch else models.verify(spec=bench.spec)
+            except models.ModelError as exc:
+                row.status, row.reason = "skipped", str(exc).replace("the face model", bench.spec.name)
+                continue
+            row_opts = argparse.Namespace(**{**vars(opts), "cache_dir": opts.cache_dir / f"{source.label}-quality"})
+            try:
+                runner = open_backend(backend, path, bench, row_opts)
+            except Unavailable as exc:
+                row.status, row.reason = "skipped", str(exc)
+                continue
+            try:
+                if runner.outputs is None:
+                    raise Unavailable(f"{backend} cannot return the mask")
+                shares, widths, masks = [], [], []
+                for frame in picked:
+                    data = preprocess(frame, bench, runner.width, runner.height, runner.layout)
+                    alpha = upsample_alpha(
+                        person_alpha(runner.outputs(data), bench.person), source.width, source.height
+                    )
+                    share, width = edge_metrics(alpha)
+                    shares.append(share)
+                    widths.append(width)
+                    masks.append(alpha > 0.5)
+                regions[bench.spec.key] = masks
+                row.frames = len(picked)
+                row.person_pct = float(np.mean(shares)) * 100.0
+                row.edge_px = float(np.mean(widths))
+                row.edge_pct = row.edge_px / source.width * 100.0
+            except Exception as exc:  # a model that loads but cannot be decoded is reported, not fatal to the table
+                row.status, row.reason = "skipped", f"failed while running: {type(exc).__name__}: {exc}"
+            finally:
+                runner.close()
+        reference = regions.get(REFERENCE_MODEL)
+        for key, row in results.items():
+            if reference is not None and key in regions:
+                row.iou_vs_reference = float(
+                    np.mean([mask_iou(a, b) for a, b in zip(regions[key], reference, strict=True)])
+                )
+        rows.extend(results.values())
+    return rows
+
+
+def edge_table(rows: Sequence[EdgeRow], source: str) -> str:
+    lines = [
+        "| Model | Backend | Frames | Person % of frame | Edge width px (% of width) | IoU with "
+        + REFERENCE_MODEL
+        + " |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        if row.source != source:
+            continue
+        if row.status != "ok":
+            lines.append(f"| {row.model} | {row.backend} | - | - | - | skipped: {cell_text(row.reason)} |")
+            continue
+        lines.append(
+            f"| {row.model} | {row.backend} | {row.frames} | {_fmt(row.person_pct, 1)} "
+            f"| {_fmt(row.edge_px, 1)} ({_fmt(row.edge_pct, 2)}) | {_fmt(row.iou_vs_reference, 3)} |"
+        )
+    return "\n".join(lines)
 
 
 # -- reporting ------------------------------------------------------------------------------------------------------
@@ -949,6 +1141,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="OpenVINO CACHE_DIR (default: a fresh temp dir, so the first compile is cold)",
     )
     run.add_argument("--fetch", action="store_true", help="download missing models (pinned URL, sha256 checked)")
+    run.add_argument(
+        "--edge-quality",
+        action="store_true",
+        help="also compare the segmenters' masks at the edge on a few frames per rig (needs a clip with a person)",
+    )
+    run.add_argument("--quality-frames", type=int, default=5, help="frames per rig for --edge-quality (default 5)")
     out = parser.add_argument_group("output")
     out.add_argument("--json", type=Path, metavar="PATH", help="write the full results as JSON")
     out.add_argument("--update-doc", type=Path, metavar="PATH", help="rewrite the bench-ai block in this markdown file")
@@ -965,13 +1163,15 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     bad = [m for m in args.models if m not in known]
     if bad:
         parser.error(f"unknown model(s) {', '.join(bad)}; choose from {', '.join(sorted(known))}")
-    for name in ("iterations", "threads", "max_frames"):
+    for name in ("iterations", "threads", "max_frames", "quality_frames"):
         if getattr(args, name) < 1:
             parser.error(f"--{name.replace('_', '-')} must be at least 1")
     if args.warmup < 0 or args.fps <= 0:
         parser.error("--warmup must be 0 or more and --fps above 0")
     if args.synthetic and args.clip:
         parser.error("use --clip or --synthetic, not both")
+    if args.edge_quality and args.synthetic:
+        parser.error("--edge-quality needs a recorded clip with a person in it, not generated frames")
     if args.measured and not args.synthetic:
         parser.error("--measured only applies to --synthetic frames; clips are always measured")
     return args
@@ -995,15 +1195,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.cache_dir = Path(tmp) if tmp else args.cache_dir
         args.cache_dir.mkdir(parents=True, exist_ok=True)
         rows = run_matrix(sources, args)
+        edge_rows: list[EdgeRow] = []
+        if args.edge_quality:
+            try:
+                edge_rows = run_edge_quality(sources, args)
+            except BenchError as exc:
+                print(f"bench_ai: {exc}", file=sys.stderr)
+                return 2
     host = host_info()
     when = dt.datetime.now(dt.UTC).astimezone()
     for source in dict.fromkeys(r.source for r in rows):
         size = next(r.size for r in rows if r.source == source)
         print(f"\n{source} ({size}{', synthetic' if args.synthetic else ''})\n")
         print(markdown_table(rows, source))
+        if edge_rows:
+            print(f"\nMask quality at the edge, {source} (relative to {REFERENCE_MODEL}, no ground truth)\n")
+            print(edge_table(edge_rows, source))
     try:
         if args.json:
-            args.json.write_text(json.dumps(build_report(rows, args, host, when), indent=2) + "\n")
+            report = build_report(rows, args, host, when)
+            report["edge_quality"] = [dataclasses.asdict(r) for r in edge_rows]
+            args.json.write_text(json.dumps(report, indent=2) + "\n")
         if args.update_doc:
             update_doc(args.update_doc, doc_block(rows, args, host, when))
     except OSError as exc:

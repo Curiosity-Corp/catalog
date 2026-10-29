@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import queue
 import re
+import site
 import subprocess
 import sys
 import threading
@@ -21,11 +22,12 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright, expect, sync_playwright
 
-from support import ACTION_TIMEOUT, EXPECT_TIMEOUT, App, Rig, poll
+from support import ACTION_TIMEOUT, EXPECT_TIMEOUT, App, DiskProbe, Rig, poll
 
 REPO = Path(__file__).resolve().parents[2]
 ARTIFACTS = Path(os.environ.get("E2E_ARTIFACTS", REPO / "e2e-artifacts"))
-URL_LINE = re.compile(r"StreamStack Console: (http://127\.0\.0\.1:\d+/)\?token=(\S+?)(?:#\S*)?\s*$")
+URL_LINE = re.compile(r"StreamStack Console: (http://127\.0\.0\.1:\d+/)")
+TOKEN_QUERY = re.compile(r"\?token=([^#\s]+)")
 STARTUP_SECONDS = 30
 ALL_BROWSERS = ("chromium", "firefox")
 DESKTOP = {"width": 1280, "height": 720}
@@ -40,7 +42,31 @@ window.__csp = [];
 document.addEventListener('securitypolicyviolation', (e) => {
   window.__csp.push(`${e.violatedDirective} ${e.blockedURI}`);
 });
+// The event stream's life, for the failure report (issue #161): when it opened, failed, and last pushed a state.
+window.__sse = { opened: 0, errors: 0, frames: 0, last: null, log: [] };
+if (window.EventSource) {
+  const Native = window.EventSource;
+  window.EventSource = class extends Native {
+    constructor(url, init) {
+      super(url, init);
+      const note = (what) => {
+        const sse = window.__sse;
+        sse.log.push(`${Math.round(performance.now())} ms ${what}`);
+        if (sse.log.length > 40) sse.log.shift();
+      };
+      this.addEventListener('open', () => { window.__sse.opened += 1; note('open'); });
+      this.addEventListener('error', () => { window.__sse.errors += 1; note('error'); });
+      this.addEventListener('state', () => {
+        window.__sse.frames += 1;
+        window.__sse.last = Math.round(performance.now());
+      });
+    }
+  };
+}
 """
+
+
+PROBES: list[DiskProbe] = []
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -82,6 +108,9 @@ def rig(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Rig]:
     env = {
         **os.environ,
         "HOME": str(home),
+        # the isolated HOME hides `pip install --user` packages (CI installs the e2e extras that way): keep the real
+        # user site so the demo server can import the extras (aiortc for the WebRTC preview)
+        "PYTHONUSERBASE": os.environ.get("PYTHONUSERBASE") or site.getuserbase(),
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_STATE_HOME": str(home / ".local/state"),
         "XDG_CACHE_HOME": str(home / ".cache"),
@@ -90,6 +119,8 @@ def rig(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Rig]:
         "PYTHONUNBUFFERED": "1",
         "NO_COLOR": "1",
         "STREAMSTACK_DEMO_CLOCK": os.environ.get("E2E_DEMO_CLOCK", DEMO_CLOCK),
+        # one log line per action (name, answer, milliseconds): the failure report quotes them (issue #161)
+        "STREAMSTACK_CONSOLE_ACTION_LOG": "1",
     }
     env.pop("STREAMSTACK_ENV_FILE", None)
     cmd = [sys.executable, "-m", "streamstack", "console", "--demo", "--no-window", "--port", "0"]
@@ -97,6 +128,9 @@ def rig(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Rig]:
         cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
     log: list[str] = []
+    # the demo server writes under `home`: time fsyncs there for the whole run, so a stall can be pinned on the disk
+    probe = DiskProbe(home).start()
+    PROBES.append(probe)
     lines: queue.Queue[str | None] = queue.Queue()
     threading.Thread(target=_pump, args=(proc.stdout, lines, log), daemon=True).start()
     try:
@@ -109,10 +143,23 @@ def rig(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Rig]:
             if line is None:
                 pytest.fail(f"console exited ({proc.poll()}) before it was ready:\n" + "\n".join(log))
             found = URL_LINE.search(line)
-        server = Rig(base=found.group(1), token=found.group(2), log=log, home=home)
+        # The log line carries no token (it lands in the journal); `console --url` prints the tokenised address.
+        shown = subprocess.run(
+            [sys.executable, "-m", "streamstack", "console", "--url"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=STARTUP_SECONDS,
+            check=False,
+        )
+        token = TOKEN_QUERY.search(shown.stdout)
+        if shown.returncode != 0 or token is None:
+            pytest.fail(f"`console --url` gave no token (exit {shown.returncode}): {shown.stderr.strip()}")
+        server = Rig(base=found.group(1), token=token.group(1), log=log, home=home, probe=probe)
         server.state()  # ready: the API answers with the token
         yield server
     finally:
+        probe.stop()
         proc.terminate()
         try:
             proc.wait(timeout=10)
@@ -157,6 +204,7 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             ),
         )
         rig.act("hotkeys.demo.reset")
+        rig.act("meetings.demo.reset")
         rig.act("deck.reset")  # the default profile on the simulated 4x4 deck, first page
         rig.act("slots.demo.reset")  # no time-of-day profiles, the demo clock back where it started
         if s["hardware"]["host"] != "dm313red":
@@ -180,6 +228,11 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
         if fr["mode"] != "off":
             rig.act("framing.mode", mode="off")
         rig.act("call.demo_reset")  # no call, the warning at its defaults
+        rig.act("network.demo_reset")  # a healthy link, default targets, no bandwidth result
+        rig.act("echo.demo_reset")  # no check, no results, the scripted coupling cleared
+        rig.act("preflight.demo_reset")  # no faults, no result, no history
+        poll(rig, lambda st: st["call"]["state"] == "idle")  # the call has left (it has a leave hysteresis)
+        rig.act("safejoin.demo_reset")  # Warn mode, nothing held, no events
         rig.act("audio.demo_output_reset")  # outputs plugged, first the default
         rig.act("audio.mute", on=False)
         rig.act("audio.bypass", on=False)
@@ -191,6 +244,8 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
         if not all(engine["available"] for engine in s["audio"]["denoise"]["engines"]):
             rig.act("audio.demo_deepfilternet", on=True)  # the demo rig may have lost its DeepFilterNet library
         chain = s["audio"]["chain"]
+        if chain.get("held"):
+            rig.act("audio.demo_chain_held", on=False)
         if chain["preset"] != base["preset"] or chain["custom"]:
             rig.act("audio.preset", name=base["preset"])
         if chain["loudness"]["on"] or chain["loudness"]["target_lufs"] != -16.0:
@@ -239,6 +294,8 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
             poll(rig, lambda st: not any(e["swapping"] for e in st["stream"]["encoders"]))
         if s["framing"]["mode"] != "off":
             rig.act("framing.mode", mode="off")
+        if s["eyeline"]["enabled"] or s["eyeline"]["calibrated"] or s["eyeline"]["reminder"]["on"]:
+            rig.act("eyeline.demo.reset")
         if s["video"]["recording"]["active"]:
             rig.act("video.record", on=False)
         if s["video"]["streaming"]["active"]:
@@ -258,6 +315,29 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
     reset()
     yield
     reset()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
+    """A failed browser test carries what the page posted, what the server answered and what its disk was doing."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call" or report.passed:
+        return
+    funcargs = getattr(item, "funcargs", {})
+    holder = funcargs.get("app") or funcargs.get("rig")
+    if holder is None:
+        return
+    try:
+        text = holder.evidence()
+    except Exception as exc:  # a failing report must never hide the failure it reports on
+        text = f"evidence unavailable: {type(exc).__name__}: {exc}"
+    report.sections.append(("e2e evidence", text))
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    for probe in PROBES:
+        terminalreporter.write_line(probe.summary())
 
 
 # ---------------------------------------------------------------------------

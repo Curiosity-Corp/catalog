@@ -191,6 +191,16 @@ def test_run_checks_returns_structured_results(healthy_rig: None) -> None:
     assert cli.summarize(checks) == "ok"
 
 
+def test_run_checks_names_a_usb_device_that_never_started(healthy_rig: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    # deskmeet1, 2026-10-24: the Scarlett 2i2 sat on hub port 1-2.4.3 failing "set address" (error -71).
+    monkeypatch.setattr(system, "stuck_usb_ports", lambda sysfs=system.SYSFS_USB: ["1-2.4.3"])
+    checks = {c["id"]: c for c in cli.run_checks()}
+    stuck = checks["usb-stuck"]
+    assert stuck["state"] == "warn" and "1-2.4.3" in stuck["title"] and "cable" in stuck["hint"]
+    monkeypatch.setattr(system, "stuck_usb_ports", lambda sysfs=system.SYSFS_USB: [])
+    assert "usb-stuck" not in {c["id"] for c in cli.run_checks()}
+
+
 def test_run_checks_flags_what_is_missing(healthy_rig: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "video_name", lambda device: "")
     monkeypatch.setattr(cli, "audio_sources", lambda: {})

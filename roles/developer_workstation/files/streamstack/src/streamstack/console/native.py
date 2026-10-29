@@ -56,6 +56,7 @@ from streamstack.engine.graph import Source, Spec
 from streamstack.engine.process import VideoEngine
 from streamstack.hardware import camera as hwcamera
 from streamstack.hardware import roles
+from streamstack.presets.luts import LUTS
 
 log = logging.getLogger(__name__)
 Notify = Callable[[str, str], None]
@@ -82,6 +83,7 @@ class NativeVideo:
         resolve: Callable[[source.Camera, dict[str, str]], Source] = source.resolve,
         engine_factory: Callable[..., VideoEngine] = VideoEngine,
         backend: Callable[[str], tuple[str, str]] = probe.probe_backend,
+        mjpeg: Callable[[str], tuple[str, str]] = probe.probe_mjpeg,
         canon: CanonLink | None = None,
         arc: ArcBlur | None = None,
         plan: roles.PlanSource | None = None,
@@ -96,6 +98,7 @@ class NativeVideo:
         self._state_file = state_file or config.state_dir() / "video.json"
         self._discover = discover or (lambda settings: source.cameras(settings, plan=self._plan()))
         self._resolve, self._factory, self._probe_backend = resolve, engine_factory, backend
+        self._probe_mjpeg = mjpeg
         self.lock = threading.RLock()
         self.canon = canon or CanonLink(cfg, self._toast)
         self.arc = arc or ArcBlur(cfg, plan=self._plan)
@@ -120,6 +123,7 @@ class NativeVideo:
         self._cameras: list[source.Camera] = []
         self._active: str | None = None
         self._looks: dict[str, dict] = {}
+        self._look_luts: dict[str, str] = {}  # camera label -> the generated LUT of the look applied to it
         self._privacy = False
         self._wanted = True  # the program camera should be running (the virtual camera switch)
         self._engine: VideoEngine | None = None
@@ -127,6 +131,8 @@ class NativeVideo:
         self._reason: str | None = None  # why there is no engine yet (camera absent, no signal)
         self._backend: tuple[str, str] | None = None
         self._backend_node = ""  # the node `_backend` was probed on
+        self._mjpeg: tuple[str, str] | None = None  # how a Motion-JPEG camera is decoded, and why not on the GPU
+        self._mjpeg_node = ""
         self._engine_node = ""  # the node the running engine's graph was built for
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -181,6 +187,9 @@ class NativeVideo:
                     self._looks[str(label)] = {**NEUTRAL, **validate_look(values)}
                 except ActionError as exc:
                     log.warning("video state: ignoring the saved look of %s: %s", label, exc.message)
+        luts = data.get("luts")
+        if isinstance(luts, dict):
+            self._look_luts = {str(k): v for k, v in luts.items() if isinstance(v, str) and v in LUTS}
         if isinstance(data.get("active"), str):
             self._active = data["active"]
         self._idle.keep_alive = data.get("keep_alive") is True
@@ -195,6 +204,7 @@ class NativeVideo:
             payload = {
                 "active": self._active,
                 "looks": copy.deepcopy(self._looks),
+                "luts": dict(self._look_luts),
                 "blur": self.arc.settings(),
                 "keep_alive": self._idle.keep_alive,
             }
@@ -401,22 +411,71 @@ class NativeVideo:
                 )
         return self._backend[0]
 
+    def _mjpeg_for_engine(self, node: str) -> str:
+        """How a Motion-JPEG camera is decoded: the setting, else the probe (VA-API decode into libplacebo, or
+        libavcodec plus hwupload where that import fails). Probed once per node; the probe keeps its own answer."""
+        wanted = (self.cfg.get("STREAMSTACK_ENGINE_MJPEG_DECODE") or "auto").strip().lower()
+        if wanted in graph.MJPEG_DECODES:
+            return wanted
+        if self._mjpeg is None or self._mjpeg_node != node:
+            self._mjpeg_node = node
+            self._mjpeg = self._probe_mjpeg(node)
+            if self._mjpeg[0] != graph.MJPEG_VAAPI:
+                where = (
+                    "on the CPU"
+                    if self._mjpeg[0] == graph.MJPEG_SOFTWARE
+                    else "on the GPU and is copied through memory"
+                )
+                log.warning("MJPEG cameras decode %s (%s): %s", where, self._mjpeg[0], self._mjpeg[1])
+                self._warn_once("mjpeg", f"Video engine: MJPEG decodes {where} ({self._mjpeg[1]}).")
+        return self._mjpeg[0]
+
     def _spec_for(self, src: Source) -> Spec:
         node = self._node().path
         self._engine_node = node
         width, height = source.output_size(self.cfg, src)
+        backend = self._backend_for_engine(node)
         return Spec(
             src,
             hwcamera.device_for("program", self.cfg, self._plan()),
             width,
             height,
-            backend=self._backend_for_engine(node),
+            backend=backend,
             render_node=node,
             detect_fps=_detect_fps(self.cfg),
             lut=(self.cfg.get("STREAMSTACK_ENGINE_LUT") or "").strip(),
             shaders=self._shader_dir(),
+            scaler=self._scaler(),
+            denoise=self._denoise() if backend == "vulkan" else "",
             blur=self.arc.graph if self.arc.capable else None,
+            mjpeg_decode=self._mjpeg_for_engine(node) if src.mjpeg and backend == "vulkan" else graph.MJPEG_VAAPI,
         )
+
+    def _scaler(self) -> str:
+        """The libplacebo scaler (STREAMSTACK_ENGINE_SCALER); only a benchmarked name is used, else the default."""
+        wanted = (self.cfg.get("STREAMSTACK_ENGINE_SCALER") or "").strip().lower()
+        if not wanted:
+            return graph.DEFAULT_SCALER
+        if wanted not in graph.SCALERS:
+            self._warn_once(
+                "scaler",
+                f"STREAMSTACK_ENGINE_SCALER={wanted!r} is not a benchmarked scaler; using {graph.DEFAULT_SCALER}.",
+            )
+            return graph.DEFAULT_SCALER
+        return wanted
+
+    def _denoise(self) -> str:
+        """The GPU video denoiser (STREAMSTACK_ENGINE_DENOISE): "" for off, or a name in graph.DENOISERS."""
+        wanted = (self.cfg.get("STREAMSTACK_ENGINE_DENOISE") or "off").strip().lower()
+        if wanted in ("", "off", "0", "false", "no"):
+            return ""
+        if wanted not in graph.DENOISERS:
+            self._warn_once(
+                "denoise",
+                f"STREAMSTACK_ENGINE_DENOISE={wanted!r} is not a known video denoiser (off or nlmeans); it stays off.",
+            )
+            return ""
+        return wanted
 
     def _shader_dir(self) -> str:
         """Where the GPU sharpen shaders go; empty keeps the live CPU cas filter (STREAMSTACK_ENGINE_SHARPEN=cpu)."""
@@ -436,7 +495,8 @@ class NativeVideo:
         spec = self._spec_for(src)
         with self.lock:
             self._reason, self._source, self._blur_built = None, src, spec.blur is not None
-            engine, look, privacy = self._engine, dict(self._active_look()), self._privacy
+            engine, privacy, active = self._engine, self._privacy, self._active
+        look = self._engine_look(active)
         if engine is None:
             engine = self._factory(
                 spec, look, notify=self._toast, before_child=self.delivery.guard, on_exit=self.delivery.on_exit
@@ -464,12 +524,19 @@ class NativeVideo:
     def _active_look(self) -> dict:
         return dict(self._looks.get(self._active or "", NEUTRAL))
 
+    def _engine_look(self, label: str | None, look: dict | None = None) -> dict:
+        """The look the engine is given: the sliders, plus the name of the look's own LUT when it has one."""
+        with self.lock:
+            values = dict(look if look is not None else self._looks.get(label or "", NEUTRAL))
+            lut = self._look_luts.get(label or "")
+        return {**values, "lut": lut} if lut else values
+
     def _set_look(self, label: str, look: dict) -> None:
         with self.lock:
             self._looks[label] = dict(look)
             engine = self._engine if label == self._active else None
         if engine is not None:
-            engine.apply_look(look)
+            engine.apply_look(self._engine_look(label, look))
 
     def _cancel_ramp(self) -> None:
         self._ramp_cancel.set()
@@ -525,7 +592,7 @@ class NativeVideo:
         return snapshot
 
     def _engine_block(self, info: dict | None, src: Source | None, reason: str | None, wanted: bool) -> dict:
-        backend = self._backend
+        backend, mjpeg = self._backend, self._mjpeg
         resting = self._idle.state == idle.IDLE and wanted
         block: dict = {
             "native": True,
@@ -534,6 +601,7 @@ class NativeVideo:
             "backend": (info or {}).get("backend") or (backend[0] if backend else None),
             "backend_note": backend[1] if backend and backend[0] == "cpu" else None,
             "decode": (info or {}).get("decode"),
+            "decode_note": mjpeg[1] if mjpeg and mjpeg[0] != graph.MJPEG_VAAPI else None,
             "source": src.label if src else None,
             "source_mode": (info or {}).get("source_mode"),
             "output": (info or {}).get("output"),
@@ -574,7 +642,12 @@ class NativeVideo:
                 }
             ]
         if block["state"] == "running":
-            detail = f"{block['output']}, {block['decode']}, {block['fps'] or 0:g} fps, {block['dropped']} dropped"
+            parts = [str(block["output"])]
+            if block["decode"] is not None:
+                note = " (zero-copy import into libplacebo fails here)" if block["decode_note"] is not None else ""
+                parts.append(block["decode"] + note)
+            parts += [f"{block['fps'] or 0:g} fps", f"{block['dropped']} dropped"]
+            detail = ", ".join(parts)
             return [
                 {
                     **base,
@@ -662,7 +735,7 @@ class NativeVideo:
         with self.lock:
             self._source, self._reason, engine = src, None, self._engine
         if engine is not None:
-            engine.apply_look(self._active_look())
+            engine.apply_look(self._engine_look(name))
             engine.set_spec(self._spec_for(src))
         else:
             self._wake.set()
@@ -687,18 +760,30 @@ class NativeVideo:
         return None
 
     def _look_reset(self, params: dict) -> str | None:
-        self._start_ramp(self._target(params), dict(BUILTIN_LOOKS["Natural"]), RESET_SECONDS)
+        label = self._target(params)
+        with self.lock:
+            self._look_luts.pop(label, None)
+        self._start_ramp(label, dict(BUILTIN_LOOKS["Natural"]), RESET_SECONDS)
         return "Look reset"
 
     def _looks_apply(self, params: dict) -> str | None:
         name = required_name(params)
         look = self.library.get(name)
-        self._start_ramp(self._target(params), look, APPLY_SECONDS)
+        label = self._target(params)
+        lut = self.library.lut_of(name)
+        with self.lock:  # the look's LUT is on the engine from the first ramp step; its strength ramps with the look
+            if lut in LUTS:
+                self._look_luts[label] = str(lut)
+            else:
+                self._look_luts.pop(label, None)
+        self._start_ramp(label, look, APPLY_SECONDS)
         return f"Look: {name}"
 
     def _looks_save(self, params: dict) -> str | None:
         name = required_name(params)
-        self.library.save(name, self._active_look())
+        with self.lock:
+            lut = self._look_luts.get(self._active or "")  # the look being saved is the active camera's
+        self.library.save(name, self._active_look(), lut)
         return f"Saved look {name}"
 
     def _looks_delete(self, params: dict) -> str | None:

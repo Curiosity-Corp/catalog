@@ -344,3 +344,24 @@ def test_app_checks_fail_when_a_required_app_is_missing(monkeypatch: pytest.Monk
     checks = {c["id"]: c for c in cli.app_checks()}
     assert checks["app-gphoto2"]["state"] == "fail"
     assert cli.summarize(list(checks.values())) == "fail"
+
+
+REAL_STUCK_USB_PORTS = system.stuck_usb_ports  # conftest stubs it so no test reads the machine's own bus
+
+
+def test_stuck_usb_ports_reads_hub_port_states(tmp_path: Path) -> None:
+    # The layout recorded on deskmeet1: root hub ports, a hub chain 1-2 -> 1-2.4, and the 2i2 stuck on port 3.
+    states = {
+        "1-0:1.0/usb1-port4": "configured",
+        "1-0:1.0/usb1-port10": "not attached",
+        "1-2:1.0/1-2-port4": "configured",
+        "1-2.4:1.0/1-2.4-port2": "configured",
+        "1-2.4:1.0/1-2.4-port3": "default",
+        "2-0:1.0/usb2-port7": "default",
+    }
+    for path, state in states.items():
+        (tmp_path / path).mkdir(parents=True)
+        (tmp_path / path / "state").write_text(state + "\n")
+    (tmp_path / "1-4").mkdir()  # a device directory, not a port
+    assert REAL_STUCK_USB_PORTS(tmp_path) == ["1-2.4.3", "2-7"]
+    assert REAL_STUCK_USB_PORTS(tmp_path / "absent") == []

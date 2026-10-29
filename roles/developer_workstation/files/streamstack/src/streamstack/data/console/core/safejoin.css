@@ -1,0 +1,17 @@
+/* safejoin.css — the "You are not on air" banner. Calm, never flashing; theme tokens only. */
+.sj {
+  position: absolute; inset-inline: 0; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-4); border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-1) 88%, var(--amber) 12%);
+  border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
+  backdrop-filter: blur(3px);
+}
+.sj[hidden] { display: none; }
+.sj-icon { display: grid; place-items: center; flex: none; width: 2.4rem; height: 2.4rem; border-radius: 50%; color: var(--amber); background: var(--amber-soft); }
+.sj-icon .icon { width: 1.3rem; height: 1.3rem; }
+.sj-text { flex: 1; min-width: 0; display: grid; gap: 0.15rem; }
+.sj-title { font-size: var(--fs-md); color: var(--text); }
+.sj-msg { margin: 0; font-size: var(--fs-sm); color: var(--text-2); line-height: 1.4; }
+.sj-btn { flex: none; min-width: 8rem; }
+.sj-compact { position: static; flex-wrap: wrap; border-radius: var(--r-3); padding: var(--s-2) var(--s-3); }
+.sj-compact .sj-btn { width: 100%; }

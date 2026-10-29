@@ -11,6 +11,8 @@ title, detail, hint) and every row that is not `ok` names the fix. The rows, in 
 * `hw-capture`    the capture card's modes; `hw-loopback-*` the two v4l2loopback devices by label
 * `hw-scarlett`   a Focusrite Scarlett that is on USB or expected: no sound card, MSD mode, firmware too old, or healthy
                   (scarlett_doctor, #130; the live rows only, the Console's cached rows carry it too)
+* `hw-seat`       another user's WirePlumber on this desk (linger, device groups, drop-in), and the policy that
+                  fixes it (docs/adr/0007-seat-policy.md, #127); read-only, the fix is printed for the owner
 * `hw-source-*`   a probe source that was denied or failed, with the fix; `hw-notice-*` any other Plan warning
 
 An audio interface the rig expects that is not enumerating on USB (the Scarlett 2i2 on the deck studio) is a **warning**
@@ -25,7 +27,7 @@ from typing import Any
 
 from streamstack.audiochain import graph
 
-from . import duplex, scarlett_doctor
+from . import duplex, scarlett_doctor, seat
 from .found import Found
 from .model import Snapshot
 from .plan import DUMMY_SINK, DeviceRow, GpuRole, Plan
@@ -473,10 +475,11 @@ def checks(
     catalogue: Catalogue,
     engine: str | None = None,
     scarlett: scarlett_doctor.Evidence | None = None,
+    seats: seat.Evidence | None = None,
 ) -> list[dict[str, str]]:
     """Every hardware row for this Plan and snapshot. `scarlett` is what `scarlett_doctor.collect` read (the card's
-    mixer controls and the kernel log); without it the pure rows are the same as before and there is no
-    `hw-scarlett` row."""
+    mixer controls and the kernel log); `seats` is what `seat.collect` read (who else runs a WirePlumber on this
+    desk). Without them the pure rows are the same as before and there is no `hw-scarlett` or `hw-seat` row."""
     target = voice_target(plan, engine or default_engine())
     rig = catalogue.rig(plan.rig.id)
     rig_label = rig.label if rig else plan.rig.id
@@ -486,6 +489,8 @@ def checks(
     rows.append(_encoder_row(plan))
     rows += _audio_rows(plan, snapshot, target)
     rows += scarlett_doctor.checks(snapshot, catalogue, plan.rig.id, scarlett)
+    if seats is not None:
+        rows += seat.rows(seat.diagnose(seats))
     if capture := _capture_row(plan):
         rows.append(capture)
     rows += _loopback_rows(plan, snapshot)
@@ -508,8 +513,11 @@ def report(found: Found | None, engine: str | None = None) -> dict[str, Any]:
     """The `hardware` section of `streamstack doctor --json`: the rig header and the rows."""
     if found is None:
         return {"rig": None, "checks": [failed_row()]}
+    from streamstack import config
+
+    guarded = seat.parse_guarded(config.load_settings().get("STREAMSTACK_SEAT_GUARDED", ""))
     evidence = scarlett_doctor.collect(found.snapshot, found.catalogue, found.plan.rig.id)
     return {
         "rig": rig_header(found.plan),
-        "checks": checks(found.plan, found.snapshot, found.catalogue, engine, evidence),
+        "checks": checks(found.plan, found.snapshot, found.catalogue, engine, evidence, seat.collect(guarded)),
     }

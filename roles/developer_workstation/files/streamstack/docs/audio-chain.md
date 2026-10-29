@@ -31,6 +31,11 @@ changes the graph's shape: then StreamStack restarts its host process (a short g
   process. The user's PipeWire daemon and its configuration are never touched, and no module has to be unloaded by
   hand (the host is found again by its configuration path). The one thing it changes is the default microphone,
   described under "StreamStack Mic as the default microphone" below.
+* **A deliberate stop is honoured (#145).** `streamstack chain stop` writes `audio-chain/stopped-by-user` in the state
+  directory before it stops the host, and the Console's supervisor (which otherwise restarts a dead host within
+  seconds) leaves the chain stopped while that file exists; the Audio and Live pages say it was stopped from the
+  command line. `streamstack chain start`, `streamstack studio`, "Start studio" in the Console and the systemd unit's
+  `chain run` remove the file.
 * The file is `~/.local/state/streamstack/audio-chain/filter-chain.conf`. It ends with `# structure <signature>`;
   the host restarts only when that signature differs from the one it runs with.
 * Live changes go to the node `streamstack_mic.capture` as `Props` params (`pw-cli set-param`), only the values that

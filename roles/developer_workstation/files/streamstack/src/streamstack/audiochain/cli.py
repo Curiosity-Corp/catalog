@@ -28,6 +28,7 @@ def _runtime(cfg: dict[str, str], *, autostart: bool = True, manage_default: boo
 
 def start(cfg: dict[str, str], *, wait: float = START_WAIT_S, say: Callable[[str], None] = print) -> int:
     """Start the host (if it is not running) and wait for "StreamStack Mic" to appear. 0 when it is there."""
+    clear_stop_marker(say)  # a deliberate start: the Console supervises the chain again (#145)
     rt = _runtime(cfg)
     rt.supervise()
     end = time.monotonic() + wait
@@ -54,6 +55,7 @@ def _default_line(result: str | None) -> str:
 
 def run_foreground(cfg: dict[str, str]) -> int:
     """For a service manager: write the configuration and replace this process with the host (no detaching)."""
+    clear_stop_marker()  # the service is a deliberate start
     rt = _runtime(cfg)
     missing = graph.missing_required()
     if missing:
@@ -71,15 +73,33 @@ def run_foreground(cfg: dict[str, str]) -> int:
     return 0  # pragma: no cover - execv does not return
 
 
+def clear_stop_marker(say: Callable[[str], None] = print) -> None:
+    try:
+        chain.clear_stopped(config.state_dir())
+    except OSError as exc:
+        say(f"streamstack: cannot clear the stop marker ({exc}); the Console may keep the chain stopped")
+
+
+KEPT_STOPPED = "The Console will keep it stopped until you run `streamstack chain start`."
+
+
 def stop(cfg: dict[str, str]) -> int:
     conf = runtime.conf_path(config.state_dir())
+    # The marker goes first: the Console's supervisor checks it every second and would otherwise start the host
+    # again between our stop and the marker (issue #145).
+    try:
+        chain.mark_stopped(config.state_dir())
+    except OSError as exc:
+        print(
+            f"streamstack: cannot record the stop ({exc}); a running Console may start the chain again", file=sys.stderr
+        )
     if not runtime.host_pids(conf):
         release_default(cfg)  # a claim left by a host that died is still given back
-        print("The voice chain is not running.")
+        print(f"The voice chain is not running. {KEPT_STOPPED}")
         return 0
     if runtime.stop_host(conf):
         release_default(cfg)
-        print("Voice chain stopped; apps fall back to the raw microphone.")
+        print(f"Voice chain stopped; apps fall back to the raw microphone. {KEPT_STOPPED}")
         return 0
     print("streamstack: the voice chain did not stop", file=sys.stderr)
     return 1
