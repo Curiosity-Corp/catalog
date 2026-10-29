@@ -120,7 +120,7 @@ test-py311:
   extends: .venv
   stage: artifact-security
   needs: []
-  image: python:3.11-slim
+  image: python:3.15-slim
   interruptible: true
   rules: !reference [.rules-gate, rules]
   script:
@@ -209,7 +209,7 @@ pip-audit:
   extends: .venv
   stage: artifact-security
   needs: []
-  image: python:3.13-slim
+  image: python:3.15-slim
   interruptible: true
   rules: !reference [.rules-gate, rules]
   script:
@@ -223,7 +223,7 @@ package:
   extends: .venv
   stage: build
   needs: []
-  image: python:3.13-slim
+  image: python:3.15-slim
   interruptible: true
   rules: !reference [.rules-gate, rules]
   script:
@@ -338,7 +338,7 @@ dfn-ladspa-verify:
   needs:
     - job: dfn-ladspa-package
       artifacts: false
-  image: python:3.13-slim
+  image: python:3.15-slim
   interruptible: false
   rules: !reference [.dfn-ladspa-rules, rules]
   variables:
@@ -376,7 +376,7 @@ deb-build:
   needs: []
   # bookworm, not the default trixie: Debian 13 verifies apt signatures with sqv and ships no gpgv, which is what the
   # Ubuntu and Debian 12 hosts this repository serves use; the tests need the real gpgv and apt-get (REQUIRE_APT_TOOLS)
-  image: python:3.13-bookworm
+  image: python:3.15-bookworm
   interruptible: true
   rules: !reference [.rules-gate, rules]
   variables:
@@ -409,7 +409,7 @@ apt-index:
   needs:
     - job: deb-build
       artifacts: true
-  image: python:3.13
+  image: python:3.15
   interruptible: true
   rules: !reference [.deb-full-rules, rules]
   script:
@@ -461,7 +461,7 @@ apt-publish:
     - job: deb-sign
       artifacts: true
   # bookworm, like deb-build: `apt_repo.py verify` needs gpgv, which the trixie-based python:3.13 image lacks
-  image: python:3.13-bookworm
+  image: python:3.15-bookworm
   interruptible: false
   rules:
     - if: $CI_COMMIT_TAG
@@ -487,7 +487,7 @@ apt-publish:
 changelog-check:
   stage: preflight
   needs: []
-  image: python:3.13
+  image: python:3.15
   interruptible: true
   # a seconds-long check: a hung runner must fail fast and retry, not hold the merge train for an hour (#146)
   timeout: 10m
@@ -513,7 +513,7 @@ changelog-check:
 release-verify:
   stage: preflight
   needs: []
-  image: python:3.13
+  image: python:3.15
   interruptible: false
   variables:
     GIT_DEPTH: "100"
