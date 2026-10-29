@@ -161,6 +161,26 @@ def usb_ids(node: Path) -> tuple[str, str] | None:
     return None
 
 
+def usb_speed(device: str, sysfs: Path = SYSFS_VIDEO) -> int | None:
+    """The negotiated USB link speed in Mb/s (480 is USB 2, 5000 and up USB 3) of the device behind a video node.
+
+    `device` may be a udev link such as /dev/streamstack/camlink; None when the node is not USB or cannot be read.
+    """
+    node = sysfs / Path(device).resolve().name
+    try:
+        here = (node / "device").resolve(strict=True)
+    except OSError:
+        return None
+    for parent in (here, *here.parents):
+        try:
+            return int(float((parent / "speed").read_text().strip()))
+        except OSError:
+            continue
+        except ValueError:
+            return None
+    return None
+
+
 def video_by_usb_id(ids: tuple[tuple[str, str], ...], sysfs: Path = SYSFS_VIDEO) -> list[str]:
     """The capture nodes of every USB device with one of these (vendor, product) ids, lowest node first.
 
@@ -284,6 +304,29 @@ def current_format(device: str) -> str:
     if fps:
         text += f" @ {fps:g} fps"
     return text
+
+
+SYSFS_USB = Path("/sys/bus/usb/devices")
+
+
+def stuck_usb_ports(sysfs: Path = SYSFS_USB) -> list[str]:
+    """USB ports with something plugged in that never enumerated, as device paths ("1-2.4.3").
+
+    A hub port whose `state` stays "default" has a device that answered the reset but not "set address" (the
+    kernel logs error -71 or -32): a bad cable, port or hub. Such a device has no idVendor and is invisible to every
+    other probe, so an audio interface on it looks merely unplugged.
+    """
+    stuck = set()
+    for port in sysfs.glob("*/*-port*"):
+        try:
+            if (port / "state").read_text().strip() != "default":
+                continue
+        except OSError:
+            continue
+        hub, _, number = port.name.rpartition("-port")
+        bus = hub.removeprefix("usb")
+        stuck.add(f"{bus}-{number}" if hub.startswith("usb") else f"{hub}.{number}")
+    return sorted(stuck)
 
 
 def usb_products(vendor: str) -> list[str]:

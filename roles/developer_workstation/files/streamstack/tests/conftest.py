@@ -2,37 +2,54 @@
 
 from __future__ import annotations
 
+import faulthandler
+import os
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from streamstack import cli, store, system
+from streamstack import cli, crash, store, system
 from streamstack.audiochain import runtime as chain_runtime
 from streamstack.director import adapters, faces
 
+# What the login this suite runs in really uses, captured before any fixture can change it. Only the isolation
+# regression test reads it, to prove no test can see it.
+REAL_RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "")
+REAL_HOME = os.environ.get("HOME", "")
+
 
 @pytest.fixture(autouse=True)
-def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def isolated_home(tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     for name, sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_STATE_HOME", ".local/state"), ("XDG_CACHE_HOME", ".cache")):
         monkeypatch.setenv(name, str(home / sub))
     monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local/share"))
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(home / "run"))  # the slate's work files, never the real /run/user
+    # The runtime dir holds the live Console's socket and token (streamstack-console.json), the Canon bridge socket and
+    # the PipeWire/Pulse sockets: a test that can see the real one can drive the CEO's desk. Mode 0700 as the spec says.
+    # A sibling of tmp_path, not inside it: tests list tmp_path and home and must not find a stray directory there.
+    runtime = tmp_path_factory.mktemp("run")
+    runtime.chmod(0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    for name in ("PULSE_SERVER", "PULSE_RUNTIME_PATH", "DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("STREAMSTACK_ENV_FILE", str(tmp_path / "absent.env"))
     monkeypatch.setenv("NO_COLOR", "1")
     # No test may reach the PipeWire or PulseAudio server of the machine that runs it (#142: an unisolated run flipped
     # the live desk's default microphone). pw-metadata, pw-dump, pw-cli and pactl find only this socket-less path.
     monkeypatch.setenv("PIPEWIRE_REMOTE", str(tmp_path / "no-pipewire"))
     monkeypatch.setenv("PULSE_SERVER", f"unix:{tmp_path}/no-pulse")
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
     monkeypatch.setenv("STREAMSTACK_SETUP_SERVICE", "off")  # `streamstack setup` must not touch the real systemd
     for name in ("STREAMSTACK_SHARE", "STREAMSTACK_AUTO_VERBOSE", "STREAMSTACK_AUTO_CLAUDE", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     # No test may read the capture card plugged into the machine that runs it.
     monkeypatch.setattr(system, "find_camlink", lambda: "")
     monkeypatch.setattr(cli, "find_camlink", lambda: "")
+    monkeypatch.setattr(system, "stuck_usb_ports", lambda sysfs=system.SYSFS_USB: [])
+    monkeypatch.setattr(system, "usb_speed", lambda device, sysfs=system.SYSFS_VIDEO: None)
     return home
 
 
@@ -40,6 +57,20 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def clean_store_warnings() -> None:
     """The store's warning log is process-wide; no test inherits another's."""
     store.dismiss()
+
+
+@pytest.fixture(autouse=True)
+def clean_crash_state() -> Iterator[None]:
+    """`crash` keeps process-wide state: the hooks and faulthandler `install` puts in (every in-process `cli.main` call
+    installs them under the command's name), the component name and the handled-error rate limiter. No test inherits
+    another's: it starts and ends with the hooks out, the name back to the default and the limiter empty."""
+    crash.reset_for_tests()
+    was_tracing = faulthandler.is_enabled()
+    yield
+    crash.uninstall()  # also disables faulthandler, pytest's own included
+    crash.reset_for_tests()
+    if was_tracing:
+        faulthandler.enable(file=sys.__stderr__, all_threads=True)
 
 
 @pytest.fixture(autouse=True)

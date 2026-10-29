@@ -5,11 +5,11 @@ import { act } from './actions.js';
 import { store } from './store.js';
 import { toast } from './toast.js';
 
-export const toggleMute = () => act('audio.mute', { on: !store.state.audio.mic.muted });
-export const toggleBypass = () => act('audio.bypass', { on: !store.state.audio.chain.bypass });
-export const togglePrivacy = () => act('video.privacy', { on: !store.state.video.privacy });
-export const toggleAuto = () => act(store.state.auto.running ? 'auto.off' : 'auto.on');
-export const toggleVirtualcam = () => act('video.virtualcam', { on: !store.state.video.virtualcam });
+export const toggleMute = () => act('audio.mute', { on: !store.intent('audio.mic.muted') });
+export const toggleBypass = () => act('audio.bypass', { on: !store.intent('audio.chain.bypass') });
+export const togglePrivacy = () => act('video.privacy', { on: !store.intent('video.privacy') });
+export const toggleAuto = () => act(store.intent('auto.running') ? 'auto.off' : 'auto.on');
+export const toggleVirtualcam = () => act('video.virtualcam', { on: !store.intent('video.virtualcam') });
 export const selectScene = (name) => act('video.scene', { name });
 export const selectSceneByIndex = (i) => {
   const sc = store.state.video.scenes[i];
@@ -35,5 +35,5 @@ export const stopStudio = () => act('studio.stop');
 export const startStudio = () => act('studio.start');
 
 /** Every Litra on or off together (the L key and the palette). */
-export const toggleLights = () => act('lighting.power', { id: 'all', on: !store.state.lighting.master.on });
+export const toggleLights = () => act('lighting.power', { id: 'all', on: !store.intent('lighting.master.on') });
 export const selectLightPreset = (name) => act('lighting.preset', { name });

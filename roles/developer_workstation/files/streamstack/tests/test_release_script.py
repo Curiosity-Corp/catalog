@@ -191,7 +191,7 @@ def test_prepare_promotes_the_changelog_and_prints_the_tag_command(
 ) -> None:
     assert _prepare(release, repo, "--date", "2026-10-24") == 0
     out = capsys.readouterr().out
-    assert 'git tag -a v0.0.8 -m "StreamStack 0.0.8"' in out
+    assert 'git tag -a v0.0.8 <release-MR-head-sha> -m "StreamStack 0.0.8"' in out
     assert "git push origin v0.0.8" in out
     assert "## [0.0.8] - 2026-10-24" in (repo / "CHANGELOG.md").read_text()
     assert release.read_version((repo / "src/streamstack/__init__.py").read_text()) == "0.0.8"
@@ -592,3 +592,29 @@ def test_check_fragments_against_a_real_branch(
     assert "edited directly" in capsys.readouterr().err
     monkeypatch.setenv("CI_MERGE_REQUEST_LABELS", "skip-changelog")
     assert check() == 0
+
+
+def test_tag_commands_tag_the_release_mr_head_not_the_merge_commit(release: ModuleType) -> None:
+    lines = "\n".join(release.tag_commands("0.0.15"))
+    assert "git tag -a v0.0.15 <release-MR-head-sha>" in lines and "never" in lines
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_main_ancestor_problem(release: ModuleType, tmp_path: Path) -> None:
+    def run(*args: str) -> None:
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.org")
+    run("config", "user.name", "t")
+    (tmp_path / "a").write_text("a")
+    run("add", "a")
+    run("commit", "-qm", "a")
+    run("update-ref", "refs/remotes/origin/main", "HEAD")
+    assert release.main_ancestor_problem(tmp_path) is None
+    run("checkout", "-q", "-b", "unmerged")
+    (tmp_path / "b").write_text("b")
+    run("add", "b")
+    run("commit", "-qm", "b")
+    problem = release.main_ancestor_problem(tmp_path)
+    assert problem is not None and "not an ancestor" in problem

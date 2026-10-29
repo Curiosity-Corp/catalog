@@ -48,6 +48,7 @@ log = logging.getLogger("streamstack.store")
 BACKUP_SUFFIX = ".bak"
 CORRUPT_MARK = ".corrupt-"
 KEEP_CORRUPT = 5  # quarantined copies kept per file
+SLOW_WRITE_S = 1.0  # a save that takes longer than this is logged (a starved or failing disk)
 MAX_WARNINGS = 50
 ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -224,6 +225,7 @@ def atomic_write_bytes(
     fsyncs for files that are rewritten every second and worthless after a reboot (status heartbeats): they stay
     atomic, so a reader still never sees half a file. Raises OSError.
     """
+    began = time.monotonic()
     target = _resolve(path)
     directory = target.parent
     directory.mkdir(parents=True, exist_ok=True)
@@ -249,6 +251,12 @@ def atomic_write_bytes(
         raise
     if durable:
         _fsync_dir(directory)
+    took = time.monotonic() - began
+    if took >= SLOW_WRITE_S:
+        # A stalled disk shows here first: say so, so a control that seemed to take seconds can be traced to it.
+        log.warning(
+            "slow write of %s: %.1f s for %d bytes (fsync %s)", target, took, len(data), "on" if durable else "off"
+        )
     return target
 
 

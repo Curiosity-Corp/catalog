@@ -93,6 +93,7 @@ def empty_state() -> dict[str, Any]:
             "lighting": [],
             "canon": {"present": False},
             "blur": False,
+            "shots": [],
         },
         "status": {
             "state": "off",
@@ -277,6 +278,8 @@ class SlotsController:
             steps.append(("scene", "video.scene", {"name": profile["scene"]}))
         if "blur" in profile:
             steps.append(("blur", "video.blur", dict(profile["blur"])))
+        if "framing" in profile:
+            steps.append(("framing", "framing.shot", dict(profile["framing"])))
         if director_on:
             return steps
         if "look" in profile:
@@ -301,6 +304,8 @@ class SlotsController:
             before["scene"] = snap["video"]["program_scene"]
         if "blur" in parts and dig(snap, "video.blur.on") is not None:
             before["blur"] = {"on": bool(snap["video"]["blur"]["on"]), "strength": dig(snap, "video.blur.strength")}
+        if "framing" in parts and dig(snap, "framing.shot"):
+            before["framing"] = {"shot": snap["framing"]["shot"], "mode": dig(snap, "framing.mode")}
         if "voice" in parts and dig(snap, "audio.chain.preset"):
             before["voice"] = snap["audio"]["chain"]["preset"]
         if "lighting" in parts and isinstance(dig(snap, "lighting.master"), dict):
@@ -400,7 +405,10 @@ class SlotsController:
         self, part: str, action: str, params: dict[str, Any], snap: dict[str, Any], fade: float, expect: dict[str, Any]
     ) -> dict[str, Any]:
         value = (
-            params.get("name") or params.get("value") or (("on" if params["on"] else "off") if "on" in params else "")
+            params.get("name")
+            or params.get("value")
+            or params.get("shot")
+            or (("on" if params["on"] else "off") if "on" in params else "")
         )
         shown = f"{params['id'].replace('_', ' ')} {value}" if part == "canon" else str(value)
         result = {"part": part, "label": slots.PART_LABELS[part], "value": shown, "state": "applied", "detail": ""}
@@ -426,6 +434,8 @@ class SlotsController:
             expect.setdefault("canon", {})[params["id"]] = str(params["value"])
         elif part == "blur":
             expect["blur"] = bool(params["on"])
+        elif part == "framing":
+            expect["framing"] = params["shot"]
         else:
             expect[part] = params["name"]
 
@@ -542,6 +552,10 @@ class SlotsController:
             current = dig(snap, "video.blur.on")
             if current is not None and bool(current) != expect["blur"]:
                 return "blur", "on" if current else "off"
+        if "framing" in expect:
+            current = dig(snap, "framing.shot")
+            if current is not None and current != expect["framing"]:
+                return "framing", str(current)
         if "voice" in expect:
             current = dig(snap, "audio.chain.preset")
             if current is not None and current != expect["voice"]:
@@ -579,6 +593,9 @@ class SlotsController:
             "voices": _names(dig(snap, "audio.chain.presets")),
             "lighting": _names(dig(snap, "lighting.presets")),
             "blur": bool(dig(snap, "video.blur.available")) or dig(snap, "video.blur.available") is None,
+            "shots": [s["name"] for s in dig(snap, "framing.shots") or [] if isinstance(s, Mapping)]
+            if dig(snap, "framing.available")
+            else [],
             "canon": {
                 "present": present,
                 "exposure_choices": list(exposure.get("choices") or []),
@@ -785,6 +802,9 @@ class SlotsController:
             profile["scene"] = snap["video"]["program_scene"]
         if dig(snap, "video.blur.on") is not None:
             profile["blur"] = {"on": bool(snap["video"]["blur"]["on"])}
+        framing_on = dig(snap, "framing.available") and dig(snap, "framing.mode") not in (None, "off")
+        if framing_on and dig(snap, "framing.shot"):
+            profile["framing"] = {"shot": snap["framing"]["shot"]}
         if dig(snap, "audio.chain.preset"):
             profile["voice"] = snap["audio"]["chain"]["preset"]
         if dig(snap, "lighting.lights"):
@@ -826,6 +846,10 @@ class SlotsController:
             if before["blur"].get("strength") is not None:
                 blur["strength"] = before["blur"]["strength"]
             run("video.blur", blur)
+        if "framing" in before:
+            run("framing.shot", {"shot": before["framing"]["shot"]})
+            if before["framing"].get("mode") == "off":
+                run("framing.mode", {"mode": "off"})  # a shot starts framing; undo puts it back off too
         if "look" in before:
             run("video.look", {"values": before["look"]})
         for cid, value in (before.get("canon") or {}).items():

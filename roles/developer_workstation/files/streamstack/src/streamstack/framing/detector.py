@@ -123,7 +123,7 @@ def decode_yunet(
 
     if len(outputs) != 12:
         raise ValueError(f"YuNet gives 12 output tensors, this model gave {len(outputs)}")
-    boxes, scores, eyes, mouths = [], [], [], []
+    boxes, scores, eyes, mouths, marks = [], [], [], [], []
     for n, stride in enumerate(STRIDES):
         cols, rows = width // stride, height // stride
         cls = np.clip(np.asarray(outputs[n], dtype=np.float32).reshape(-1), 0.0, 1.0)
@@ -149,10 +149,14 @@ def decode_yunet(
         mouth_rows = ((kps[keep, 7] + row) + (kps[keep, 9] + row)) / 2 * stride  # mean y of the two mouth corners
         mouth_wide = np.abs(kps[keep, 8] - kps[keep, 6]) * stride  # corner to corner
         mouths.append(np.stack([mouth_rows, mouth_wide], axis=1))
+        cols_x = np.arange(10) % 2 == 0  # kps are x, y pairs: right eye, left eye, nose, right mouth, left mouth
+        grid = np.where(cols_x[None, :], col[:, None], row[:, None])
+        marks.append((kps[keep] + grid) * stride / height)  # units of the picture height
     if not boxes:
         return []
     all_boxes, all_scores, all_eyes = np.concatenate(boxes), np.concatenate(scores), np.concatenate(eyes)
     all_mouths = np.concatenate(mouths)
+    all_marks = np.concatenate(marks)
     faces = []
     for i in nms(all_boxes, all_scores, nms_threshold, top_k):
         x, y, w, h = (float(v) for v in all_boxes[i])
@@ -172,6 +176,7 @@ def decode_yunet(
                 eye if y0 / height <= eye <= y1 / height else None,
                 mouth if y0 / height <= mouth <= y1 / height else None,
                 float(all_mouths[i, 1]) / width,
+                tuple(float(v) for v in all_marks[i]),
             )
         )
     return faces
@@ -380,6 +385,7 @@ class OpenCvDetector:
                     eye if y0 / height <= eye <= y1 / height else None,
                     mouth if y0 / height <= mouth <= y1 / height else None,
                     mouth_wide,
+                    tuple(float(v) / height for v in row[4:14]),
                 )
             )  # fmt: skip
         self._timing.add(time.perf_counter() - started)

@@ -31,6 +31,26 @@ writer is allowed and the second one blocks or breaks the first. Two feeders on 
 process holding the Cam Link is `warn`. Fix for OBS: close OBS, or choose Tools > Stop Virtual Camera.
 `streamstack loopback guard` prints the rows and exits 1 on any fail.
 
+## Conformance run (#86 acceptance)
+
+After a kernel update or a module reload, with no call running, prove the contract on a scratch node:
+
+    sudo v4l2loopback-ctl add -n "Conformance scratch" -x 1 /dev/video50 && sudo chmod 666 /dev/video50
+    python3 tools/loopback_conformance.py --device /dev/video50
+    sudo v4l2loopback-ctl delete /dev/video50
+
+Six steps: unlisted with no writer, listed with one (`exclusive_caps`), only the contract formats, frames delivered,
+unlisted again when the writer exits (a dead producer is visible), and a second writer works. It refuses the program and
+camera nodes and any node a process holds. Run on dm313red (kernel 7.0.0-38, module 0.15.3) on 2026-10-27: all six ok.
+
+## Version 0.15.4
+
+Upstream 0.15.4 fixes two concurrency bugs in the frame copy. Ubuntu 26.04 ships 0.15.3 (the kernel's prebuilt module
+and the archive's `v4l2loopback-dkms` alike), so it cannot be installed from the distribution: doctor shows 0.15.3 as a
+note naming the fix, and warns only below 0.15.3. We do not build upstream by default: it would replace the distribution's
+module on every host and needs a reload with no call running. If a camera freezes or tears under load, build 0.15.4 with
+DKMS on that host and run the conformance above.
+
 ## After a module reload
 
 Reload only with the Console stopped and no call running, then run `streamstack loopback guard` and

@@ -18,6 +18,7 @@ import { drawSwatch, sameLook } from './look-swatch.js';
 import { mountBody } from './camera-body.js';
 import { mountFraming } from './framing.js';
 import { mountSlots } from './slots.js';
+import { mountEyeLine } from './eyeline.js';
 import { mountBlur, blurCommands } from './blur.js';
 
 const STORE_KEY = 'streamstack.console.camera';
@@ -79,6 +80,7 @@ const TEMPLATE = `
             <ss-button size="sm" icon="zebra" data-ref="tZebra" title="Zebra: stripes where highlights clip (Z)"><span class="lbl">Zebra</span></ss-button>
             <ss-button size="sm" icon="eye" data-ref="tFraming" title="Auto-framing: keep you in the picture" aria-haspopup="dialog" aria-expanded="false"><span class="lbl">Framing</span></ss-button>
             <ss-button size="sm" icon="moonsun" data-ref="tSlots" title="Time-of-day profiles: a look, lights and more for each part of the day" aria-haspopup="dialog" aria-expanded="false"><span class="lbl">Day</span></ss-button>
+            <ss-button size="sm" icon="camera" data-ref="tEyeline" title="Eye-line coach: is the camera where you look?" aria-haspopup="dialog" aria-expanded="false"><span class="lbl">Eye line</span></ss-button>
             <ss-button size="sm" icon="scope" data-ref="tScopes" title="Scopes: histogram and parade (H)"><span class="lbl">Scopes</span></ss-button>
           </div>
         </ss-preview>
@@ -89,6 +91,10 @@ const TEMPLATE = `
         <div class="fr-pop sl-pop" role="dialog" aria-label="Time-of-day profiles" data-ref="slotsPop" hidden>
           <div class="fr-pop-head sl-pop-head"><span class="eyebrow">Time of day</span><button type="button" class="sl-close" data-ref="slotsClose" aria-label="Close time-of-day profiles">Close</button></div>
           <div data-ref="slotsHost"></div>
+        </div>
+        <div class="el-pop" role="dialog" aria-label="Eye-line coach" data-ref="eyelinePop" hidden>
+          <div class="el-pop-head"><span class="eyebrow">Eye-line coach</span></div>
+          <div data-ref="eyelineHost"></div>
         </div>
       </div>
     </ss-card>
@@ -191,6 +197,7 @@ export async function mount(host, ctx) {
   await ctx.ensureCss(new URL('./common.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./camera.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./framing.css', import.meta.url).href);
+  await ctx.ensureCss(new URL('./eyeline.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./blur.css', import.meta.url).href);
   await ctx.ensureCss(new URL('./slots.css', import.meta.url).href);
   document.title = 'Camera · StreamStack';
@@ -207,7 +214,7 @@ export async function mount(host, ctx) {
     R.framingPop.hidden = !open;
     R.tFraming.setAttribute('aria-expanded', String(open));
   };
-  R.tFraming.addEventListener('click', () => setFramingOpen(R.framingPop.hidden));
+  R.tFraming.addEventListener('click', () => { setFramingOpen(R.framingPop.hidden); if (!R.framingPop.hidden) setEyelineOpen(false); });
   const closeFraming = (e) => {
     if (R.framingPop.hidden) return;
     if (e.type === 'keydown' ? e.key === 'Escape' : !e.target.closest?.('.fr-pop, [data-ref="tFraming"]')) setFramingOpen(false);
@@ -218,7 +225,7 @@ export async function mount(host, ctx) {
   off.push(store.subscribe((st) => st.framing.mode, (mode) => R.tFraming.toggleAttribute('pressed', mode !== 'off')));
   off.push(mountSlots(R.slotsHost, ctx));
   const setSlotsOpen = (open) => {
-    if (open) setFramingOpen(false);
+    if (open) { setFramingOpen(false); setEyelineOpen(false); }
     R.slotsPop.hidden = !open;
     R.tSlots.setAttribute('aria-expanded', String(open));
   };
@@ -232,6 +239,22 @@ export async function mount(host, ctx) {
   document.addEventListener('pointerdown', closeSlots);
   off.push(() => { document.removeEventListener('keydown', closeSlots); document.removeEventListener('pointerdown', closeSlots); });
   off.push(store.subscribe((st) => st.slots.status.state, (state) => R.tSlots.toggleAttribute('pressed', state === 'applied' || state === 'suggested')));
+  // The eye-line coach is a second popover, opened from its own button; opening one closes the other.
+  off.push(mountEyeLine(R.eyelineHost, ctx));
+  const setEyelineOpen = (open) => {
+    R.eyelinePop.hidden = !open;
+    R.tEyeline.setAttribute('aria-expanded', String(open));
+    if (open) { setFramingOpen(false); setSlotsOpen(false); }
+  };
+  R.tEyeline.addEventListener('click', () => setEyelineOpen(R.eyelinePop.hidden));
+  const closeEyeline = (e) => {
+    if (R.eyelinePop.hidden) return;
+    if (e.type === 'keydown' ? e.key === 'Escape' : !e.target.closest?.('.el-pop, [data-ref="tEyeline"]')) setEyelineOpen(false);
+  };
+  document.addEventListener('keydown', closeEyeline);
+  document.addEventListener('pointerdown', closeEyeline);
+  off.push(() => { document.removeEventListener('keydown', closeEyeline); document.removeEventListener('pointerdown', closeEyeline); });
+  off.push(store.subscribe((st) => st.eyeline.enabled, (on) => R.tEyeline.toggleAttribute('pressed', !!on)));
   const save = () => writePrefs(prefs);
 
   // ---------- overlays + scopes ----------

@@ -60,6 +60,11 @@ Choosing a platform and tier, or applying a profile, sends `stream.set` through 
 rig answers HTTP 501; the controller saves the choice and reports the part as `pending`. When the backend lands it
 implements `stream.set` and the same calls report `applied` with no UI change.
 
+With the backend, the platform and tier ids in that call also give the stream its bandwidth ladder: step 0 is this plan
+and the later steps are the lower rungs of the same tier and then of the lower tiers
+(`presets.plan.ladder_tier`). When the uplink cannot carry the plan the stream steps down along it by itself and back up
+when the link is steady; see "Bandwidth adaptation" in [stream](stream.md).
+
 ## Profiles
 
 A profile bundles look, platform and tier (together or neither), lighting preset, voice preset and framing mode.

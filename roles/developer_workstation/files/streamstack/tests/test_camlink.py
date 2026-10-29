@@ -10,6 +10,7 @@ from streamstack import camlink, cli, config, system
 
 FIXTURES = Path(__file__).parent / "fixtures/v4l2"
 CFG = config.load_settings(Path("/nonexistent"))
+REAL_USB_SPEED = system.usb_speed  # conftest stubs it so no test reads the machine's own card
 
 
 def modes(name: str) -> list[system.Mode]:
@@ -149,6 +150,25 @@ def test_health_without_signal_or_card() -> None:
     assert missing["camlink"]["state"] == "warn" and "camlink-audio" not in missing
 
 
+def test_health_warns_when_the_card_is_on_a_usb_2_link() -> None:
+    # deskmeet1, 2026-10-24: the card enumerated at 480 Mb/s and delivered 10.39 fps of the 1080p29.97 it reports.
+    slow = camlink.Probe(
+        device="/dev/video0", offered=modes("camlink_1080p2997.txt"), chosen=("YUYV", 1920, 1080, 29.97), usb_mbps=480
+    )
+    usb = checks_for(slow)["camlink-usb"]
+    assert usb["state"] == "warn" and "480 Mb/s" in usb["title"] and "USB 3" in usb["hint"]
+    assert slow.public()["usb2"] is True
+    fast = camlink.Probe(device="/dev/video0", offered=slow.offered, chosen=slow.chosen, usb_mbps=5000)
+    unknown = camlink.Probe(device="/dev/video0", offered=slow.offered, chosen=slow.chosen)
+    assert "camlink-usb" not in checks_for(fast) and "camlink-usb" not in checks_for(unknown)
+
+
+def test_probe_reads_the_usb_link_of_the_card(card: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(system, "usb_speed", lambda device, sysfs=system.SYSFS_VIDEO: 480)
+    probe = camlink.probe(CFG, {})
+    assert probe.usb_mbps == 480 and probe.usb2
+
+
 def test_cam_link_audio_is_never_the_call_microphone() -> None:
     sources = {
         "alsa_input.usb-Elgato_Cam_Link_4K-00.analog-stereo": "Cam Link 4K Analog Stereo",
@@ -222,6 +242,24 @@ def test_both_cam_link_4k_revisions_are_found_by_usb_id(tmp_path: Path) -> None:
     make_node(sysfs, usb, "video1", 1, "0fd9", "0067")
     make_node(sysfs, usb, "video5", 0, "0fd9", "0066")
     assert system.video_by_usb_id(system.CAMLINK_USB_IDS, sysfs) == ["/dev/video0", "/dev/video5"]
+
+
+def test_usb_speed_walks_from_the_node_to_its_usb_device(tmp_path: Path) -> None:
+    sysfs, usb = tmp_path / "video4linux", tmp_path / "usb"
+    make_node(sysfs, usb, "video0", 0, "0fd9", "0067")
+    (usb / "0fd9" / "0fd9:0067" / "speed").write_text("480\n")
+    assert REAL_USB_SPEED("/dev/video0", sysfs) == 480
+    (usb / "0fd9" / "0fd9:0067" / "speed").write_text("5000\n")
+    # Found through the udev link too: the link's target names the node.
+    target = tmp_path / "dev" / "video0"
+    target.parent.mkdir()
+    target.touch()
+    link = tmp_path / "camlink"
+    link.symlink_to(target)
+    assert REAL_USB_SPEED(str(link), sysfs) == 5000
+    assert REAL_USB_SPEED("/dev/video9", sysfs) is None  # no such node
+    (usb / "0fd9" / "0fd9:0067" / "speed").unlink()
+    assert REAL_USB_SPEED("/dev/video0", sysfs) is None  # not USB, or unreadable
 
 
 def test_find_camlink_prefers_the_udev_link_then_the_usb_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

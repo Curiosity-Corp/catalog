@@ -57,10 +57,18 @@ DEFAULTS = {
     # Sharpening on the Vulkan backend: auto | gpu (a shader on the Arc, strength in steps of 0.05, the engine rebuilds
     # its child when a look moves to another step) or cpu (the live cas filter, about 260 % of a core at 1080p).
     "STREAMSTACK_ENGINE_SHARPEN": "auto",
+    "STREAMSTACK_ENGINE_SCALER": "",
+    # GPU video denoise for a noisy camera (the Canon in low light): off | nlmeans (nlmeans_vulkan, about 9 ms of GPU
+    # per 720p frame). Vulkan backend only.
+    "STREAMSTACK_ENGINE_DENOISE": "off",
+    "STREAMSTACK_ENGINE_MJPEG_DECODE": "auto",
     # Background blur on the Arc through OpenVINO (needs `pip install 'streamstack[blur]'`): auto | off. Device: auto
     # picks the discrete Arc; or an OpenVINO device id such as GPU.1.
     "STREAMSTACK_ENGINE_BLUR": "auto",
     "STREAMSTACK_ENGINE_BLUR_DEVICE": "auto",
+    # How the blurred background treats the person's outline: normalised (only background pixels are averaged, no
+    # colour halo) | plain (the whole frame is blurred, the first version).
+    "STREAMSTACK_ENGINE_BLUR_EDGE": "normalised",
     # Idle the engine and the Canon live view while no app reads StreamStack Camera (#128): auto | off. The engine rests
     # after _AFTER seconds without a reader and wakes within a second of the first one; a placeholder keeps the camera
     # listed meanwhile. _IGNORE lists process names (comma separated) whose open handle does not count as a reader.
@@ -97,6 +105,10 @@ DEFAULTS = {
     # The studio rig profile (src/streamstack/data/hardware/rigs.toml): auto picks the best overlap with the hardware
     # found, or name one (studio-wave-xlr, studio-deck, generic-linux). A STREAMSTACK_RIG in the environment wins.
     "STREAMSTACK_RIG": "auto",
+    # Other local users on this desk (comma separated) for whom the owner has applied the seat policy (a WirePlumber
+    # drop-in, or removal from the audio and video groups; docs/adr/0007-seat-policy.md). `streamstack doctor` cannot
+    # read another user's home, so this is how it is told the policy is in place.
+    "STREAMSTACK_SEAT_GUARDED": "",
     # Wave XLR hardware control over its vendor USB interface: off (never opened),
     # read, or write. See docs/interfaces.md.
     "STREAMSTACK_WAVE_XLR_USB": "off",
@@ -126,6 +138,12 @@ DEFAULTS = {
     "STREAMSTACK_AUTO_LIGHTS": "true",
     "STREAMSTACK_AUTO_HARDWARE_GAIN": "true",
     "STREAMSTACK_AUTO_FACES": "true",
+    # The deterministic exposure and colour controllers (streamstack.director.metering) in the live loop: the Canon's
+    # exposure compensation first, then the key light, in measured stops. Opt-in: the model constants are not tuned on
+    # the real Canon and Litra yet (#94), so the default (false) keeps the one-notch steps. The grey
+    # card (x,y,w,h as fractions of the frame, empty = none) lets the camera's white balance follow the card.
+    "STREAMSTACK_AUTO_METERING": "false",
+    "STREAMSTACK_AUTO_GREYCARD": "",
     # Which interface input the director's gain follows: auto (the first with a gain), 1, 2, or a control id.
     "STREAMSTACK_AUTO_INTERFACE_INPUT": "auto",
     # Where the property is, for sunrise and sunset (computed offline). Empty: the time zone's city.

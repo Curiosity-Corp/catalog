@@ -4,10 +4,10 @@
 # bumps it) owns the stages, the workflow rules and every assurance plane:
 #
 #   preflight        lint, test (below), changelog-check (MRs), release-verify (tags)
-#   source-security  sast (semgrep + gitleaks; gitleaks blocks on tags), e2e and e2e-lighting (below)
+#   source-security  sast (semgrep + gitleaks; gitleaks blocks on every pipeline), e2e and e2e-lighting (below)
 #   supply-chain     lockfile-verify (no runtime dependencies: asserted), dependency-scan, scorecard
 #   build            python-build (wheel + sdist, dist/SHA256SUMS, twine check, tag == package version), package
-#   supply-chain-vex python-sbom (CycloneDX of what the wheel installs, with the auto and framing extras)
+#   supply-chain-vex python-sbom (CycloneDX of what the wheel installs, with the PYTHON_SBOM_EXTRAS extras)
 #   artifact-security / policy-gate   python-vuln-scan (grype), python-license, pip-audit, test-py311
 #   attest           python-sign (Notation + Azure Key Vault over the dist and SBOM checksums; main and tags)
 #   artifact-promote python-publish (the project's PyPI registry; tags only; also the signed manifest,
@@ -60,6 +60,9 @@ variables:
   # The release host is configuration, never code (streamstack.registry, scripts/install-release.sh): in a pipeline of
   # the project it is the server the pipeline runs on.
   STREAMSTACK_GITLAB_HOST: $CI_SERVER_HOST
+  # gitleaks blocks on every pipeline, not only on tags: v0.0.18's tag failed on a finding that every merge request
+  # pipeline had only warned about. A leak is cheaper to fix before the tag is cut.
+  GITLEAKS_STRICT: "true"
   # --- launch-sequence python-package inputs ---
   PREFLIGHT_REQUIRED_TOOLS: "uv uvx python3"
   PREFLIGHT_COMMANDS: >-
@@ -75,12 +78,12 @@ variables:
     set -eu
     uv venv --quiet .ci-venv
     . .ci-venv/bin/activate
-    uv pip install --quiet -e ".[dev,auto,framing,bench,deck,whip,shortcuts]"
+    uv pip install --quiet -e ".[dev,framing,bench,deck,whip,shortcuts,calendar]"
     # The real-backend framing tests need the face model; they skip, not fail, when the download is unreachable.
     python -m streamstack framing --fetch || echo "face model not fetched; real-backend framing tests will skip"
     python -m pytest --cov=streamstack --cov-report=term --cov-report=xml:coverage.xml --junitxml=report.xml
   # The SBOM, the grype scan and the licence gate cover what a user installs with the extras.
-  PYTHON_SBOM_EXTRAS: "auto framing whip shortcuts"
+  PYTHON_SBOM_EXTRAS: "framing whip shortcuts calendar"
   PYTHON_SBOM_MC_TYPE: "application"
   # The DeepFilterNet plugin package: version = upstream version + build revision. tests/test_dfn_ladspa_ci.py
   # keeps this equal to audiochain/plugin.py and images/dfn-ladspa/Dockerfile.
@@ -121,7 +124,7 @@ test-py311:
   interruptible: true
   rules: !reference [.rules-gate, rules]
   script:
-    - python -m pip install -e ".[dev,auto,framing,bench,deck,whip,stills,shortcuts]"
+    - python -m pip install -e ".[dev,framing,bench,deck,whip,stills,shortcuts]"
     - python -m streamstack framing --fetch || echo "face model not fetched; real-backend framing tests will skip"
     - python -m pytest --junitxml=report-py311.xml
   artifacts:
@@ -347,6 +350,133 @@ dfn-ladspa-verify:
     - python images/dfn-ladspa/smoke.py installed/libdeep_filter_ladspa.so
 
 # =============================================================================
+# The Debian package and the signed apt repository (issues #99, #101)
+# =============================================================================
+#
+#   deb-build    (build)           scripts/build_deb.py: a reproducible .deb from `make install`, its provenance
+#                                  statement (in-toto, SLSA v1) and DEB-SHA256SUMS; smoke-runs the extracted launcher;
+#                                  runs tests/test_apt_repo.py with the real apt-get (signature, tamper, update, rollback)
+#   apt-index    (supply-chain-vex) pulls every published .deb, adds this build, writes Packages and Release
+#   deb-sign     (attest)          a Kubernetes Job (scripts/ci/deb-sign.sh): Notation over DEB-SHA256SUMS and the
+#                                  OpenPGP repository key from Key Vault over Release (InRelease, Release.gpg)
+#   apt-publish  (artifact-promote, tags) verifies the whole repository the way apt does, then publishes it to the
+#                                  Generic Package Registry package streamstack-apt/stable and the package files to
+#                                  streamstack-release/<version>
+#
+# deb-sign is a warning on main until it has been seen green there (it needs the ci-dispatch runner and Key Vault); on
+# a tag it is required, because a release without its signatures must not be published.
+
+.deb-full-rules:
+  rules:
+    - !reference [.ls-tier:full, rules]
+
+deb-build:
+  extends: .venv
+  stage: build
+  needs: []
+  # bookworm, not the default trixie: Debian 13 verifies apt signatures with sqv and ships no gpgv, which is what the
+  # Ubuntu and Debian 12 hosts this repository serves use; the tests need the real gpgv and apt-get (REQUIRE_APT_TOOLS)
+  image: python:3.13-bookworm
+  interruptible: true
+  rules: !reference [.rules-gate, rules]
+  variables:
+    REQUIRE_APT_TOOLS: "1"
+  script:
+    - python scripts/build_deb.py --out deb-dist
+    - dpkg-deb --info deb-dist/streamstack_*_all.deb
+    # the whole listing, never `| head`: an early-closed pipe kills dpkg-deb under pipefail
+    - dpkg-deb --contents deb-dist/streamstack_*_all.deb > deb-dist/contents.txt
+    - wc -l deb-dist/contents.txt
+    # the package must carry a working launcher: extract it (no root needed) and run it
+    - dpkg-deb --extract deb-dist/streamstack_*_all.deb deb-root
+    - deb-root/usr/bin/streamstack --version
+    - python scripts/deb_provenance.py deb-dist/DEB-SHA256SUMS > deb-dist/deb-provenance.intoto.json
+    # the manifest Notation signs covers the package and where it came from
+    - (cd deb-dist && sha256sum deb-provenance.intoto.json >> DEB-SHA256SUMS && sha256sum -c DEB-SHA256SUMS)
+    - python -m pip install pytest
+    # tests/conftest.py imports the package, which this job does not install: run from the source tree
+    - PYTHONPATH=src python -m pytest tests/test_apt_repo.py -q --junitxml=report-apt.xml
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - deb-dist/
+    reports:
+      junit: report-apt.xml
+
+apt-index:
+  stage: supply-chain-vex
+  needs:
+    - job: deb-build
+      artifacts: true
+  image: python:3.13
+  interruptible: true
+  rules: !reference [.deb-full-rules, rules]
+  script:
+    # every published release stays in the repository (that is what makes a rollback possible), then this build joins
+    - python scripts/apt_repo.py pull apt-repo
+    - cp deb-dist/streamstack_*_all.deb apt-repo/
+    - python scripts/apt_repo.py index apt-repo
+    - ls -l apt-repo
+  artifacts:
+    expire_in: 14 days
+    paths:
+      - apt-repo/
+
+deb-sign:
+  stage: attest
+  tags: [ci-dispatch] # calls the Kubernetes API: only the ci-dispatcher runner serves it
+  timeout: 30m
+  interruptible: false
+  image: ${IMAGE_REGISTRY}/dockerhub-proxy/alpine/k8s:1.31.13
+  needs:
+    - job: deb-build
+      artifacts: true
+    - job: apt-index
+      artifacts: true
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - scheduler_failure
+  rules:
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"
+      allow_failure: true
+  script:
+    - sh scripts/ci/deb-sign.sh deb-dist/DEB-SHA256SUMS apt-repo/Release deb-signed
+  artifacts:
+    expire_in: 14 days
+    paths:
+      - deb-signed/
+
+apt-publish:
+  stage: artifact-promote
+  needs:
+    - job: deb-build
+      artifacts: true
+    - job: apt-index
+      artifacts: true
+    - job: deb-sign
+      artifacts: true
+  # bookworm, like deb-build: `apt_repo.py verify` needs gpgv, which the trixie-based python:3.13 image lacks
+  image: python:3.13-bookworm
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - cp deb-signed/InRelease deb-signed/Release.gpg apt-repo/
+    # what apt will check, checked before anything is uploaded
+    - python scripts/apt_repo.py verify apt-repo --keyring packaging/apt-public.asc
+    - python scripts/apt_repo.py publish apt-repo --extra packaging/apt-public.asc
+    # the package files of this release beside the wheel: one place, one URL scheme
+    - |
+      VERSION="${CI_COMMIT_TAG#v}"
+      BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/streamstack-release/${VERSION}"
+      python scripts/apt_repo.py put --base "${BASE}" "deb-dist/streamstack_${VERSION}_all.deb" deb-dist/DEB-SHA256SUMS deb-dist/deb-provenance.intoto.json deb-signed/DEB-SHA256SUMS.cose.sig
+
+# =============================================================================
 # Release (tag vX.Y.Z only)
 # =============================================================================
 
@@ -359,6 +489,14 @@ changelog-check:
   needs: []
   image: python:3.13
   interruptible: true
+  # a seconds-long check: a hung runner must fail fast and retry, not hold the merge train for an hour (#146)
+  timeout: 10m
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - scheduler_failure
   variables:
     GIT_DEPTH: "100"
   rules:
@@ -368,15 +506,36 @@ changelog-check:
 
 # Fail before building: the tag, streamstack.__version__ and CHANGELOG.md must agree, and the version must be a
 # 0.0.x patch release unless the owner approved a minor (RELEASE_OWNER_APPROVED_MINOR=true on the pipeline).
+#
+# It needs git (`--require-main-ancestor` runs `git merge-base`), so it runs on the full python image like
+# changelog-check, never on the uv slim ${PYTHON_IMAGE}, which has no git: that made v0.0.17's tag pipeline fail
+# with "No such file or directory: 'git'" and burned the tag. tests/test_ci_release_verify.py guards it.
 release-verify:
   stage: preflight
   needs: []
-  image: ${PYTHON_IMAGE}
+  image: python:3.13
   interruptible: false
+  variables:
+    GIT_DEPTH: "100"
   rules:
     - if: $CI_COMMIT_TAG
   script:
-    - python3 scripts/release.py check-tag "$CI_COMMIT_TAG"
+    - python3 scripts/release.py check-tag "$CI_COMMIT_TAG" --require-main-ancestor
+
+# The same gate before the tag exists. v0.0.14 (fragments left in the tree) and v0.0.17 (no git in the image) were
+# only found by their tag pipelines, which cannot be re-run on the same tag. The release MR (title
+# `chore(release): X.Y.Z`) runs release-verify's image and `check-tag` against its SOURCE head, the commit the tag
+# will name (not the merged-result commit, which also carries fragments merged ahead of it). `--require-main-ancestor`
+# cannot hold before the merge; the checkout itself proves git works, and the tag job repeats that check.
+release-verify-mr:
+  extends: release-verify
+  interruptible: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TITLE =~ /^chore\(release\): [0-9]+\.[0-9]+\.[0-9]+$/'
+  script:
+    - 'VERSION="${CI_MERGE_REQUEST_TITLE#chore(release): }"'
+    - git checkout --quiet --detach "${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}"
+    - python3 scripts/release.py check-tag "v${VERSION}"
 
 python-build:
   needs:
@@ -431,6 +590,8 @@ release:
       artifacts: true
     - job: release-assets
       artifacts: false
+    - job: apt-publish
+      artifacts: false
   before_script:
     - !reference [.release:create, before_script]
     - |
@@ -443,5 +604,9 @@ release:
         "{\"name\":\"SBOM (CycloneDX)\",\"url\":\"${BASE}/python-sbom.cdx.json\",\"link_type\":\"other\"}" \
         "{\"name\":\"Signed checksum manifest\",\"url\":\"${BASE}/RELEASE-SHA256SUMS\",\"link_type\":\"other\"}" \
         "{\"name\":\"Signature (Notation COSE)\",\"url\":\"${BASE}/RELEASE-SHA256SUMS.cose.sig\",\"link_type\":\"other\"}" \
+        "{\"name\":\"Debian package\",\"url\":\"${BASE}/streamstack_${VERSION}_all.deb\",\"link_type\":\"package\"}" \
+        "{\"name\":\"Package checksums and provenance (signed: DEB-SHA256SUMS.cose.sig)\",\"url\":\"${BASE}/DEB-SHA256SUMS\",\"link_type\":\"other\"}" \
+        "{\"name\":\"Package provenance (in-toto)\",\"url\":\"${BASE}/deb-provenance.intoto.json\",\"link_type\":\"other\"}" \
+        "{\"name\":\"Package signature (Notation COSE)\",\"url\":\"${BASE}/DEB-SHA256SUMS.cose.sig\",\"link_type\":\"other\"}" \
         "{\"name\":\"Package registry\",\"url\":\"${CI_PROJECT_URL}/-/packages\",\"link_type\":\"package\"}")"
       export RELEASE_ASSETS_LINKS

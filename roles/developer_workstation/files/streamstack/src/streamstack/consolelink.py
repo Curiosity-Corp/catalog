@@ -86,6 +86,17 @@ class ConsoleLink:
             raise ConsoleUnavailable("the Console sent no video state")
         return video
 
+    def section(self, name: str) -> dict:
+        """One object of the Console's snapshot (`preflight`, `call`, ...)."""
+        raw = self._request("GET", "/api/state")
+        try:
+            value = json.loads(raw)[name]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ConsoleUnavailable(f"the Console sent no {name} state ({exc})") from exc
+        if not isinstance(value, dict):
+            raise ConsoleUnavailable(f"the Console sent an unreadable {name} state")
+        return value
+
     def act(self, action: str, **params: object) -> None:
         self._request("POST", "/api/action", {"action": action, **params})
 

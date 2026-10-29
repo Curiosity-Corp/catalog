@@ -30,6 +30,7 @@ encode.py).
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 # v4l2 fourcc -> ffmpeg input format (raw formats the engine uploads as they are)
@@ -42,10 +43,46 @@ CPU_GRADE = "eq@grade"
 TONE = "colorcorrect@tone"
 SHARP = "cas@sharp"
 BLUR_BG = "gblur@bg"
+BLUR_WEIGHT = "gblur@bgw"  # the normalised blur's denominator: same sigma as BLUR_BG, always commanded with it
+BLUR_EDGES = ("normalised", "plain")  # how the background copy treats the person's edge, see _blur_branch
 BLUR_MERGE = "maskedmerge@blur"
 
 WARMTH_SPAN = 0.35  # colorcorrect shift at warmth = +-1 (CPU backend)
 SPLIT_SPAN = 0.25  # colorcorrect shift at lut_amount = 1
+# libplacebo scalers the engine may be told to use (STREAMSTACK_ENGINE_SCALER). A name is on this list only after
+# tools/bench_scalers.py has measured it on the Arc (quality and cost; the numbers are in docs/native-video-engine.md).
+SCALERS = (
+    "nearest",
+    "bilinear",
+    "bicubic",
+    "spline16",
+    "spline36",
+    "spline64",
+    "gaussian",
+    "sinc",
+    "lanczos",
+    "ginseng",
+    "catmull_rom",
+    "mitchell",
+    "robidoux",
+    "robidouxsharp",
+    "ewa_lanczos",
+    "ewa_lanczossharp",
+    "ewa_lanczos4sharpest",
+    "ewa_ginseng",
+    "ewa_hann",
+    "ewa_robidoux",
+    "oversample",
+)
+MJPEG_VAAPI, MJPEG_VAAPI_COPY, MJPEG_SOFTWARE = "vaapi", "vaapi-copy", "software"
+MJPEG_DECODES = (MJPEG_VAAPI, MJPEG_VAAPI_COPY, MJPEG_SOFTWARE)
+DEFAULT_SCALER = "lanczos"  # as sharp as ewa_lanczos (same PSNR and SSIM) for 35 to 45 % less GPU time
+LUT_STEP = 0.05  # per-look LUT strengths are baked in these steps (one blended .cube each)
+# The cube maps normalised RGB (gamma-encoded, after the YUV decode) to RGB, as a .cube file does everywhere else.
+# `conversion` (the filter's other mode) is a source-to-display colourspace conversion and gave a heavy tint
+# (measured: mean 138 of 255 off the reference on a near-identity cube); `native` applies it to the raw Y'CbCr values.
+LUT_TYPE = "lut_type=normalized"
+LUT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,40}")
 SHARP_STEP = 0.05  # the GPU sharpen strengths are baked in these steps (one shader file each)
 WARM_TEMPERATURE = -1.0  # libplacebo temperature at warmth = +1 (negative is warmer; its range is -1.143 to 5)
 COOL_TEMPERATURE = 5.0  # ... at warmth = -1 (libplacebo's cool side tops out at a mild shift, see the docs)
@@ -113,10 +150,15 @@ class BlurGraph:
     mask_width: int = 320
     mask_height: int = 180
     down: int = 4
+    # "normalised": the background copy is a weighted blur that only averages background pixels, so the person's
+    # colour cannot bleed into the blurred edge (issue #133). "plain": the whole frame is blurred (the first version).
+    edge: str = "normalised"
 
 
 @dataclass(frozen=True)
 class Spec:
+    """Everything a graph needs besides the look. `mjpeg_decode` matters for MJPEG cameras only."""
+
     source: Source
     out_device: str
     out_width: int
@@ -135,6 +177,26 @@ class Spec:
     # Replaces the v4l2 input (all input options and "-i ..."): the benchmark and tests feed raw frames this way.
     input_override: tuple[str, ...] = ()
     blur: BlurGraph | None = None
+    scaler: str = DEFAULT_SCALER  # libplacebo scaler for the crop zoom and any size change; one of SCALERS
+    # Video denoise on the GPU before the grade: "" (off) or "nlmeans" (nlmeans_vulkan, DENOISE_NLMEANS; tools/
+    # bench_video_denoise.py has the numbers). The graph then crops EDGE_TRIM pixels off every side, see safe_window.
+    denoise: str = ""
+    # How a Motion-JPEG camera is decoded: "vaapi" (on the GPU, mapped into Vulkan, no copy), "vaapi-copy" (decoded on
+    # the GPU, read back and uploaded again: the decoder's own transfer names the real surface format) or "software"
+    # (the threaded libavcodec decoder, then hwupload). probe.probe_mjpeg picks the first that works on this stack.
+    mjpeg_decode: str = MJPEG_VAAPI
+
+    @property
+    def va_mjpeg(self) -> bool:
+        """The camera is MJPEG and VA-API decodes it (the only case with VA surfaces in the graph)."""
+        return self.backend == "vulkan" and self.source.mjpeg and self.mjpeg_decode == MJPEG_VAAPI
+
+    @property
+    def decode_path(self) -> str:
+        """What decodes the camera, for the state block and the doctor."""
+        if not self.source.mjpeg:
+            return "none (raw)"
+        return self.mjpeg_decode if self.backend == "vulkan" else MJPEG_SOFTWARE
 
 
 @dataclass(frozen=True)
@@ -143,6 +205,8 @@ class GraphKey:
 
     sharpen: float = 0.0  # GPU sharpen strength, a multiple of SHARP_STEP; 0 = no sharpen stage
     split: bool = False  # the colorcorrect split-tone stage is in the graph
+    lut: str = ""  # the look's own 3D LUT (a generated cube's name); "" = none
+    lut_steps: int = 0  # its strength in LUT_STEP units (1..20)
 
 
 @dataclass(frozen=True)
@@ -217,11 +281,34 @@ def sharpen_level(look: dict) -> float:
     return round(steps * SHARP_STEP, 2)
 
 
+def lut_choice(look: dict) -> tuple[str, int]:
+    """The per-look LUT a look asks for: (name, strength steps), or ("", 0) when it has none or it is off.
+
+    The name is the look's `lut` entry (set by the Console from the preset catalog); a LUT that is on but at a
+    strength under half a step is off.
+    """
+    name = look.get("lut")
+    if not isinstance(name, str) or not look.get("lut_enabled") or LUT_NAME.fullmatch(name) is None:
+        return "", 0
+    steps = round(min(1.0, max(0.0, float(look.get("lut_amount", 0.0)))) / LUT_STEP)
+    return (name, steps) if steps > 0 else ("", 0)
+
+
+def lut_file_path(directory: str, name: str, steps: int) -> str:
+    """Where the blended cube for (name, steps) lives (shaders.ensure_lut writes it); a pure function."""
+    return f"{directory.rstrip('/')}/lut-{name}-{steps:02d}.cube"
+
+
 def graph_key(spec: Spec, look: dict) -> GraphKey | None:
-    """What `look` bakes into the graph of `spec`, or None when nothing is baked (CPU sharpen, CPU backend)."""
+    """What `look` bakes into the graph of `spec`, or None when nothing is baked (CPU sharpen, CPU backend).
+
+    A look with its own LUT replaces the split-tone approximation (colorcorrect) with the real cube.
+    """
     if spec.backend != "vulkan" or not spec.shaders:
         return None
-    return GraphKey(sharpen=sharpen_level(look), split=abs(split_values(look)) > 1e-4)
+    lut, steps = lut_choice(look)
+    split = not lut and abs(split_values(look)) > 1e-4
+    return GraphKey(sharpen=sharpen_level(look), split=split, lut=lut, lut_steps=steps)
 
 
 def look_controls(
@@ -265,9 +352,16 @@ def blur_sigma(strength: int | float) -> float:
     return 0.5 + 0.6 * min(BLUR_MAX, max(BLUR_MIN, float(strength)))
 
 
-def blur_controls(on: bool, strength: int | float) -> dict[tuple[str, str], str]:
-    """The blur filters' commandable controls. Off leaves the merge disabled, so the sharp picture passes through."""
-    return {(BLUR_BG, "sigma"): fnum(blur_sigma(strength)), (BLUR_MERGE, "enable"): "1" if on else "0"}
+def blur_controls(on: bool, strength: int | float, edge: str = "plain") -> dict[tuple[str, str], str]:
+    """The blur filters' commandable controls. Off leaves the merge disabled, so the sharp picture passes through.
+
+    `edge` is the graph's BlurGraph.edge: the normalised blur has a second blur (the weights') that follows the
+    sigma."""
+    sigma = fnum(blur_sigma(strength))
+    controls = {(BLUR_BG, "sigma"): sigma, (BLUR_MERGE, "enable"): "1" if on else "0"}
+    if edge == "normalised":
+        controls[(BLUR_WEIGHT, "sigma")] = sigma
+    return controls
 
 
 def diff_controls(old: dict[tuple[str, str], str] | None, new: dict[tuple[str, str], str]) -> list[Command]:
@@ -316,20 +410,38 @@ def _grade_filter(
             f"w={spec.out_width}",
             f"h={spec.out_height}",
             f"format={out_format}",
-            "upscaler=ewa_lanczos",
-            "downscaler=ewa_lanczos",
+            f"upscaler={spec.scaler}",
+            f"downscaler={spec.scaler}",
         ]
         if rect is not None:
             opts += [f"crop_x={rect.x}", f"crop_y={rect.y}", f"crop_w={rect.w}", f"crop_h={rect.h}"]
         opts += [f"{k}={fnum(v)}" for k, v in grade.items()]
         opts.append(f"extra_opts=temperature={fnum(warmth_temperature(float(look.get('warmth', 0.0))))}")
-        if spec.lut:
-            opts += [f"lut={_quote(spec.lut)}", "lut_type=conversion"]
+        if key is not None and key.lut:
+            opts += [f"lut={_quote(lut_file_path(spec.shaders, key.lut, key.lut_steps))}", LUT_TYPE]
+        elif spec.lut:
+            opts += [f"lut={_quote(spec.lut)}", LUT_TYPE]
         if key is not None and key.sharpen > 0:
             opts.append(f"custom_shader_path={_quote(sharpen_shader_path(spec.shaders, key.sharpen))}")
         return f"libplacebo@grade={':'.join(opts)}"
     sets = ":".join(f"{k}={fnum(v)}" for k, v in grade.items())
     return f"scale={spec.out_width}:{spec.out_height}:flags=bicubic,format=yuv444p,eq@grade={sets}:eval=frame"
+
+
+DENOISE_NLMEANS = "nlmeans_vulkan=s=3:p=3:r=5"  # the measured pick (docs/native-video-engine.md, issue #92)
+DENOISERS = {"": None, "nlmeans": DENOISE_NLMEANS}
+EDGE_TRIM = 2  # nlmeans_vulkan writes garbage into its outermost row and column (ffmpeg 8.0.1, Mesa 26.0): cut them
+
+
+def safe_window(spec: Spec, rect: Rect | None) -> Rect | None:
+    """`rect` (None = the whole frame) kept EDGE_TRIM pixels inside the frame when the denoiser is on, else as given."""
+    if not spec.denoise:
+        return rect
+    src = spec.source
+    box = rect or Rect(0, 0, src.width, src.height)
+    x0, y0 = max(box.x, EDGE_TRIM), max(box.y, EDGE_TRIM)
+    x1, y1 = min(box.x + box.w, src.width - EDGE_TRIM), min(box.y + box.h, src.height - EDGE_TRIM)
+    return Rect(x0, y0, max(x1 - x0, 2), max(y1 - y0, 2))
 
 
 UPLOAD_FORMATS = {"yuyv422": "yuv422p", "uyvy422": "yuv422p", "nv12": "nv12", "yuv420p": "yuv420p"}
@@ -376,7 +488,7 @@ def build_detect_graph(spec: Spec) -> str:
     program path (measured, see docs/native-video-engine.md); a second graph reading the same stream costs nothing.
     """
     tail = f"fps={fnum(spec.detect_fps)},scale={spec.detect_width}:-2:flags=fast_bilinear,format=yuvj420p[det]"
-    if spec.backend == "vulkan" and spec.source.mjpeg:
+    if spec.va_mjpeg:
         # decoded on the Arc by VA-API; shrink there and read back the small picture only
         return f"[0:v]scale_vaapi=w={spec.detect_width}:h=-2,hwdownload,format=nv12,{tail}"
     return f"[0:v]{tail}"
@@ -390,7 +502,7 @@ def build_seg_graph(spec: Spec) -> str:
     if spec.blur is None:
         raise GraphError("this spec has no blur branch")
     side = spec.blur.seg_size
-    if spec.backend == "vulkan" and spec.source.mjpeg:
+    if spec.va_mjpeg:
         return f"[0:v]scale_vaapi=w={side}:h={side},hwdownload,format=nv12,format=rgb24[seg]"
     return f"[0:v]scale={side}:{side}:flags=fast_bilinear,format=rgb24[seg]"
 
@@ -408,10 +520,31 @@ def _blur_branch(spec: Spec, on: bool, strength: float) -> str:
     w, h = spec.out_width, spec.out_height
     small_w, small_h = max(2, w // blur.down // 2 * 2), max(2, h // blur.down // 2 * 2)
     sigma = fnum(blur_sigma(strength))
+    if blur.edge == "plain":
+        return (
+            f";[bgs]scale={small_w}:{small_h}:flags=bilinear,gblur@bg=sigma={sigma}:steps=2,"
+            f"scale={w}:{h}:flags=bilinear[bg];"
+            f"[1:v]gblur=sigma=1.5,scale={w}:{h}:flags=bilinear[m];"
+            f"[fg][bg][m]maskedmerge@blur=enable={int(on)}"
+        )
+    if blur.edge != "normalised":
+        raise GraphError(f"{blur.edge!r} is not a blur edge mode (one of: {', '.join(BLUR_EDGES)})")
+    # Normalised blur: bg = blur(picture x weight) / blur(weight), per plane, at the small size. The weight is the
+    # background mask squared, so the half-covered pixels on the person's outline (which carry the person's colour)
+    # count for little. Where the weight is nil the division is clamped; those pixels are under the person.
+    # The divide is the `blend` filter's own divide mode, not an `all_expr` expression: same values (one level apart
+    # at most, and white instead of A*255 where the weight is exactly 0), but the expression evaluator cost about
+    # 80 % of the branch's extra CPU (issue #148). The weight is the same in all three planes of the mask, so its
+    # blur runs on one plane and is copied back to three (`mergeplanes`) for the divide: a third of the gblur work.
     return (
-        f";[bgs]scale={small_w}:{small_h}:flags=bilinear,gblur@bg=sigma={sigma}:steps=2,"
-        f"scale={w}:{h}:flags=bilinear[bg];"
-        f"[1:v]gblur=sigma=1.5,scale={w}:{h}:flags=bilinear[m];"
+        f";[bgs]scale={small_w}:{small_h}:flags=bilinear[fs];"
+        f"[1:v]gblur=sigma=1.5[ms];[ms]split=2[mw][mm];"
+        f"[mw]scale={small_w}:{small_h}:flags=bilinear,split[wp][wq];[wp][wq]blend=all_mode=multiply,split[wa][wb];"
+        f"[fs][wa]blend=all_mode=multiply,gblur@bg=sigma={sigma}:steps=2[num];"
+        f"[wb]extractplanes=y,gblur@bgw=sigma={sigma}:steps=2,split=3[d0][d1][d2];"
+        f"[d0][d1][d2]mergeplanes=0x001020:yuv444p[den];"
+        f"[num][den]blend=all_mode=divide,scale={w}:{h}:flags=bilinear[bg];"
+        f"[mm]scale={w}:{h}:flags=bilinear[m];"
         f"[fg][bg][m]maskedmerge@blur=enable={int(on)}"
     )
 
@@ -436,6 +569,13 @@ def build_graph(
     """
     src = spec.source
     src.pix_fmt  # noqa: B018 - raises GraphError for a format the engine cannot read
+    if spec.scaler not in SCALERS:
+        raise GraphError(f"{spec.scaler!r} is not a benchmarked scaler (one of: {', '.join(SCALERS)})")
+    if spec.denoise not in DENOISERS:
+        raise GraphError(f"{spec.denoise!r} is not a known denoiser (one of: {', '.join(n for n in DENOISERS if n)})")
+    if spec.denoise and spec.backend != "vulkan":
+        raise GraphError("the GPU denoiser needs the Vulkan backend")
+    rect = safe_window(spec, rect)
     if src.width <= 0 or src.height <= 0:
         raise GraphError("the source has no size")
     if spec.blur is not None and blur is None:
@@ -445,14 +585,18 @@ def build_graph(
     stamp = f"setpts=N/({fnum(src.fps)}*TB)," if spec.blur is not None else ""
     yuv = _yuv_stage(look, spec.backend, key)
     if spec.backend == "vulkan":
-        # MJPEG is decoded on the Arc by VA-API and mapped into Vulkan without leaving video memory
-        head = f"[0:v]{stamp}" + (
-            "hwmap=derive_device=vulkan" if src.mjpeg else f"format={upload_format(src)},hwupload"
-        )
+        if spec.va_mjpeg:  # decoded on the Arc by VA-API and mapped into Vulkan without leaving video memory
+            upload = "hwmap=derive_device=vulkan"
+        elif src.mjpeg:  # system-memory frames (libavcodec's, or the VA decoder's own readback): 4:2:0 or 4:2:2
+            upload = "format=yuv420p|yuv422p|nv12,hwupload"
+        else:
+            upload = f"format={upload_format(src)},hwupload"
+        head = f"[0:v]{stamp}{upload}"
         # 4:4:4 when a CPU stage or the blur merge needs whole planes; otherwise the camera's own 4:2:2 comes back
         out_format = "yuv444p" if yuv or spec.blur is not None else "yuv422p"
         grade = _grade_filter(spec, look, rect, blackout, key, out_format)
-        stages = [*spec.pre_grade, grade, "hwdownload", f"format={out_format}"]
+        denoise = [DENOISERS[spec.denoise]] if spec.denoise else []
+        stages = [*denoise, *spec.pre_grade, grade, "hwdownload", f"format={out_format}"]
     else:
         if src.mjpeg:
             raise GraphError("MJPEG cameras need the Vulkan/VA-API backend (the CPU backend reads raw formats only)")
@@ -464,15 +608,18 @@ def build_graph(
             chain += "," + yuv
     else:
         chain = ",".join([head, *stages, *([yuv] if yuv else [])])
-    tail_in = f"{chain},format={spec.output_format}"
     if spec.taps:
+        # split BEFORE the packing step: the taps convert from the program picture's own planar format straight to
+        # nv12, instead of from the packed output format (one conversion fewer, and no 4:2:2 repack on the way)
         outs = ["prog"] + [f"t{i}" for i in range(len(spec.taps))]
         labels = "".join(f"[{o}]" for o in outs)
-        graph = f"{tail_in},split={len(outs)}{labels}"
+        graph = (
+            f"{chain},split={len(outs)}{labels.replace('[prog]', '[pre]', 1)};[pre]format={spec.output_format}[prog]"
+        )
         for i, _ in enumerate(spec.taps):
             graph += f";[t{i}]format=nv12[tap{i}]"
         return graph
-    return f"{tail_in}[prog]"
+    return f"{chain},format={spec.output_format}[prog]"
 
 
 def input_args(spec: Spec) -> list[str]:
@@ -537,8 +684,10 @@ def build_argv(
             "-filter_hw_device",
             "vk",
         ]
-        if spec.source.mjpeg:
+        if spec.va_mjpeg:
             argv += ["-hwaccel", "vaapi", "-hwaccel_device", "va", "-hwaccel_output_format", "vaapi"]
+        elif spec.source.mjpeg and spec.mjpeg_decode == MJPEG_VAAPI_COPY:
+            argv += ["-hwaccel", "vaapi", "-hwaccel_device", "va"]  # no output format: frames come back in memory
     if any(tap.encoder.endswith("_qsv") for tap in spec.taps):
         # the Quick Sync encoders open their own device: without this they take the first GPU libva finds, which on
         # a machine with an integrated GPU is not the one the graph runs on
@@ -584,7 +733,7 @@ def blend_looks(start: dict, target: dict, mix: float) -> dict:
     """A look part-way between two: numbers eased, flags jump half-way (a LUT never flashes at full strength)."""
     out = dict(target)
     for key, value in target.items():
-        if isinstance(value, bool) or key not in start or isinstance(start[key], bool):
+        if isinstance(value, (bool, str)) or key not in start or isinstance(start[key], (bool, str)):
             continue
         out[key] = start[key] + (value - start[key]) * smoothstep(mix)
     for key in ("sharpen_enabled", "lut_enabled"):

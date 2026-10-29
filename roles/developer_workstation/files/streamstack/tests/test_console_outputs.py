@@ -496,6 +496,32 @@ def test_the_state_says_what_is_playing_and_how_far(sound: Sound, out: Outputs) 
     assert wait_idle(out)["test"]["elapsed"] is None
 
 
+def test_a_slow_disk_never_blocks_the_state_or_the_end_of_a_test(
+    sound: Sound, out: Outputs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#163: the results file is written outside the lock `state()` takes: a stalled disk delays only the save."""
+    writing, release = threading.Event(), threading.Event()
+
+    def slow_write(path: Path | str, data: Any, **_: Any) -> Path:
+        writing.set()
+        assert release.wait(30), "the test never released the disk"
+        return Path(path)
+
+    monkeypatch.setattr(outputs.filestore, "write_json", slow_write)
+    try:
+        out.act("audio.output_test", {"name": WAVE})
+        assert writing.wait(30), "the test thread never reached the save"
+        answered: list[dict[str, Any]] = []
+        poller = threading.Thread(target=lambda: answered.append(out.state()), daemon=True)
+        poller.start()
+        poller.join(timeout=5)
+        assert answered, "state() is blocked behind the results write"
+        assert device(answered[0], WAVE)["result"]["result"] == "pending"  # the verdict is already in memory
+    finally:
+        release.set()
+    assert wait_idle(out, timeout=10)["test"]["state"] == "idle"
+
+
 def test_stop_ends_a_running_test_and_records_nothing(sound: Sound, out: Outputs) -> None:
     sound.hold = True
     out.act("audio.output_test", {"name": WAVE})

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
+
 from playwright.sync_api import expect
 
-from support import LOADED, App, Rig, poll
+from support import LOADED, SCALE, App, Rig, poll
 
 
 def test_shift_r_revives_a_stalled_mic_from_any_page(app: App, rig: Rig) -> None:
@@ -16,16 +18,23 @@ def test_shift_r_revives_a_stalled_mic_from_any_page(app: App, rig: Rig) -> None
     expect(banner.first).to_contain_text("Microphone stalled")
     app.hash_to("camera")  # a page without the banner: the shortcut is global
     app.press("Shift+R")
-    assert poll(rig, lambda s: s["audio"]["mic"]["revive"]["state"] == "reviving")
-    assert poll(rig, lambda s: s["audio"]["mic"]["revive"]["state"] == "ok", timeout=20)
+    # The demo's "reviving" lasts 1.5 s and the state is only advanced when read: a starved runner can see it already
+    # "ok". The end state (revived, no longer stalled) is what proves the shortcut posted.
+    assert poll(
+        rig,
+        lambda s: s["audio"]["mic"]["revive"]["state"] == "ok" and not s["audio"]["mic"]["stalled"],
+        timeout=20 * SCALE,
+    )
     app.hash_to("live")
     expect(app.page.locator(".revive[data-state='stalled']")).to_have_count(0)
 
 
 def test_shift_r_does_nothing_while_the_mic_is_healthy(app: App, rig: Rig) -> None:
     app.goto("live")
-    before = rig.state()["audio"]["mic"]["revive"]["state"]  # may still be "ok" from the previous test
     app.press("Shift+R")
-    # state-read: nothing is expected to happen; there is no post to wait for
-    assert rig.state()["audio"]["mic"]["revive"]["state"] == before
-    assert rig.state()["audio"]["mic"]["revive"]["state"] != "reviving"
+    # Nothing is expected to happen, so there is no post to wait for: watch the state for longer than a demo revive
+    # takes to begin. ("ok" may linger from the previous test and ends on its own clock, so only "reviving" counts.)
+    watch_until = time.monotonic() + 2.0
+    while time.monotonic() < watch_until:
+        assert rig.state()["audio"]["mic"]["revive"]["state"] != "reviving"
+        time.sleep(0.1)

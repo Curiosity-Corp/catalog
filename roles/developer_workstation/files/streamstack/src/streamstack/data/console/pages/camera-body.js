@@ -79,7 +79,9 @@ export async function mountBody(side, ctx) {
       const res = await act('video.canon_set', { id, value }, { quiet: true });
       if (res) {
         // show the request until the next snapshot reports what the camera really did
-        store.patch({ [`video.canon.controls.${id}.value`]: String(value) });
+        // (held until a snapshot that began after the camera was told, not for a fixed 600 ms: #157)
+        const path = `video.canon.controls.${id}.value`;
+        store.settle([path], store.patch({ [path]: String(value) }, { hold: Infinity }), { seq: res.seq, bySeq: true });
         if (res.message) toast(res.message, { level: 'warn', timeout: 5000, id: `canon:${id}` });
       }
     } finally {

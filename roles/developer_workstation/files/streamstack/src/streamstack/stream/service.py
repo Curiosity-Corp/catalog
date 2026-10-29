@@ -32,13 +32,18 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from streamstack import store, system
 from streamstack.hardware import camera as hwcamera
 from streamstack.hardware import roles
-from streamstack.stream import ffcmd, mkv, recover
+from streamstack.presets import catalog
+from streamstack.presets.schema import PresetError
+from streamstack.stream import adapt, ffcmd, mkv, recover, srt
 from streamstack.stream.ffcmd import AudioSource, EncoderChoice, Source
+from streamstack.stream.ingest import SrtIngest
 from streamstack.stream.model import (
+    REF,
     AssignError,
     Destination,
     EncoderSettings,
@@ -64,7 +69,10 @@ from streamstack.stream.probe import (
 )
 from streamstack.stream.proc import Child, ProgressParser
 from streamstack.stream.relay import Chain
+from streamstack.stream.replay import DEFAULT_MAX_MB, DEFAULT_SECONDS, REPLAY_ID, ReplayError, ReplaySink, idle_stats
 from streamstack.stream.sinks import FileSink, PipeSink
+from streamstack.stream.twitch import CONFIG_URL as TWITCH_CONFIG_URL
+from streamstack.stream.twitch import AccountProbe, TwitchCaps, is_twitch
 from streamstack.stream.usage import UsageMeter
 
 if TYPE_CHECKING:
@@ -85,6 +93,19 @@ FAST_FAIL_S = 20.0
 TRANSPORT_LATENCY_MS = {"record": 0, "rtmp": 250, "whip": 150}  # typical ingest buffering; SRT uses its own setting
 WHIP_PLAYOUT_MS = 100  # a typical server or player jitter buffer; added to the measured half round trip (not measured)
 EVENT_LIMIT = 30
+Uplink = Callable[[], str | None]  # the network quality monitor's rating of the uplink (#41), if there is one
+IDLE_INGEST: dict[str, Any] = {
+    "active": False,
+    "state": "idle",
+    "port": 0,
+    "latency_ms": 0,
+    "encrypted": False,
+    "file": "",
+    "files": [],
+    "bytes": 0,
+    "callers": 0,
+    "last_error": "",
+}
 
 
 class StreamError(Exception):
@@ -149,7 +170,7 @@ class Active:
 
     dest: Destination
     codec: str
-    sink: PipeSink | FileSink | WhipSink
+    sink: PipeSink | FileSink | WhipSink | ReplaySink
     started_at: float
     path: Path | None = None  # recordings
     moved: bool = False  # already fell back from Enhanced RTMP
@@ -182,8 +203,13 @@ class StreamService:
         plan: roles.PlanSource | None = None,
         raw_override: AudioSource | None = None,
         disk_free: Callable[[Path], int] | None = None,
+        adapt_config: adapt.AdaptConfig | None = None,
+        uplink: Uplink | None = None,
+        twitch: AccountProbe | None = None,
     ) -> None:
         self.cfg = dict(cfg)
+        self._twitch = twitch or AccountProbe(self.cfg.get("STREAMSTACK_TWITCH_CONFIG_URL") or TWITCH_CONFIG_URL)
+        self._accounts: dict[str, TwitchCaps] = {}  # destination id -> what Twitch said that account may publish
         self.notify: Notify = notify or (lambda level, text: None)
         self._plan = plan or (lambda: None)  # the hardware Plan: which GPU encodes (ADR 0003)
         self._probe = probe or ProbeCache(probe_host, key=render_signature)
@@ -195,10 +221,20 @@ class StreamService:
         self._raw_override = raw_override
         self._disk_free = disk_free or free_bytes
         self._lock = threading.RLock()
-        self._settings = EncoderSettings()
+        self._settings = EncoderSettings()  # what the person chose (saved)
+        self._effective = self._settings  # what is sent: the choice, stepped down while the link cannot carry it
+        self._ladder: dict[str, str] | None = None  # {"platform", "tier"} of the plan the person applied
+        self._adapt_on = True
+        self._adapt: adapt.AdaptController | None = None
+        self._adapt_judge = adapt.Judge(adapt_config or adapt.AdaptConfig())
+        self._adapt_config = adapt_config or adapt.AdaptConfig()
+        self._adapt_next = 0.0
+        self._adapt_last: adapt.Verdict = adapt.Verdict()
+        self._uplink = uplink or (lambda: None)
         self._destinations: list[Destination] = []
         self._runs: dict[str, Run] = {}
         self._active: dict[str, Active] = {}
+        self._pending_replay: ReplaySink | None = None  # armed by start_replay, taken by _make_sink
         self._audio: Gen | None = None
         self._audio_pending: Gen | None = None
         self._audio_track: mkv.Track | None = None
@@ -212,6 +248,9 @@ class StreamService:
         self._disk_warned = False
         self._disk_stopped = ""
         self._recovery: threading.Thread | None = None
+        self._last_ingest: dict[str, Any] | None = None
+        self._ingest: SrtIngest | None = None  # SRT input: a listener that records a remote sender
+        self._srt: dict[str, srt.SrtLink] = {}  # a path probe per SRT destination that is running
         self._gen_ids = 0
         self._epoch = 0.0
         self._source: Source | None = None
@@ -243,14 +282,25 @@ class StreamService:
             data = store.read_json(self._state_path, {}, validate=store.is_object)
             self._settings = EncoderSettings.from_dict(data.get("settings"))
             self._destinations = destinations_from(data.get("destinations", []))
+            self._adapt_on = data.get("adapt", True) is not False
+            ladder = data.get("ladder")
+            if isinstance(ladder, dict) and all(isinstance(ladder.get(k), str) for k in ("platform", "tier")):
+                self._set_ladder(ladder["platform"], ladder["tier"])
         except (OSError, ValueError) as exc:  # SettingsError is a ValueError; a damaged file starts clean, loudly
             self._event("warn", f"Stream settings could not be read ({exc}); starting with the defaults.")
             self._settings, self._destinations = EncoderSettings(), []
+            self._ladder, self._adapt = None, None
+        self._effective = self._settings
 
     def _save(self) -> None:
         if self._state_path is None:
             return
-        body = {"settings": self._settings.to_dict(), "destinations": [d.to_dict() for d in self._destinations]}
+        body = {
+            "settings": self._settings.to_dict(),
+            "destinations": [d.to_dict() for d in self._destinations],
+            "ladder": self._ladder,
+            "adapt": self._adapt_on,
+        }
         try:
             store.write_json(self._state_path, body, mode=0o600)  # destinations hold stream keys
         except OSError as exc:
@@ -362,6 +412,7 @@ class StreamService:
         """End everything: sinks first (so files are closed cleanly), then every encoder."""
         with self._lock:
             ids = list(self._active)
+        self._end_ingest()
         for dest_id in ids:
             try:
                 self._deactivate(dest_id)
@@ -374,6 +425,13 @@ class StreamService:
     def start_stream(self, ids: list[str] | None = None) -> str:
         """Start every enabled live destination (or the named ones). Recording is separate (`start_record`)."""
         with self._lock:
+            pending = [
+                d
+                for d in self._destinations
+                if d.live() and (d.id in ids if ids else d.enabled) and d.id not in self._active
+            ]
+        self._ask_twitch(pending)  # a network call: never under the service lock
+        with self._lock:
             chosen = [d for d in self._destinations if d.live() and (d.id in ids if ids else d.enabled)]
             if ids:
                 missing = sorted(set(ids) - {d.id for d in self._destinations})
@@ -384,8 +442,39 @@ class StreamService:
             started = [d for d in chosen if d.id not in self._active]
             if not started:
                 return "Already streaming."
+            if not any(a.dest.live() for a in self._active.values()):
+                self._adapt_reset("a new stream starts")
             self._bring_up(started)
         return f"Streaming to {', '.join(d.label() for d in started)}."
+
+    def _ask_twitch(self, dests: list[Destination]) -> None:
+        """Ask Twitch what each Twitch destination's account may publish (Enhanced Broadcasting)."""
+        for dest in dests:
+            if dest.kind != "rtmp" or dest.options.get("mode", "auto") != "auto" or not is_twitch(dest.url):
+                with self._lock:
+                    self._accounts.pop(dest.id, None)  # no longer a Twitch destination: forget what it was
+                continue
+            try:
+                key = resolve_secret(dest.key_ref, self.cfg) if dest.key_ref else ""
+            except SecretError as exc:
+                self._event("warn", f"{dest.label()}: the stream key could not be read to check the account ({exc}).")
+                continue
+            caps = self._twitch.lookup(key)
+            with self._lock:
+                self._accounts[dest.id] = caps
+            if not caps.known:
+                self._event("info", f"{dest.label()}: {caps.reason} Using the normal codec choice with fallback.")
+
+    def _available_for(self, dest: Destination, available: set[str]) -> set[str]:
+        """The host's codecs narrowed to what this destination's account may publish, when Twitch said."""
+        caps = self._accounts.get(dest.id)
+        if caps is None or not caps.known or dest.codec != "auto":
+            return available
+        narrowed = {c for c in available if c in caps.codecs}
+        if narrowed and narrowed != available:
+            names = ", ".join(c.upper() for c in caps.codecs)
+            self._event("info", f"{dest.label()}: this Twitch account may publish {names}.")
+        return narrowed or available
 
     def stop_stream(self, dest_id: str | None = None) -> str:
         with self._lock:
@@ -425,14 +514,153 @@ class StreamService:
             self._after_change()
         return f"Recording saved to {path}."
 
+    def start_ingest(self, port: int, name: str = "", latency_ms: int = 200, key_ref: str = "") -> str:
+        """Listen for an SRT sender on `port` and record what it delivers (SRT input, or a remote backup recording)."""
+        if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
+            raise StreamError("The SRT input port must be a number from 1024 to 65535.", 400)
+        if isinstance(latency_ms, bool) or not isinstance(latency_ms, int) or not 20 <= latency_ms <= 8000:
+            raise StreamError("SRT input latency_ms must be between 20 and 8000.", 400)
+        with self._lock:
+            if self._ingest is not None and self._ingest.status()["active"]:
+                raise StreamError("SRT input is already listening; stop it first.", 409)
+            ffmpeg = self.host().ffmpeg
+            if not ffmpeg:
+                raise StreamError("ffmpeg is not installed, so nothing can be received.", 409)
+            if key_ref and not REF.fullmatch(key_ref):
+                raise StreamError("key_ref looks like env:NAME, file:/path, cfg:NAME or cmd:command args.", 400)
+            try:
+                passphrase = resolve_secret(key_ref, self.cfg) if key_ref else ""
+            except SecretError as exc:
+                raise StreamError(str(exc), 400) from None
+            self._ingest = SrtIngest(
+                ffmpeg,
+                port,
+                self.record_dir(),
+                name or "SRT-backup",
+                self._spawn_child,
+                latency_ms,
+                passphrase,
+                wall=self._wall,
+                notify=self._event,
+            )
+            self._ingest.start()
+            self._ensure_supervisor()
+        return f"Listening for an SRT sender on port {port}; it is recorded to {self.record_dir()}."
+
+    def stop_ingest(self) -> str:
+        with self._lock:
+            if self._ingest is None or not self._ingest.status()["active"]:
+                return "SRT input is not listening."
+            status = self._ingest.status()
+            self._end_ingest()
+        saved = f" Saved: {status['file']}." if status["file"] else ""
+        return f"SRT input stopped.{saved}"
+
+    def _end_ingest(self) -> None:
+        ingest, self._ingest = self._ingest, None
+        if ingest is not None:
+            self._last_ingest = ingest.status() | {"active": False, "state": "stopped"}
+            ingest.stop()
+
+    def _ensure_supervisor(self) -> None:
+        """The tick thread also serves the SRT listener when nothing is being streamed or recorded."""
+        if self._supervisor is None or not self._supervisor.is_alive():
+            self._stop = threading.Event()
+            self._supervisor = threading.Thread(
+                target=self._supervise, args=(self._stop,), name="stream-supervisor", daemon=True
+            )
+            self._supervisor.start()
+
+    def start_replay(self, seconds: int = DEFAULT_SECONDS) -> str:
+        """Keep the last `seconds` of the program in memory so a moment can be saved after it happened."""
+        try:
+            seconds = int(seconds)
+        except (TypeError, ValueError):
+            raise StreamError("The replay length must be a whole number of seconds.", 400) from None
+        with self._lock:
+            if REPLAY_ID in self._active:
+                return "Instant replay is already armed."
+            cap = self.replay_max_bytes()
+            self._check_replay_memory(seconds, cap)
+            self._pending_replay = ReplaySink(REPLAY_ID, seconds, cap, wall=self._wall)  # validates the length
+            dest = Destination(REPLAY_ID, "record", "Instant replay")
+            try:
+                self._bring_up([dest])
+            finally:
+                self._pending_replay = None
+        return f"Instant replay is keeping the last {seconds} s in memory (up to {cap // (1024 * 1024)} MB)."
+
+    def stop_replay(self) -> str:
+        with self._lock:
+            if REPLAY_ID not in self._active:
+                return "Instant replay is not armed."
+            self._deactivate(REPLAY_ID)
+            self._after_change()
+        return "Instant replay stopped and its memory freed."
+
+    def save_replay(self, seconds: int | None = None, name: str = "") -> dict[str, Any]:
+        """Write the last `seconds` of the buffer to a clip in the recordings folder."""
+        with self._lock:
+            active = self._active.get(REPLAY_ID)
+            if active is None or not isinstance(active.sink, ReplaySink):
+                raise StreamError("Instant replay is not armed.", 409)
+            sink = active.sink
+            ffmpeg = self.host().ffmpeg
+            stamp = datetime.fromtimestamp(self._wall()).strftime("%Y%m%d-%H%M%S")
+            path = self.record_dir() / f"{slug(name or 'Replay')}-{stamp}.mkv"
+        try:  # the (slow) write happens outside the service lock: the buffer has its own
+            result = sink.save(path, None if seconds is None else int(seconds), ffmpeg)
+        except ReplayError as exc:
+            raise StreamError(exc.message, exc.status) from None
+        except (TypeError, ValueError):
+            raise StreamError("The clip length must be a whole number of seconds.", 400) from None
+        self._event("info", f"Replay clip saved to {result['file']} ({result['seconds']} s).")
+        return result
+
+    def replay_max_bytes(self) -> int:
+        try:
+            megabytes = int(self.cfg.get("STREAMSTACK_REPLAY_MAX_MB") or DEFAULT_MAX_MB)
+        except (TypeError, ValueError):
+            megabytes = DEFAULT_MAX_MB
+        return max(1, megabytes) * 1024 * 1024
+
+    def _check_replay_memory(self, seconds: int, cap: int) -> None:
+        """Refuse an arm that would not fit: the buffer would silently hold less than the length asked for."""
+        source = self._source or self.source()
+        size = self._settings.size(source.size)
+        fps = self._settings.fps or source.fps
+        codec = self._wanted_codec(self._settings)
+        kbps = (
+            self._settings.bitrate_for("h264" if codec == "auto" else codec, size, fps)
+            + self._settings.audio_bitrate_kbps
+        )
+        need = int(seconds * kbps * 1000 / 8 * 1.1)  # the window plus the keyframe straddling its edge
+        if need > cap:
+            fits = int(cap / (kbps * 1000 / 8 * 1.1))
+            raise StreamError(
+                f"{seconds} s at about {kbps // 1000} Mbit/s needs {need // (1024 * 1024)} MB, over the "
+                f"{cap // (1024 * 1024)} MB replay limit. Arm up to {max(fits, 0)} s, lower the bitrate, or raise "
+                "STREAMSTACK_REPLAY_MAX_MB.",
+                400,
+            )
+
     def set(self, patch: Mapping[str, Any]) -> str:
-        """Change encoder settings and/or the destination list. Encoder changes apply live where they can."""
+        """Change encoder settings, the destination list and/or the downshift ladder. Encoder changes apply live
+        where they can.
+
+        `ladder: {platform, tier}` (from the Presets page) names the plan the settings came from, so automatic
+        downshift knows its steps; `ladder: None` forgets it; `adapt: bool` turns automatic downshift on or off.
+        Changing the picture or the bitrate by hand without naming a ladder forgets the ladder: the steps below a
+        plan the person has overridden would no longer mean anything.
+        """
         patch = dict(patch)
         new_destinations = patch.pop("destinations", None)
+        ladder_given = "ladder" in patch
+        ladder_req = patch.pop("ladder", None)
+        adapt_req = patch.pop("adapt", None)
         with self._lock:
-            old = self._settings
             try:
-                new = EncoderSettings.from_dict(patch, old)
+                new = EncoderSettings.from_dict(patch, self._settings)
                 destinations, secrets = (
                     edit_destinations(new_destinations, self._destinations, self._key_ref)
                     if new_destinations is not None
@@ -442,21 +670,147 @@ class StreamService:
                     raise SettingsError("This rig has no private place to keep a key; give a key_ref instead.")
             except SettingsError as exc:
                 raise StreamError(str(exc), 400) from None
+            if adapt_req is not None and not isinstance(adapt_req, bool):
+                raise StreamError("adapt must be true or false.", 400)
+            ladder, controller, reset = self._plan_ladder(patch, ladder_given, ladder_req, adapt_req)
             if destinations is not None:
                 self._check_destination_edit(destinations, set(secrets))
-            kind = classify_change(old, new)
+            old = self._effective
+            effective = new if reset or controller is None else self._overlay(new, controller.index)
+            kind = classify_change(old, effective)
             if kind in ("codec", "geometry", "seamless"):
-                self._check_encoder_choice(new)
+                self._check_encoder_choice(effective)
             if secrets:
                 self._write_keys(secrets)
-            self._settings = new
+            self._settings, self._effective = new, effective
+            self._ladder, self._adapt = ladder, controller
+            if adapt_req is not None:
+                self._adapt_on = adapt_req
+            if reset:
+                if controller is not None:
+                    controller.reset()
+                self._adapt_judge.forget()
+                self._adapt_last = adapt.Verdict()
             if destinations is not None:
                 self._destinations = destinations
                 self._forget_keys()
             self._save()
             if not self._runs:
                 return "Saved; it applies when the stream starts."
-            return self._apply_change(kind, old, new)
+            return self._apply_change(kind, old, effective)
+
+    # -- automatic downshift (docs/stream.md "Bandwidth adaptation") ---------------------------------------------
+
+    def _overlay(self, base: EncoderSettings, index: int) -> EncoderSettings:
+        """`base` stepped down to ladder step `index`: only the picture size, frame rate and bitrate move."""
+        if self._adapt is None or index <= 0:
+            return base
+        return adapt.overlay(base, self._adapt.steps[index])
+
+    def _build_ladder(self, platform_id: str, tier_id: str) -> adapt.AdaptController:
+        try:
+            cat = catalog.load()
+            steps = adapt.build_steps(cat.platform(platform_id), cat.tiers, tier_id)
+        except PresetError as exc:
+            raise StreamError(f"Bandwidth ladder: {exc}", 400) from None
+        return adapt.AdaptController(steps, self._adapt_config)
+
+    def _set_ladder(self, platform_id: str, tier_id: str) -> None:
+        """Adopt a ladder (at load). A plan that no longer exists is dropped with a note, never an error."""
+        try:
+            controller = self._build_ladder(platform_id, tier_id)
+        except StreamError as exc:
+            self._event("warn", f"Automatic downshift is off: {exc.message}")
+            return
+        self._ladder, self._adapt = {"platform": platform_id, "tier": tier_id}, controller
+
+    def _plan_ladder(
+        self, patch: Mapping[str, Any], given: bool, request: object, adapt_req: bool | None
+    ) -> tuple[dict[str, str] | None, adapt.AdaptController | None, bool]:
+        """The ladder and controller after this change, and whether the controller starts again at the top step."""
+        if given and request is not None:
+            if (
+                not isinstance(request, Mapping)
+                or not isinstance(request.get("platform"), str)
+                or not isinstance(request.get("tier"), str)
+            ):
+                raise StreamError("ladder must be {platform: id, tier: id} or null.", 400)
+            platform_id, tier_id = request["platform"], request["tier"]
+            return {"platform": platform_id, "tier": tier_id}, self._build_ladder(platform_id, tier_id), True
+        if given or any(key in patch for key in adapt.ADAPT_KEYS):
+            if self._ladder is not None:
+                self._event("info", "Bandwidth ladder forgotten: the picture settings were changed by hand.")
+            return None, None, True
+        return self._ladder, self._adapt, adapt_req is not None and self._adapt is not None
+
+    def _link_sample(self, active: Active) -> adapt.LinkSample:
+        run = self._runs.get(active.codec)
+        snap = run.chain.snapshot() if run else {"video_kbps": 0.0, "audio_kbps": 0.0}
+        kbps = float(snap["video_kbps"]) + float(snap["audio_kbps"])
+        dest = active.dest
+        return adapt.sample_from_status(dest.id, dest.label(), dest.kind, active.sink.status(), kbps)
+
+    def _adapt_reset(self, why: str) -> None:
+        """Back to the plan the person chose (nothing is sending, or automation was turned off)."""
+        if self._adapt is None:
+            return
+        was = self._adapt.index
+        self._adapt.reset()
+        self._adapt_judge.forget()
+        self._adapt_last = adapt.Verdict()
+        if was:
+            self._effective = self._settings
+            self._event("info", f"Picture back to {self._adapt.steps[0].label}: {why}.")
+
+    def _adapt_tick(self, now: float) -> None:
+        controller = self._adapt
+        if controller is None:
+            return
+        live = [a for a in self._active.values() if a.dest.live() and a.path is None]
+        if not live:
+            if controller.index:
+                self._adapt_reset("the stream stopped")
+            return
+        if not self._adapt_on or now < self._adapt_next:
+            return
+        self._adapt_next = now + self._adapt_config.eval_interval_s
+        verdict = adapt.worst([self._adapt_judge.judge(self._link_sample(a)) for a in live])
+        self._adapt_last = verdict
+        try:
+            rating = self._uplink()
+        except Exception as exc:  # an optional extra opinion must never stop the supervisor
+            self._event("warn", f"The network quality rating could not be read: {type(exc).__name__}: {exc}")
+            rating = None
+        shift = controller.evaluate(now, verdict, rating)
+        if shift is None:
+            return
+        target = self._overlay(self._settings, shift.to)
+        old = self._effective
+        try:
+            kind = classify_change(old, target)
+            if kind in ("codec", "geometry", "seamless"):
+                self._check_encoder_choice(target)
+            self._effective = target
+            self._apply_change(kind, old, target)
+        except StreamError as exc:  # a swap is still in flight, or the encoder refused: try again next round
+            self._effective = old
+            self._adapt_next = now + 1.0
+            self._event("warn", f"Automatic {shift.direction}shift waits: {exc.message}")
+            return
+        controller.commit(now, shift)
+        label = controller.steps[shift.to].label
+        if shift.direction == "down":
+            self._event("warn", f"The link is struggling ({shift.reason}); sending {label} until it recovers.")
+        else:
+            self._event("ok", f"The link has been steady ({shift.reason}); sending {label}.")
+
+    def adapt_state(self, now: float) -> dict[str, Any]:
+        controller = self._adapt
+        body: dict[str, Any] = {"enabled": self._adapt_on, "ladder": self._ladder, "available": controller is not None}
+        if controller is not None:
+            body.update(controller.snapshot(now))
+            body["verdict"] = {"level": self._adapt_last.level, "reason": self._adapt_last.reason}
+        return body
 
     # -- stream keys typed into the Console: one private file each, never in stream.json or the state -------
 
@@ -503,7 +857,7 @@ class StreamService:
     def _check_destination_edit(self, destinations: list[Destination], rekeyed: AbstractSet[str] = frozenset()) -> None:
         by_id = {d.id: d for d in destinations}
         for dest_id, active in self._active.items():
-            if dest_id == "record":
+            if dest_id in ("record", REPLAY_ID):
                 continue
             if dest_id in rekeyed:
                 raise StreamError(f"{active.dest.label()} is streaming; stop it before changing its key.", 409)
@@ -532,8 +886,8 @@ class StreamService:
         for dest in dests:
             self._require_transport(host, dest)
         source = self._source or self.source()
-        size = self._settings.size(source.size)
-        available = host.available_codecs(size, self._settings.fps or source.fps)
+        size = self._effective.size(source.size)
+        available = host.available_codecs(size, self._effective.fps or source.fps)
         if not available:
             raise StreamError("No working video encoder was found on this host; see the probe for the reasons.", 409)
         first = not self._runs
@@ -542,7 +896,7 @@ class StreamService:
         added: list[str] = []
         try:
             for dest in dests:
-                codec = self._codec_for(dest, available)
+                codec = self._codec_for(dest, self._available_for(dest, available))
                 self._attach(dest, codec, (paths or {}).get(dest.id))
                 added.append(dest.id)
         except (StreamError, AssignError) as exc:
@@ -570,8 +924,8 @@ class StreamService:
     def _codec_for(self, dest: Destination, available: set[str]) -> str:
         existing = {a.codec for a in self._active.values()}
         if self._active:
-            return assign_codec(dest, available, existing, self._wanted_codec(self._settings), self.max_chains())
-        plan = plan_chains([dest], available, self._wanted_codec(self._settings), self.max_chains())
+            return assign_codec(dest, available, existing, self._wanted_codec(self._effective), self.max_chains())
+        plan = plan_chains([dest], available, self._wanted_codec(self._effective), self.max_chains())
         codec = plan.codec_of(dest.id)
         if codec is None:
             raise StreamError(plan.unserved.get(dest.id, f"{dest.label()} cannot be served."), 409)
@@ -585,12 +939,8 @@ class StreamService:
         self._audio_failed = ""
         self._audio_track = None
         self._audio_last_ts = -1
-        self._stop = threading.Event()
         self._start_audio(host)
-        self._supervisor = threading.Thread(
-            target=self._supervise, args=(self._stop,), name="stream-supervisor", daemon=True
-        )
-        self._supervisor.start()
+        self._ensure_supervisor()
 
     def _after_change(self) -> None:
         """Stop the pipelines nothing needs any more; end the session when no destination is left."""
@@ -612,6 +962,8 @@ class StreamService:
                 gen.child.stop(grace=1.0)
         self._audio = self._audio_pending = None
         self._stop_raw()
+        if self._ingest is not None:
+            self._ensure_supervisor()  # a listening SRT input still needs its tick
         self._source = None
 
     def _stop_run(self, run: Run) -> None:
@@ -625,7 +977,12 @@ class StreamService:
 
     def _attach(self, dest: Destination, codec: str, path: Path | None = None) -> None:
         run = self._runs.get(codec) or self._start_run(codec)
-        sink, target = self._make_sink(dest, codec, path)
+        self._start_srt_link(dest)
+        try:
+            sink, target = self._make_sink(dest, codec, path)
+        except (StreamError, OSError):
+            self._stop_srt_link(dest.id)
+            raise
         recording = dest.kind == "record"
         if recording:
             self._disk_warned, self._disk_stopped = False, ""
@@ -648,11 +1005,34 @@ class StreamService:
         active.sink.shutdown()
         if active.dest.kind == "record":
             self._finish_recording(active)
+        self._stop_srt_link(dest_id)
         self._event("info", f"{active.dest.label()} stopped.")
+
+    def _start_srt_link(self, dest: Destination) -> srt.SrtLink | None:
+        if dest.kind != "srt":
+            return None
+        self._stop_srt_link(dest.id)
+        parts = urlsplit(dest.url)
+        link = srt.SrtLink(
+            parts.hostname or "",
+            parts.port or 0,
+            str(dest.options.get("mode", "caller")),
+            dest.options.get("latency_ms", 120),
+        )
+        self._srt[dest.id] = link
+        link.start()
+        return link
+
+    def _stop_srt_link(self, dest_id: str) -> None:
+        link = self._srt.pop(dest_id, None)
+        if link is not None:
+            link.stop()
 
     def _make_sink(
         self, dest: Destination, codec: str, path: Path | None
-    ) -> tuple[PipeSink | FileSink | WhipSink, Path | None]:
+    ) -> tuple[PipeSink | FileSink | WhipSink | ReplaySink, Path | None]:
+        if dest.id == REPLAY_ID and self._pending_replay is not None:
+            return self._pending_replay, None
         if dest.kind == "record" and dest.options.get("format", "mkv") == "mkv":
             target = path or self.record_dir() / f"recording-{int(self._wall())}.mkv"
             return FileSink(dest.id, target), target
@@ -660,7 +1040,7 @@ class StreamService:
             return self._whip_sink(dest), None
         target = path
         ffmpeg = self.host().ffmpeg
-        audio_kbps = self._settings.audio_bitrate_kbps
+        audio_kbps = self._effective.audio_bitrate_kbps
 
         def spawn(on_exit: Callable[[int], None], on_line: Callable[[str], None]) -> Child:
             secret = ""
@@ -671,7 +1051,9 @@ class StreamService:
                     raise OSError(str(exc)) from None
             if target is not None:
                 target.parent.mkdir(parents=True, exist_ok=True)
-            argv = ffcmd.sink_argv(ffmpeg, dest, codec, audio_kbps, secret, str(target or ""))
+            link = self._srt.get(dest.id)
+            latency = link.resolve() if link is not None else None  # fixed for this connection; "auto" is measured now
+            argv = ffcmd.sink_argv(ffmpeg, dest, codec, audio_kbps, secret, str(target or ""), latency)
             return self._spawn_child(
                 f"sink-{dest.id}",
                 argv,
@@ -731,7 +1113,7 @@ class StreamService:
 
     def _start_run(self, codec: str) -> Run:
         source = self._source or self.source()
-        settings = self._settings
+        settings = self._effective
         choice = self._choose(codec, settings)
         fps = settings.fps or source.fps
         chain = Chain(codec, self._clock_ms, 1000.0 / max(fps, 1))
@@ -821,7 +1203,7 @@ class StreamService:
     def _start_audio(self, host: HostProbe) -> None:
         source = self._resolve_audio_name(self._audio_source or self.audio_source())
         self._audio_source = source
-        gen = self._spawn_audio(host, source, self._settings)
+        gen = self._spawn_audio(host, source, self._effective)
         self._audio = gen
         if not gen.header_seen.wait(AUDIO_HEADER_WAIT_S):
             reason = gen.child.last_error() or "no audio arrived"
@@ -1093,7 +1475,12 @@ class StreamService:
             old_run.chain.detach(active.dest.id)
         active.sink.shutdown()
         self._active.pop(active.dest.id, None)
-        self._attach(active.dest, codec, active.path)
+        if isinstance(active.sink, ReplaySink):  # a different codec cannot join the old pictures: start empty
+            self._pending_replay = ReplaySink(REPLAY_ID, active.sink.seconds, active.sink.max_bytes, wall=self._wall)
+        try:
+            self._attach(active.dest, codec, active.path)
+        finally:
+            self._pending_replay = None
         self._active[active.dest.id].moved = True
 
     # -- supervision -----------------------------------------------------------------------------------------
@@ -1122,6 +1509,9 @@ class StreamService:
                 self._revive(run, now)
             self._enhanced_fallback()
             self._guard_disk()
+            self._adapt_tick(now)
+            if self._ingest is not None:
+                self._ingest.tick()
 
     def _reconcile(self, run: Run) -> None:
         """Commit or report a swap once the relay has decided it."""
@@ -1252,9 +1642,10 @@ class StreamService:
         encode_ms = run.chain.latency_ms if run else 0.0
         queue_ms = status["queued_bytes"] * 8 / max(kbps, 1)  # bytes*8/kbps = ms of video waiting
         whip = status.get("whip") or {}
-        transport = (
-            int(dest.options.get("latency_ms", 120)) if dest.kind == "srt" else TRANSPORT_LATENCY_MS.get(dest.kind, 0)
-        )
+        link = self._srt.get(dest.id)
+        transport = TRANSPORT_LATENCY_MS.get(dest.kind, 0)
+        if link is not None:
+            transport = int(link.stats()["latency_ms"] or srt.DEFAULT_LATENCY_MS)
         if dest.kind == "whip" and whip.get("rtt_ms") is not None:
             transport = WHIP_PLAYOUT_MS + int(whip["rtt_ms"] / 2)  # the measured one-way delay plus a receiver buffer
         base.update(
@@ -1272,6 +1663,11 @@ class StreamService:
         )
         if dest.kind == "whip":
             base["whip"] = whip
+        account = self._accounts.get(dest.id)
+        if account is not None and active is not None and dest.kind == "rtmp":
+            base["account"] = account.to_dict()
+        if link is not None:
+            base["srt"] = link.stats()
         if active.path is not None:
             base["file"] = status.get("file") or str(active.path)
             base["bytes"] = status["net_bytes"]
@@ -1310,6 +1706,10 @@ class StreamService:
             self._add_disk(recording, record_active, info.get("bytes", 0))
         elif self._disk_stopped:
             recording["stopped"] = self._disk_stopped
+        replay_active = self._active.get(REPLAY_ID)
+        replay: dict[str, Any] = idle_stats(self.replay_max_bytes())
+        if replay_active is not None and isinstance(replay_active.sink, ReplaySink):
+            replay = replay_active.sink.stats()
         live = [d for d in destinations if d["active"]]
         states = {d["state"] for d in live}
         if not self._active:
@@ -1322,8 +1722,10 @@ class StreamService:
             status = "degraded"
         elif live:
             status = "starting" if states <= {"connecting", "idle"} else "degraded"
-        else:
+        elif "record" in self._active:
             status = "recording"
+        else:
+            status = "replay"
         runs = []
         pids: set[int] = set()
         for run in self._runs.values():
@@ -1361,7 +1763,7 @@ class StreamService:
         bitrate = sum(r["bitrate_kbps"] + (self._audio.settings.audio_bitrate_kbps if self._audio else 0) for r in runs)
         latencies = [d["latency_ms"] for d in live if d["kind"] != "record" and d["state"] == "live"]
         source = self._source or self.source()
-        effective = self._settings.size(source.size)
+        effective = self._effective.size(source.size)
         return {
             "status": status,
             "uptime_s": round(self._wall() - self._started_at) if self._active else 0,
@@ -1374,8 +1776,12 @@ class StreamService:
             "encoder": ", ".join(r["encoder"] for r in runs) if runs else "",
             "destinations": destinations,
             "recording": recording,
+            "ingest": self._ingest.status() if self._ingest is not None else (self._last_ingest or IDLE_INGEST),
+            "replay": replay,
             "settings": self._settings.to_dict(),
-            "output": {"width": effective[0], "height": effective[1], "fps": self._settings.fps or source.fps},
+            "effective": self._effective.to_dict(),
+            "adapt": self.adapt_state(self._wall()),
+            "output": {"width": effective[0], "height": effective[1], "fps": self._effective.fps or source.fps},
             "audio": {
                 "source": (self._audio_source or self.audio_source()).name,
                 "bitrate_kbps": self._audio.settings.audio_bitrate_kbps if self._audio else 0,

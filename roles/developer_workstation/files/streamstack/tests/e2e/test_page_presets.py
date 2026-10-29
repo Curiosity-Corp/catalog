@@ -79,6 +79,32 @@ def test_arrow_keys_move_the_tier(pr: App, rig: Rig) -> None:
     assert poll(rig, lambda s: s["presets"]["tier"] == "constrained")
 
 
+def test_two_quick_tier_choices_land_in_the_order_they_were_made(pr: App, rig: Rig) -> None:
+    """The server answers each request on its own thread: a slow first post must not land after the second one.
+
+    The page holds back the first post (Balanced) for a second, so a second choice (Constrained) made at once would
+    overtake it, and the older choice would stand. The page sends posts of one action in the order it made them.
+    """
+    page = pr.page
+    page.evaluate(
+        """() => {
+          const send = window.fetch.bind(window);
+          window.fetch = (url, init) => {
+            const body = typeof init?.body === 'string' ? init.body : '';
+            const slow = body.includes('"presets.tier"') && body.includes('"balanced"');
+            return slow ? new Promise((done) => setTimeout(done, 1000)).then(() => send(url, init)) : send(url, init);
+          };
+        }"""
+    )
+    tap(page, page.get_by_role("radio", name="Balanced"))
+    page.get_by_role("radio", name="Balanced").focus()
+    page.keyboard.press("ArrowRight")
+    assert poll(rig, lambda s: s["presets"]["tier"] == "constrained")
+    page.wait_for_timeout(1500)  # the held post has long been answered: the later choice must still stand
+    assert rig.state()["presets"]["tier"] == "constrained"
+    expect(page.get_by_role("radio", name="Constrained")).to_have_attribute("aria-checked", "true")
+
+
 def test_looks_grid_filters_and_applies(pr: App, rig: Rig) -> None:
     page = pr.page
     looks = page.locator(".pr-look")
@@ -182,3 +208,16 @@ def test_layout_has_no_overflow_and_screenshots(
         page.screenshot(path=str(artifacts / f"presets-{name}-{tag}.png"))
     assert (artifacts / f"presets-{tag}.png").stat().st_size > 5_000
     assert overflow == []
+
+
+def test_the_choice_stays_while_snapshots_keep_arriving(pr: App, rig: Rig) -> None:
+    """#157: the radio shows the pick at once and never flips back while the server's snapshots catch up."""
+    page = pr.page
+    tap(page, page.get_by_role("radio", name="YouTube Live"))
+    youtube = page.get_by_role("radio", name="YouTube Live")
+    for _ in range(10):
+        expect(youtube).to_have_attribute("aria-checked", "true", timeout=EXPECT_TIMEOUT)
+        page.wait_for_timeout(100)
+    assert poll(rig, lambda s: s["presets"]["platform"] == "youtube")
+    assert isinstance(rig.state()["seq"], int)
+    expect(youtube).to_have_attribute("aria-checked", "true")

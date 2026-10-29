@@ -1,7 +1,7 @@
 // core/actions.js — the only way the UI changes the rig.
 //
 //   act(action, params?, {quiet?})      -> Promise<{ok, message?}|null>
-//        Applies the optimistic update at once, POSTs api/action, toasts the server's
+//        Applies the optimistic update at once, POSTs api/action (posts of one action go out in call order), toasts the server's
 //        `error` text on failure (with a one-press fix when the studio is down) and
 //        rolls the optimistic value back to the server's. Never rejects.
 //   actStream(action, params, {ms})     -> void
@@ -58,6 +58,71 @@ function chainPatch(values, s) {
   });
   if (Object.keys(out).length) out['audio.chain.custom'] = true;
   return out;
+}
+
+/** `{prefix.key: value}` for the listed params that were sent. */
+function keysOf(p, keys, prefix, convert = (k, v) => v) {
+  const out = {};
+  for (const k of keys) if (p[k] !== undefined) out[`${prefix}.${k}`] = convert(k, p[k]);
+  return out;
+}
+
+/** Same, for the params that already name a field of `group` (a settings object the server sends whole). */
+function existingKeysOf(p, group, prefix) {
+  return keysOf(p, Object.keys(p).filter((k) => k in group), prefix);
+}
+
+/** Deck profile edits (#157). The editor draws from `deck.profile`, which also changes when a key lights up, so an edit
+ *  that is not held on screen is overwritten by the next snapshot and the key, label or tab flips back to what it was.
+ *  The views are the server's to compute (rev, lit, tone); the patch carries only what the edit decides. */
+const deckPage = (s, id) => s.deck.profile.pages.findIndex((p) => p.id === id);
+const keyPath = (pi, k) => `deck.profile.pages.${pi}.keys.${k}`;
+const emptyKey = (i) => ({ i, empty: true, rev: '0' });
+
+function deckKeySet(p, s) {
+  const pi = deckPage(s, p.page);
+  const view = pi < 0 ? null : s.deck.profile.pages[pi].keys[p.key];
+  if (!view || !p.spec) return {};
+  const raw = { action: p.spec.action || '', params: p.spec.params || {}, ...(p.spec.label ? { label: p.spec.label } : {}), ...(p.spec.icon ? { icon: p.spec.icon } : {}) };
+  return {
+    [keyPath(pi, p.key)]: {
+      ...view, i: p.key, empty: false, action: raw.action, raw,
+      label: raw.label || (view.empty ? raw.action || 'Set action' : view.label),
+      icon: raw.icon || (view.empty ? 'command' : view.icon),
+    },
+  };
+}
+
+function deckKeyMove(p, s) {
+  const a = deckPage(s, p.page);
+  const b = deckPage(s, p.to_page || p.page);
+  if (a < 0 || b < 0) return {};
+  const from = s.deck.profile.pages[a].keys[p.key];
+  const to = s.deck.profile.pages[b].keys[p.to];
+  if (!from || !to) return {};
+  return { [keyPath(a, p.key)]: { ...to, i: p.key }, [keyPath(b, p.to)]: { ...from, i: p.to } };
+}
+
+function deckPageDelete(p, s) {
+  const pages = s.deck.profile.pages.filter((x) => x.id !== p.page);
+  if (pages.length === s.deck.profile.pages.length || !pages.length) return {};
+  return { 'deck.profile.pages': pages, ...(s.deck.profile.home === p.page ? { 'deck.profile.home': pages[0].id } : {}) };
+}
+
+function deckPageMove(p, s) {
+  const pages = [...s.deck.profile.pages];
+  const at = pages.findIndex((x) => x.id === p.page);
+  if (at < 0 || !Number.isInteger(p.to) || p.to < 0 || p.to >= pages.length) return {};
+  pages.splice(p.to, 0, ...pages.splice(at, 1));
+  return { 'deck.profile.pages': pages };
+}
+
+/** Settings that live under a light id, a slot id or an hour: replaced whole, because an id may contain a dot. */
+function lightSettings(p, s) {
+  const fields = ['name', 'role', 'min_brightness', 'max_brightness', 'min_kelvin', 'max_kelvin'].filter((k) => p[k] !== undefined);
+  if (!p.id || !fields.length) return {};
+  const lights = s.lighting.automation.settings.lights;
+  return { 'lighting.automation.settings.lights': { ...lights, [p.id]: { ...(lights[p.id] || {}), ...Object.fromEntries(fields.map((k) => [k, p[k]])) } } };
 }
 
 const NEUTRAL_LOOK = { brightness: 0, contrast: 0, gamma: 0, saturation: 0, warmth: 0 };
@@ -147,6 +212,50 @@ export const OPTIMISTIC = {
     const extra = preset.on ? { 'lighting.master.brightness': preset.brightness, 'lighting.master.kelvin': preset.kelvin } : {};
     return masterPatch(lightPatch({}, s, fields), s, { 'lighting.preset': p.name, ...extra });
   },
+  // Settings pages draw their controls from a broad slice (`call`, `framing`, `network`, ...) that changes many times a
+  // second for other reasons. Without an entry here a click was overwritten by the next snapshot, before the server had
+  // saved it, and the control seemed not to move (#155).
+  'call.set': (p) => keysOf(p, ['enabled', 'sensitivity', 'cooldown_s', 'sound'], 'call.muted_warning', (k, v) => (k === 'cooldown_s' ? Number(v) : v)),
+  'network.set': (p) => (p.enabled !== undefined ? { 'network.enabled': !!p.enabled } : {}),
+  // not 'telemetry.set': an opt-in that opens a metrics endpoint must show only what the server has done
+  'hotkeys.enable': (p) => ({ 'hotkeys.enabled': !!p.on }),
+  'framing.mode': (p) => ({ 'framing.mode': p.mode }),
+  'framing.hold': (p) => ({ 'framing.held': !!p.on }),
+  'framing.handoff': (p) => ({ 'framing.handoff': !!p.on }),
+  'framing.shot': (p) => ({ 'framing.shot': p.shot }),
+  'framing.subjects': (p) => ({ 'framing.subjects': p.subjects }),
+  'slots.mode': (p) => ({ 'slots.mode': p.mode }),
+  'deck.key_set': deckKeySet,
+  'deck.key_clear': (p, s) => {
+    const pi = deckPage(s, p.page);
+    return pi < 0 || !s.deck.profile.pages[pi].keys[p.key] ? {} : { [keyPath(pi, p.key)]: emptyKey(p.key) };
+  },
+  'deck.key_move': deckKeyMove,
+  'deck.page_rename': (p, s) => (deckPage(s, p.page) < 0 ? {} : { [`deck.profile.pages.${deckPage(s, p.page)}.name`]: p.name }),
+  'deck.page_move': deckPageMove,
+  'deck.page_delete': deckPageDelete,
+  // the model only: the grid and every key re-flow on the server, and a half-drawn grid is worse than a late one
+  'deck.layout': (p, s) => (p.model && s.deck.models.some((m) => m.id === p.model) ? { 'deck.profile.model': p.model } : {}),
+  'presets.platform': (p, s) => ({ 'presets.platform': p.id, ...(s.presets.tier ? {} : { 'presets.tier': 'balanced' }) }),
+  'presets.tier': (p) => ({ 'presets.tier': p.id }),
+  'slots.fade': (p) => ({ 'slots.fade_seconds': Number(p.seconds) }),
+  'slots.profile': (p, s) => {
+    const i = s.slots.slots.findIndex((x) => x.id === p.slot);
+    const profile = p.profile || {};
+    return i < 0 ? {} : { [`slots.slots.${i}.profile`]: profile, [`slots.slots.${i}.empty`]: Object.keys(profile).length === 0 };
+  },
+  'slots.clear': (p, s) => {
+    const i = s.slots.slots.findIndex((x) => x.id === p.slot);
+    return i < 0 ? {} : { [`slots.slots.${i}.profile`]: {}, [`slots.slots.${i}.empty`]: true };
+  },
+  'lighting.auto.slot': (p, s) => (s.lighting.automation.settings.schedule.slots[p.slot]
+    ? keysOf(p, ['brightness', 'kelvin'], `lighting.automation.settings.schedule.slots.${p.slot}`, (k, v) => Number(v)) : {}),
+  'lighting.auto.hour': (p, s) => (s.lighting.automation.hours[Number(p.hour)]
+    ? keysOf(p, ['brightness', 'kelvin'], `lighting.automation.hours.${Number(p.hour)}`, (k, v) => Number(v)) : {}),
+  'lighting.light.settings': lightSettings,
+  'deck.settings': (p) => keysOf(p, ['brightness', 'sleep_minutes'], 'deck.profile.settings', (k, v) => Number(v)),
+  'lighting.auto.follow': (p, s) => existingKeysOf(p, s.lighting.automation.settings.follow, 'lighting.automation.settings.follow'),
+  'lighting.auto.schedule': (p, s) => existingKeysOf(p, s.lighting.automation.settings.schedule, 'lighting.automation.settings.schedule'),
   'stream.set': (p) => Object.fromEntries(STREAM_SETTINGS.filter((k) => p[k] !== undefined).map((k) => [`stream.settings.${k}`, p[k]])),
   'studio.start': () => ({ 'studio.busy': true }),
   'studio.stop': () => ({ 'studio.busy': true }),
@@ -165,16 +274,36 @@ function fixFor(message) {
   return undefined;
 }
 
+// One lane per action name: a post goes out only after the previous post of the same action has answered. The server
+// handles requests on separate threads, so two overlapping posts of one action (a tier picked, then picked again with
+// the arrow keys) can reach it in the opposite order and leave the older choice standing.
+const lanes = new Map();   // action -> promise that settles when the lane's last post has answered
+
+function inOrder(action, send) {
+  const run = (lanes.get(action) || Promise.resolve()).then(send);
+  const tail = run.then(() => undefined, () => undefined);
+  lanes.set(action, tail);
+  tail.then(() => { if (lanes.get(action) === tail) lanes.delete(action); });
+  return run;
+}
+
+/** Actions whose optimistic value is a state that passes (a start in progress, a restart), not one the server keeps. */
+const TRANSIENT = new Set(['studio.start', 'studio.stop', 'audio.revive']);
+
 export async function act(action, params = {}, { quiet = false, hold } = {}) {
   const optimistic = OPTIMISTIC[action];
   let paths = [];
+  let token = 0;
   if (optimistic) {
     const patch = optimistic(params, store.state);
     paths = Object.keys(patch);
-    store.patch(patch, hold === undefined ? undefined : { hold });
+    // Held until the server has answered, however long that takes: a fixed 600 ms ran out on a loaded machine before the
+    // snapshot carrying the change arrived, the page flipped back, and the next M press toggled from the stale value.
+    token = store.patch(patch, { hold: hold === undefined ? Infinity : hold });
   }
   try {
-    const res = await postAction(action, params);
+    const res = await inOrder(action, () => postAction(action, params));
+    store.settle(paths, token, { agree: !TRANSIENT.has(action), seq: res && res.seq });
     if (res && res.message && !quiet && SLOW.has(action)) toast(res.message, { level: 'info', timeout: 3500, id: `act:${action}` });
     return res;
   } catch (err) {

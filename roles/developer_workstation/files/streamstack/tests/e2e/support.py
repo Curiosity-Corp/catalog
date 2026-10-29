@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Locator, Page, Request, expect
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Locator, Page, Request, Response, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 ROUTES = ("live", "camera", "audio", "auto", "system", "lighting", "interface", "presets", "stream", "deck", "mini")
@@ -48,6 +49,75 @@ LOADED = int(15_000 * SCALE)
 HTTP_TIMEOUT = float(os.environ.get("STREAMSTACK_TEST_HTTP_TIMEOUT", "90"))
 ACTION_TIMEOUT = int(10_000 * SCALE)
 EXPECT_TIMEOUT = int(5_000 * SCALE)
+# What the server prints about its own actions (STREAMSTACK_CONSOLE_ACTION_LOG=1, set by the rig fixture) and about
+# anything slow; `Rig.evidence()` quotes these lines when a wait gives up.
+SERVER_EVIDENCE = re.compile(r"action |slow write|state snapshot took|Traceback|Error")
+EVIDENCE_LINES = 40
+
+
+class DiskProbe:
+    """Measures the disk the demo server writes to, so a stalled control can be told from a stalled disk (issue #161).
+
+    Every ``period`` seconds a thread writes a few bytes into ``directory`` and fsyncs them (what the Console's own
+    durable writes do) and records how long that took, and how late the thread itself woke (CPU starvation shows there
+    even when the disk is fine).
+    """
+
+    def __init__(self, directory: Path, period: float = 1.0) -> None:
+        self.path = directory / "disk-probe"
+        self.period = period
+        self.fsync_ms: list[float] = []
+        self.wake_lag_ms: list[float] = []
+        self.slow: list[str] = []  # "<seconds since start> fsync <ms>" for every fsync over a second
+        self._began = time.monotonic()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="disk-probe", daemon=True)
+
+    def start(self) -> DiskProbe:
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+        with contextlib.suppress(OSError):
+            self.path.unlink()
+
+    def _run(self) -> None:
+        due = time.monotonic() + self.period
+        while not self._stop.wait(max(0.0, due - time.monotonic())):
+            woke = time.monotonic()
+            self.wake_lag_ms.append(max(0.0, woke - due) * 1000)
+            try:
+                with self.path.open("wb") as handle:
+                    handle.write(b"probe")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except OSError as exc:
+                self.slow.append(f"{woke - self._began:7.1f}s write failed: {exc}")
+            else:
+                took = (time.monotonic() - woke) * 1000
+                self.fsync_ms.append(took)
+                if took >= 1000:
+                    self.slow.append(f"{woke - self._began:7.1f}s fsync {took:.0f} ms")
+            due = max(due + self.period, time.monotonic())
+
+    @staticmethod
+    def _percentile(values: list[float], fraction: float) -> float:
+        ordered = sorted(values)
+        return ordered[min(len(ordered) - 1, int(len(ordered) * fraction))] if ordered else 0.0
+
+    def summary(self) -> str:
+        n = len(self.fsync_ms)
+        if not n:
+            return "disk probe: no samples"
+        return (
+            f"disk probe: {n} fsyncs, median {self._percentile(self.fsync_ms, 0.5):.1f} ms, "
+            f"p95 {self._percentile(self.fsync_ms, 0.95):.1f} ms, max {max(self.fsync_ms):.0f} ms; "
+            f"thread wake lag p95 {self._percentile(self.wake_lag_ms, 0.95):.1f} ms, "
+            f"max {max(self.wake_lag_ms, default=0.0):.0f} ms; {len(self.slow)} fsync(s) over 1 s"
+            + "".join("\n  " + line for line in self.slow[-10:])
+        )
 
 
 @dataclass
@@ -58,6 +128,7 @@ class Rig:
     token: str
     log: list[str] = field(default_factory=list)
     home: Path | None = None  # the demo server's isolated HOME, for tests that damage or read its files
+    probe: DiskProbe | None = None  # the disk the server writes to, measured while the suite runs
 
     @property
     def url(self) -> str:
@@ -79,6 +150,15 @@ class Rig:
                 return err.code, json.loads(raw)
             except ValueError:
                 return err.code, raw.decode(errors="replace")
+
+    def evidence(self) -> str:
+        """What the server and its disk were doing: appended to every failure that says a state never arrived."""
+        lines = [line for line in list(self.log) if SERVER_EVIDENCE.search(line)][-EVIDENCE_LINES:]
+        parts = ["server log (actions, slow writes and snapshots, errors; newest last):"]
+        parts += ["  " + line for line in lines] or ["  (nothing logged)"]
+        if self.probe is not None:
+            parts.append(self.probe.summary())
+        return "\n".join(parts)
 
     def state(self) -> dict[str, Any]:
         status, body = self.request("GET", "api/state", token=self.token)
@@ -235,7 +315,9 @@ def poll_settled(
         elif now - since >= quiet:
             return value
         time.sleep(0.05)
-    raise AssertionError(f"server state never settled; last probe value {value!r}{_lighting_context(rig)}")
+    raise AssertionError(
+        f"server state never settled; last probe value {value!r}{_lighting_context(rig)}\n{rig.evidence()}"
+    )
 
 
 def poll(rig: Rig, probe: Callable[[dict[str, Any]], Any], timeout: float = 10.0 * SCALE) -> Any:
@@ -247,7 +329,9 @@ def poll(rig: Rig, probe: Callable[[dict[str, Any]], Any], timeout: float = 10.0
         if value:
             return value
         time.sleep(0.05)
-    raise AssertionError(f"server state never matched; last probe value {value!r}{_lighting_context(rig)}")
+    raise AssertionError(
+        f"server state never matched; last probe value {value!r}{_lighting_context(rig)}\n{rig.evidence()}"
+    )
 
 
 class App:
@@ -260,6 +344,14 @@ class App:
         page.on("request", lambda request: self._in_flight.__setitem__(request, time.monotonic()))
         page.on("requestfinished", lambda request: self._in_flight.pop(request, None))
         page.on("requestfailed", lambda request: self._in_flight.pop(request, None))
+        # What the page did to the server and how the server answered (issue #161). Handlers only read event data:
+        # a blocking Playwright call inside one would stall the event loop it runs on.
+        self.opened_at = time.monotonic()
+        self.trace: list[str] = []
+        self._posted: dict[Request, float] = {}
+        page.on("request", self._note_post)
+        page.on("response", self._note_response)
+        page.on("requestfailed", self._note_failure)
 
     # ---- navigation ----
     def goto(self, route: str = "live", *, wait_ready: bool = True) -> App:
@@ -270,6 +362,7 @@ class App:
         own readiness marks says what is missing, and a failure lists the requests still in flight, so the next
         recurrence names the stuck resource instead of only a timeout.
         """
+        self.opened_at = time.monotonic()
         try:
             self.page.goto(f"{self.rig.url}#/{route}", wait_until="commit")
             if wait_ready:
@@ -277,6 +370,69 @@ class App:
         except (PlaywrightTimeout, AssertionError) as err:
             raise AssertionError(f"opening #{route} failed: {err}\n{self.describe_in_flight()}") from err
         return self
+
+    @staticmethod
+    def _action_name(request: Request) -> str | None:
+        if request.method != "POST" or not request.url.split("?")[0].endswith("api/action"):
+            return None
+        try:
+            body = json.loads(request.post_data or "{}")
+        except ValueError:
+            return "?"
+        return str(body.get("action", "?")) if isinstance(body, dict) else "?"
+
+    def _stamp(self) -> str:
+        return f"{time.monotonic() - self.opened_at:7.2f}s"
+
+    @staticmethod
+    def _post_values(request: Request) -> str:
+        """What the post asked for, for the trace: a toggle that asks for the state the server already has does nothing
+        (issue #167). Only on/off flags and ids are shown: a value may be a stream key or a token."""
+        try:
+            body = json.loads(request.post_data or "{}")
+        except ValueError:
+            return ""
+        if not isinstance(body, dict):
+            return ""
+        return " ".join(f"{k}={body[k]!r}" for k in ("on", "id", "name") if isinstance(body.get(k), bool | str))
+
+    def _note_post(self, request: Request) -> None:
+        name = self._action_name(request)
+        if name is not None:
+            self._posted[request] = time.monotonic()
+            self.trace.append(f"{self._stamp()} POST {name} sent {self._post_values(request)}")
+
+    def _note_response(self, response: Response) -> None:
+        began = self._posted.pop(response.request, None)
+        if began is not None:
+            name = self._action_name(response.request)
+            self.trace.append(f"{self._stamp()} POST {name} -> {response.status} after {time.monotonic() - began:.2f}s")
+
+    def _note_failure(self, request: Request) -> None:
+        if self._posted.pop(request, None) is not None:
+            self.trace.append(f"{self._stamp()} POST {self._action_name(request)} FAILED: {request.failure}")
+
+    def evidence(self) -> str:
+        """The page's side of a stuck control: the action posts and their answers, and the event stream's life."""
+        parts = [f"page evidence ({time.monotonic() - self.opened_at:.1f}s after the page object was made):"]
+        parts += ["  " + line for line in self.trace[-EVIDENCE_LINES:]] or ["  no action was posted"]
+        for request, began in self._posted.items():
+            parts.append(f"  still waiting after {time.monotonic() - began:.1f}s: POST {self._action_name(request)}")
+        try:
+            sse = self.page.evaluate("() => window.__sse || null")
+            where = self.page.evaluate("() => location.hash")
+        except PlaywrightError as exc:
+            parts.append(f"  event stream unreadable: {exc}")
+        else:
+            if sse is None:
+                parts.append("  event stream: not recorded")
+            else:
+                parts.append(
+                    f"  page {where}; event stream opened {sse['opened']}x, errors {sse['errors']}, "
+                    f"state frames {sse['frames']}, last frame {sse['last']} ms into the page"
+                )
+                parts += ["    " + line for line in sse["log"][-12:]]
+        return "\n".join([*parts, "  " + self.describe_in_flight().replace("\n", "\n  "), self.rig.evidence()])
 
     def describe_in_flight(self) -> str:
         now = time.monotonic()
@@ -359,12 +515,11 @@ class App:
         self.page.keyboard.press(key)
 
     def wait_picture(self) -> None:
-        """Wait until the live program picture has decoded a frame (the MJPEG stream is up)."""
+        """Wait until the live program picture shows a frame (WebRTC or the MJPEG stream, whichever carries it)."""
         self.page.wait_for_function(
             """() => {
               const pv = document.querySelector('ss-preview');
-              const img = pv && pv.shadowRoot.querySelector('img');
-              return !!img && !img.hidden && img.naturalWidth > 0;
+              return !!pv && pv.live;
             }""",
             timeout=LOADED,
         )

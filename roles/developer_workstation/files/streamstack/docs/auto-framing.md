@@ -119,6 +119,26 @@ State (`framing` in the snapshot): `mode`, `state` (`off`, `starting`, `tracking
 `detect_p95_ms`, `fps`, `model`, `zoom`, `window` (`cx`, `cy`, `zoom` in frame units), `sources[]`, `skipped[]`,
 `modes[]`.
 
+## Eye-line coach
+
+Optional and off by default (Camera page, "Eye line" button; state key `eyeline`). It reuses the director's face
+finder: YuNet returns five landmarks per face (eyes, nose tip, mouth corners), and `streamstack.framing.eyeline`
+fits a rigid 3D face model to them to get yaw, pitch and roll, with no extra model. The head pose is classed as
+looking at the lens, the screen, down at the keyboard or away, smoothed over the last 5 detections.
+
+- **Camera position wizard.** Look into the lens and press Calibrate (about 10 samples) so angles are measured
+  from your real lens pose; the thirds grid shows where your eye line sits against the one-third target, and the
+  distance field turns the 6 degree "reads as eye contact" limit into centimetres from the lens for the call window.
+  Without calibration the advice is marked rough.
+- **Reminder.** Optional nudge after 1 to 30 minutes of looking away during a call, at most once per 10 minutes.
+- **Privacy.** Only landmark geometry is used; no picture is stored or sent, and the detector is released a minute
+  after the coach is turned off.
+- **Accuracy.** Gaze here is head pose, not iris tracking. There are no recorded clips in the repository, so the 90%
+  class accuracy gate runs on synthetic clips of projected landmarks with person-to-person proportions and jitter:
+  about 99.8% calibrated and about 80% uncalibrated. Real-footage validation is still open.
+- **Generative eye contact** (NVIDIA Maxine, Studio Effects) is out of scope: it alters the picture and needs
+  hardware this project does not target; see docs/hardware-ai-evaluation.md.
+
 ## Engine
 
 `streamstack.framing.engine` is pure Python with no I/O: 5 to 10 Hz detections go through a One Euro filter, a

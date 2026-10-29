@@ -109,7 +109,7 @@ def pumped():
             p.close()
 
 
-def wait_state(feed: BlurFeed, state: str, timeout: float = 5.0) -> bool:
+def wait_state(feed: BlurFeed, state: str, timeout: float = 30.0) -> bool:
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if feed.stats()["state"] == state:

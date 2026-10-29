@@ -32,6 +32,18 @@ def no_hotkeys() -> dict:
     return empty_state()
 
 
+def no_meetings() -> dict:
+    from streamstack.console.meetings import empty_state
+
+    return empty_state()
+
+
+def no_eyeline() -> dict:
+    from streamstack.console.eyeline import empty_state
+
+    return empty_state()
+
+
 def empty_diagnostics() -> dict:
     return {
         "telemetry": {
@@ -59,8 +71,32 @@ def _no_hardware() -> dict:
     return empty_state()
 
 
+def _no_network() -> dict:
+    from streamstack.console.network import empty_state
+
+    return empty_state()
+
+
+def _no_echo() -> dict:
+    from streamstack.console.echocheck import empty_state
+
+    return empty_state()
+
+
+def _no_safejoin() -> dict:
+    from streamstack.console.safejoin import empty_state
+
+    return empty_state()
+
+
 def _no_call() -> dict:
     from streamstack.console.call import empty_state
+
+    return empty_state()
+
+
+def _no_preflight() -> dict:
+    from streamstack.console.preflight import empty_state
 
     return empty_state()
 
@@ -102,6 +138,12 @@ class Rig:
         call: Any = None,
         slots: Any = None,
         hotkeys: Any = None,
+        network: Any = None,
+        echo: Any = None,
+        meetings: Any = None,
+        eyeline: Any = None,
+        preflight: Any = None,
+        safejoin: Any = None,
     ) -> None:
         self.audio, self.video, self.studio = audio, video, studio
         self.lighting = lighting  # optional: a rig without lights reports an empty lighting object
@@ -115,6 +157,12 @@ class Rig:
         self.call = call  # optional: call awareness (call.* actions, "call" state, `call.snapshot()` for features)
         self.slots = slots  # optional: time-of-day look profiles (slots.* actions, "slots" state)
         self.hotkeys = hotkeys  # optional: global hotkeys and MIDI (hotkeys.* actions, "hotkeys" state)
+        self.network = network  # optional: network quality (network.* actions, "network" state); follows `call`
+        self.echo = echo  # optional: the echo / speaker-bleed check (echo.* actions, "echo" state); follows `call`
+        self.meetings = meetings  # optional: calendar-aware setup (meetings.* actions, "meetings" state)
+        self.eyeline = eyeline  # optional: the eye-line coach (eyeline.* actions, "eyeline" state)
+        self.preflight = preflight  # optional: the pre-meeting check (preflight.* actions, "preflight" state)
+        self.safejoin = safejoin  # optional: safe join (safejoin.* actions, "safejoin" state); follows `call`
         self.demo = demo
         self.on_toast: Notify | None = None  # the hub sets this
         self._started = False
@@ -134,12 +182,22 @@ class Rig:
             call,
             slots,
             hotkeys,
+            network,
+            echo,
+            meetings,
+            eyeline,
+            preflight,
+            safejoin,
         )
         for controller in controllers:
             if controller is not None:
                 controller.notify = self.notify
+        if preflight is not None:
+            preflight.bind(self.snapshot, self.act)  # it judges the whole snapshot and runs its one-press fixes
         if deck is not None:
             deck.rig = self  # pressing a key runs a Console action
+        if eyeline is not None and call is not None:
+            eyeline.in_call = call.active  # the looking-away reminder only speaks during a call
         if call is not None and callable(getattr(audio, "mic_muted", None)):
             call.own_muted = audio.mic_muted  # the Console's own mute: the microphone is silent, nothing to detect
         if slots is not None:
@@ -147,6 +205,14 @@ class Rig:
             slots.rig = self  # a profile reads what is on and what changed from the snapshot
         if hotkeys is not None:
             hotkeys.rig = self  # a hotkey or a MIDI control runs a Console action
+        if echo is not None:
+            echo.bind(self.snapshot)  # it reads the outputs and the microphone, and plays only when no call is on
+        if meetings is not None:
+            meetings.rig = self  # preparing for a meeting runs Console actions
+        if safejoin is not None:
+            safejoin.bind(self.snapshot, self.act)  # it reads privacy and mute, and sets them
+            if call is not None:
+                safejoin.attach(call)
 
     # -- construction ---------------------------------------------------------
 
@@ -158,12 +224,21 @@ class Rig:
         from streamstack.console.call import CallController, live_settings_path
         from streamstack.console.deck import DeckController
         from streamstack.console.diagnostics import Diagnostics
+        from streamstack.console.echocheck import EchoController
+        from streamstack.console.echocheck import live_store_path as echo_store_path
+        from streamstack.console.eyeline import EyeLineController
         from streamstack.console.framing import FramingController
         from streamstack.console.hardware import HardwareController
         from streamstack.console.hotkeys import HotkeysController
         from streamstack.console.interface import InterfaceController
         from streamstack.console.lighting import LightingController
+        from streamstack.console.meetings import MeetingsController
         from streamstack.console.native import NativeVideo
+        from streamstack.console.network import NetworkController
+        from streamstack.console.network import live_settings_path as network_settings_path
+        from streamstack.console.preflight import PreflightController, face_found, live_history_path
+        from streamstack.console.safejoin import SafeJoinController
+        from streamstack.console.safejoin import live_settings_path as safejoin_settings_path
         from streamstack.console.slots import SlotsController
         from streamstack.console.stream import StreamController
         from streamstack.console.studio import StudioController
@@ -183,13 +258,14 @@ class Rig:
         lighting = LightingController()
         call = CallController(cfg, settings_path=live_settings_path())
         slots = SlotsController(lambda action, params: None, in_call=call.active)
+        framing = FramingController(cfg, video)
         return cls(
             audio,
             video,
             StudioController(cfg),
             lighting=lighting,
             interface=InterfaceController(cfg, call_active=call.active),
-            framing=FramingController(cfg, video),
+            framing=framing,
             stream=stream,
             deck=DeckController(),
             diagnostics=Diagnostics(cfg),
@@ -197,6 +273,12 @@ class Rig:
             call=call,
             slots=slots,
             hotkeys=HotkeysController(),
+            network=NetworkController(call=call, settings_path=network_settings_path()),
+            echo=EchoController(call=call, store_path=echo_store_path()),
+            meetings=MeetingsController(),
+            eyeline=EyeLineController(cfg, video),
+            preflight=PreflightController(history_path=live_history_path(), face=lambda: face_found(framing.state())),
+            safejoin=SafeJoinController(settings_path=safejoin_settings_path()),
         )
 
     @classmethod
@@ -206,11 +288,17 @@ class Rig:
         from streamstack.console.call import DemoCall
         from streamstack.console.deck import DemoDeck
         from streamstack.console.diagnostics import Diagnostics
+        from streamstack.console.echocheck import DemoEcho
+        from streamstack.console.eyeline import DemoEyeLine
         from streamstack.console.framing import DemoFraming
         from streamstack.console.hardware import DemoHardware
         from streamstack.console.hotkeys import DemoHotkeys
         from streamstack.console.interface import DemoInterface
         from streamstack.console.lighting import DemoLighting
+        from streamstack.console.meetings import DemoMeetings
+        from streamstack.console.network import DemoNetwork
+        from streamstack.console.preflight import DemoPreflight
+        from streamstack.console.safejoin import DemoSafeJoin
         from streamstack.console.slots import DemoSlots
         from streamstack.console.stream import DemoStream
         from streamstack.console.studio import DemoStudio
@@ -234,6 +322,12 @@ class Rig:
             call=call,
             slots=slots,
             hotkeys=DemoHotkeys(),
+            network=DemoNetwork(call=call),
+            echo=DemoEcho(call=call),
+            meetings=DemoMeetings(),
+            eyeline=DemoEyeLine(),
+            preflight=DemoPreflight(),
+            safejoin=DemoSafeJoin(),
         )
 
     # -- lifecycle ------------------------------------------------------------
@@ -246,8 +340,14 @@ class Rig:
         controllers = controllers if self.framing is None else (*controllers, self.framing)
         controllers = controllers if self.stream is None else (*controllers, self.stream)
         controllers = controllers if self.call is None else (*controllers, self.call)
+        controllers = controllers if self.network is None else (*controllers, self.network)
+        controllers = controllers if self.echo is None else (*controllers, self.echo)
+        controllers = controllers if self.preflight is None else (*controllers, self.preflight)
+        controllers = controllers if self.safejoin is None else (*controllers, self.safejoin)
         controllers = controllers if self.deck is None else (*controllers, self.deck)
         controllers = controllers if self.hotkeys is None else (*controllers, self.hotkeys)
+        controllers = controllers if self.meetings is None else (*controllers, self.meetings)
+        controllers = controllers if self.eyeline is None else (*controllers, self.eyeline)
         return controllers if self.slots is None else (*controllers, self.slots)  # last: it acts through the others
 
     def start(self) -> None:
@@ -348,6 +448,7 @@ class Rig:
             "auto": studio["auto"],
             "health": self._framing_health(self._health(studio["health"])),
             "framing": self.framing.state() if self.framing is not None else None,
+            "eyeline": self.eyeline.state() if self.eyeline is not None else no_eyeline(),
             "system": studio["system"],
             "virtual": studio["virtual"],
             "lighting": self.lighting.state() if self.lighting is not None else _no_lighting(),
@@ -358,9 +459,14 @@ class Rig:
             "diagnostics": self.diagnostics.state() if self.diagnostics is not None else empty_diagnostics(),
             "hardware": self.hardware.state() if self.hardware is not None else _no_hardware(),
             "call": self.call.state() if self.call is not None else _no_call(),
+            "network": self.network.state() if self.network is not None else _no_network(),
+            "echo": self.echo.state() if self.echo is not None else _no_echo(),
+            "preflight": self.preflight.state() if self.preflight is not None else _no_preflight(),
+            "safejoin": self.safejoin.state() if self.safejoin is not None else _no_safejoin(),
         }
         snap["slots"] = self.slots.state(snap) if self.slots is not None else no_slots()
         snap["hotkeys"] = self.hotkeys.state(snap) if self.hotkeys is not None else no_hotkeys()
+        snap["meetings"] = self.meetings.state(snap) if self.meetings is not None else no_meetings()
         snap["deck"] = self.deck.state(snap) if self.deck is not None else no_deck()  # last: its keys show the rest
         return snap
 
@@ -399,12 +505,32 @@ class Rig:
             if self.hardware is None:
                 raise ActionError("Hardware probing is not part of this rig.", 409)
             return self.hardware.act(action, params)
+        elif prefix == "network":
+            if self.network is None:
+                raise ActionError("The network monitor is not part of this rig.", 409)
+            return self.network.act(action, params)
+        elif prefix == "echo":
+            if self.echo is None:
+                raise ActionError("The echo check is not part of this rig.", 409)
+            return self.echo.act(action, params)
         elif prefix == "call":
             if self.call is None:
                 raise ActionError("Call awareness is not part of this rig.", 409)
             return self.call.act(action, params)
+        elif prefix == "preflight":
+            if self.preflight is None:
+                raise ActionError("Pre-flight is not part of this rig.", 409)
+            return self.preflight.act(action, params)
+        elif prefix == "safejoin":
+            if self.safejoin is None:
+                raise ActionError("Safe join is not part of this rig.", 409)
+            return self.safejoin.act(action, params)
         elif prefix == "storage":
             return self._storage_act(action, params)
+        elif prefix == "meetings":
+            if self.meetings is None:
+                raise ActionError("Calendar-aware setup is not part of this rig.", 409)
+            return self.meetings.act(action, params)
         elif prefix == "deck":
             if self.deck is None:
                 raise ActionError("Stream Deck support is not part of this rig.", 409)
@@ -417,15 +543,19 @@ class Rig:
             if self.hotkeys is None:
                 raise ActionError("Hotkeys are not part of this rig.", 409)
             controller = self.hotkeys
+        elif prefix == "eyeline":
+            if self.eyeline is None:
+                raise ActionError("The eye-line coach is not part of this rig.", 409)
+            controller = self.eyeline
         elif prefix == "framing":
             if self.framing is None:
                 raise ActionError("Auto-framing is not part of this rig.", 409)
             controller = self.framing
-        elif prefix in ("stream", "record"):
+        elif prefix in ("stream", "record", "ingest", "replay"):
             if self.stream is None:
                 if prefix == "stream":  # the Presets page reads 501 as "pending": its choice is saved for later
                     raise ActionError("The streaming backend is not part of this rig (stream.set is pending).", 501)
-                raise ActionError("Recording and streaming are not part of this rig.", 409)
+                raise ActionError("Recording, replay and streaming are not part of this rig.", 409)
             controller = self.stream
         else:
             raise ActionError(f"Unknown action {action!r}.", 400)
