@@ -338,6 +338,82 @@ def test_watchdog_tick_heals_when_our_marker_says_it_was_forced_off(env: Path) -
     assert (conn / "status").read_text() == "connected"
 
 
+def test_hotplug_echo_of_our_own_probe_does_not_retrigger_a_repair(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 2026-10-28 22:14: every reprobe raised a drm uevent, which started the next
+    # hotplug repair about every 12 s. Inside the quiet window they are deferred.
+    _kernel_connector(env)
+    x = FakeX(None)
+    monkeypatch.setattr(guard, "run", x.run)
+    assert guard.repair(_cfg(), "hotplug") == 0
+    assert x.active == ("7680x4320", "60")
+    x2 = FakeX(("7680x4320", "60"))
+    monkeypatch.setattr(guard, "run", x2.run)
+    for _ in range(10):
+        assert guard.repair(_cfg(), "hotplug") == 0
+    assert x2.calls == []
+    assert guard.load_state().get("deferred_at")
+
+
+def _open_quiet_window() -> None:
+    now = time.time()
+    guard.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    guard.save_state({"last_repair_end": now - 5, "last_modeset": now - 30})
+
+
+def _window_closes() -> None:
+    state = guard.load_state()
+    state["last_repair_end"] = time.time() - guard.HOTPLUG_QUIET - 1
+    guard.save_state(state)
+
+
+def _run_one_watch_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Stop(Exception):
+        pass
+
+    def stop(seconds: float) -> None:
+        if seconds == 0.123:  # the watch loop's own end-of-tick sleep
+            raise Stop
+
+    monkeypatch.setattr(guard, "sleep", stop)
+    monkeypatch.setattr(guard, "idle_ms", lambda: None)
+    with pytest.raises(Stop):
+        guard.watch(_cfg(), interval=0.123)
+
+
+def test_a_hotplug_in_the_window_with_the_mode_wrong_at_the_end_repairs_exactly_once(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _kernel_connector(env)
+    _open_quiet_window()
+    x = FakeX(None)  # the TV changed mode / was replugged inside the window
+    monkeypatch.setattr(guard, "run", x.run)
+    assert guard.repair(_cfg(), "hotplug") == 0
+    assert x.calls == []  # deferred, nothing touched yet
+    _window_closes()
+    _run_one_watch_tick(monkeypatch)
+    assert x.active == ("7680x4320", "60")
+    assert [guard.HELPER] in x.calls and x.calls.count([guard.HELPER]) == 1
+    assert not any("3840x2160" in " ".join(c) for c in x.calls)
+    # the deferred marker is spent: a second tick does not repair again
+    before = len(x.calls)
+    _run_one_watch_tick(monkeypatch)
+    assert x.calls.count([guard.HELPER]) == 1
+    assert not guard.load_state().get("deferred_at")
+    assert len(x.calls) >= before
+
+
+def test_a_hotplug_in_the_window_with_the_mode_correct_repairs_nothing_and_keeps_the_window_closed(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _kernel_connector(env)
+    _open_quiet_window()
+    x = FakeX(("7680x4320", "60"))
+    monkeypatch.setattr(guard, "run", x.run)
+    assert guard.repair(_cfg(), "hotplug") == 0
+    _window_closes()
+    closed_at = guard.load_state()["last_repair_end"]
+    _run_one_watch_tick(monkeypatch)
+    assert x.offs() == 0 and [guard.HELPER] not in x.calls
+    assert guard.load_state()["last_repair_end"] == closed_at  # no new suppression window
+    assert not guard.load_state().get("deferred_at")
+
+
 # --- wake detection -------------------------------------------------------------
 
 
