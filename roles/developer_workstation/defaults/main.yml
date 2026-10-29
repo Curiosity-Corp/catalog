@@ -821,6 +821,10 @@ minimal_desktop_xorg_accel_method: "{{ (hardware_profiles.get(hardware_profile, 
 # and stops it adding the iGPU as a second (PRIME) GPU. Empty (the default)
 # leaves X's own behaviour and removes the drop-in (catalog#122).
 minimal_desktop_xorg_auto_add_gpu: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_auto_add_gpu', '') }}"
+# The hardware profile's optional `xorg_preferred_modes` maps a connector to the
+# mode X starts it in (`PreferredMode` in a Monitor section, e.g. DP-3:
+# 3840x2160). Empty (the default) writes nothing and removes the drop-in.
+minimal_desktop_xorg_preferred_modes: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_preferred_modes', {}) }}"
 minimal_desktop_lightdm_minimum_vt: 8
 minimal_desktop_lightdm_vtswitch_wrapper: false
 minimal_desktop_lightdm_remove_dropins: []
@@ -1690,6 +1694,12 @@ hardware_profiles:
     # Glamor off did not stop the SIGBUS either; X also drove the iGPU as a
     # second GPU (modeset(G0)) that has no display attached.
     xorg_auto_add_gpu: false
+    # Experiment (catalog#122): with DP-4 8K60 down the TV runs the DP-3 fallback
+    # and X paints at 7680x4320 in the greeter's first frame, where it crashes.
+    # Start DP-3 at 4K; the 8K60 pin is applied by curiosity-display-setup once
+    # DP-4 is back.
+    xorg_preferred_modes:
+      DP-3: 3840x2160
     # libinput pointer speed for the G604 (confirmed by the CEO on the 8K TV).
     pointer_accel_speed: 0.6
     pipx_packages:

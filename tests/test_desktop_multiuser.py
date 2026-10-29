@@ -204,6 +204,21 @@ def test_deskmeet_x_does_not_auto_add_the_igpu() -> None:
     assert removal["state"] == "absent" and removal["path"] == task["dest"]
 
 
+def test_deskmeet_dp3_starts_at_4k_in_x() -> None:
+    """catalog#122 experiment: no 7680x4320 first paint while DP-4 8K60 is down."""
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["hardware_profiles"]["deskmeet-b760"]["xorg_preferred_modes"] == {"DP-3": "3840x2160"}
+    assert not any("xorg_preferred_modes" in p for n, p in defaults["hardware_profiles"].items() if n != "deskmeet-b760")
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined, trim_blocks=True, lstrip_blocks=True)
+    tasks = _tasks("minimal-desktop-lightdm.yml")
+    task = _named(tasks, "Set the connectors' preferred X modes")["ansible.builtin.copy"]
+    rendered = env.from_string(task["content"]).render(minimal_desktop_xorg_preferred_modes={"DP-3": "3840x2160"})
+    assert 'Identifier "DP-3"' in rendered and 'Option "PreferredMode" "3840x2160"' in rendered
+    assert "Managed by Ansible" in rendered
+    removal = _named(tasks, "Remove the preferred-mode override")["ansible.builtin.file"]
+    assert removal["state"] == "absent" and removal["path"] == task["dest"]
+
+
 def test_lightdm_restart_backoff_drop_in() -> None:
     """A crashing X server must not turn lightdm.service into a ~3 s relaunch loop."""
     defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())

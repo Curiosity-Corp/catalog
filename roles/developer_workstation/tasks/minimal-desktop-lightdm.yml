@@ -18,6 +18,15 @@
       - minimal_desktop_lightdm_start_limit_burst | int >= 1
       - minimal_desktop_xorg_accel_method in ['', 'none', 'glamor']
       - minimal_desktop_xorg_auto_add_gpu in ['', true, false]
+      - minimal_desktop_xorg_preferred_modes is mapping
+      - >-
+        minimal_desktop_xorg_preferred_modes | dict2items
+        | selectattr('key', 'match', '^[A-Za-z]+-[0-9]+$') | list | length
+        == minimal_desktop_xorg_preferred_modes | length
+      - >-
+        minimal_desktop_xorg_preferred_modes.values() | map('string')
+        | select('match', '^[0-9]+x[0-9]+$') | list | length
+        == minimal_desktop_xorg_preferred_modes | length
       - minimal_desktop_lightdm_remove_dropins is sequence
       - minimal_desktop_lightdm_remove_dropins is not string
       - minimal_desktop_lightdm_remove_dropins | map('string') | select('match', '^[A-Za-z0-9_.-]+[.]conf$') | list | length == minimal_desktop_lightdm_remove_dropins | length
@@ -300,6 +309,29 @@
     path: /etc/X11/xorg.conf.d/20-curiosity-server-flags.conf
     state: absent
   when: minimal_desktop_xorg_auto_add_gpu | string | length == 0
+
+# Read at the next X server start; a running X server is left alone.
+- name: Set the connectors' preferred X modes
+  ansible.builtin.copy:
+    dest: /etc/X11/xorg.conf.d/20-curiosity-preferred-modes.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible.
+      {% for output, mode in minimal_desktop_xorg_preferred_modes.items() %}
+      Section "Monitor"
+          Identifier "{{ output }}"
+          Option "PreferredMode" "{{ mode }}"
+      EndSection
+      {% endfor %}
+  when: minimal_desktop_xorg_preferred_modes | length > 0
+
+- name: Remove the preferred-mode override when none is set
+  ansible.builtin.file:
+    path: /etc/X11/xorg.conf.d/20-curiosity-preferred-modes.conf
+    state: absent
+  when: minimal_desktop_xorg_preferred_modes | length == 0
 
 # Reload first: systemd still holds the display-manager.service alias it
 # loaded for gdm3, and refuses to load lightdm.service ("File exists") until
