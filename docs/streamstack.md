@@ -56,6 +56,7 @@ installs:
 | gphoto2, ffmpeg | Canon live view bridge, `ffplay` previews |
 | StreamStack | `/usr/local/lib/streamstack`, with `streamstack`, `streamstack-auto`, `streamstack-console` and `streamstack-tray` in `/usr/local/bin` |
 | `streamstack-console.service` | a user service that runs the Console without a window for the accounts in `streamstack_console_users` (default `[mrh]`): it hosts the native video engine, the only writer of `/dev/video43`, and starts the voice chain, so both exist at login |
+| `streamstack-camera-publish.service` | a one-shot user service after the Console: `streamstack camera-publish` restarts WirePlumber once so PipeWire (Firefox, the camera portal) lists StreamStack Camera, which WirePlumber probed at boot before anything fed it; it never runs while an app holds the camera or captures audio |
 
 A host that still has OBS Studio, Easy Effects or the obs-backgroundremoval
 plugin from an earlier role release gets them removed (`streamstack_retired_packages`,

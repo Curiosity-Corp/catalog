@@ -347,6 +347,23 @@ def test_the_console_runs_headless_for_the_studio_account_only() -> None:
     assert '"--no-window"' in (APP / "src/streamstack/cli.py").read_text()
 
 
+def test_the_program_camera_is_published_to_pipewire_after_the_console_feeds_it() -> None:
+    # WirePlumber probes the exclusive_caps loopback at module load and never again (StreamStack#176)
+    unit = _environment().from_string((ROLE / "templates/streamstack-camera-publish.service.j2").read_text()).render(
+        **{k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")}
+    )
+    assert "After=graphical-session.target pipewire.service wireplumber.service streamstack-console.service" in unit
+    assert "ExecStart=/usr/local/bin/streamstack camera-publish --wait 120" in unit
+    assert "ExecCondition=/usr/local/bin/streamstack camera-publish --help" in unit  # old releases: skipped, not failed
+    assert "SuccessExitStatus=3" in unit  # an app holds the camera or captures audio: never interrupt a call
+    assert "ConditionUser=|mrh" in unit and "Type=oneshot" in unit and "WantedBy=graphical-session.target" in unit
+    assert "--force" not in unit
+    link = _task("Publish StreamStack Camera to PipeWire at login")
+    assert link["ansible.builtin.file"]["src"] == "/etc/systemd/user/streamstack-camera-publish.service"
+    assert link["when"] == "streamstack_console_users | length > 0"
+    assert _task("Leave PipeWire's camera list to the Console")["when"] == "streamstack_console_users | length == 0"
+
+
 def test_the_voice_chain_is_not_enabled_beside_the_console() -> None:
     # The Console starts the chain host itself; a second supervisor would restart it against the first.
     install = _task("Install the StreamStack voice chain and deck user services")

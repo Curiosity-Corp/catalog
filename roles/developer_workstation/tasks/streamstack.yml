@@ -548,6 +548,34 @@
     state: absent
   when: streamstack_console_users | length == 0
 
+# WirePlumber probes the exclusive_caps program camera at module load, before the
+# Console feeds it, and never again; this one-shot restarts WirePlumber once after
+# the Console is up so PipeWire (Firefox, the camera portal) lists StreamStack
+# Camera. It never runs during a call (StreamStack#176).
+- name: Install the StreamStack camera publish user service
+  ansible.builtin.template:
+    src: streamstack-camera-publish.service.j2
+    dest: /etc/systemd/user/streamstack-camera-publish.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Publish StreamStack Camera to PipeWire at login
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants/streamstack-camera-publish.service
+    src: /etc/systemd/user/streamstack-camera-publish.service
+    state: link
+    owner: root
+    group: root
+    force: true
+  when: streamstack_console_users | length > 0
+
+- name: Leave PipeWire's camera list to the Console
+  ansible.builtin.file:
+    path: /etc/systemd/user/graphical-session.target.wants/streamstack-camera-publish.service
+    state: absent
+  when: streamstack_console_users | length == 0
+
 - name: Start the StreamStack panel icon at login
   ansible.builtin.copy:
     src: streamstack/packaging/applications/streamstack-tray.desktop
