@@ -318,6 +318,7 @@ export async function mount(host, ctx) {
       ...row('Audio', `${AUDIO_NAMES[a.codec]}${a.bitrate_kbps ? ` ${a.bitrate_kbps} kbps` : ''}, ${a.sample_rate / 1000} kHz ${a.channels === 1 ? 'mono' : 'stereo'}`),
       ...row('Loudness', a.loudness_lufs === null ? 'No target (leave the mix as it is)' : `${a.loudness_lufs} LUFS, true peak ${a.true_peak_dbtp} dBTP`),
       ...row('Transport', plan.transport.map((t) => TRANSPORT_NAMES[t]).join(', then ')),
+      ...(plan.rtmp ? row('RTMP ingest', `${plan.rtmp.tls ? 'RTMPS (TLS), rtmps://' : 'rtmp://'} · ${plan.rtmp.audio.map((c) => AUDIO_NAMES[c]).join(', then ')} audio`) : []),
       ...row('Upload needed', plan.uplink_mbps_needed ? `about ${plan.uplink_mbps_needed} Mbps (with headroom)` : 'No uplink used'));
     const why = h('div', { class: 'pr-why' },
       h('p', {}, p.rationale),

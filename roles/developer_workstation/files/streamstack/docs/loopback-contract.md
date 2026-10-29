@@ -23,6 +23,15 @@ Prevention: `make install` installs `/etc/kernel/postinst.d/zz-streamstack-v4l2l
 640x360 and 3840x2160 with even sides, 24 to 60 fps, and `exclusive_caps` on. Anything else is `v4l2loopback-contract`
 with the offending value. The engine already writes yuyv422 at its configured size and rate.
 
+The engine holds that contract whatever the camera delivers (`engine/source.py` `output_plan`, #175). A camera at or
+above 1280x720 and 24 fps is passed through at its own size and rate. A card or a fallback below that is never
+advertised as it is: the node stays at 1280x720, the picture is scaled to fit with its own aspect ratio and centred on
+black (`pad`, at the very end of the graph), and a camera under 24 fps is repeated up to 30 fps (`fps`). Example: the
+Cam Link 4K on a host whose HDMI source is 480p delivers 720x480 YUYV at 21.8 fps; the node stays 1280x720 at 30 fps
+with the picture 1080x720 between two black bars, and the "Camera reconnecting" card is written at the same format.
+`STREAMSTACK_ENGINE_SIZE=WIDTHxHEIGHT` is the operator's explicit choice and overrides the size (the doctor still
+checks it); the frame rate floor always applies.
+
 ## Competing producers
 
 `hardware/contention.py` lists the processes holding a node by reading `/proc/<pid>/fd` only. A second writer on

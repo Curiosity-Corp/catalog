@@ -267,6 +267,15 @@ def trial_argv(ffmpeg: str, cand: Candidate, device: str) -> list[str]:
     return argv
 
 
+OPUS_RTMP_FFMPEG = 8  # the first release whose FLV muxer announces Opus as Enhanced RTMP audio (checked on 8.0.1)
+
+
+def ffmpeg_major(version: str) -> int:
+    """The major number of an ffmpeg version string ("8.0.1-3ubuntu2" is 8); 0 for a git build or an unknown form."""
+    match = re.match(r"(\d+)\.\d+", version)
+    return int(match.group(1)) if match else 0
+
+
 def ffmpeg_version(text: str) -> str:
     match = re.search(r"ffmpeg version (\S+)", text)
     return match.group(1) if match else ""
@@ -391,8 +400,32 @@ def probe_transports(
             "the server must support Enhanced RTMP; classic H.264 is the fallback",
         )
     )
-    rtmps = rtmp and "tls" in names
-    out.append(TransportProbe("rtmps", "RTMPS (TLS)", rtmps, "" if rtmps else "this ffmpeg build has no TLS support"))
+    rtmps = rtmp and "rtmps" in names and "tls" in names
+    out.append(
+        TransportProbe(
+            "rtmps",
+            "RTMPS (TLS)",
+            rtmps,
+            "" if rtmps else "this ffmpeg build has no TLS support",
+            "the server certificate is checked unless the destination turns tls_verify off",
+        )
+    )
+    opus_ok = enhanced and ffmpeg_major(version) >= OPUS_RTMP_FFMPEG
+    out.append(
+        TransportProbe(
+            "rtmp-opus",
+            "Enhanced RTMP audio (Opus)",
+            opus_ok,
+            ""
+            if opus_ok
+            else (
+                f"ffmpeg {version or '?'} cannot send Opus over FLV (needs ffmpeg {OPUS_RTMP_FFMPEG} or newer)"
+                if enhanced
+                else "Enhanced RTMP itself is unavailable"
+            ),
+            "opt-in per destination (options.audio: opus); AAC is the default every server takes",
+        )
+    )
     reason = whip_check()
     if reason:
         out.append(TransportProbe("whip", "WHIP (WebRTC)", False, reason))
@@ -418,6 +451,7 @@ TRANSPORT_LABELS = (
     ("rtmp", "RTMP (classic, H.264 + AAC)"),
     ("rtmp-enhanced", "Enhanced RTMP (AV1, HEVC)"),
     ("rtmps", "RTMPS (TLS)"),
+    ("rtmp-opus", "Enhanced RTMP audio (Opus)"),
     ("whip", "WHIP (WebRTC)"),
 )
 

@@ -181,7 +181,7 @@ class Delivery:
 
     def note_output(self, spec: Spec) -> None:
         with self._lock:
-            self._out = (spec.out_width, spec.out_height, spec.source.fps if spec.source.fps > 0 else DEFAULT_FPS)
+            self._out = (spec.out_width, spec.out_height, spec.rate if spec.rate > 0 else DEFAULT_FPS)
 
     # -- the slate -------------------------------------------------------------------------------------------------
 

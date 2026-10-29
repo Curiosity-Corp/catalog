@@ -32,6 +32,11 @@ A platform has resolution and fps caps, codec order (AV1, HEVC, H.264), rate con
 (codec, bitrate, loudness target), transport order (Enhanced RTMP, RTMP, SRT, WHIP), a rationale, a source URL and a
 `verified` grade. Checked 2026-10.
 
+An RTMP platform may add two optional fields: `rtmps` (its ingest takes TLS, so the plan says to use `rtmps://`;
+true for YouTube, Twitch, Kick, LinkedIn and Facebook) and `rtmp_audio` (the audio codecs it takes, most preferred
+first; AAC only when absent, and `opus` is only valid with the `enhanced-rtmp` transport). The plan carries them as
+`rtmp: {tls, audio}`, and the Presets page shows them under Transport.
+
 | Platform | Grade | Source | Uncertain |
 | --- | --- | --- | --- |
 | YouTube Live | official | support.google.com/youtube/answer/2853702 | AV1/HEVC ingest ranges |

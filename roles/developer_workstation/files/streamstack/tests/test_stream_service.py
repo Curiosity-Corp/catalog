@@ -87,7 +87,7 @@ def runner(argv: list[str], timeout: float) -> tuple[int, str]:
     if "-encoders" in argv:
         return 0, ENCODERS
     if "-protocols" in argv:
-        return 0, "Output:\n file\n rtmp\n srt\n tls\n"
+        return 0, "Output:\n file\n rtmp\n rtmps\n srt\n tls\n"
     if "-muxers" in argv:
         return 0, MUXERS
     if "protocol=rtmp" in argv:
@@ -484,6 +484,176 @@ def test_enhanced_rtmp_that_never_connects_falls_back_to_classic_h264(env: Env) 
     assert [e["codec"] for e in state["encoders"]] == ["h264"]
     assert any("falling back to classic H.264" in text for _, text in env.events)
     env.svc.shutdown()
+
+
+def sink_argv_of(env: Env, dest_id: str, after: int = 0) -> list[str]:
+    """The argv of the destination's sink once it has started (the encoder's picture and the audio must arrive).
+
+    `after` is how many sinks the destination had before a move; the argv is that of a newer one.
+    """
+    active = env.svc._active[dest_id]
+    if len(env.named(f"sink-{dest_id}")) <= after:
+        video = env.last(f"video-{active.codec}")
+        start = 1500 * (after > 0)  # a move starts a new sink on the running encoder: later timestamps
+        env.feed(video, start, start + 1500, key_at={start, start + 600, start + 1200})
+        env.audio(start, start + 1500)
+    return env.last(f"sink-{dest_id}").argv
+
+
+def value_after(argv: list[str], flag: str) -> str | None:
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def test_rtmp_opus_with_h264_falls_back_to_aac_when_the_server_never_takes_it(env: Env) -> None:
+    env.svc.set(
+        {
+            "codec": "h264",
+            "destinations": [{"id": "r", "kind": "rtmp", "url": "rtmp://h.test/app", "options": {"audio": "opus"}}],
+        }
+    )
+    start_with_audio(env, env.svc.start_stream)
+    state = env.svc.state()["destinations"][0]
+    assert state["codec"] == "h264" and state["rtmp"] == {
+        "enhanced": True, "legacy": False, "audio": "opus", "tls": False, "tls_verify": False,
+    }  # fmt: skip
+    first = sink_argv_of(env, "r")
+    count = len(env.named("sink-r"))
+    assert value_after(first, "-c:a") == "copy" and value_after(first, "-rtmp_enhanced_codecs") == "Opus"
+    env.svc._active["r"].sink.restarts = 2
+    env.svc.tick()
+    after = env.svc.state()["destinations"][0]
+    assert after["codec"] == "h264" and after["rtmp"]["legacy"] and after["rtmp"]["audio"] == "aac"
+    assert after["rtmp"]["enhanced"] is False
+    second = sink_argv_of(env, "r", after=count)
+    assert value_after(second, "-c:a") == "aac" and "-rtmp_enhanced_codecs" not in second
+    assert any("did not accept Opus" in text for _, text in env.events)
+    sinks = len(env.named("sink-r"))
+    env.svc._active["r"].sink.restarts = 9
+    env.svc.tick()  # a destination that has fallen back does not fall back again
+    assert env.svc._active["r"].legacy and len(env.named("sink-r")) == sinks
+    env.svc.shutdown()
+
+
+def test_rtmp_av1_and_opus_fall_back_together_in_one_step(env: Env) -> None:
+    env.svc.set(
+        {"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmp://h.test/app", "options": {"audio": "opus"}}]}
+    )
+    start_with_audio(env, env.svc.start_stream)
+    assert env.svc.state()["destinations"][0]["codec"] == "av1"
+    assert value_after(sink_argv_of(env, "r"), "-rtmp_enhanced_codecs") == "av01,Opus"
+    env.svc._active["r"].sink.restarts = 2
+    env.svc.tick()
+    state = env.svc.state()["destinations"][0]
+    assert state["codec"] == "h264" and state["rtmp"]["legacy"] and state["rtmp"]["audio"] == "aac"
+    assert any("AV1 and Opus" in text for _, text in env.events)
+    env.svc.shutdown()
+
+
+def test_legacy_flag_is_kept_by_a_later_move_to_h264_and_dropped_for_another_codec(env: Env) -> None:
+    env.svc.set({"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmp://h.test/app"}]})
+    start_with_audio(env, env.svc.start_stream)
+    active = env.svc._active["r"]
+    env.svc._move(active, "h264", legacy=True)
+    assert env.svc._active["r"].legacy
+    env.svc._move(env.svc._active["r"], "h264")
+    assert env.svc._active["r"].legacy
+    env.svc._move(env.svc._active["r"], "hevc")
+    assert not env.svc._active["r"].legacy and "-rtmp_enhanced_codecs" in sink_argv_of(env, "r")
+    env.svc.shutdown()
+
+
+def test_aac_rtmp_with_h264_has_nothing_to_fall_back_from(env: Env) -> None:
+    env.svc.set({"codec": "h264", "destinations": [{"id": "r", "kind": "rtmp", "url": "rtmp://h.test/app"}]})
+    start_with_audio(env, env.svc.start_stream)
+    env.svc._active["r"].sink.restarts = 5
+    env.svc.tick()
+    assert not env.svc._active["r"].legacy and not env.svc.state()["destinations"][0]["moved"]
+    env.svc.shutdown()
+
+
+def test_rtmps_state_and_tls_flags(env: Env) -> None:
+    env.svc.set({"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmps://h.test/app"}]})
+    start_with_audio(env, env.svc.start_stream)
+    assert env.svc.state()["destinations"][0]["rtmp"]["tls_verify"] is True
+    argv = sink_argv_of(env, "r")
+    assert value_after(argv, "-tls_verify") == "1" and value_after(argv, "-verifyhost") == "h.test"
+    env.svc.shutdown()
+
+
+def test_a_running_rtmp_destination_cannot_change_its_audio_or_tls(env: Env) -> None:
+    env.svc.set({"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmps://h.test/app"}]})
+    start_with_audio(env, env.svc.start_stream)
+    for options in ({"audio": "opus"}, {"tls_verify": False}):
+        with pytest.raises(StreamError, match="stop it before changing it"):
+            env.svc.set(
+                {"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmps://h.test/app", "options": options}]}
+            )
+    env.svc.shutdown()
+
+
+def test_the_audio_bitrate_still_changes_live_for_an_opus_rtmp_destination(env: Env) -> None:
+    env.svc.set(
+        {"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmp://h.test/app", "options": {"audio": "opus"}}]}
+    )
+    start_with_audio(env, env.svc.start_stream)
+    sinks = len(env.named("sink-r"))
+    message = env.svc.set({"audio_bitrate_kbps": 96})
+    assert "Audio bitrate changed live" in message and len(env.named("sink-r")) == sinks  # no reconnect
+    env.svc.shutdown()
+
+
+def limited_env(tmp_path: Path, **gaps: str) -> Env:
+    """An Env whose ffmpeg reports `gaps`: `version`, `protocols` or `rtmp_help` replaced."""
+    original = globals()["runner"]
+
+    def limited(argv: list[str], timeout: float) -> tuple[int, str]:
+        if "-version" in argv and "version" in gaps:
+            return 0, f"ffmpeg version {gaps['version']}"
+        if "-protocols" in argv and "protocols" in gaps:
+            return 0, gaps["protocols"]
+        if "protocol=rtmp" in argv and "rtmp_help" in gaps:
+            return 0, gaps["rtmp_help"]
+        return original(argv, timeout)
+
+    env = Env(tmp_path)
+    env.svc._probe = probe.ProbeCache(
+        lambda: probe.probe_host("ffmpeg", limited, nodes=["/dev/null"], cores=16, whip_check=lambda: "")
+    )
+    return env
+
+
+def test_rtmps_destination_is_refused_when_ffmpeg_has_no_tls(tmp_path: Path) -> None:
+    env = limited_env(tmp_path, protocols="Output:\n file\n rtmp\n srt\n")
+    env.svc.set({"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmps://h.test/app"}]})
+    with pytest.raises(StreamError, match="no TLS support"):
+        start_with_audio(env, env.svc.start_stream)
+    env.svc.shutdown()
+
+
+def test_opus_destination_is_refused_on_an_old_ffmpeg_but_aac_still_streams(tmp_path: Path) -> None:
+    env = limited_env(tmp_path, version="7.1.1")
+    env.svc.set(
+        {"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmp://h.test/app", "options": {"audio": "opus"}}]}
+    )
+    with pytest.raises(StreamError, match="needs ffmpeg 8"):
+        start_with_audio(env, env.svc.start_stream)
+    env.svc.shutdown()
+
+
+def test_without_enhanced_rtmp_an_auto_destination_streams_classic_h264(tmp_path: Path) -> None:
+    env = limited_env(tmp_path, rtmp_help="")
+    env.svc.set({"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmp://h.test/app"}]})
+    start_with_audio(env, env.svc.start_stream)
+    state = env.svc.state()["destinations"][0]
+    assert state["codec"] == "h264" and "-rtmp_enhanced_codecs" not in sink_argv_of(env, "r")
+    env.svc.shutdown()
+    pinned = limited_env(tmp_path, rtmp_help="")
+    pinned.svc.set(
+        {"destinations": [{"id": "r", "kind": "rtmp", "url": "rtmp://h.test/app", "options": {"mode": "enhanced"}}]}
+    )
+    with pytest.raises(StreamError, match="no Enhanced RTMP"):
+        start_with_audio(pinned, pinned.svc.start_stream)
+    pinned.svc.shutdown()
 
 
 def test_forced_enhanced_rtmp_does_not_fall_back(env: Env) -> None:

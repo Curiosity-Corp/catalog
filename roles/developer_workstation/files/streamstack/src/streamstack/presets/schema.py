@@ -39,6 +39,7 @@ CODECS = ("av1", "hevc", "h264")
 RATE_CONTROLS = ("cbr", "vbr", "cqp", "none")
 TRANSPORTS = ("enhanced-rtmp", "rtmp", "srt", "whip", "virtualcam", "file")
 AUDIO_CODECS = ("aac", "opus", "pcm")
+RTMP_AUDIO_CODECS = ("aac", "opus")  # what an RTMP ingest can be asked to carry (Opus is Enhanced RTMP)
 GROUPS = ("live", "call", "archive")
 ORIENTATIONS = ("landscape", "portrait")
 TIER_POLICIES = ("ladder", "ignore")
@@ -186,7 +187,7 @@ def validate_platform(entry: object, index: int = 0) -> dict[str, Any]:
         "bitrate_cap_kbps", "platform_max_kbps", "keyframe_interval_s", "audio", "transport", "tier_policy",
         "verified", "rationale", "source", "uncertain",
     }  # fmt: skip
-    _only(data, required | {"quality", "h264_profile", "container"}, required, path)
+    _only(data, required | {"quality", "h264_profile", "container", "rtmps", "rtmp_audio"}, required, path)
     codecs = data["codecs"]
     if not isinstance(codecs, list) or len(set(codecs)) != len(codecs):
         raise _fail(f"{path}.codecs", "must be a list of distinct codecs, most preferred first")
@@ -238,6 +239,22 @@ def validate_platform(entry: object, index: int = 0) -> dict[str, Any]:
         out["h264_profile"] = _choice(data["h264_profile"], ("baseline", "main", "high"), f"{path}.h264_profile")
     if "container" in data:
         out["container"] = _choice(data["container"], ("mkv", "mp4", "mov"), f"{path}.container")
+    rtmp_transport = bool({"rtmp", "enhanced-rtmp"} & set(out["transport"]))
+    if "rtmps" in data:
+        if not isinstance(data["rtmps"], bool):
+            raise _fail(f"{path}.rtmps", "must be true or false")
+        if not rtmp_transport:
+            raise _fail(f"{path}.rtmps", "only applies to a platform with an rtmp transport")
+        out["rtmps"] = data["rtmps"]
+    if "rtmp_audio" in data:
+        accepted = data["rtmp_audio"]
+        if not isinstance(accepted, list) or not accepted or len(set(accepted)) != len(accepted):
+            raise _fail(f"{path}.rtmp_audio", "must be a non-empty list of distinct audio codecs, most preferred first")
+        if not rtmp_transport:
+            raise _fail(f"{path}.rtmp_audio", "only applies to a platform with an rtmp transport")
+        out["rtmp_audio"] = [_choice(c, RTMP_AUDIO_CODECS, f"{path}.rtmp_audio[{i}]") for i, c in enumerate(accepted)]
+        if "opus" in out["rtmp_audio"] and "enhanced-rtmp" not in out["transport"]:
+            raise _fail(f"{path}.rtmp_audio", "opus needs the enhanced-rtmp transport")
     if "file" in out["transport"] and "container" not in out:
         raise _fail(path, "a file transport needs a container")
     return out

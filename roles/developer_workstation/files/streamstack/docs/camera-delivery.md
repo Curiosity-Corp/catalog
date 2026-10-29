@@ -37,6 +37,15 @@ the command), a toast when it starts and when the camera is back, and `state.vid
 says the sentence a person needs: "StreamStack Camera is not listed by Teams, Zoom or Chrome: nothing feeds
 /dev/video43", naming the broken link (the source has no producer, or the engine is not running).
 
+## One format, whatever feeds the node
+
+Call apps read the one format the program node offers, so the node must not follow a weak source down. When the Canon
+is off USB the engine reads the Cam Link, which on some hosts captures 720x480 at 21.8 fps; the node used to be
+renegotiated to 480p and `streamstack doctor` warned "offers only 480p". Now the engine scales the picture to fit
+1280x720, centres it on black and repeats frames up to 30 fps, and the slate is written at the same format
+(`engine/source.py` `output_plan`, `engine/graph.py` `output_stage`, #175). Sources at 720p or above and 24 fps or more
+are passed through unchanged. The contract is in `docs/loopback-contract.md`.
+
 ## Idle when no app reads the camera
 
 A running engine keeps the GPU, the lights and the Canon's mirror and sensor busy even when nobody looks at the picture.
@@ -85,4 +94,17 @@ or read the `video-pipewire` row in `streamstack doctor`. Verified on dm313red a
 (PipeWire 1.6.2, WirePlumber): the three v4l2 cameras including StreamStack Camera are Video/Source nodes. Legacy apps:
 `pw-v4l2 <app>`. Chromium lists PipeWire cameras only with the flag above; Firefox with `media.webrtc.camera.allow-pipewire`.
 Zoom and Teams use the v4l2 node directly; whether any build uses the portal is a question for a person on a call.
+
+**After a boot it is not published until WirePlumber probes the node again (#176).** With `exclusive_caps=1` the
+loopback offers only OUTPUT capability until the Console writes it. WirePlumber probes a device when udev announces it
+(module load, early boot) and v4l2loopback sends no uevent when a writer attaches, so WirePlumber keeps the stale
+OUTPUT-only answer (`api.v4l2.cap.capabilities` ending in `2` in `pw-dump`, while `v4l2-ctl -d /dev/video43 --info`
+says Video Capture) and lists only the Cam Link. deskmeet1 showed exactly this (WirePlumber started at boot, the node
+fed later); dm313red showed the camera only because its WirePlumber had been restarted after the node was fed. No
+modprobe or WirePlumber config differs between the hosts. `streamstack camera-publish` is the fix: it waits until the
+node is fed, does nothing when PipeWire already lists it, refuses while an app holds `/dev/video43` or any program
+other than StreamStack captures audio (exit 3; `--force` overrides), and otherwise runs
+`systemctl --user restart wireplumber` once and waits for the node to appear. The workstation role runs it after
+`streamstack-console.service` starts (`streamstack-camera-publish.service`, user unit); `streamstack doctor` names it in
+the `video-pipewire` hint.
 

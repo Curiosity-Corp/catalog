@@ -433,13 +433,13 @@ class NativeVideo:
     def _spec_for(self, src: Source) -> Spec:
         node = self._node().path
         self._engine_node = node
-        width, height = source.output_size(self.cfg, src)
+        out = source.output_plan(self.cfg, src)
         backend = self._backend_for_engine(node)
         return Spec(
             src,
             hwcamera.device_for("program", self.cfg, self._plan()),
-            width,
-            height,
+            out.width,
+            out.height,
             backend=backend,
             render_node=node,
             detect_fps=_detect_fps(self.cfg),
@@ -449,6 +449,8 @@ class NativeVideo:
             denoise=self._denoise() if backend == "vulkan" else "",
             blur=self.arc.graph if self.arc.capable else None,
             mjpeg_decode=self._mjpeg_for_engine(node) if src.mjpeg and backend == "vulkan" else graph.MJPEG_VAAPI,
+            out_fps=out.fps,
+            letterbox=out.letterbox,
         )
 
     def _scaler(self) -> str:

@@ -129,6 +129,13 @@ def _platform() -> dict:
         ({"quality": {"av1": 30}}, "only applies to cqp"),
         ({"surprise": 1}, "unknown field 'surprise'"),
         ({"verified": "trust-me"}, "must be one of official"),
+        ({"rtmps": "yes"}, "rtmps: must be true or false"),
+        ({"rtmps": True, "transport": ["srt"]}, "only applies to a platform with an rtmp transport"),
+        ({"rtmp_audio": []}, "non-empty list of distinct audio codecs"),
+        ({"rtmp_audio": ["aac", "aac"]}, "non-empty list of distinct audio codecs"),
+        ({"rtmp_audio": ["pcm"]}, "must be one of aac, opus"),
+        ({"rtmp_audio": ["opus"], "transport": ["rtmp"]}, "opus needs the enhanced-rtmp transport"),
+        ({"rtmp_audio": ["aac"], "transport": ["whip"]}, "only applies to a platform with an rtmp transport"),
     ],
 )
 def test_platform_validation(change: dict, message: str) -> None:
@@ -219,6 +226,21 @@ def test_every_platform_and_tier_resolves_within_the_platform_limits(platform_id
         if rate is not None and platform["bitrate_cap_kbps"]:
             assert rate <= platform["bitrate_cap_kbps"]
     assert plan["transport"] == platform["transport"]
+
+
+def test_the_plan_says_how_to_set_up_an_rtmp_destination() -> None:
+    youtube = resolve(CAT.platform("youtube"), CAT.tier("high"))
+    assert youtube["rtmp"] == {"tls": True, "audio": ["aac"]}
+    tiktok = resolve(CAT.platform("tiktok"), CAT.tier("high"))
+    assert tiktok["rtmp"] == {"tls": False, "audio": ["aac"]}  # no RTMPS documented, so none is asked for
+    assert "rtmp" not in resolve(CAT.platform("archive"), CAT.tier("high"))  # a file has no RTMP ingest
+    opus = {**CAT.platform("youtube"), "rtmp_audio": ["opus", "aac"]}
+    assert resolve(opus, CAT.tier("high"))["rtmp"]["audio"] == ["opus", "aac"]
+
+
+def test_the_documented_rtmps_platforms() -> None:
+    assert {p["id"] for p in CAT.platforms if p.get("rtmps")} == {"youtube", "twitch", "kick", "linkedin", "facebook"}
+    assert all("opus" not in p.get("rtmp_audio", []) for p in CAT.platforms)  # no platform documents Opus ingest
 
 
 def test_youtube_ultra_is_4k60_with_av1_first() -> None:

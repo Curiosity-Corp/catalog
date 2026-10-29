@@ -299,10 +299,11 @@ The default changes from `ewa_lanczos` to `lanczos`: the same picture quality (P
 downscaled picture saves 60 to 190 ms of GPU time per second. At 1:1 (no zoom, same size) libplacebo does not scale
 and the setting costs nothing. The full 21-row tables are reproduced by `tools/bench_scalers.py --ratio 0.8|0.5|2`.
 
-VA-API to Vulkan and the MJPEG decode path (#137): a VA-decoded JPEG maps into Vulkan and reads back through `hwmap`
-and `hwdownload` equal to a software decode, but libplacebo cannot import the mapped frame on this stack (ffmpeg
-8.0.1, libplacebo 7.360, mesa 26.0.8, intel-media-va-driver 26.1.2, Arc A380): `vk->CreateImage ...
-VK_ERROR_OUT_OF_DEVICE_MEMORY` (libplacebo `gpu_tex.c`, the dma-buf import). A Cam Link in MJPEG mode would therefore
+VA-API to Vulkan and the MJPEG decode path (#137, #138): a VA-decoded JPEG maps into Vulkan and reads back through
+`hwmap` and `hwdownload` equal to a software decode, but libplacebo cannot import the mapped frame on this stack
+(ffmpeg 8.0.1, libplacebo 7.360, mesa 26.0.8, intel-media-va-driver 26.1.2, Arc A380): `vk->CreateImage ...
+VK_ERROR_OUT_OF_DEVICE_MEMORY` (libplacebo `gpu_tex.c`, the dma-buf import). That error is not a memory shortage (the
+Arc reports a 6 GB device heap and the failing image is 640x360): see "Root cause of the zero-copy failure" below. A Cam Link in MJPEG mode would therefore
 have had no picture. So the engine picks the first of three ways to decode a Motion-JPEG camera that works here:
 
 | Path | Graph head | Where the decode runs |
@@ -312,8 +313,11 @@ have had no picture. So the engine picks the first of three ways to decode a Mot
 | `software` | libavcodec (threaded by default), `format=yuv420p\|yuv422p\|nv12,hwupload` | the CPU |
 
 - `probe.probe_mjpeg` runs the engine's own head, tier by tier, on a synthetic 4:2:0 and a 4:2:2 JPEG (decode,
-  libplacebo, read back). The first tier that passes both is used. The answer is cached in `engine-mjpeg-probe.json`
-  next to the settings under a fingerprint of the node, the ffmpeg version and the mesa, VA driver and libva packages;
+  libplacebo, read back). A tier passes only when it exits 0 **and** its picture equals the one a software decode
+  gives through the same libplacebo (mean error under 4 of 255): exit codes alone are not trusted, see below. The first
+  tier that passes both is used. When zero-copy fails with libplacebo's `CreateImage` error the probe runs the VA to
+  Vulkan mapping alone and reports which step failed (the import, or the mapping). The answer is cached in `engine-mjpeg-probe.json`
+  next to the settings under a fingerprint of the node, the ffmpeg version and the mesa, VA driver, libva and libplacebo packages;
   a new stack probes again, and a probe that could not run (no ffmpeg, timeout) is not kept. This stack answers
   `vaapi-copy`, with the zero-copy failure as the reason.
 - The decoder's own read-back is used (no `-hwaccel_output_format`) rather than a `hwdownload` in the graph: a
@@ -331,10 +335,33 @@ to 18 % against 10 to 12 %): most of the engine's cost is shared (the read-back 
 conversion to the output format and the detect branch; a raw camera costs 29 % in the same measure). Zero-copy could
 not be measured on this stack.
 
-Time-boxed look at making the zero-copy import work on the Arc: nothing found; the variants, errors, versions and the
-stalled `hwmap,scale_vulkan` copy are recorded in
-issue #138 in the project tracker for a retest after driver
-updates (`streamstack engine probe` shows when the stack starts passing).
+### Root cause of the zero-copy failure (#138, measured 2026-10-29 on dm313red)
+
+Same stack as above, kernel 7.0.0-38, i915. A `LD_PRELOAD` shim on `vkCreateImage` shows what libplacebo asks the
+driver for. `hwmap` imports the VA surface into Vulkan correctly (`VK_FORMAT_R8_UNORM` per plane, explicit modifier
+`I915_FORMAT_MOD_4_TILED` 0x...09, Y plane pitch 640, chroma planes at offsets 245760 and 368640, pitch 640: all
+accepted, result 0). libplacebo then re-exports that Vulkan frame as a DRM object (the log's `Mapped AVVkFrame to a
+DRM object`) and imports it again with `usage=0x5`; that second description is wrong: chroma planes at offset 0 with
+pitch 320 instead of 245760 / 640, and a linear BGRA surface (pitch 2560) with pitch 640 (the width in pixels). anv
+rejects it with `VK_ERROR_OUT_OF_DEVICE_MEMORY`, which is how it reports an image it cannot lay out. So:
+
+- It is not device memory: a 6 GB device heap and 45 GB shared, and the failing image is 640x360.
+- It is not the JPEG: NV12 (`scale_vaapi=format=nv12`) and linear BGRA fail the same way. Every VA-API frame fails.
+- It is not how StreamStack builds the graph: `hwmap`, `hwmap=derive_device=vulkan`, a Vulkan device derived from
+  the VA one or created separately, `mode=read+write`, and a VAAPI to Vulkan to VAAPI to Vulkan chain all fail
+  identically. The zero-copy head in `graph.py` is the standard ffmpeg one.
+- It is in the ffmpeg 8.0.1 / libplacebo 7.360 pair (the Vulkan to DRM export and the dma-buf import that consumes it)
+  on a Mesa anv that validates plane layouts. `apt-cache policy` shows no newer mesa, libplacebo, ffmpeg or iHD candidate on 2026-10-29.
+
+The one variant that runs, `hwmap,scale_vulkan=w=..:h=..,libplacebo=...` (a GPU copy into a native Vulkan frame), exits
+0 and does not stall on a 10 s 1080p30 MJPEG clip on this stack, but its picture is wrong: the first frames are empty
+(an all-green image, 9.5 dB against a software decode, while `hwmap,scale_vulkan,hwdownload` alone is 77 dB). The
+copy is not synchronised with libplacebo's read. That is why the probe compares pictures: an exit code of 0 would have
+selected a path that shows green. #138's earlier note that the 3-frame run "passes" was an unchecked exit status.
+
+Retest: a new mesa, libplacebo, ffmpeg or iHD changes the fingerprint and `streamstack engine probe` runs again by
+itself; it prints `mjpeg decode: vaapi` only when the zero-copy picture equals the software one. Nothing in StreamStack
+has to change when it does.
 
 ## OBS was removed (#61)
 

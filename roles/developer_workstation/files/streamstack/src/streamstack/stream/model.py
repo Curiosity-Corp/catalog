@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import SplitResult, quote, urlsplit, urlunsplit
 
 CODECS = ("av1", "hevc", "h264")  # best first: this order is the selection policy
 CODEC_RANK = {codec: rank for rank, codec in enumerate(CODECS)}
@@ -33,6 +33,8 @@ KINDS = ("record", "srt", "rtmp", "whip")
 LIVE_KINDS = ("srt", "rtmp", "whip")
 SRT_MODES = ("caller", "listener")
 RTMP_MODES = ("auto", "enhanced", "classic")
+RTMP_AUDIO = ("aac", "opus")  # Opus is Enhanced RTMP audio: only servers that take the extension can play it
+RTMP_OPTIONS = {"mode", "audio", "tls_verify", "ca_file"}
 RECORD_FORMATS = ("mkv", "mp4")
 DEST_ID = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 
@@ -303,11 +305,14 @@ class Destination:
         if codec not in ("auto", *CODECS):
             raise SettingsError(f"codec must be auto or one of {', '.join(CODECS)}.")
         options = dict(data.get("options") or {})
+        url = str(data.get("url", "")).strip()
+        if kind == "rtmp":
+            url = normalize_rtmp_url(url)
         dest = cls(
             ident,
             kind,
             str(data.get("name", ""))[:60],
-            str(data.get("url", "")).strip(),
+            url,
             str(data.get("key_ref", "")).strip(),
             codec,
             options,
@@ -336,17 +341,77 @@ class Destination:
             latency = self.options.get("latency_ms", 120)
             if latency != "auto":  # "auto" follows the measured round trip (stream/srt.py)
                 _number("SRT latency_ms", latency, 20, 8000)
-        if self.kind == "rtmp" and self.options.get("mode", "auto") not in RTMP_MODES:
-            raise SettingsError(f"RTMP mode must be one of {', '.join(RTMP_MODES)}.")
-        if self.kind == "rtmp" and "?" in self.url:
-            raise SettingsError("Put the stream key in key_ref; the URL ends at the application name.")
+        if self.kind == "rtmp":
+            self._validate_rtmp(parts)
         if self.key_ref and not REF.fullmatch(self.key_ref):
             raise SettingsError("key_ref looks like env:NAME, file:/path, cfg:NAME or cmd:command args.")
         if not self.allowed_codecs():
             raise SettingsError(f"A {self.kind} destination cannot carry codec {self.codec}.")
 
+    def _validate_rtmp(self, parts: SplitResult) -> None:
+        unknown = sorted(set(self.options) - RTMP_OPTIONS)
+        if unknown:
+            raise SettingsError(
+                f"Unknown RTMP option {unknown[0]!r}; the options are {', '.join(sorted(RTMP_OPTIONS))}."
+            )
+        mode = self.options.get("mode", "auto")
+        if mode not in RTMP_MODES:
+            raise SettingsError(f"RTMP mode must be one of {', '.join(RTMP_MODES)}.")
+        if "?" in self.url or "#" in self.url:
+            raise SettingsError("Put the stream key in key_ref; the URL ends at the application name.")
+        try:
+            _ = parts.port
+        except ValueError:
+            raise SettingsError("The port in the RTMP URL must be a number from 1 to 65535.") from None
+        if self.rtmp_audio() not in RTMP_AUDIO:
+            raise SettingsError(f"RTMP audio must be one of {', '.join(RTMP_AUDIO)}.")
+        if self.rtmp_audio() == "opus" and mode == "classic":
+            raise SettingsError(
+                "Opus audio is Enhanced RTMP; use mode auto or enhanced, or audio aac for classic RTMP."
+            )
+        tls_options = sorted({"tls_verify", "ca_file"} & set(self.options))
+        if tls_options and parts.scheme != "rtmps":
+            raise SettingsError(f"{tls_options[0]} applies to rtmps:// URLs only.")
+        if "tls_verify" in self.options and not isinstance(self.options["tls_verify"], bool):
+            raise SettingsError("tls_verify must be true or false.")
+        ca_file = self.options.get("ca_file", "")
+        if not isinstance(ca_file, str) or any(ord(ch) < 32 for ch in ca_file):
+            raise SettingsError("ca_file must be the path of a PEM file.")
+        if ca_file and not self.tls_verify():
+            raise SettingsError("ca_file has no use with tls_verify off.")
+
+    def rtmp_audio(self) -> str:
+        """The audio codec this RTMP destination is asked to carry: `aac` (every server) or `opus` (Enhanced RTMP)."""
+        return self.options.get("audio", "aac")
+
+    def is_tls(self) -> bool:
+        return self.kind == "rtmp" and urlsplit(self.url).scheme == "rtmps"
+
+    def tls_verify(self) -> bool:
+        """Whether the server certificate is checked (RTMPS). On unless the destination turns it off."""
+        return self.options.get("tls_verify", True) is not False
+
     def live(self) -> bool:
         return self.kind in LIVE_KINDS
+
+
+def normalize_rtmp_url(url: str) -> str:
+    """The URL with a lower-case scheme and host and no trailing slash; the application path is untouched.
+
+    ffmpeg picks the protocol by a lower-case scheme, so `RTMPS://Live.Example/app/` would otherwise fail with
+    "protocol not found". A URL that does not parse, or carries credentials, is returned as it is: `validate`
+    reports it.
+    """
+    try:
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return url
+    if parts.scheme not in ("rtmp", "rtmps") or not host or parts.username or parts.password:
+        return url
+    shown = f"[{host}]" if ":" in host else host
+    netloc = shown + (f":{port}" if port is not None else "")
+    return urlunsplit((parts.scheme, netloc, parts.path.rstrip("/"), parts.query, parts.fragment))
 
 
 def destinations_from(data: Any) -> list[Destination]:

@@ -147,6 +147,18 @@ class TestDestinations:
             {"id": "a", "kind": "srt", "url": "srt://h:1", "options": {"mode": "x"}},
             {"id": "a", "kind": "rtmp", "url": "rtmp://h/app?key=1"},
             {"id": "a", "kind": "rtmp", "url": "rtmp://h/app", "key_ref": "literal-key"},
+            {"id": "a", "kind": "rtmp", "url": "rtmp://h/app#frag"},
+            {"id": "a", "kind": "rtmp", "url": "rtmp://h:99999/app"},
+            {"id": "a", "kind": "rtmp", "url": "rtmp://h/app", "options": {"mode": "fast"}},
+            {"id": "a", "kind": "rtmp", "url": "rtmp://h/app", "options": {"latency_ms": 5}},
+            {"id": "a", "kind": "rtmp", "url": "rtmp://h/app", "options": {"audio": "mp3"}},
+            {"id": "a", "kind": "rtmp", "url": "rtmp://h/app", "options": {"audio": "opus", "mode": "classic"}},
+            {"id": "a", "kind": "rtmp", "url": "rtmp://h/app", "options": {"tls_verify": False}},
+            {"id": "a", "kind": "rtmp", "url": "rtmp://h/app", "options": {"ca_file": "/x.pem"}},
+            {"id": "a", "kind": "rtmp", "url": "rtmps://h/app", "options": {"tls_verify": "no"}},
+            {"id": "a", "kind": "rtmp", "url": "rtmps://h/app", "options": {"ca_file": 5}},
+            {"id": "a", "kind": "rtmp", "url": "rtmps://h/app", "options": {"ca_file": "/x.pem", "tls_verify": False}},
+            {"id": "a", "kind": "rtmp", "url": "rtmps://u:p@h/app"},
             {"id": "a", "kind": "record", "options": {"format": "avi"}},
             {"id": "a", "kind": "whip", "url": "ftp://h/x"},
             {"id": "a", "kind": "whip", "url": "https://u:p@h/x"},
@@ -156,6 +168,34 @@ class TestDestinations:
     def test_invalid(self, data: dict[str, object]) -> None:
         with pytest.raises(SettingsError):
             Destination.from_dict(data)
+
+    def test_rtmp_options_and_defaults(self) -> None:
+        plain = dest("rtmp")
+        assert plain.rtmp_audio() == "aac" and not plain.is_tls() and plain.tls_verify()
+        opus = dest("rtmp", options={"audio": "opus", "mode": "enhanced"})
+        assert opus.rtmp_audio() == "opus" and opus.allowed_codecs() == ("av1", "hevc", "h264")
+        secure = dest("rtmp", url="rtmps://live.test:443/app", options={"tls_verify": False})
+        assert secure.is_tls() and not secure.tls_verify()
+        with_ca = dest("rtmp", url="rtmps://live.test/app", options={"ca_file": "/etc/ssl/ingest.pem"})
+        assert with_ca.is_tls() and with_ca.tls_verify() and Destination.from_dict(with_ca.to_dict()) == with_ca
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            ("RTMPS://Live.Example.COM/app/", "rtmps://live.example.com/app"),
+            ("rtmp://Live.test:1935/app/sub//", "rtmp://live.test:1935/app/sub"),
+            ("  rtmps://[::1]:443/live  ", "rtmps://[::1]:443/live"),
+            ("rtmp://live.test/a%20b", "rtmp://live.test/a%20b"),
+        ],
+    )
+    def test_rtmp_urls_are_normalised(self, given: str, expected: str) -> None:
+        assert dest("rtmp", url=given).url == expected
+
+    def test_normalising_leaves_what_validation_must_reject(self) -> None:
+        from streamstack.stream.model import normalize_rtmp_url
+
+        for url in ("rtmps://u:p@h/app", "rtmp://h:99999/app", "srt://h:1", "", "not a url"):
+            assert normalize_rtmp_url(url) == url
 
     def test_allowed_codecs(self) -> None:
         assert dest("rtmp").allowed_codecs()[0] == "av1"

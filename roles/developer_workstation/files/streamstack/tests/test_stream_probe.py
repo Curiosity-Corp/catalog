@@ -16,7 +16,7 @@ ENCODERS = """Encoders:
  V....D libx264              libx264 H.264
  V....D libsvtav1            SVT-AV1
 """
-PROTOCOLS = "Supported file protocols:\nInput:\n  file\nOutput:\n  file\n  rtmp\n  srt\n  tls\n"
+PROTOCOLS = "Supported file protocols:\nInput:\n  file\nOutput:\n  file\n  rtmp\n  rtmps\n  srt\n  tls\n"
 MUXERS = " E mp4             MP4\n E flv             FLV\n E matroska        Matroska\n"
 RTMP_HELP = "rtmp AVOptions:\n  -rtmp_enhanced_codecs <string> E.. enhanced\n"
 
@@ -121,7 +121,7 @@ def test_trial_goes_through_the_real_filter_chain() -> None:
 def test_transports() -> None:
     h = host()
     ok = {t.id: t for t in h.transports}
-    assert all(ok[i].ok for i in ("record-mkv", "record-mp4", "srt", "rtmp", "rtmp-enhanced", "rtmps"))
+    assert all(ok[i].ok for i in ("record-mkv", "record-mp4", "srt", "rtmp", "rtmp-enhanced", "rtmps", "rtmp-opus"))
     assert not ok["whip"].ok and "WHIP" in ok["whip"].label and "streamstack[whip]" in ok["whip"].reason
     ready = {t.id: t for t in host(whip="").transports}
     assert ready["whip"].ok and ready["whip"].reason == ""
@@ -194,3 +194,28 @@ def test_source_info_for_missing_and_real_files(tmp_path) -> None:
 def test_encoder_probe_builds_a_choice() -> None:
     choice = EncoderProbe("av1_vaapi", "av1", "vaapi", "x", "/dev/dri/renderD128", ok=True).choice()
     assert choice.device == "/dev/dri/renderD128" and choice.codec == "av1"
+
+
+def test_opus_over_rtmp_needs_ffmpeg_8_and_enhanced_rtmp() -> None:
+    def ts(version: str, rtmp_help: str = RTMP_HELP) -> dict[str, probe.TransportProbe]:
+        return {t.id: t for t in probe.probe_transports("ff", PROTOCOLS, MUXERS, rtmp_help, version, lambda: "")}
+
+    assert ts("8.0.1-3ubuntu2")["rtmp-opus"].ok
+    old = ts("7.1.1")
+    assert old["rtmp-enhanced"].ok and not old["rtmp-opus"].ok and "needs ffmpeg 8" in old["rtmp-opus"].reason
+    assert not ts("N-123456-gabcdef")["rtmp-opus"].ok  # a git build: the version cannot be told, so it is not claimed
+    none = ts("8.0", rtmp_help="")
+    assert not none["rtmp-opus"].ok and "Enhanced RTMP itself is unavailable" in none["rtmp-opus"].reason
+
+
+def test_rtmps_needs_the_rtmps_protocol_and_tls() -> None:
+    no_tls = "Output:\n  rtmp\n  srt\n"
+    ts = {t.id: t for t in probe.probe_transports("ff", no_tls, MUXERS, RTMP_HELP, "8.0", lambda: "")}
+    assert ts["rtmp"].ok and not ts["rtmps"].ok and "TLS" in ts["rtmps"].reason
+    only_tls = "Output:\n  rtmp\n  tls\n"  # the TLS library alone does not give rtmps://
+    ts = {t.id: t for t in probe.probe_transports("ff", only_tls, MUXERS, RTMP_HELP, "8.0", lambda: "")}
+    assert not ts["rtmps"].ok
+
+
+def test_ffmpeg_major() -> None:
+    assert [probe.ffmpeg_major(v) for v in ("8.0.1-3ubuntu2", "6.1", "N-1-g2", "", "7")] == [8, 6, 0, 0, 0]

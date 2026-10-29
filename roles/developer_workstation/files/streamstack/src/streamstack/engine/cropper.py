@@ -33,7 +33,7 @@ class EngineCropper:
             applied = Crop(
                 rect["x"], rect["y"], source.width - rect["x"] - rect["w"], source.height - rect["y"] - rect["h"]
             )
-        out_height = float(engine.spec.out_height)
+        out_height = float(engine.spec.picture[1])  # the camera's own height on the node, not the black bars
         return [Item(SCENE, 1, source.label, source.width, source.height, out_height, Crop(), applied)]
 
     def apply(self, item: Item, crop: Crop) -> None:

@@ -498,3 +498,51 @@ def test_the_detection_and_mask_outputs_encode_on_one_thread_too() -> None:
         options = _output_options(argv, target)
         assert options[options.index("-threads") + 1] == "1"
     assert "-flush_packets" in _output_options(argv, "pipe:7")
+
+
+# -- the call-app contract floor: a small or slow camera is letterboxed and repeated, never advertised as it is ----
+
+LOW_CARD = Source("Cam Link 4K", "/dev/video0", "YUYV", 720, 480, 21.8)
+
+
+def low_spec(**kw) -> Spec:
+    return Spec(LOW_CARD, "/dev/video43", 1280, 720, out_fps=30.0, letterbox=True, **kw)
+
+
+def test_the_picture_keeps_the_camera_aspect_and_fits_the_node() -> None:
+    assert low_spec().picture == (1080, 720)
+    wide = Spec(Source("w", "/dev/video0", "YUYV", 640, 360, 30.0), "/dev/video43", 1280, 720, letterbox=True)
+    assert wide.picture == (1280, 720)
+    tall = Spec(Source("t", "/dev/video0", "YUYV", 1024, 768, 30.0), "/dev/video43", 1280, 720, letterbox=True)
+    assert tall.picture == (960, 720)
+
+
+def test_without_letterbox_the_picture_is_the_whole_node() -> None:
+    assert Spec(LOW_CARD, "/dev/video43", 1920, 1080).picture == (1920, 1080)
+
+
+@pytest.mark.parametrize("backend", ["vulkan", "cpu"])
+def test_a_low_resolution_camera_is_scaled_to_fit_then_padded_and_repeated(backend: str) -> None:
+    text = graph.build_graph(low_spec(backend=backend), NEUTRAL)
+    if backend == "vulkan":
+        assert "w=1080:h=720" in text and "fps=21.8" in text
+    else:
+        assert "scale=1080:720:" in text
+    assert "pad=1280:720:100:0:color=black,fps=30" in text
+    assert "[prog]" in text
+
+
+def test_the_blur_branch_works_at_the_picture_size_not_the_node_size() -> None:
+    text = graph.build_graph(low_spec(blur=graph.BlurGraph()), NEUTRAL, blur=(True, 8))
+    assert "[1:v]gblur=sigma=1.5[ms]" in text
+    assert "scale=1080:720:flags=bilinear[bg]" in text and "scale=1280:720" not in text
+    assert text.rindex("pad=1280:720:100:0:color=black") > text.index("maskedmerge@blur")
+
+
+def test_a_camera_that_fills_the_node_at_its_own_rate_gets_no_extra_stage() -> None:
+    assert graph.output_stage(spec()) == []
+    assert "pad=" not in graph.build_graph(spec(), NEUTRAL) and "fps=20[" not in graph.build_graph(spec(), NEUTRAL)
+
+
+def test_the_program_node_rate_is_the_contract_rate_not_the_camera_rate() -> None:
+    assert low_spec().rate == 30.0 and spec().rate == 20.0

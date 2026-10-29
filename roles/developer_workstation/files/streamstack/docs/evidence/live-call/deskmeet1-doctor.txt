@@ -1,0 +1,77 @@
+streamstack 0.0.22
+rig: studio-deck (selected by overlap)
+
+Hardware
+[  ok] rig: studio-deck (selected by overlap): Studio with Stream Deck; reason: overlap; scores: studio-deck 12, studio-wave-xlr 7
+[  ok] Elgato Stream Deck (original V2): present: USB 0fd9:006d
+[  ok] Intel Arc A380: present: PCI 8086:56a5
+[  ok] Elgato Cam Link 4K: present: USB 0fd9:0066
+[  ok] Canon EOS 50D: not present: optional for this rig
+[  ok] Logitech Litra Beam: present: USB 046d:c901
+[  ok] Intel UHD Graphics 770: present: PCI 8086:a780
+[  ok] Onboard HD Audio (Raptor Lake PCH): present: PCI 8086:7a50
+[  ok] Focusrite Scarlett 2i2 (4th Gen): not present: optional for this rig
+[  ok] Focusrite Scarlett 2i2 (3rd Gen): not present: optional for this rig
+[  ok] Elgato Wave XLR: not present: optional for this rig
+[  ok] grade: /dev/dri/renderD129 (Intel Corporation DG2 [Arc A380], 8086:56a5): chosen by the studio-deck rig
+[  ok] encode: /dev/dri/renderD129 (Intel Corporation DG2 [Arc A380], 8086:56a5): chosen by the studio-deck rig
+[  ok] decode: /dev/dri/renderD128 (Intel Corporation Raptor Lake-S GT1 [UHD Graphics 770], 8086:a780): chosen by the studio-deck rig
+[  ok] blur: /dev/dri/renderD129 (Intel Corporation DG2 [Arc A380], 8086:56a5): chosen by the studio-deck rig
+[  ok] encoder: av1_vaapi (av1): VA-API on /dev/dri/renderD129
+[warn] Focusrite Scarlett 2i2 (4th Gen) or Focusrite Scarlett 2i2 (3rd Gen) or Elgato Wave XLR is not enumerating on USB: Studio with Stream Deck expects it, and it is not among the USB devices; no audio interface is attached and PipeWire is on its Dummy Output, so there is no call microphone and the voice chain does not start
+       -> an owner action at the machine: re-seat the interface in a direct rear USB port (no hub, no front panel) with a short known-good cable, then run `streamstack doctor` again
+[warn] monitor output: PipeWire's Dummy Output, nothing is audible: no real sink exists
+       -> connect headphones or an interface (its card is at profile off)
+[warn] Focusrite Scarlett: not on USB, and the kernel reports USB errors: kernel: usb 1-10.1.4: device not accepting address 42, error -71; kernel: usb 1-10.1.4: device not accepting address 43, error -71; kernel: usb 1-10.1-port4: unable to enumerate USB device
+       -> an owner action at the machine: re-seat the interface in a direct rear USB port (no hub, no front panel) with a short known-good cable, then run `streamstack doctor` again
+[warn] hhtest, mrh, seantech runs a second WirePlumber; their config is out of sight, so the policy cannot be checked: hhtest: runs pipewire, pipewire-pulse, wireplumber (wireplumber up 3 d 4 h); linger on (their services start at boot and never stop); in no device group: the seat ACL does not name them; their config is not readable by this user, so a drop-in cannot be checked | mrh: runs pipewire, pipewire-pulse, wireplumber (wireplumber up 3 d 4 h); linger on (their services start at boot and never stop); in no device group: the seat ACL does not name them; their config is not readable by this user, so a drop-in cannot be checked | seantech: runs pipewire, pipewire-pulse, wireplumber (wireplumber up 3 d 4 h); linger on (their services start at boot and never stop); in group audio, video: may open every sound card and camera; their config is not readable by this user, so a drop-in cannot be checked
+       -> if you applied the policy for them, record it with STREAMSTACK_SEAT_GUARDED=seantech in ~/.config/streamstack/streamstack.env; otherwise `streamstack seat-policy script --user seantech` prints the drop-in to apply
+[  ok] Elgato Cam Link 4K: 720x480@21.8 YUYV on /dev/video0: offers 720x480@21.8 YUYV
+[  ok] Canon EOS 50D: /dev/video42: v4l2loopback device found by its label
+[  ok] StreamStack Camera: /dev/video43: v4l2loopback device found by its label
+
+Video
+[warn] Canon EOS 50D (/dev/video42) has no picture yet; browsers will not list it
+       -> start it: systemctl --user start streamstack-canon.service
+[  ok] StreamStack Camera (/dev/video43) is live: 720x480 YUYV @ 30 fps
+[warn] /dev/video43 offers only 480p; calls want 720p or 1080p
+[warn] StreamStack Camera is fed, but Canon EOS 50D has no producer: /dev/video43 shows the 'camera reconnecting' card or the Cam Link until Canon EOS 50D returns
+       -> systemctl --user restart streamstack-canon.service, and check the camera's cable and power
+[warn] StreamStack Camera is fed but PipeWire does not publish it as a camera: PipeWire lists these cameras: Cam Link 4K. Teams in Edge, Zoom and Chrome read /dev/video43 directly and are unaffected; Firefox and the portal path will not list it
+       -> systemctl --user restart wireplumber (and check no WirePlumber config disables the v4l2 monitor)
+[  ok] The engine is running: it idles after 10.0 s without a reader
+[warn] no Canon camera on USB
+       -> check the cable, power, and that the dial is not on a movie-only mode
+[  ok] Elgato Cam Link on /dev/streamstack/camlink: 480p21.8 YUYV: offers 480p21.8 YUYV; now 720x480 YUYV @ 21.8 fps
+[  ok] Auto-framing is ready: YuNet 2023mar, OpenVINO (Intel GPU or CPU); YuNet 2023mar at /home/mrh/.local/share/streamstack/models/face_detection_yunet_2023mar.onnx (sha256 verified)
+[  ok] kernel 7.0.0-38-generic has a v4l2loopback module
+[  ok] the newer kernel 7.0.0-42-generic has the module, so a reboot keeps the camera
+[  ok] v4l2loopback 0.15.3 is loaded (0.15.4 upstream fixes two frame-copy concurrency bugs): the distribution ships 0.15.3; if a camera freezes or tears under load, building upstream 0.15.4 with DKMS is the first thing to try
+[  ok] StreamStack Camera meets the call-app contract: 720x480 YUYV 30 fps
+[  ok] only StreamStack feeds /dev/video43
+
+Audio
+[  ok] Cam Link HDMI audio is the camera's sound, not a call microphone: Cam Link 4K Analog Stereo
+[warn] no microphone found
+       -> plug in a USB microphone; the Wave XLR also needs +48V for condenser mics
+[warn] a USB device on port 1-10.1.4, 1-2.4.3 is plugged in but never started: it did not answer the computer's set-up (bad cable, port or hub), so it is invisible to everything, an audio interface included
+       -> plug it straight into a port on the computer with a short, known-good cable
+[  ok] amixer is installed (alsa-utils)
+[FAIL] the voice chain is not running, so there is no processed voice
+       -> streamstack chain start (or open the Console, which starts it)
+
+Apps
+[  ok] PipeWire patchbay: installed
+[  ok] camera controls: installed
+[  ok] Canon tether: installed
+[  ok] previews: installed
+[  ok] browser for Teams web: microsoft-edge, microsoft-edge-stable, google-chrome, firefox
+[  ok] Zoom desktop client: not installed, calls use the zoom.us web client
+[  ok] seen by apps: no app has StreamStack Camera or StreamStack Mic open
+[  ok] auto mode: off (streamstack auto on|off)
+
+Pick these in Teams / Zoom
+  Camera:     StreamStack Camera   (graded by StreamStack; or Canon EOS 50D raw)
+  Microphone: StreamStack Mic
+  Speaker:    headphones - not the laptop speakers
+  Run `streamstack call-settings` for the in-app toggles to turn off.
