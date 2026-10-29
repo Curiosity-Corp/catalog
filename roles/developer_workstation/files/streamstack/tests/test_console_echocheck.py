@@ -144,6 +144,8 @@ def test_results_are_remembered(tmp_path: Path) -> None:
     deadline = time.monotonic() + 15
     while first.state()["state"] == "running" and time.monotonic() < deadline:
         time.sleep(0.05)
+    while not store.exists() and time.monotonic() < deadline:  # the save follows the result (issue #168)
+        time.sleep(0.05)
     assert store.exists()
     again = EchoController(store_path=store)
     remembered = again.last_result(HDMI)
@@ -302,6 +304,8 @@ def test_a_clear_verdict_on_a_bad_link_says_so_and_warns(tmp_path: Path) -> None
     assert result["link"]["level"] == "caveat"
     assert "may come from it" in result["text"]
     assert toasts[-1][0] == "warn"
+    while not (tmp_path / "e.json").exists() and time.monotonic() < deadline:  # the save follows the result (#168)
+        time.sleep(0.05)
     assert EchoController(store_path=tmp_path / "e.json").last_result(HEADSET)["link"]["level"] == "caveat"
 
 

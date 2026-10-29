@@ -19,6 +19,7 @@ from streamstack import cli, config, lightauto, lighting, lightplan, store
 from streamstack.console import lightauto as panel_module
 from streamstack.console.errors import ActionError, Superseded
 from streamstack.lighting import Found, LightingError, Litra, Transport
+from streamstack.saving import LatestWriter, Nothing
 
 log = logging.getLogger(__name__)
 
@@ -82,13 +83,17 @@ class PresetLibrary:
         """`ephemeral`: still atomic, but no fsync and no backup (the demo rig's presets need no disk flush)."""
         self.path = path
         self.ephemeral = ephemeral
-        self.lock = threading.Lock()
+        self.lock = threading.Lock()  # serialises edits; held for the edit, never across the disk write
+        self._writer: LatestWriter[dict[str, dict]] = LatestWriter(self._write)
 
     def file(self) -> Path:
         return self.path or config.user_env_file().parent / "lighting.json"
 
     def user(self) -> dict[str, dict[str, Any]]:
-        data = store.read_json(self.file(), {}, validate=store.is_object)
+        # a preset being saved is listed from the moment it is accepted, not when its fsyncs finish (issue #168)
+        data = self._writer.pending()
+        if isinstance(data, Nothing):
+            data = store.read_json(self.file(), {}, validate=store.is_object)
         saved: dict[str, dict[str, Any]] = {}
         for name, values in data.items() if isinstance(data, dict) else ():
             try:
@@ -124,10 +129,11 @@ class PresetLibrary:
         with self.lock:
             presets = self.user()
             presets[name] = {"brightness": brightness, "kelvin": kelvin}
-            try:
-                self._write(presets)
-            except OSError as exc:
-                raise ActionError(f"Could not save the preset: {exc.strerror or exc}", 409) from exc
+            self._writer.publish(presets)
+        try:
+            self._writer.flush()
+        except OSError as exc:
+            raise ActionError(f"Could not save the preset: {exc.strerror or exc}", 409) from exc
 
     def delete(self, name: str) -> None:
         if name in BUILTIN_PRESETS:
@@ -137,10 +143,11 @@ class PresetLibrary:
             if name not in presets:
                 raise ActionError(f"No saved lighting preset called {name}.", 400)
             del presets[name]
-            try:
-                self._write(presets)
-            except OSError as exc:
-                raise ActionError(f"Could not delete the preset: {exc.strerror or exc}", 409) from exc
+            self._writer.publish(presets)
+        try:
+            self._writer.flush()
+        except OSError as exc:
+            raise ActionError(f"Could not delete the preset: {exc.strerror or exc}", 409) from exc
 
 
 class _Slot:

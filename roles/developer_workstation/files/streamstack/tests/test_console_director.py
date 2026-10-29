@@ -134,7 +134,7 @@ def test_unwritable_settings_are_a_500_not_a_crash(monkeypatch: pytest.MonkeyPat
     def refuse(*args: object, **kwargs: object) -> None:
         raise settings.SettingsError("disk full")
 
-    monkeypatch.setattr(settings, "set_persona", refuse)
+    monkeypatch.setattr(settings, "save", refuse)
     with pytest.raises(ActionError) as err:
         Panel({}).act("auto.persona", {"id": "executive"})
     assert err.value.status == 500 and "disk full" in str(err.value)

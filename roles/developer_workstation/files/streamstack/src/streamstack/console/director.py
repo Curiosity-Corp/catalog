@@ -18,6 +18,7 @@ import copy
 import threading
 import time
 import traceback
+from collections.abc import Callable
 from datetime import datetime
 from importlib.resources import files
 from typing import Any
@@ -25,6 +26,7 @@ from typing import Any
 from streamstack import config
 from streamstack.console.errors import ActionError
 from streamstack.director import daylight, learning, personas, settings, status
+from streamstack.saving import LatestWriter, Nothing
 
 LIBRARY_TTL = 5.0
 ACTIONS = ("auto.persona", "auto.persona_save", "auto.persona_reset", "auto.location")
@@ -46,11 +48,23 @@ class DirectorPanel:
         self._cached: tuple[tuple, dict] | None = None
         self._library_at = 0.0
         self._library_held: personas.Library | None = None
+        # An edit shows as soon as it is accepted and is saved after (issue #168): the choices through `_prefs_writer`,
+        # a persona's file through `_persona_pending` (id -> the persona being saved, None for one being removed).
+        self._prefs_writer: LatestWriter[dict] = LatestWriter(lambda prefs: settings.save(prefs))
+        self._persona_pending: dict[str, dict | None] = {}
+        self._persona_save_lock = threading.Lock()  # one persona write at a time, never held with `_lock`
+        self._shipped_held: personas.Library | None = None
 
     # -- storage the demo replaces -------------------------------------------------------------
 
     def _prefs(self) -> dict:
-        return settings.load()
+        pending = self._prefs_writer.pending()
+        return copy.deepcopy(pending) if not isinstance(pending, Nothing) else settings.load()
+
+    def _change_prefs(self, change: Callable[[dict], dict]) -> None:
+        with self._lock:
+            self._prefs_writer.publish(change(self._prefs()))
+        self._prefs_writer.flush()
 
     def _library(self) -> personas.Library:
         return personas.load_library()
@@ -59,19 +73,44 @@ class DirectorPanel:
         return status.read()
 
     def _store_persona(self, persona_id: str) -> None:
-        settings.set_persona(persona_id)
+        self._change_prefs(lambda prefs: settings.with_persona(prefs, persona_id))
 
     def _save_persona(self, persona: dict) -> dict:
-        return personas.save_user(persona)
+        saved = personas.validate(persona)
+        self._queue_persona(saved["id"], saved)
+        return saved
 
     def _remove_persona(self, persona_id: str) -> bool:
-        return personas.remove_user(persona_id)
+        library = self._library_now()
+        if persona_id in library.personas and library.personas[persona_id]["source"] != "shipped":
+            self._queue_persona(persona_id, None)
+            return True
+        return personas.remove_user(persona_id)  # nothing edited that we know of; a damaged file may still be there
+
+    def _queue_persona(self, persona_id: str, persona: dict | None) -> None:
+        """The persona (or its removal) shows now; its file is written after, one write at a time."""
+        with self._lock:
+            self._persona_pending[persona_id] = persona
+            self._library_held = None
+        with self._persona_save_lock:
+            with self._lock:
+                wanted = self._persona_pending.get(persona_id)
+            try:
+                if wanted is not None:
+                    personas.save_user(wanted)
+                else:
+                    personas.remove_user(persona_id)
+            finally:
+                with self._lock:
+                    if self._persona_pending.get(persona_id) is persona:
+                        del self._persona_pending[persona_id]
+                    self._library_held = None
 
     def _store_property(self, name: str, latitude: object, longitude: object) -> None:
-        settings.set_property(name, latitude, longitude)
+        self._change_prefs(lambda prefs: settings.with_property(prefs, name, latitude, longitude))
 
     def _clear_property(self) -> None:
-        settings.clear_property()
+        self._change_prefs(settings.without_property)
 
     def _sheet(self) -> bytes | None:
         return status.sheet_bytes()
@@ -93,7 +132,25 @@ class DirectorPanel:
         with self._lock:
             if self._library_held is None or time.monotonic() - self._library_at > LIBRARY_TTL:
                 self._library_held, self._library_at = self._library(), time.monotonic()
-            return self._library_held
+            held, pending = self._library_held, dict(self._persona_pending)
+        if not pending:
+            return held
+        shipped = self._shipped_personas()
+        shown = personas.Library(personas=dict(held.personas), problems=list(held.problems))
+        for persona_id, persona in pending.items():  # edits still being written show as if saved
+            if persona is not None:
+                shown.personas[persona_id] = {**persona, "source": "edited" if persona_id in shipped else "custom"}
+            elif persona_id in shipped:
+                shown.personas[persona_id] = shipped[persona_id]
+            else:
+                shown.personas.pop(persona_id, None)
+        return shown
+
+    def _shipped_personas(self) -> dict[str, dict]:
+        with self._lock:
+            if self._shipped_held is None:
+                self._shipped_held = personas.load_library(include_user=False)
+            return self._shipped_held.personas
 
     def _forget_library(self) -> None:
         with self._lock:

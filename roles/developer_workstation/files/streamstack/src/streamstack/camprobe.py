@@ -23,7 +23,8 @@ FIREFOX_FAKE_LABEL = "Default Video Device"  # what Firefox calls its own test c
 MIN_FRAMES = 10
 MIN_FPS = 10.0
 MIN_LUMA = 8.0  # mean 8-bit luma below this is a black picture
-MIN_CONTRAST = 1.0  # luma standard deviation below this is a flat picture
+MIN_CONTRAST = 1.0  # a picture whose luma varies by less than this, in space and in time, is flat
+SETTLE_SECONDS = 4.0  # how long past the sampling window the probe waits for a first frame with real content
 
 PROBE_URL = "http://localhost/streamstack-camera-probe"
 FIREFOX_FAKE_PREFS = {"media.navigator.streams.fake": True, "media.navigator.permission.disabled": True}
@@ -33,9 +34,9 @@ REAL_ARGS = ["--use-fake-ui-for-media-stream"]  # auto-accept the permission pro
 # Runs in the page. Labels are empty until a getUserMedia has succeeded once, so it warms up with the default camera
 # (opened for reading, closed at once), lists, then opens the matching camera and samples its frames.
 PROBE_JS = """
-async ({ pattern, flags, seconds, width, height, fps }) => {
+async ({ pattern, flags, seconds, settle, minContrast, width, height, fps }) => {
   const out = { devices: [], matched: null, opened: false, error: null, settings: null, frames: 0, distinct: 0,
-                seconds: 0, luma_mean: null, luma_std: null };
+                seconds: 0, luma_mean: null, luma_std: null, luma_peak: null, spatial_std: 0, mean_range: 0 };
   try {
     const warm = await navigator.mediaDevices.getUserMedia({ video: true });
     warm.getTracks().forEach((t) => t.stop());
@@ -73,30 +74,39 @@ async ({ pattern, flags, seconds, width, height, fps }) => {
     video.requestVideoFrameCallback ? video.requestVideoFrameCallback(cb) : requestAnimationFrame(cb);
   let last = null;
   let sum = 0, sumsq = 0, n = 0;
+  let peak = -1, lo = Infinity, hi = -Infinity;
   const started = performance.now();
   await new Promise((resolve) => {
     const onFrame = () => {
       out.frames += 1;
       ctx.drawImage(video, 0, 0, 64, 36);
       const px = ctx.getImageData(0, 0, 64, 36).data;
-      let hash = 0;
+      let hash = 0, fsum = 0, fsq = 0, fn = 0;
       for (let i = 0; i < px.length; i += 4) {
         const y = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
         hash = (hash * 31 + Math.round(y)) | 0;
-        sum += y; sumsq += y * y; n += 1;
+        fsum += y; fsq += y * y; fn += 1;
       }
+      sum += fsum; sumsq += fsq; n += fn;
+      const fmean = fsum / fn;
+      peak = Math.max(peak, fmean); lo = Math.min(lo, fmean); hi = Math.max(hi, fmean);
+      out.spatial_std = Math.max(out.spatial_std, Math.sqrt(Math.max(0, fsq / fn - fmean ** 2)));
+      out.mean_range = hi - lo;
       if (hash !== last) out.distinct += 1;
       last = hash;
-      if (performance.now() - started >= seconds * 1000) return resolve();
+      const elapsed = (performance.now() - started) / 1000;
+      const live = out.spatial_std >= minContrast || out.mean_range >= minContrast;
+      if (elapsed >= seconds && (live || elapsed >= seconds + settle)) return resolve();
       next(onFrame);
     };
     next(onFrame);
-    setTimeout(resolve, seconds * 1000 + 3000);  // no frames at all: do not hang
+    setTimeout(resolve, (seconds + settle) * 1000 + 3000);  // no frames at all: do not hang
   });
   out.seconds = (performance.now() - started) / 1000;
   if (n) {
     out.luma_mean = sum / n;
     out.luma_std = Math.sqrt(Math.max(0, sumsq / n - (sum / n) ** 2));
+    out.luma_peak = peak;
   }
   stream.getTracks().forEach((t) => t.stop());
   return out;
@@ -111,6 +121,15 @@ class Row:
     title: str
     detail: str = ""
     hint: str = ""
+
+
+def picture_spread(report: dict) -> float | None:
+    """How much the picture varies: the larger of the best single frame's spatial spread and how far the frame mean
+    luma moved over the window. A solid test card that drifts in colour is live; a solid frame held still is not.
+    Reports from before the split carry only the pooled `luma_std`."""
+    if "spatial_std" not in report and "mean_range" not in report:
+        return report.get("luma_std")
+    return max(float(report.get("spatial_std") or 0.0), float(report.get("mean_range") or 0.0))
 
 
 def evaluate(
@@ -171,7 +190,8 @@ def evaluate(
         )
     else:
         rows.append(Row("moving", True, f"the picture changes ({report['distinct']} distinct frames)"))
-    mean, std = report.get("luma_mean"), report.get("luma_std")
+    mean = report.get("luma_peak", report.get("luma_mean"))  # black only if no frame was ever lit
+    std = picture_spread(report)
     if mean is None or mean < MIN_LUMA:
         rows.append(
             Row(
@@ -247,6 +267,8 @@ def run(
                         "pattern": re.escape(label),
                         "flags": "i",
                         "seconds": seconds,
+                        "settle": SETTLE_SECONDS,
+                        "minContrast": MIN_CONTRAST,
                         "width": size[0],
                         "height": size[1],
                         "fps": fps,

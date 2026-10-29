@@ -17,6 +17,7 @@ Targets are configurable (`network.set`) and kept in `console-network.json`. Pre
 
 from __future__ import annotations
 
+import copy
 import logging
 import random
 import threading
@@ -30,6 +31,7 @@ from streamstack import store as filestore
 from streamstack.console.audio import bool_param, number_param
 from streamstack.console.errors import ActionError
 from streamstack.netquality import Alerter, Bandwidth, Fetcher, ProbeError, Sample, Target, Transport, Wifi, Window
+from streamstack.saving import LatestWriter
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +122,7 @@ class NetworkController:
         self._interval = interval_s
         self._parallel = parallel
         self._path = settings_path
+        self._writer: LatestWriter[dict[str, Any]] = LatestWriter(lambda doc: filestore.write_json(self._path, doc))
         self._settings = read_settings(settings_path)
         self._lock = threading.RLock()
         self._windows: dict[str, Window] = {}
@@ -380,8 +383,10 @@ class NetworkController:
             self._settings = settings
             if changed:
                 self._clear()
-            self._save()
+            if self._path is not None:
+                self._writer.publish(copy.deepcopy(self._settings))
         self._wake.set()
+        self._save()
         return None
 
     def _clear(self) -> None:
@@ -393,12 +398,15 @@ class NetworkController:
         self._alerter.reset()
 
     def _save(self) -> None:
+        """Save the newest settings, outside `_lock` (issue #168: the disk never holds up the state). A failed save
+        is the person's to hear about: the setting stays in effect until the Console restarts."""
         if self._path is None:
             return
         try:
-            filestore.write_json(self._path, self._settings)
+            self._writer.flush()
         except OSError as exc:
             log.warning("cannot save %s: %s", self._path, exc)
+            raise ActionError(f"The setting is in effect but could not be saved: {exc}", 409) from exc
 
     def _bandwidth_block(self) -> str | None:
         if self._bandwidth["state"] == "running":

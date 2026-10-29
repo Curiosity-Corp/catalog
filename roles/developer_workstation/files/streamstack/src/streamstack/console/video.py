@@ -24,6 +24,7 @@ from streamstack.console.errors import ActionError
 from streamstack.presets import catalog as presets_catalog
 from streamstack.presets.luts import LUTS
 from streamstack.presets.schema import LOOK_FLAGS, LOOK_LIMITS, LOOK_NEUTRAL
+from streamstack.saving import LatestWriter, Nothing
 
 log = logging.getLogger(__name__)
 Notify = Callable[[str, str], None]
@@ -107,7 +108,8 @@ class LookLibrary:
         """`ephemeral`: still atomic, but no fsync and no backup (the demo rig's looks need no disk flush)."""
         self.path = path
         self.ephemeral = ephemeral
-        self.lock = threading.Lock()
+        self.lock = threading.Lock()  # serialises edits; held for the edit, never across the disk write
+        self._writer: LatestWriter[dict[str, dict]] = LatestWriter(self._write)
 
     def file(self) -> Path:
         return self.path or config.user_env_file().parent / "looks.json"
@@ -115,7 +117,10 @@ class LookLibrary:
     def _read(self) -> dict[str, tuple[dict[str, float | bool], str | None]]:
         """Saved looks as name -> (values, LUT name). The LUT is an optional "lut" string inside the entry, so a file
         written before LUTs were kept (values only) loads unchanged, and an unknown or malformed LUT reads as none."""
-        data = store.read_json(self.file(), {}, validate=store.is_object)
+        # a look being saved is listed from the moment it is accepted, not when its fsyncs finish (issue #168)
+        data = self._writer.pending()
+        if isinstance(data, Nothing):
+            data = store.read_json(self.file(), {}, validate=store.is_object)
         saved: dict[str, tuple[dict[str, float | bool], str | None]] = {}
         for name, entry in data.items() if isinstance(data, dict) else ():
             try:
@@ -174,10 +179,11 @@ class LookLibrary:
             looks[name] = {key: look[key] for key in NEUTRAL if key in look}
             if lut in LUTS:
                 looks[name]["lut"] = lut
-            try:
-                self._write(looks)
-            except OSError as exc:
-                raise ActionError(f"Could not save the look: {exc.strerror or exc}", 409) from exc
+            self._writer.publish(looks)
+        try:
+            self._writer.flush()
+        except OSError as exc:
+            raise ActionError(f"Could not save the look: {exc.strerror or exc}", 409) from exc
 
     def delete(self, name: str) -> None:
         if name in BUILTIN_LOOKS:
@@ -187,10 +193,11 @@ class LookLibrary:
             if name not in looks:
                 raise ActionError(f"No saved look called {name}.", 400)
             del looks[name]
-            try:
-                self._write(looks)
-            except OSError as exc:
-                raise ActionError(f"Could not delete the look: {exc.strerror or exc}", 409) from exc
+            self._writer.publish(looks)
+        try:
+            self._writer.flush()
+        except OSError as exc:
+            raise ActionError(f"Could not delete the look: {exc.strerror or exc}", 409) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +475,16 @@ class DemoVideo:
     def act(self, action: str, params: dict) -> str | None:
         if action.startswith("video.canon_"):
             return self.canon.act(action, params)
+        if action in ("video.looks.save", "video.looks.delete"):
+            # The library saves outside every lock the state takes (issue #168): the look is listed at once.
+            name = required_name(params)
+            if action == "video.looks.delete":
+                self.library.delete(name)
+                return f"Deleted look {name}"
+            with self.lock:
+                values = dict(self.looks_by_source[self.selected])
+            self.library.save(name, values)
+            return f"Saved look {name}"
         with self.lock:
             return self._act(action, params)
 
@@ -499,14 +516,6 @@ class DemoVideo:
             return f"Editing {name}"
         if action in ("video.look", "video.look.reset", "video.looks.apply"):
             return self._look(action, params)
-        if action == "video.looks.save":
-            name = required_name(params)
-            self.library.save(name, self.looks_by_source[self.selected])
-            return f"Saved look {name}"
-        if action == "video.looks.delete":
-            name = required_name(params)
-            self.library.delete(name)
-            return f"Deleted look {name}"
         if action == "video.blur":
             if self.arc.blocked() and params.get("on") is not False:
                 raise ActionError(f"Background blur is unavailable: {self.arc.reason()}.", 409)

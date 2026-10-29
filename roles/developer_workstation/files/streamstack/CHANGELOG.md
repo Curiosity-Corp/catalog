@@ -5,6 +5,14 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-10-29
+
+### Fixed
+- The call matrix no longer calls Firefox's test camera flat on a starved runner: a drifting solid-colour card read as flat when too few frames landed in the window (#153). The camera probe now judges spatial spread and colour movement separately, waits up to 4 s for a first frame with real content, and calls a feed black only if no frame was ever lit; a held or all-black feed still fails.
+- Every Console action that saves a setting now shows the change first and saves it afterwards, so a stalled disk can no longer freeze the page (#168): telemetry, call, safe join, network, echo results, meeting setup, hotkeys, the Stream Deck profile, lighting presets and automation, camera looks, the eye-line coach, auto-framing, time-of-day profiles and the AI Director's choices and personas. Saves are still fsynced, the newest value always wins, and a save that fails is reported to you instead of being swallowed. One test now stalls the disk for every saving action and fails if a new one is added without a case.
+- Console controls that you set (the mic mute, the voice-effects bypass, a gain fader and every other plain value) now stay as you set them until a snapshot built after your action arrives, instead of letting go as soon as any snapshot shows the same value. On a loaded machine an older snapshot that happened to match could end the hold early, and the next one showed the old value again for a moment (#169). A new test replays that order for mute, bypass and a slider, and another fails if a `store.settle` call is added that does not release by the answer's `seq`.
+- The publish-before-fsync gate (tests/test_console_publish_before_fsync.py) no longer fails on a loaded CI runner: once the test lets its stuck write go, the real write runs without fsyncs, so a runner fsync stall of tens of seconds (infra#639) is not mistaken for a stuck Console action (#171). The product (saving.py, framing, lighting) was not at fault; the gate still fails on a real hang.
+
 ## [0.0.20] - 2026-10-29
 
 ### Fixed

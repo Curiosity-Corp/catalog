@@ -61,27 +61,42 @@ def save(settings: dict) -> None:
     write_json(settings_path(), settings)
 
 
+def with_persona(current: dict, persona_id: str) -> dict:
+    """`current` with the persona chosen (a new dict; nothing is written)."""
+    return {**current, "persona": persona_id}
+
+
+def with_property(current: dict, name: str, latitude: str | float | None, longitude: str | float | None) -> dict:
+    """`current` with the property location set (validated; a new dict, nothing is written).
+
+    Raises SettingsError for a place that does not exist."""
+    try:
+        lat, lon = check_coordinates(latitude, longitude)
+    except LocationError as exc:
+        raise SettingsError(str(exc)) from exc
+    place = {"name": str(name or "").strip()[:60] or "This property", "latitude": lat, "longitude": lon}
+    return {**current, "property": place}
+
+
+def without_property(current: dict) -> dict:
+    """`current` without a property location (a new dict, nothing is written)."""
+    return {k: v for k, v in current.items() if k != "property"}
+
+
 def set_persona(persona_id: str) -> dict:
-    settings = load()
-    settings["persona"] = persona_id
+    settings = with_persona(load(), persona_id)
     save(settings)
     return settings
 
 
 def set_property(name: str, latitude: str | float | None, longitude: str | float | None) -> dict:
     """Store the property location (validated); raises SettingsError for a place that does not exist."""
-    try:
-        lat, lon = check_coordinates(latitude, longitude)
-    except LocationError as exc:
-        raise SettingsError(str(exc)) from exc
-    settings = load()
-    settings["property"] = {"name": str(name or "").strip()[:60] or "This property", "latitude": lat, "longitude": lon}
+    settings = with_property(load(), name, latitude, longitude)
     save(settings)
     return settings
 
 
 def clear_property() -> dict:
-    settings = load()
-    settings.pop("property", None)
+    settings = without_property(load())
     save(settings)
     return settings

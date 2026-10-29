@@ -25,6 +25,7 @@ Every call start leaves one entry in the event list (`safejoin.events`), newest 
 
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 import time
@@ -37,6 +38,7 @@ from streamstack import store as filestore
 from streamstack.callstate import CallSnapshot
 from streamstack.console.audio import number_param
 from streamstack.console.errors import ActionError
+from streamstack.saving import LatestWriter
 
 log = logging.getLogger(__name__)
 
@@ -118,6 +120,7 @@ class SafeJoinController:
         self._clock, self._wall = clock, wall
         self._lock = threading.RLock()
         self._path = settings_path  # None: settings live in memory only (the demo rig, tests)
+        self._writer: LatestWriter[dict[str, Any]] = LatestWriter(lambda doc: filestore.write_json(self._path, doc))
         self._settings = read_settings(settings_path) if settings_path is not None else default_settings()
         self._snapshot: Snapshot | None = None
         self._run: RunAction | None = None
@@ -357,17 +360,21 @@ class SafeJoinController:
             )
         with self._lock:
             self._settings.update(changes)
-            self._save()
+            if self._path is not None:
+                self._writer.publish(copy.deepcopy(self._settings))
+        self._save()
         return None
 
     def _save(self) -> None:
+        """Save the newest settings, outside `_lock` (issue #168: the disk never holds up the state). A failed save
+        is the person's to hear about: the setting stays in effect until the Console restarts."""
         if self._path is None:
             return
         try:
-            filestore.write_json(self._path, self._settings)
+            self._writer.flush()
         except OSError as exc:
             log.warning("cannot save %s: %s", self._path, exc)
-            raise ActionError(f"The setting could not be saved: {exc}", 409) from exc
+            raise ActionError(f"The setting is in effect but could not be saved: {exc}", 409) from exc
 
 
 class DemoSafeJoin(SafeJoinController):
