@@ -535,13 +535,17 @@ def repair(cfg: Config, reason: str, force: bool = False) -> int:
         force = force or reason in FORCED_REASONS
         state = load_state()
         now = time.time()
-        if now - state.get("last_modeset", 0) < MIN_GAP and not force:
-            log("ignored: within the minimum gap after our own modeset", reason=reason)
-            return 0
         if reason == "hotplug" and now - state.get("last_repair_end", 0) < HOTPLUG_QUIET:
             # A full xrandr probe raises drm change uevents; without this the
             # hotplug rule re-triggers a repair every ~12 s (seen 2026-10-28).
-            log("ignored: hotplug uevent right after a repair (echo of its own probe)", reason=reason)
+            # Deferred, not dropped: the watch loop runs one assess when the window
+            # closes, so a real replug or mode change in the window is not lost.
+            state["deferred_at"] = now
+            save_state(state)
+            log("deferred: hotplug uevent right after a repair; assessing when the window closes", reason=reason)
+            return 0
+        if now - state.get("last_modeset", 0) < MIN_GAP and not force:
+            log("ignored: within the minimum gap after our own modeset", reason=reason)
             return 0
         if now < state.get("cooldown_until", 0):
             log("held back: cooling down after a failed repair", reason=reason,
@@ -730,7 +734,10 @@ def watch(cfg: Config, interval: float = 5.0) -> int:
         quiet = now - load_state().get("last_repair_end", 0) < HOTPLUG_QUIET
         for event in events:
             if quiet and event in ("sink-wake", "dpms-on"):
-                log("ignored: wake edge right after a repair (echo of its own probe)", event=event)
+                state = load_state()
+                state["deferred_at"] = now
+                save_state(state)
+                log("deferred: wake edge right after a repair; assessing when the window closes", event=event)
                 continue
             log("wake edge detected", event=event)
             if event in ("tv-wake", "sink-wake"):
@@ -738,6 +745,14 @@ def watch(cfg: Config, interval: float = 5.0) -> int:
                 pending += [(now + 10, event), (now + 45, event)]
             else:
                 pending.append((now + 2, event))
+        state = load_state()
+        if state.get("deferred_at") and now - state.get("last_repair_end", 0) >= HOTPLUG_QUIET:
+            # One assess for everything deferred. It repairs only when the mode
+            # is really wrong, and only a real repair re-opens the quiet window.
+            state.pop("deferred_at", None)
+            save_state(state)
+            log("quiet window closed: assessing what was deferred")
+            repair(cfg, "deferred")
         due = [item for item in pending if item[0] <= now]
         pending = [item for item in pending if item[0] > now]
         for _, event in due:
