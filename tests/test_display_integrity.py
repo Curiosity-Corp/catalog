@@ -136,3 +136,20 @@ def test_tasks_never_restart_lightdm_and_retire_cleanly():
     assert "/usr/local/bin/curiosity-display-integrity" in removed["loop"]
     assert "Restart curiosity display-integrity timer" in text
     assert any(h["name"] == "Restart curiosity display-integrity timer" for h in HANDLERS)
+
+
+def test_integrity_runs_before_lightdm_and_clears_its_failed_state():
+    includes = [
+        t["ansible.builtin.include_tasks"]["file"]
+        for t in yaml.safe_load((ROLE / "tasks/minimal-desktop.yml").read_text())
+        if "ansible.builtin.include_tasks" in t
+    ]
+    assert includes.index("minimal-desktop-integrity.yml") < includes.index("minimal-desktop-lightdm.yml")
+    block = next(t for t in yaml.safe_load(TASK_FILE.read_text()) if t["name"].startswith("Apply"))["block"]
+    names = [t["name"] for t in block]
+    run = block[names.index("Verify display packages before LightDM starts")]
+    assert run["ansible.builtin.command"]["argv"].startswith("{{ ['/usr/local/bin/curiosity-display-integrity']")
+    assert "reinstalled:" in run["changed_when"]
+    reset = block[names.index("Clear LightDM's failed state after a reinstall")]
+    assert reset["ansible.builtin.command"] == "systemctl reset-failed lightdm.service"
+    assert reset["when"] == "_display_integrity_run.stdout is search('reinstalled:')"

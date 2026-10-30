@@ -53,6 +53,30 @@
         state: started
         daemon_reload: true
 
+    # Runs before the LightDM tasks (see minimal-desktop.yml), so their
+    # `state: started` launches X from clean pages instead of burning the
+    # restart backoff on a corrupt binary.
+    - name: Verify display packages before LightDM starts
+      ansible.builtin.command:
+        argv: "{{ ['/usr/local/bin/curiosity-display-integrity'] + minimal_desktop_integrity_packages }}"
+      register: _display_integrity_run
+      changed_when: "'reinstalled:' in _display_integrity_run.stdout"
+      # A failed reinstall (no mirror, apt lock) must not stop the rest of the
+      # workstation pull; the timer retries and the warning below reports it.
+      failed_when: false
+
+    - name: Report a failed display package reinstall
+      ansible.builtin.debug:
+        msg: "curiosity-display-integrity exited {{ _display_integrity_run.rc }}: {{ _display_integrity_run.stderr | default('') }}"
+      when: _display_integrity_run.rc != 0
+
+    # A LightDM that gave up on the corrupt X (start limit hit) would refuse
+    # the start below until its failure state is cleared.
+    - name: Clear LightDM's failed state after a reinstall
+      ansible.builtin.command: systemctl reset-failed lightdm.service
+      when: _display_integrity_run.stdout is search('reinstalled:')
+      changed_when: true
+
 - name: Retire display package integrity guard when it is not wanted
   when: not (minimal_desktop_integrity_enabled | bool)
   block:
