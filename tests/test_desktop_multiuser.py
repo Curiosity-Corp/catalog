@@ -219,6 +219,29 @@ def test_deskmeet_dp3_starts_at_4k_in_x() -> None:
     assert removal["state"] == "absent" and removal["path"] == task["dest"]
 
 
+def test_deskmeet_x_runs_under_the_gdb_trace_sidecar() -> None:
+    """catalog#122: a persistent Xorg SIGBUS needs the faulting instructions, not config guesses."""
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["hardware_profiles"]["deskmeet-b760"]["xorg_gdb_trace"] is True
+    assert not any("xorg_gdb_trace" in p for n, p in defaults["hardware_profiles"].items() if n != "deskmeet-b760")
+    assert "false" in defaults["minimal_desktop_xorg_gdb_trace"]
+    script = FILES / "curiosity-xserver-gdb"
+    assert os.access(script, os.X_OK)
+    text = script.read_text()
+    assert subprocess.run(["sh", "-n", str(script)], capture_output=True).returncode == 0
+    # X must be started with SIGUSR1 ignored and the ready signal forwarded to lightdm.
+    assert "trap '' USR1" in text and 'kill -USR1 "$LIGHTDM"' in text
+    assert "-novtswitch" in text and "Managed by Ansible" in text
+    tasks = _tasks("minimal-desktop-lightdm.yml")
+    drop = _named(tasks, "Point LightDM at the diagnostic X server command")["ansible.builtin.copy"]
+    assert drop["dest"] == "/etc/lightdm/lightdm.conf.d/45-xserver-gdb.conf"
+    assert "xserver-command=/usr/local/bin/curiosity-xserver-gdb" in drop["content"]
+    # 45 sorts after the wrapper's 40, so it wins; switching it off removes only the drop-in.
+    assert "40-xserver-wrapper.conf" < "45-xserver-gdb.conf"
+    removal = _named(tasks, "Remove the diagnostic X server command drop-in")["ansible.builtin.file"]
+    assert removal["state"] == "absent" and removal["path"] == drop["dest"]
+
+
 def test_lightdm_restart_backoff_drop_in() -> None:
     """A crashing X server must not turn lightdm.service into a ~3 s relaunch loop."""
     defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
