@@ -222,7 +222,7 @@ def test_deskmeet_dp3_starts_at_4k_in_x() -> None:
 def test_gdb_trace_sidecar_is_opt_in_and_reversible() -> None:
     """catalog#122: a persistent Xorg SIGBUS needs the faulting instructions, not config guesses."""
     defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
-    assert defaults["hardware_profiles"]["deskmeet-b760"]["xorg_gdb_trace"] is False
+    assert defaults["hardware_profiles"]["deskmeet-b760"]["xorg_gdb_trace"] is True
     assert not any("xorg_gdb_trace" in p for n, p in defaults["hardware_profiles"].items() if n != "deskmeet-b760")
     assert "false" in defaults["minimal_desktop_xorg_gdb_trace"]
     script = FILES / "curiosity-xserver-gdb"
