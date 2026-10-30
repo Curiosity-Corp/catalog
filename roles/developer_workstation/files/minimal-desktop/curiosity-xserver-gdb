@@ -1,0 +1,44 @@
+#!/bin/sh
+# Managed by Ansible.
+#
+# Diagnostic LightDM X server command (catalog#122): runs the same X server as
+# lightdm-xserver-wrapper and attaches gdb to it, so a crash leaves the faulting
+# instructions, registers and stack in /var/log/lightdm/xorg-gdb.log. LightDM
+# waits for the SIGUSR1 that X sends its parent once it is ready, so this shell
+# starts X with SIGUSR1 ignored (the condition for X to send it) and forwards
+# the signal to LightDM. Enabled only by the hardware profile's xorg_gdb_trace.
+LOG=/var/log/lightdm/xorg-gdb.log
+[ -f "$LOG" ] && [ "$(stat -c %s "$LOG")" -gt 5242880 ] && : > "$LOG"
+
+for arg in "$@"; do
+    shift
+    [ "$arg" = "-novtswitch" ] || set -- "$@" "$arg"
+done
+
+LIGHTDM=$PPID
+trap 'kill -USR1 "$LIGHTDM" 2>/dev/null' USR1
+trap 'kill -TERM "$XPID" 2>/dev/null' TERM INT
+
+( trap '' USR1; exec /usr/lib/xorg/Xorg "$@" ) &
+XPID=$!
+
+(
+    echo "=== $(date '+%F %T') attach to Xorg pid $XPID: $*"
+    exec gdb -batch -nx -p "$XPID" \
+        -ex "set pagination off" -ex "set confirm off" \
+        -ex "handle SIGUSR1 SIGUSR2 SIGIO SIGALRM SIGPIPE SIGCHLD SIGTERM SIGINT SIGHUP nostop noprint pass" \
+        -ex "continue" \
+        -ex "echo ===SIGNAL===\n" -ex "info signals SIGBUS" \
+        -ex "bt 16" -ex "info registers" \
+        -ex "x/24i \$pc-60" \
+        -ex "x/8gx \$rsp" \
+        -ex "kill"
+) >> "$LOG" 2>&1 &
+
+wait "$XPID"
+status=$?
+while [ "$status" -gt 128 ] && kill -0 "$XPID" 2>/dev/null; do
+    wait "$XPID"
+    status=$?
+done
+exit "$status"

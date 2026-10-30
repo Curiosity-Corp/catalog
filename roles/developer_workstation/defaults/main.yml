@@ -825,6 +825,11 @@ minimal_desktop_xorg_auto_add_gpu: "{{ (hardware_profiles.get(hardware_profile, 
 # mode X starts it in (`PreferredMode` in a Monitor section, e.g. DP-3:
 # 3840x2160). Empty (the default) writes nothing and removes the drop-in.
 minimal_desktop_xorg_preferred_modes: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_preferred_modes', {}) }}"
+# The hardware profile's optional `xorg_gdb_trace` (default false) starts
+# LightDM's X server under a gdb sidecar that logs the faulting instructions,
+# registers and stack of a crash to /var/log/lightdm/xorg-gdb.log. A diagnostic
+# for catalog#122; remove the profile key once the crash is understood.
+minimal_desktop_xorg_gdb_trace: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_gdb_trace', false) | bool }}"
 minimal_desktop_lightdm_minimum_vt: 8
 minimal_desktop_lightdm_vtswitch_wrapper: false
 minimal_desktop_lightdm_remove_dropins: []
@@ -1694,6 +1699,8 @@ hardware_profiles:
     # Glamor off did not stop the SIGBUS either; X also drove the iGPU as a
     # second GPU (modeset(G0)) that has no display attached.
     xorg_auto_add_gpu: false
+    # Diagnostic for the persistent Xorg SIGBUS (catalog#122); remove once understood.
+    xorg_gdb_trace: true
     # Experiment (catalog#122): with DP-4 8K60 down the TV runs the DP-3 fallback
     # and X paints at 7680x4320 in the greeter's first frame, where it crashes.
     # Start DP-3 at 4K; the 8K60 pin is applied by curiosity-display-setup once
