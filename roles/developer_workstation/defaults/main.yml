@@ -1699,8 +1699,10 @@ hardware_profiles:
     # Glamor off did not stop the SIGBUS either; X also drove the iGPU as a
     # second GPU (modeset(G0)) that has no display attached.
     xorg_auto_add_gpu: false
-    # Diagnostic for the persistent Xorg SIGBUS (catalog#122); remove once understood.
-    xorg_gdb_trace: true
+    # Diagnostic for the Xorg SIGBUS (catalog#122): off again after lightdm ran
+    # 60 min (restart counter 0) with X under the gdb sidecar. Turning it off tests
+    # whether the crash returns without it; set true to trace again.
+    xorg_gdb_trace: false
     # Experiment (catalog#122): with DP-4 8K60 down the TV runs the DP-3 fallback
     # and X paints at 7680x4320 in the greeter's first frame, where it crashes.
     # Start DP-3 at 4K; the 8K60 pin is applied by curiosity-display-setup once
