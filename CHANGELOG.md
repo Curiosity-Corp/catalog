@@ -18,6 +18,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- deskmeet1: the gdb sidecar on LightDM's X server is off again (`xorg_gdb_trace: false`, catalog#122). With it, lightdm ran 60 min with restart counter 0 and no crash logged, where it had crashed every 1-3 min; switching it off removes `45-xserver-gdb.conf` and tests whether the Xorg SIGBUS returns without it.
 - deskmeet1: LightDM's X server runs under a gdb sidecar (`xorg_gdb_trace`, catalog#122 diagnostic). The Xorg SIGBUS in `ValidatePicture`/`CompositeRects` survived five config changes (!142, !144, !145, !147, !148); `/var/log/lightdm/xorg-gdb.log` now records the faulting instructions, registers and stack of each crash. Remove the profile key once the cause is known.
 - deskmeet1 (`deskmeet-b760`) starts DP-3 at 3840x2160 in X (profile key `xorg_preferred_modes`, catalog#122 experiment): with the DP-4 8K60 path down, every X start painted the greeter at 7680x4320 and ended in the Xorg SIGBUS in `ValidatePicture`/`CompositeRects`. Read at the next X start, no reboot; the 8K60 pin still applies when DP-4 returns.
 - deskmeet1 (`deskmeet-b760`) keeps X on one GPU: profile key `xorg_auto_add_gpu: false` writes `ServerFlags AutoAddGPU false` (catalog#122). The Xorg SIGBUS in `ValidatePicture`/`CompositeRects` survived the GTK greeter, glamor off and the display guard's probe skip, so the iGPU added as a second GPU (`modeset(G0)`) is the next suspect. Read at the next X start, no reboot.
