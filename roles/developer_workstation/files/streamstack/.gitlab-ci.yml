@@ -149,7 +149,7 @@ e2e:
   stage: source-security
   needs: []
   parallel: 4
-  image: mcr.microsoft.com/playwright/python:v1.64.0-noble
+  image: mcr.microsoft.com/playwright/python:v1.64.1-noble
   interruptible: true
   rules: !reference [.rules-gate, rules]
   variables:
@@ -176,7 +176,7 @@ e2e:
 e2e-lighting:
   stage: source-security
   needs: []
-  image: mcr.microsoft.com/playwright/python:v1.64.0-noble
+  image: mcr.microsoft.com/playwright/python:v1.64.1-noble
   interruptible: true
   parallel:
     matrix:
