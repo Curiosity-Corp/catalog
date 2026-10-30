@@ -12,7 +12,7 @@
       - minimal_desktop_integrity_packages is sequence
       - minimal_desktop_integrity_packages is not string
       - minimal_desktop_integrity_packages | length > 0
-      - minimal_desktop_integrity_interval | string | regex_search('^[0-9]+(s|min|h)$')
+      - minimal_desktop_integrity_interval | string is match('^[0-9]+(s|min|h)$')
     fail_msg: >-
       minimal_desktop_integrity_packages must be a non-empty list and
       minimal_desktop_integrity_interval a systemd span like 10min.
