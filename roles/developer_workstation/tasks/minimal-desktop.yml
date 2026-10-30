@@ -32,6 +32,13 @@
       tags: [minimal-desktop, lightdm]
   tags: [minimal-desktop, lightdm]
 
+- name: Guard display packages against corrupted cached files
+  ansible.builtin.include_tasks:
+    file: minimal-desktop-integrity.yml
+    apply:
+      tags: [minimal-desktop, lightdm, integrity]
+  tags: [minimal-desktop, lightdm, integrity]
+
 - name: Install the display setup helper and its LightDM hook
   ansible.builtin.include_tasks:
     file: minimal-desktop-display-setup.yml

@@ -1,0 +1,43 @@
+#!/bin/sh
+# Managed by Ansible.
+#
+# Reinstalls display-stack packages whose installed files no longer match
+# dpkg's md5sums. deskmeet1 (no ECC) silently flipped bits in the page-cache
+# copy of /usr/lib/xorg/Xorg: the disk copy stayed correct, but every X start
+# mapped the corrupt cached page and died with SIGBUS in ValidatePicture.
+# A reinstall writes a fresh inode, so the next X start reads clean pages.
+# Conffiles are skipped (admins and Ansible edit those on purpose).
+#
+# Usage: curiosity-display-integrity [package ...]
+set -u
+
+PACKAGES=${*:-${CURIOSITY_INTEGRITY_PACKAGES:-}}
+[ -n "$PACKAGES" ] || { echo "no packages to verify" >&2; exit 2; }
+
+bad=""
+for pkg in $PACKAGES; do
+    status=$(dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null) || continue
+    case "$status" in ii*) ;; *) continue ;; esac
+    # dpkg --verify prints "<9 attrs> [c] <path>"; the third attr is "5" when
+    # the md5 differs. Lines with the "c" marker are conffiles.
+    mismatches=$(dpkg --verify "$pkg" 2>/dev/null \
+        | awk 'substr($1, 3, 1) == "5" && $2 != "c" { sub(/^[^ ]+ +/, ""); print }')
+    if [ -n "$mismatches" ]; then
+        echo "$pkg: md5 mismatch in installed files:"
+        echo "$mismatches" | sed 's/^/  /'
+        bad="$bad $pkg"
+    fi
+done
+
+if [ -z "$bad" ]; then
+    echo "display packages verified clean: $PACKAGES"
+    exit 0
+fi
+
+echo "reinstalling:$bad"
+# shellcheck disable=SC2086
+DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y -q \
+    -o DPkg::Lock::Timeout=300 \
+    -o Dpkg::Options::=--force-confold \
+    $bad || { echo "reinstall failed:$bad" >&2; exit 1; }
+echo "reinstalled:$bad"

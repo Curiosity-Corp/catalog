@@ -830,6 +830,22 @@ minimal_desktop_xorg_preferred_modes: "{{ (hardware_profiles.get(hardware_profil
 # registers and stack of a crash to /var/log/lightdm/xorg-gdb.log. A diagnostic
 # for catalog#122; remove the profile key once the crash is understood.
 minimal_desktop_xorg_gdb_trace: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_gdb_trace', false) | bool }}"
+# Display package integrity guard (catalog#122): a timer re-checks these
+# packages against dpkg's md5sums and reinstalls one whose installed files no
+# longer match. On deskmeet1 (no ECC) bit flips in the page-cache copy of
+# /usr/lib/xorg/Xorg crash-looped X while the disk copy stayed correct; the
+# reinstall gives the next X start a fresh, clean inode. Conffiles are skipped.
+minimal_desktop_integrity_enabled: true
+minimal_desktop_integrity_interval: 10min
+minimal_desktop_integrity_packages:
+  - xserver-xorg-core
+  - xserver-common
+  - libpixman-1-0
+  - libdrm2
+  - libxfont2
+  - lightdm
+  - lightdm-gtk-greeter
+  - slick-greeter
 minimal_desktop_lightdm_minimum_vt: 8
 minimal_desktop_lightdm_vtswitch_wrapper: false
 minimal_desktop_lightdm_remove_dropins: []
