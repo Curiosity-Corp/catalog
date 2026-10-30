@@ -1,0 +1,12 @@
+# Managed by curiosity.workstation (minimal_desktop_integrity_enabled)
+[Unit]
+Description=Reinstall display packages whose cached files fail dpkg md5 checks
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment="CURIOSITY_INTEGRITY_PACKAGES={{ minimal_desktop_integrity_packages | join(' ') }}"
+ExecStart=/usr/local/bin/curiosity-display-integrity
+TimeoutStartSec=20min
+Nice=10
+IOSchedulingClass=idle

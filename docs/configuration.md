@@ -450,6 +450,9 @@ LightDM autologin, remains primary-account or system-wide; set
 | `minimal_desktop_xorg_auto_add_gpu` | `''` (profile key `xorg_auto_add_gpu`) | `true`/`false` sets the X server flag `AutoAddGPU` in `/etc/X11/xorg.conf.d/20-curiosity-server-flags.conf`; empty removes the file. `deskmeet-b760` sets `false` so X does not drive the display-less iGPU as a second GPU (catalog#122). |
 | `minimal_desktop_xorg_preferred_modes` | `{}` (profile key `xorg_preferred_modes`) | Connector to mode map written as `PreferredMode` Monitor sections in `/etc/X11/xorg.conf.d/20-curiosity-preferred-modes.conf`; empty removes the file. `deskmeet-b760` starts `DP-3` at `3840x2160` while the 8K60 DP-4 path is down (catalog#122). |
 | `minimal_desktop_lightdm_restart_sec` | `10` | `RestartSec` of the `lightdm.service` drop-in. The packaged unit restarts with no delay, so an X server that dies at start was relaunched every ~3 s. |
+| `minimal_desktop_integrity_enabled` | `true` | Installs `curiosity-display-integrity.timer`, which reinstalls a display package whose installed (non-conffile) files fail dpkg's md5 check. Guards against page-cache corruption on non-ECC hosts (catalog#122). `false` removes the timer and helper. |
+| `minimal_desktop_integrity_interval` | `10min` | How often the integrity timer runs (systemd time span). |
+| `minimal_desktop_integrity_packages` | X server, pixman, libdrm, libxfont2, LightDM and both greeters | Packages the integrity timer verifies; ones not installed are skipped. |
 | `minimal_desktop_lightdm_start_limit_burst` | `10` | Failures inside the interval after which systemd stops restarting LightDM. The next pull (`state: started`) or a reboot tries again. |
 | `minimal_desktop_lightdm_start_limit_interval_sec` | `600` | Window for the start limit (must cover burst x restart_sec). |
 

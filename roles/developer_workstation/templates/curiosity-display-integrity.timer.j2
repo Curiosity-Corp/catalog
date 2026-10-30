@@ -1,0 +1,11 @@
+# Managed by curiosity.workstation (minimal_desktop_integrity_enabled)
+[Unit]
+Description=Periodic display package integrity check
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec={{ minimal_desktop_integrity_interval }}
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

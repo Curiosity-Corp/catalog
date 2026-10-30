@@ -1,0 +1,80 @@
+---
+# Display package integrity guard. Hosts without ECC can corrupt the
+# page-cache copy of an executable while the disk stays correct; X then
+# crash-loops on bad code (deskmeet1, catalog#122). The timer re-verifies the
+# display stack against dpkg md5sums and reinstalls a mismatching package,
+# which gives X a fresh inode on its next start. It does not restart LightDM:
+# a crashing X is re-spawned by LightDM anyway, and a healthy one is left alone.
+
+- name: Validate display integrity settings
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_integrity_packages is sequence
+      - minimal_desktop_integrity_packages is not string
+      - minimal_desktop_integrity_packages | length > 0
+      - minimal_desktop_integrity_interval | string | regex_search('^[0-9]+(s|min|h)$')
+    fail_msg: >-
+      minimal_desktop_integrity_packages must be a non-empty list and
+      minimal_desktop_integrity_interval a systemd span like 10min.
+
+- name: Apply display package integrity guard
+  when: minimal_desktop_integrity_enabled | bool
+  block:
+    - name: Install display integrity helper
+      ansible.builtin.copy:
+        src: minimal-desktop/curiosity-display-integrity
+        dest: /usr/local/bin/curiosity-display-integrity
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install display integrity systemd service
+      ansible.builtin.template:
+        src: curiosity-display-integrity.service.j2
+        dest: /etc/systemd/system/curiosity-display-integrity.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Install display integrity systemd timer
+      ansible.builtin.template:
+        src: curiosity-display-integrity.timer.j2
+        dest: /etc/systemd/system/curiosity-display-integrity.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart curiosity display-integrity timer
+
+    - name: Enable display integrity timer
+      ansible.builtin.systemd:
+        name: curiosity-display-integrity.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Retire display package integrity guard when it is not wanted
+  when: not (minimal_desktop_integrity_enabled | bool)
+  block:
+    - name: Check for a previously managed display integrity timer
+      ansible.builtin.stat:
+        path: /etc/systemd/system/curiosity-display-integrity.timer
+      register: _display_integrity_timer
+
+    - name: Stop and disable the display integrity timer
+      ansible.builtin.systemd:
+        name: curiosity-display-integrity.timer
+        enabled: false
+        state: stopped
+        daemon_reload: true
+      when: _display_integrity_timer.stat.exists
+
+    - name: Remove managed display integrity files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/curiosity-display-integrity.timer
+        - /etc/systemd/system/curiosity-display-integrity.service
+        - /usr/local/bin/curiosity-display-integrity
+      notify: Reload systemd

@@ -151,6 +151,12 @@
     state: restarted
     daemon_reload: true
 
+- name: Restart curiosity display-integrity timer
+  ansible.builtin.systemd:
+    name: curiosity-display-integrity.timer
+    state: restarted
+    daemon_reload: true
+
 - name: Restart curiosity ziti-health timer
   ansible.builtin.systemd:
     name: curiosity-ziti-health.timer
