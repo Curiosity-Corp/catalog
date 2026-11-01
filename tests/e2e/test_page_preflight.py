@@ -31,9 +31,20 @@ def test_a_healthy_rig_is_ready(app: App, page: Page, rig: Rig) -> None:
 
 
 def test_the_voice_prompt_counts_down_then_scores(app: App, page: Page, rig: Rig) -> None:
-    dialog = open_dialog(app, page)
-    dialog.get_by_role("button", name="Run pre-flight").click()
-    expect(dialog.get_by_text("Say your name", exact=False).first).to_be_visible(timeout=LOADED)
+    # The demo listens for only 0.6 s, a window a loaded runner can miss, and the intro paragraph also says "say your
+    # name" (it is hidden once a run starts). Hold the prompt open and read the countdown from its status line, which
+    # is "Say your name. N s" and, once the clock reaches zero, "Thanks. Checking the rest" while the hold lasts.
+    rig.act("preflight.demo_hold")
+    try:
+        dialog = open_dialog(app, page)
+        dialog.get_by_role("button", name="Run pre-flight").click()
+        prompt = dialog.locator(".pf-listen").get_by_role("status")
+        expect(prompt).to_be_visible(timeout=LOADED)
+        expect(prompt).to_have_text(re.compile(r"^(Say your name\. \d+ s|Thanks\. Checking the rest)$"), timeout=LOADED)
+        expect(prompt).to_have_text("Thanks. Checking the rest", timeout=LOADED)
+        assert rig.state()["preflight"]["phase"] == "listening"
+    finally:
+        rig.act("preflight.demo_hold", on=False)
     poll(rig, lambda s: s["preflight"]["state"] == "done", timeout=40)
     expect(dialog.get_by_role("status").filter(has_text="/ 100")).to_be_visible(timeout=LOADED)
 

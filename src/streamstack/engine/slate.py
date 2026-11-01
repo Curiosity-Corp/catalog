@@ -22,7 +22,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from streamstack import config
@@ -66,7 +66,8 @@ def message_text(spec: SlateSpec) -> str:
 
 
 def drawtext_filters(spec: SlateSpec, textfile: Path) -> str:
-    """One drawtext per line so each has its own size; `textfile` avoids every escaping rule of inline text."""
+    """One drawtext per line so each has its own size; `textfile` avoids every escaping rule of inline text.
+    `reload=1` re-reads each file per frame, so the reason can change on a running slate (`SlateFeeder.show`)."""
     h = spec.height
     brand, caption, reason = max(14, h // 22), max(20, h // 12), max(12, h // 36)
     parts = []
@@ -75,7 +76,7 @@ def drawtext_filters(spec: SlateSpec, textfile: Path) -> str:
         # drawtext reads the whole file: select the line by an expansion-free split into three single-line files
         parts.append(
             f"drawtext=textfile={_quote(str(textfile.with_name(f'{textfile.stem}-{index}.txt')))}"
-            f":fontcolor={color}:fontsize={size}:x=(w-text_w)/2:y={int(y)}"
+            f":reload=1:fontcolor={color}:fontsize={size}:x=(w-text_w)/2:y={int(y)}"
         )
     return ",".join(parts)
 
@@ -154,11 +155,22 @@ class SlateFeeder:
     # -- control ---------------------------------------------------------------------------------------------------
 
     def show(self, spec: SlateSpec, hold_frame: bytes | None = None) -> None:
-        """Make sure the slate for `spec` is being written. A running slate with the same spec is left alone; with a
-        different reason or device it is restarted (the node keeps its caps, so readers only see a new message)."""
+        """Make sure the slate for `spec` is being written. A running slate with the same spec is left alone. When
+        only the reason differs the words are rewritten in place (drawtext reloads them) and the writer, which a
+        consumer holds a handle on, is never restarted (#177); any other change (device, size, rate, caption, hold)
+        restarts it."""
         with self._lock:
-            if self._proc is not None and self._proc.poll() is None and spec == self._spec:
+            running = self._proc is not None and self._proc.poll() is None
+            if running and spec == self._spec:
                 return
+            if running and self._spec is not None and replace(spec, reason=self._spec.reason) == self._spec:
+                try:
+                    self._write_text(spec)
+                except OSError as exc:
+                    log.warning("slate: cannot update the reason in place (%s); restarting the slate", exc)
+                else:
+                    self._spec = spec
+                    return
             self._stop_locked()
             self._spec = spec
             self._hold_bytes = hold_frame if spec.hold else None
@@ -211,13 +223,22 @@ class SlateFeeder:
         self._dir.mkdir(parents=True, exist_ok=True)
         return self._dir
 
-    def _prepare(self, spec: SlateSpec) -> tuple[Path, Path | None]:
-        folder = self._work_dir()
-        base = folder / "slate"
+    def _write_text(self, spec: SlateSpec) -> Path:
+        """Write the three lines. Each file is replaced atomically: a running drawtext reloads it every frame and must
+        never read a half-written one."""
+        base = self._work_dir() / "slate"
         lines = message_text(spec).splitlines()
         lines += [" "] * (3 - len(lines))  # drawtext refuses an empty file, a space draws nothing
         for index, line in enumerate(lines):
-            base.with_name(f"slate-{index}.txt").write_text(line)
+            target = base.with_name(f"slate-{index}.txt")
+            staging = target.with_name(f".{target.name}.new")
+            staging.write_text(line)
+            os.replace(staging, target)
+        return base
+
+    def _prepare(self, spec: SlateSpec) -> tuple[Path, Path | None]:
+        folder = self._work_dir()
+        base = self._write_text(spec)
         hold = None
         if self._hold_bytes:
             hold = folder / "hold.jpg"

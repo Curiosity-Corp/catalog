@@ -300,6 +300,7 @@ class CliSession:
 
     shared = False
     USB_SETTLE = 0.6  # the kernel needs a moment to hand the interface back after the capture process exits
+    DRAIN = 2.0  # how long to wait for the stderr reader to finish once the capture process has exited
 
     def __init__(
         self,
@@ -318,6 +319,7 @@ class CliSession:
         self.paused = False
         self.resting = False  # live view is deliberately off (the engine is idle): nothing restarts the capture
         self._threads: list[threading.Thread] = []
+        self._stderr_reader: threading.Thread | None = None  # the reader for the current capture process
         self.exit_code: int | None = None
 
     def open(self) -> None:
@@ -347,6 +349,8 @@ class CliSession:
             t = threading.Thread(target=target, args=(self.proc,), daemon=True, name=f"canon-{target.__name__}")
             t.start()
             self._threads.append(t)
+            if target == self._stderr:
+                self._stderr_reader = t
 
     def _pump(self, proc: subprocess.Popen) -> None:
         splitter = JpegSplitter()
@@ -401,6 +405,11 @@ class CliSession:
         except queue.Empty:
             proc = self.proc
             if proc is not None and proc.poll() is not None:
+                # The process has exited, but its stderr reader may not have consumed the last line yet (a loaded
+                # host schedules it late). Classify only after the pipe is drained, or a busy camera reads as "io".
+                reader = self._stderr_reader
+                if reader is not None and reader is not threading.current_thread():
+                    reader.join(self.DRAIN)
                 raise cli_error(proc.returncode, self.stderr_tail()) from None
             return None
 

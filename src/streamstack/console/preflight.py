@@ -15,7 +15,8 @@ Pre-flight never changes anything on its own. A finding that one existing action
 `preflight.fix` action runs it (the Fix button) and re-judges. It never opens the camera: a call app may hold it.
 
 Actions: `preflight.run` (`listen` false skips the spoken prompt), `preflight.fix` (`check`), and, on the demo rig only,
-`preflight.demo_fault` / `preflight.demo_reset` which inject the faults the end-to-end tests exercise. The last 30 runs
+`preflight.demo_fault` / `preflight.demo_hold` / `preflight.demo_reset`, which inject the faults the end-to-end tests
+exercise and hold the spoken prompt open so a test can read it. The last 30 runs
 are kept in `console-preflight.json` (score, verdict and each check's state; no audio, no picture).
 """
 
@@ -49,7 +50,7 @@ BUDGET_S = 20.0  # the whole run, on the real rig
 SOURCE_TIMEOUT_S = 4.0  # each fact source and each check
 PROMPT = "Say your name"
 FAULTS = ("noise_floor", "no_voice", "clipping", "no_face", "jitter", "gpu_busy")
-ACTIONS = ("preflight.run", "preflight.fix", "preflight.demo_fault", "preflight.demo_reset")
+ACTIONS = ("preflight.run", "preflight.fix", "preflight.demo_fault", "preflight.demo_hold", "preflight.demo_reset")
 FIX_ACTIONS = frozenset(
     {
         "studio.start",
@@ -251,11 +252,15 @@ class PreflightController:
                 self._state, self._phase = "idle", None
             self._tell("error", f"Pre-flight could not finish: {type(exc).__name__}: {exc}")
 
+    def _wait_listening(self) -> None:
+        """Hold the listening phase for `listen_s` (the demo twin can hold it open longer)."""
+        self._stop.wait(self.listen_s)
+
     def _listen(self) -> MicProbe:
         with self._lock:
             self._levels = []
             self._listening = True
-        self._stop.wait(self.listen_s)
+        self._wait_listening()
         with self._lock:
             self._listening = False
             levels = list(self._levels)
@@ -422,6 +427,7 @@ class DemoPreflight(PreflightController):
 
     def __init__(self, notify: Notify | None = None, *, clock: Callable[[], float] = time.monotonic) -> None:
         self.faults: set[str] = set()
+        self._hold = threading.Event()  # set: stay in the listening phase until `preflight.demo_hold` on=false
         super().__init__(
             notify=notify,
             listen_s=DEMO_LISTEN_S,
@@ -433,6 +439,11 @@ class DemoPreflight(PreflightController):
 
     def state(self) -> dict[str, Any]:
         return {**super().state(), "faults": sorted(self.faults), "demo": True}
+
+    def _wait_listening(self) -> None:
+        super()._wait_listening()
+        while self._hold.is_set() and not self._stop.wait(0.05):
+            pass
 
     def _demo_network(self) -> NetworkFacts:
         if "jitter" in self.faults:
@@ -463,7 +474,14 @@ class DemoPreflight(PreflightController):
             else:
                 self.faults.discard(fault)
             return None
+        if action == "preflight.demo_hold":
+            if bool_param(params) if "on" in params else True:
+                self._hold.set()
+            else:
+                self._hold.clear()
+            return None
         if action == "preflight.demo_reset":
+            self._hold.clear()  # a held prompt would keep join() waiting
             self.join()
             self.faults.clear()
             with self._lock:

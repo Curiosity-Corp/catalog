@@ -14,6 +14,7 @@ from streamstack import preflight
 from streamstack import store as filestore
 from streamstack.console.errors import ActionError
 from streamstack.console.preflight import (
+    DEMO_LISTEN_S,
     HISTORY_MAX,
     DemoPreflight,
     PreflightController,
@@ -375,6 +376,22 @@ def test_demo_faults_validate_and_reset(demo_rig: Any) -> None:
     st = demo_rig.preflight.state()
     assert st["faults"] == [] and st["result"] is None and st["history"] == [] and st["demo"] is True
     assert isinstance(demo_rig.preflight, DemoPreflight)
+
+
+def test_demo_hold_keeps_the_prompt_open_until_released_and_reset_frees_it(demo_rig: Any) -> None:
+    demo_rig.act("preflight.demo_hold")
+    demo_rig.act("preflight.run", listen=True)
+    time.sleep(DEMO_LISTEN_S + 0.5)  # well past the demo's own listen window
+    st = demo_rig.preflight.state()
+    assert st["state"] == "running" and st["phase"] == "listening"
+    demo_rig.act("preflight.demo_hold", on=False)
+    demo_rig.preflight.join()
+    assert demo_rig.preflight.state()["state"] == "done"
+    demo_rig.act("preflight.demo_hold")
+    demo_rig.act("preflight.run", listen=True)
+    demo_rig.act("preflight.demo_reset")  # must not hang on a held prompt
+    st = demo_rig.preflight.state()
+    assert st["state"] == "idle" and st["result"] is None
 
 
 def test_the_rig_without_preflight_reports_an_empty_object_and_refuses_the_actions() -> None:
