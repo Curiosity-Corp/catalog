@@ -14,6 +14,11 @@ own job, in three steps that follow the source's health:
    the engine writes, so the node never loses its producer and the call app never loses the device.
 3. **Reconnect on its own**: the engine supervisor asks `guard` before every child start; when the camera is back the
    slate is released and the engine child takes the node, no click needed.
+4. **Prove the picture before handing over** (#177): a camera that is connected but delivers nothing (the Cam Link with
+   no HDMI signal) passes step 3's "is it there" test, so the engine child used to start, stall, die and start again,
+   and the node changed writer every few seconds. After a fault the guard now reads one frame from the source *without
+   touching the program node* (`read_one_frame`) and keeps the slate as the single writer until that read succeeds,
+   asking again with a growing pause (`PROBE_BACKOFF`).
 
 Everything here is read-only towards cameras (`v4l2-ctl --info` on a node, `os.path.exists`); only the slate and the
 engine child ever write the program node.
@@ -42,6 +47,22 @@ IDLE_CAPTION = "Camera idle"
 IDLE_REASON = "It starts when an app opens StreamStack Camera"
 LOSS_MODES = ("slate", "hold", "off")
 FALLBACK_MODES = ("auto", "off")
+PROBE_BACKOFF = (1.0, 2.0, 4.0, 8.0, 15.0)  # pause before asking a silent source for a frame again; stays at the last
+PROBE_TIMEOUT = 4.0  # seconds a source gets to deliver one frame
+HEALTHY_AFTER = 30.0  # a child that ran this long after a good probe was healthy: the pauses start over
+NO_PICTURE = "{label} is connected but delivers no picture (no signal?)"
+
+
+def read_one_frame(src: Source, timeout: float = PROBE_TIMEOUT) -> bool | None:
+    """Whether `src` delivers a frame now: read one with ffmpeg into the null muxer. Never opens the program node.
+    None when ffmpeg is not installed (the question cannot be asked; the caller proceeds as before)."""
+    if not system.have("ffmpeg"):
+        return None
+    argv = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "v4l2"]
+    argv += ["-framerate", f"{src.fps:g}", "-video_size", f"{src.width}x{src.height}", "-input_format", src.pix_fmt]
+    argv += ["-i", src.device, "-frames:v", "1", "-f", "null", "-"]
+    result = system.run(argv, timeout=timeout)
+    return result is not None and result.returncode == 0
 
 
 def loss_mode(cfg: dict[str, str]) -> str:
@@ -58,6 +79,10 @@ def fallback_mode(cfg: dict[str, str]) -> str:
         log.warning("STREAMSTACK_CAMERA_FALLBACK=%r is not auto or off; using auto", wanted)
         return "auto"
     return wanted
+
+
+def _pause(attempts: int) -> float:
+    return PROBE_BACKOFF[min(max(attempts, 1), len(PROBE_BACKOFF)) - 1]
 
 
 def _seconds(cfg: dict[str, str], key: str, default: float) -> float:
@@ -83,6 +108,7 @@ class Delivery:
         camera_device: Callable[[], str] | None = None,
         program_device: Callable[[], str] | None = None,
         last_frame: Callable[[], bytes | None] = lambda: None,
+        delivers: Callable[[Source], bool | None] = read_one_frame,
     ) -> None:
         self.cfg = cfg
         self.slate = slate or SlateFeeder(clock=clock)
@@ -91,7 +117,12 @@ class Delivery:
         self._camera_device = camera_device or (lambda: cfg.get("STREAMSTACK_CAMERA_DEVICE", ""))
         self._program_device = program_device or (lambda: cfg.get("STREAMSTACK_PROGRAM_DEVICE", ""))
         self._last_frame = last_frame
+        self._delivers = delivers
         self._lock = threading.RLock()
+        self._faulted = False  # the engine child died on this source: prove a frame before the next one starts
+        self._attempts = 0  # failed proofs (and children that died soon after one) in a row: sets the pause
+        self._next_probe = 0.0
+        self._probed_ok_at: float | None = None
         self._out: tuple[int, int, float] | None = None  # what the engine last wrote: width, height, fps
         self._lost_since: float | None = None
         self._steady_since: float | None = None
@@ -167,7 +198,7 @@ class Delivery:
         """Engine `before_child`: None lets the child start (the node is released first); a reason keeps it waiting
         while the slate holds the node."""
         self.note_output(spec)
-        reason = self.source_ready(spec.source)
+        reason = self.source_ready(spec.source) or self._prove_picture(spec.source)
         if reason is None:
             self.release()
             return None
@@ -177,7 +208,35 @@ class Delivery:
     def on_exit(self, reason: str, failures: int) -> None:
         """Engine `on_exit`: a child ended. Cover the node at once when it keeps failing, so the gap is the restart."""
         if failures >= 1:
+            now = self._clock()
+            with self._lock:
+                soon = self._probed_ok_at is not None and now - self._probed_ok_at < HEALTHY_AFTER
+                self._attempts = self._attempts + 1 if soon else 1
+                self._faulted = True
+                self._next_probe = now + _pause(self._attempts)
             self.cover(reason)
+
+    def _prove_picture(self, src: Source) -> str | None:
+        """After a fault: None once `src` delivers a frame, else a sentence (the same one every time, so neither the
+        log nor the card changes while the camera stays away). The slate keeps the node the whole time."""
+        with self._lock:
+            if not self._faulted:
+                return None
+            if self._clock() < self._next_probe:
+                return NO_PICTURE.format(label=src.label)
+        try:
+            ok = self._delivers(src)
+        except Exception:
+            log.exception("delivery: the picture check failed; letting the engine try")
+            ok = None
+        now = self._clock()
+        with self._lock:
+            if ok is False:
+                self._attempts += 1
+                self._next_probe = now + _pause(self._attempts)
+                return NO_PICTURE.format(label=src.label)
+            self._faulted, self._probed_ok_at = False, now
+        return None
 
     def note_output(self, spec: Spec) -> None:
         with self._lock:

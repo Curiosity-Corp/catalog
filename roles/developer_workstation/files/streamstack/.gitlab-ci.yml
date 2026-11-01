@@ -85,6 +85,13 @@ variables:
   # The SBOM, the grype scan and the licence gate cover what a user installs with the extras.
   PYTHON_SBOM_EXTRAS: "framing whip shortcuts calendar"
   PYTHON_SBOM_MC_TYPE: "application"
+  # python-vuln-scan (grype) keeps its hydrated vulnerability DB here. The template default
+  # ($CI_PROJECT_DIR/.cache/grype-db in launch-sequence v0.2.14) is on the RAM-backed 3Gi /builds volume of the
+  # runner pods (registry#285), and the grype v6 DB hydrates to ~3.15 GiB: sqlite fails with "database or disk is
+  # full" on every runner (job 1841389, 1842082; v0.0.24 tag pipeline 109101; infrastructure#794). /tmp is the
+  # container's disk-backed layer. The scan is unchanged and fails closed; only where it caches its DB moves.
+  # Drop this once launch-sequence >= the release carrying !479 (same default) is the pinned include.
+  GRYPE_DB_CACHE_DIR: "/tmp/grype-db"
   # The DeepFilterNet plugin package: version = upstream version + build revision. tests/test_dfn_ladspa_ci.py
   # keeps this equal to audiochain/plugin.py and images/dfn-ladspa/Dockerfile.
   DFN_LADSPA_VERSION: "0.5.6-1"
@@ -576,6 +583,7 @@ release-notes:
   artifacts:
     paths:
       - changelog-entry.md
+    expire_in: 30 days
 
 # The wheel and sdist (already on the PyPI registry) also go to the Generic Package Registry beside the signed
 # manifest, signature and SBOM, so one place (and one download URL scheme) holds a whole release.

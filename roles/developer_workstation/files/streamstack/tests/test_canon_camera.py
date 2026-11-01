@@ -319,6 +319,55 @@ def test_cli_session_raises_when_another_program_holds_the_camera(fake_cli: Path
         s.close()
 
 
+class _LateStderrProc:
+    """A capture process already exited (rc 1, no frames) whose stderr arrives late, as on a loaded host."""
+
+    returncode = 1
+
+    def __init__(self, message: bytes, delay: float) -> None:
+        import io
+
+        self.stdout = io.BytesIO(b"")
+        self.stderr = self._Slow(message, delay)
+
+    class _Slow:
+        def __init__(self, message: bytes, delay: float) -> None:
+            self.lines = [message]
+            self.delay = delay
+
+        def readline(self) -> bytes:
+            if not self.lines:
+                return b""
+            time.sleep(self.delay)
+            return self.lines.pop(0)
+
+    def poll(self) -> int:
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+    def terminate(self) -> None:
+        pass
+
+    def kill(self) -> None:
+        pass
+
+
+def test_cli_session_busy_wins_when_the_process_exits_before_its_stderr_is_read() -> None:
+    """Regression: poll() saw the exit while the stderr reader was still asleep, so the busy camera became "io"."""
+    msg = b"*** Error: Could not claim the USB device ***\n"
+    s = CliSession(popen=lambda *a, **k: _LateStderrProc(msg, 0.3), sleep=lambda _t: None)
+    s.open()
+    try:
+        with pytest.raises(CameraError) as err:
+            for _ in range(20):
+                s.next_frame(0.05)
+        assert err.value.kind == "busy"
+    finally:
+        s.close()
+
+
 def test_lib_session_rest_lowers_the_mirror_and_resume_is_free(fake_camera: type[FakeCamera]) -> None:
     fake_camera.settings["viewfinder"] = {"label": "Viewfinder", "type": "RADIO", "value": "1", "choices": ["0", "1"]}
     s = LibSession(FakeGp)

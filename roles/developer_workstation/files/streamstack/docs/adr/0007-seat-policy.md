@@ -1,7 +1,7 @@
 # ADR 0007: Two users on one desk: the seat user owns audio, the other user's PipeWire is kept off the hardware
 
-Status: provisional (2026-10-27), pending the A/B replug trial in `tools/seat_replug_trial.py`. Issue #127, milestone
-"Hardware-native".
+Status: accepted (owner decision 2026-11-01: the WirePlumber drop-in), with the cure claim still provisional pending the
+A/B replug trial in `tools/seat_replug_trial.py`. Issue #127, milestone "Hardware-native".
 
 ## Context
 
@@ -31,6 +31,19 @@ StreamStack never changes another user's files itself. It diagnoses (`streamstac
 (`streamstack seat-policy script --user seantech --option dropin|groups|stop`). It refuses the seat user and unknown
 users. `STREAMSTACK_SEAT_GUARDED=user[,user]` records which users the owner guarded, so the doctor can report
 "guarded" instead of "unverified" when it cannot read their home.
+
+## Rollout and recognition (2026-11-01)
+
+The catalog's `developer_workstation` role installs the drop-in for every `dev_users` account that is not a StreamStack
+owner, and writes `/etc/streamstack/seat-guarded.d/<user>` (root-owned: `user=`, `dropin=`, `sha256=`). The drop-in
+also names the `monitor.alsa`, `monitor.alsa-midi`, `monitor.v4l2` and `monitor.libcamera` features, so no probe of a
+card or camera remains in that user's WirePlumber (checked on 0.5.13: the control config loads those monitors, the
+drop-in loads none). Nothing restarts their WirePlumber; that happens between calls.
+
+The doctor cannot read another user's home, so it infers the policy: a root-owned marker means installed; a marker
+newer than their WirePlumber's start means `restart-pending`; nodes under `/dev/snd` or `/dev/video` held open by their
+PipeWire or WirePlumber (listable only as root) mean `contends` whatever the config says. `STREAMSTACK_SEAT_GUARDED`
+stays for a policy applied by hand. A drop-in that disables audio but not video-capture no longer counts as guarded.
 
 ## Why provisional
 

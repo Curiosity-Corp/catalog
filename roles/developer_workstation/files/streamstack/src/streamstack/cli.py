@@ -1406,7 +1406,11 @@ def cmd_seat_policy(args: argparse.Namespace) -> int:
             print(f"[{guest.verdict}] {seat.describe(guest)}")
         for error in diagnosis.errors:
             print(f"note: {error}", file=sys.stderr)
-        if diagnosis.worst in (seat.CONTENDS, seat.UNVERIFIED, seat.LINGERING):
+        if diagnosis.worst == seat.RESTART_PENDING:
+            pending = next(g.user for g in diagnosis.guests if g.verdict == seat.RESTART_PENDING)
+            command = f"sudo systemctl --user -M {pending}@ restart wireplumber"
+            print(f"restart {pending}'s WirePlumber between calls: {command}")
+        elif diagnosis.worst in (seat.CONTENDS, seat.UNVERIFIED, seat.LINGERING):
             print(
                 f"recommended: {diagnosis.recommended}; "
                 "print the commands with `streamstack seat-policy script --user NAME`"

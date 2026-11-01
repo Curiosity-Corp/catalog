@@ -46,5 +46,5 @@ reported as such and the rest of the check carries on, so a run always ends insi
 
 ## State and actions
 
-See `preflight` in docs/console.md. The demo rig adds `preflight.demo_fault` (`fault`, `on?`) and
-`preflight.demo_reset` for tests and the e2e suite.
+See `preflight` in docs/console.md. The demo rig adds `preflight.demo_fault` (`fault`, `on?`),
+`preflight.demo_hold` (`on?`, keeps the spoken prompt on screen until released) and `preflight.demo_reset` for tests and the e2e suite.

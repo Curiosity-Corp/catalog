@@ -25,10 +25,31 @@ The Console keeps the program node fed from the outside of the engine (`console/
    last frame darkened and blurred under the same line (`hold`). Exactly one writer exists at any moment: the guard
    releases the slate before the engine child opens the node. The call app keeps its handle; it sees a short freeze,
    then live picture again. Teams does not lose the device.
-4. **Fail over to the Cam Link** (`STREAMSTACK_CAMERA_FALLBACK=auto`, default). When the picked camera has had no producer
+4. **One continuous writer while the source is missing or silent (#177).** The guard's "is it there" test (node exists,
+   loopback has a producer) says yes for a Cam Link with no HDMI signal, so the engine used to start a child, wait
+   4 s for a frame, stop it and start another: `/dev/video43` changed writer every 4 to 10 s, the engine logged "the
+   camera stopped delivering frames" 500 times an hour, and Chromium `getUserMedia` read black (deskmeet1, Canon off
+   USB, 0.0.22 and 0.0.23). After any fault (a child that exited, or was stopped by the watchdog, whatever its uptime)
+   the guard now **reads one frame from the source with a separate read-only ffmpeg** (`delivery.read_one_frame`,
+   which never opens the program node) and releases the slate only when that read succeeds. Until then the slate is
+   the one writer; the question is repeated after 1, 2, 4, 8 and then every 15 s. A child that dies soon after a good
+   read makes the pause grow again; one that ran 30 s or more starts the pauses over. The card's reason changes in
+   place (drawtext `reload=1`), so even a changed sentence does not restart the writer, and the engine logs an identical
+   warning once per five minutes ("repeated N more times").
+
+   *Why this design, and not a persistent writer fed by switchable inputs.* A single long-lived ffmpeg that owns the
+   node and selects between the slate and the engine's picture would need the engine's graph to leave through a pipe
+   into a second process: an extra copy and a process on the hot path of every frame, for every user, to fix a fault
+   that only happens while the source is silent (and against the latency budget of #141 and the rig of #89). An
+   atomic handover with two writers is not available either: the contract allows one writer on the node
+   (`loopback-contract.md`, Competing producers). The churn came from *starting the real writer on a source that had not
+   proven a picture*, so the fix is to prove the picture first: the writer only changes at a real recovery, once. At
+   that moment the card holds its last frame while the engine child starts (about a second, GPU graph set-up); the
+   consumer keeps its handle, sees the card freeze, then live video, never black.
+5. **Fail over to the Cam Link** (`STREAMSTACK_CAMERA_FALLBACK=auto`, default). When the picked camera has had no producer
    for 6 s and another camera delivers, the engine is re-pointed at it, and goes back after the first camera has been
    steady for 5 s. `off` keeps the picked camera and relies on the slate. The Cam Link is only used when it is
-   connected; with no HDMI signal it delivers no frame, the stall watchdog stops it and the slate covers.
+   connected; with no HDMI signal it delivers no frame, so the picture proof in step 4 keeps the slate up instead.
 
 Where it shows: the Console's System page row **StreamStack Camera is fed by ...** (ok), **... is on Cam Link 4K, not
 Canon EOS 50D** (warning, with the restart command), **... showing 'camera reconnecting'** (failure, with the reason and
