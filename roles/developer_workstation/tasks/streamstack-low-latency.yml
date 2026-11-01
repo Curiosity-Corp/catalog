@@ -24,8 +24,11 @@
       - streamstack_audio_headroom | int >= 0
       - streamstack_realtime_rtprio | int >= 1
       - streamstack_realtime_rtprio | int <= 99
-      - (streamstack_audio_node_patterns + streamstack_audio_card_patterns) | reject('match', '^[]A-Za-z0-9_.()|*+?^$[-]+$') | list | length == 0
+      - streamstack_audio_node_patterns | reject('match', '^[]A-Za-z0-9_.()|*+?^$[-]+$') | list | length == 0
       - streamstack_audio_owner_users is iterable
+      - streamstack_seat_guest_dropin is match('^[A-Za-z0-9_.-]+[.]conf$')
+      - streamstack_seat_marker_dir is match('^/etc/[A-Za-z0-9_./-]+$')
+      - "'..' not in streamstack_seat_marker_dir"
       - streamstack_realtime_group is match('^[a-z_][a-z0-9_-]*$')
       - streamstack_usb_no_autosuspend_ids | select('match', '^[0-9a-f]{4}:([0-9a-f]{4}|[*])$') | list | length == streamstack_usb_no_autosuspend_ids | length
       - streamstack_media_package_state in ['latest', 'present']
@@ -150,12 +153,20 @@
     label: "{{ item.item.name }}"
   when: item.ansible_facts.getent_passwd[item.item.name] | default(none) is not none
 
-# --- One WirePlumber per studio card ----------------------------------------
+# --- One WirePlumber per studio desk ----------------------------------------
 # Two users' WirePlumber probing the same USB audio card at once makes the ACP
-# duplex probe fail (no microphone). WirePlumber 0.5 has no seat switch for the
-# ALSA monitor, so every managed account that does not own StreamStack gets a
-# per-user rule that disables the studio cards. See streamstack_audio_exclusive.
-# Applies at that user's next WirePlumber start; nothing is restarted here.
+# duplex probe fail (no microphone, #125 B), and the second user's WirePlumber
+# can also open every camera through the video group (StreamStack #127, ADR
+# 0007; owner decision 2026-11-01). Every managed account that does not own
+# StreamStack therefore gets a WirePlumber 0.5 drop-in that switches off the
+# ALSA, ALSA-MIDI, V4L2 and libcamera device monitors. Their PipeWire and
+# WirePlumber still run (filter-chains, anything not on hardware) but never open
+# or reserve a sound card or a camera. The content is the one
+# `streamstack seat-policy script` prints. A root-owned marker per user in
+# /etc/streamstack/seat-guarded.d lets `streamstack doctor` see the policy
+# although it cannot read the other user's home. Applies at that user's next
+# WirePlumber start; nothing is restarted here (a restart drops that user's
+# streams, and a call may be running). See streamstack_audio_exclusive.
 
 - name: Decide which users must not manage the studio audio cards
   ansible.builtin.set_fact:
@@ -187,39 +198,56 @@
     label: "{{ item.0.item.name }}:{{ item.1 }}"
   when: item.0.item.name in _streamstack_audio_excluded
 
-- name: Keep the studio audio cards out of the other users' WirePlumber
+- name: Keep the studio hardware out of the other users' WirePlumber
   ansible.builtin.copy:
-    dest: "{{ item.ansible_facts.getent_passwd[item.item.name][4] }}/.config/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-exclusive-audio.conf"
+    dest: "{{ item.ansible_facts.getent_passwd[item.item.name][4] }}/.config/wireplumber/wireplumber.conf.d/{{ streamstack_seat_guest_dropin }}"
     owner: "{{ item.item.name }}"
     group: "{{ item.ansible_facts.getent_passwd[item.item.name][2] }}"
     mode: "0644"
-    content: |
-      # Managed by the curiosity workstation role (streamstack-low-latency task group).
-      # StreamStack's studio audio cards belong to {{ streamstack_audio_owner_users | join(', ') }}'s
-      # WirePlumber only: two sessions probing one USB card at once make the
-      # duplex (microphone) profile probe fail. Disable them here.
-      monitor.alsa.rules = [
-      {% for pattern in streamstack_audio_card_patterns %}
-        {
-          matches = [
-            { device.name = "~{{ pattern }}" }
-          ]
-          actions = {
-            update-props = {
-              device.disabled = true
-            }
-          }
-        }
-      {% endfor %}
-      ]
+    content: "{{ streamstack_seat_guest_dropin_content }}"
   loop: "{{ _streamstack_rt_users.results }}"
   loop_control:
     label: "{{ item.item.name }}"
   when: item.item.name in _streamstack_audio_excluded
 
-- name: Remove the studio audio exclusion from owners and when it is switched off
+- name: Ensure the seat policy marker directory exists
+  ansible.builtin.file:
+    path: "{{ streamstack_seat_marker_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: _streamstack_audio_excluded | length > 0
+
+# The marker names the drop-in by its checksum, so a changed drop-in refreshes the
+# marker (and its mtime, which the doctor compares with the WirePlumber start).
+- name: Record the seat policy for StreamStack's doctor
+  ansible.builtin.copy:
+    dest: "{{ streamstack_seat_marker_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack-low-latency task group).
+      # {{ item }}'s WirePlumber has a drop-in that disables its ALSA and V4L2 device monitors
+      # (StreamStack #127). `streamstack doctor` reads this file because it cannot read that home.
+      user={{ item }}
+      dropin={{ streamstack_seat_guest_dropin }}
+      sha256={{ streamstack_seat_guest_dropin_content | hash('sha256') }}
+  loop: "{{ _streamstack_audio_excluded }}"
+
+- name: Remove the retired per-card studio audio exclusion
   ansible.builtin.file:
     path: "{{ item.ansible_facts.getent_passwd[item.item.name][4] }}/.config/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-exclusive-audio.conf"
+    state: absent
+  loop: "{{ _streamstack_rt_users.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.ansible_facts.getent_passwd[item.item.name] | default(none) is not none
+
+- name: Remove the seat policy from owners and when it is switched off
+  ansible.builtin.file:
+    path: "{{ item.ansible_facts.getent_passwd[item.item.name][4] }}/.config/wireplumber/wireplumber.conf.d/{{ streamstack_seat_guest_dropin }}"
     state: absent
   loop: "{{ _streamstack_rt_users.results }}"
   loop_control:
@@ -227,6 +255,15 @@
   when:
     - item.ansible_facts.getent_passwd[item.item.name] | default(none) is not none
     - item.item.name not in _streamstack_audio_excluded
+
+- name: Remove the seat policy marker of users that no longer have it
+  ansible.builtin.file:
+    path: "{{ streamstack_seat_marker_dir }}/{{ item.item.name }}"
+    state: absent
+  loop: "{{ _streamstack_rt_users.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.item.name not in _streamstack_audio_excluded
 
 # --- Canon bridge: never give up on a boot race -----------------------------
 # A user's canonctl-ptp-webcam.service (canonctl repo, fleet/systemd) that failed

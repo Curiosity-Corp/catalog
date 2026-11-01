@@ -6,6 +6,7 @@ touches the machine running the tests.
 """
 
 import ast
+import hashlib
 import re
 import shutil
 import subprocess
@@ -151,9 +152,9 @@ def test_spa_json_check_rejects_the_incident_file() -> None:
 
 
 def test_wireplumber_patterns_are_escape_free_and_validated() -> None:
-    patterns = DEFAULTS["streamstack_audio_node_patterns"] + DEFAULTS["streamstack_audio_card_patterns"]
+    patterns = DEFAULTS["streamstack_audio_node_patterns"]
     assert patterns and not any("\\" in p or '"' in p for p in patterns)
-    assert any("streamstack_audio_card_patterns" in str(c) for c in _task("Validate the StreamStack low-latency settings")["ansible.builtin.assert"]["that"])
+    assert any("streamstack_audio_node_patterns" in str(c) for c in _task("Validate the StreamStack low-latency settings")["ansible.builtin.assert"]["that"])
 
 
 def _users(*present: str, absent: tuple[str, ...] = ()) -> list[dict]:
@@ -187,17 +188,62 @@ def test_only_the_streamstack_owner_keeps_the_studio_audio_cards() -> None:
     assert _excluded(_users("mrh", "seantech", "guest"), streamstack_audio_owner_users=["mrh", "seantech"]) == ["guest"]
 
 
-def test_exclusion_drop_in_disables_only_the_studio_cards_and_parses() -> None:
-    task = _task("Keep the studio audio cards out of the other users' WirePlumber")["ansible.builtin.copy"]
-    conf = _render(task["content"])
+def test_seat_guest_drop_in_disables_the_alsa_and_v4l2_monitors_and_parses() -> None:
+    task = _task("Keep the studio hardware out of the other users' WirePlumber")["ansible.builtin.copy"]
+    ctx = {k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")}
+    conf = _environment().from_string(task["content"]).render(**ctx)
     _assert_valid_spa_json(conf)
-    assert task["dest"].endswith("/.config/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-exclusive-audio.conf")
-    cards = [re.compile(c) for c in re.findall(r'device\.name = "~([^"]+)"', conf)]
-    assert len(cards) == 2 and conf.count("device.disabled = true") == 2
-    assert any(c.match("alsa_card.usb-Elgato_Systems_Elgato_Wave_XLR_DS23M2A00049-00") for c in cards)
-    assert any(c.match("alsa_card.usb-Elgato_Cam_Link_4K_00066EBB11000-03") for c in cards)
-    assert any(c.match("alsa_card.usb-Focusrite_Scarlett_2i2_USB_Y8ABCDE-00") for c in cards)
-    assert not any(c.match("alsa_card.pci-0000_00_1f.3") for c in cards)
+    dest = _environment().from_string(task["dest"]).render(item={"ansible_facts": {"getent_passwd": {"seantech": ["x", "1001", "1001", "", "/home/seantech", "/bin/bash"]}}, "item": {"name": "seantech"}}, **ctx)
+    assert dest == "/home/seantech/.config/wireplumber/wireplumber.conf.d/90-streamstack-seat-guest.conf"
+    active = [line.strip() for line in _active(conf)]
+    for feature in ("hardware.audio", "hardware.video-capture", "monitor.alsa", "monitor.alsa-midi", "monitor.v4l2", "monitor.libcamera"):
+        assert f"{feature} = disabled" in active, feature
+    assert "wireplumber.profiles = {" in active and "main = {" in active
+    # Their PipeWire and WirePlumber keep running: nothing else is switched off, bluetooth is left to its seat monitor.
+    assert not any("required" in line or "hardware.bluetooth" in line for line in active)
+    # The same file is what `streamstack seat-policy script` prints, under the same name.
+    assert ctx["streamstack_seat_guest_dropin"] == "90-streamstack-seat-guest.conf"
+
+
+def test_seat_policy_marker_names_the_user_and_the_drop_in_checksum() -> None:
+    task = _task("Record the seat policy for StreamStack's doctor")["ansible.builtin.copy"]
+    ctx = {k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")}
+    env = _environment()
+    assert env.from_string(task["dest"]).render(item="seantech", **ctx) == "/etc/streamstack/seat-guarded.d/seantech"
+    body = env.from_string(task["content"]).render(item="seantech", **ctx)
+    fields = dict(line.split("=", 1) for line in _active(body))
+    assert fields["user"] == "seantech" and fields["dropin"] == "90-streamstack-seat-guest.conf"
+    assert fields["sha256"] == hashlib.sha256(ctx["streamstack_seat_guest_dropin_content"].encode()).hexdigest()
+    assert (task["owner"], task["mode"]) == ("root", "0644")
+    assert _task("Record the seat policy for StreamStack's doctor")["loop"] == "{{ _streamstack_audio_excluded }}"
+
+
+def test_seat_policy_is_removed_for_owners_and_when_switched_off_and_the_old_card_rule_is_retired() -> None:
+    retired = _task("Remove the retired per-card studio audio exclusion")["ansible.builtin.file"]
+    assert retired["state"] == "absent" and retired["path"].endswith("/50-curiosity-streamstack-exclusive-audio.conf")
+    gone = _task("Remove the seat policy from owners and when it is switched off")
+    assert gone["ansible.builtin.file"]["state"] == "absent"
+    assert gone["ansible.builtin.file"]["path"].endswith("/{{ streamstack_seat_guest_dropin }}")
+    assert "item.item.name not in _streamstack_audio_excluded" in gone["when"]
+    marker = _task("Remove the seat policy marker of users that no longer have it")
+    assert marker["ansible.builtin.file"]["state"] == "absent"
+    assert marker["when"] == "item.item.name not in _streamstack_audio_excluded"
+
+
+def test_seat_policy_settings_are_validated() -> None:
+    checks = _task("Validate the StreamStack low-latency settings")["ansible.builtin.assert"]["that"]
+    env = _environment()
+
+    def passes(**extra) -> bool:
+        context = {k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")}
+        context.update(extra)
+        return all(env.compile_expression(c)(**context) for c in checks)
+
+    assert passes()
+    assert not passes(streamstack_seat_guest_dropin="../x.conf")
+    assert not passes(streamstack_seat_guest_dropin="90-guest")
+    assert not passes(streamstack_seat_marker_dir="/tmp/../root")
+    assert not passes(streamstack_seat_marker_dir="relative/dir")
 
 
 def test_overrides_flow_into_the_rendered_files() -> None:

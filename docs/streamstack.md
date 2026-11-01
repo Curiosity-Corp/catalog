@@ -374,23 +374,41 @@ boot or replug.
 
 WirePlumber 0.5 has no seat or logind switch for the ALSA monitor (only the
 bluez monitor has `monitor.bluez.seat-monitoring`; checked in
-`/usr/share/wireplumber/wireplumber.conf`), so the role uses a per-user rule.
-Every `dev_users` account that is not in `streamstack_audio_owner_users`
-(default `mrh`) gets
-`~/.config/wireplumber/wireplumber.conf.d/50-curiosity-streamstack-exclusive-audio.conf`,
-which sets `device.disabled = true` on the cards matching
-`streamstack_audio_card_patterns` (Focusrite, Elgato). The ALSA monitor skips a
-disabled device before it creates it, so that user's WirePlumber never opens the
-card. The owner's session and the system-wide tuning above are unchanged, and
-other users keep their onboard and HDMI audio.
+`/usr/share/wireplumber/wireplumber.conf`), so the role switches the device
+monitors off for the other users instead (StreamStack #127, ADR 0007; owner
+decision 2026-11-01). Every `dev_users` account that is not in
+`streamstack_audio_owner_users` (default `mrh`) gets
+`~/.config/wireplumber/wireplumber.conf.d/90-streamstack-seat-guest.conf`
+(`streamstack_seat_guest_dropin`), which sets `hardware.audio`,
+`hardware.video-capture`, `monitor.alsa`, `monitor.alsa-midi`, `monitor.v4l2`
+and `monitor.libcamera` to `disabled` in the `main` profile. That user's
+PipeWire and WirePlumber keep running (filter-chains, anything not on hardware)
+but never open or reserve a sound card or a camera, including gear added later.
+The owner's session and the system-wide tuning above are unchanged. The text is
+the one `streamstack seat-policy script` prints, so the two converge.
+Checked on WirePlumber 0.5.13 in a sandbox with no sound or video nodes: the
+control config loaded `monitors/alsa.lua`, `alsa-midi.lua`, `v4l2/*` and
+`libcamera/*`; with the drop-in only the bluez monitors loaded.
 
-- `streamstack_audio_exclusive: false` removes the drop-ins again.
+For each such user the role also writes a root-owned marker
+`/etc/streamstack/seat-guarded.d/<user>` (`streamstack_seat_marker_dir`) with
+the drop-in's name and checksum. `streamstack doctor` cannot read another
+user's home, so it reads the marker to report the policy as satisfied, and
+compares the marker's mtime with that user's WirePlumber start time to say
+whether the WirePlumber still has to be restarted.
+
+- `streamstack_audio_exclusive: false` removes the drop-ins and markers again.
+- The retired per-card rule `50-curiosity-streamstack-exclusive-audio.conf` is
+  removed from every account on each run.
 - Accounts that are not on the host are skipped, and nothing is applied when no
   owner exists on the host, so a wrong owner name cannot silence every user.
-- Takes effect at the excluded user's next WirePlumber start (next login); the
-  role restarts nothing. The owner needs no restart.
-- Verify: `fuser -v /dev/snd/controlC*` lists only the owner's `wireplumber`, and
-  the other user's `pactl list cards short` no longer shows the studio cards.
+- Takes effect at the excluded user's next WirePlumber start; the role restarts
+  nothing, because a restart drops that user's streams and a call may be
+  running. Restart it between calls: `sudo systemctl --user -M USER@ restart
+  wireplumber`. The owner needs no restart.
+- Verify: `fuser -v /dev/snd/controlC*` lists only the owner's processes, and
+  `sudo ls -l /proc/$(pgrep -u USER wireplumber)/fd` shows no `/dev/snd/*` or
+  `/dev/video*` for the other user's WirePlumber or PipeWire.
 
 ### WirePlumber drop-ins must be valid SPA-JSON
 
@@ -399,7 +417,7 @@ and WirePlumber then ignores the whole file ("section 'monitor.alsa.rules' has
 no value"): the period and keep-awake rules in
 `50-curiosity-streamstack-alsa.conf` were silently not applied from at least
 2026-10-24 to 2026-10-27. Write a literal dot as `[.]` in
-`streamstack_audio_node_patterns` and `streamstack_audio_card_patterns`; the
+`streamstack_audio_node_patterns`; the
 role refuses patterns with a backslash or quote, and
 `tests/test_streamstack_low_latency.py` renders both drop-ins and validates them
 (with `spa-json-dump` from PipeWire when it is installed). Check a live host
