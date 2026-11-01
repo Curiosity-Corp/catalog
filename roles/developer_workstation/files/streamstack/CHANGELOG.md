@@ -5,6 +5,21 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.26] - 2026-11-01
+
+### Fixed
+- A busy camera is now reported as busy, not as a generic io error, when the live-view `gphoto2` process exits before its stderr has been read. The session now drains the process error output before classifying the exit, so "Another program is holding the camera" is shown even on a heavily loaded host (#180).
+
+## [0.0.25] - 2026-11-01
+
+### Fixed
+- `streamstack doctor` (and `seat-policy status`) now recognises the owner-chosen seat policy for another user's lingering WirePlumber and reports it ok instead of "seantech runs a second WirePlumber; their config is out of sight". The catalog's workstation role installs a WirePlumber 0.5 drop-in in that user's config that disables the ALSA, ALSA-MIDI, V4L2 and libcamera monitors, and leaves a root-owned marker in `/etc/streamstack/seat-guarded.d/`, which the doctor reads because it cannot read their home. A marker newer than that user's WirePlumber start is reported as "restart pending" with the restart command, and a sound or video node held open by their PipeWire/WirePlumber (when `/proc` is readable) overrides any config. A drop-in that disables audio but not video-capture no longer counts as guarded. `streamstack seat-policy script` now emits the same drop-in (with the monitors) and writes the marker too (#127).
+
+## [0.0.24] - 2026-11-01
+
+### Fixed
+- StreamStack Camera no longer flaps while the source camera is missing or silent (#177). The engine used to start a child on a camera that was connected but delivered nothing (the Cam Link with no HDMI signal, after the Canon went off USB), stop it after 4 s and start it again, so `/dev/video43` changed writer every few seconds and call apps read black. After a fault the guard now reads one frame from the source without touching the program node, keeps the "Camera reconnecting" card as the single writer until that read succeeds, and asks again with a growing pause (1, 2, 4, 8, 15 s). The card's words change in place (no restart), the engine's repeated warnings are logged once per five minutes, and a stall is treated as a fault whatever the uptime.
+
 ## [0.0.23] - 2026-10-29
 
 ### Added

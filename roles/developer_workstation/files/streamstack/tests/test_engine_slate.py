@@ -119,11 +119,31 @@ def test_show_starts_one_writer_and_is_idempotent(feeder) -> None:
     assert state["active"] and state["writing"] and state["mode"] == "card" and state["reason"] == SPEC.reason
 
 
-def test_a_new_reason_replaces_the_writer_one_at_a_time(feeder) -> None:
+def test_a_new_reason_rewrites_the_words_and_keeps_the_same_writer(feeder) -> None:
+    """#177: a call app holds a handle on the node; the words change under the same ffmpeg (drawtext reload=1)."""
     feeder.show(SPEC)
     feeder.show(SlateSpec("/dev/video43", 1280, 720, 30.0, reason="the Cam Link has no signal"))
-    assert len(feeder.procs) == 2 and feeder.procs[0].terminated and not feeder.procs[1].terminated
+    assert len(feeder.procs) == 1 and not feeder.procs[0].terminated
     assert (feeder._work_dir() / "slate-2.txt").read_text() == "the Cam Link has no signal"
+    assert feeder.state()["reason"] == "the Cam Link has no signal" and feeder.state()["starts"] == 1
+    assert not list(feeder._work_dir().glob(".*.new"))  # the atomic replace leaves nothing behind
+
+
+def test_the_words_are_reloaded_every_frame() -> None:
+    chain = slate.slate_argv(SPEC, textfile=Path("/tmp/s"))
+    assert chain[chain.index("-vf") + 1].count("reload=1") == 3
+
+
+def test_a_change_of_caption_size_or_device_replaces_the_writer_one_at_a_time(feeder) -> None:
+    feeder.show(SPEC)
+    feeder.show(SlateSpec("/dev/video43", 1280, 720, 30.0, reason=SPEC.reason, caption="Camera idle"))
+    assert len(feeder.procs) == 2 and feeder.procs[0].terminated and not feeder.procs[1].terminated
+
+
+def test_many_reason_changes_never_restart_the_writer(feeder) -> None:
+    for n in range(50):
+        feeder.show(SlateSpec("/dev/video43", 1280, 720, 30.0, reason=f"reason {n}"))
+    assert len(feeder.procs) == 1 and feeder.state()["starts"] == 1
 
 
 def test_clear_stops_the_writer_and_waits_for_it(feeder) -> None:

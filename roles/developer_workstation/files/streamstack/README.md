@@ -321,7 +321,7 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 | `STREAMSTACK_PROGRAM_DEVICE` / `_LABEL` | `/dev/video43`, `StreamStack Camera` | the program camera node the engine writes |
 | `STREAMSTACK_WIDTH`, `_HEIGHT`, `_FPS` | `1920`, `1080`, `30` | Canon bridge output, and the stream size when `STREAMSTACK_CAMLINK_MODE=off` |
 | `STREAMSTACK_CAMLINK_MODE` | `auto` | `auto`: the best mode the HDMI source offers, and the program camera follows it; `off`: keep the three settings above; `1920x1080@60 YUYV`: pin one mode (falls back to `auto` when the source does not offer it) |
-| `STREAMSTACK_SEAT_GUARDED` | empty | comma-separated users whose PipeWire/WirePlumber the owner has kept off the hardware (`streamstack seat-policy`); lets the doctor report "guarded" for a user whose home it cannot read |
+| `STREAMSTACK_SEAT_GUARDED` | empty | comma-separated users whose PipeWire/WirePlumber the owner has kept off the hardware (`streamstack seat-policy`); lets the doctor report "guarded" for a user whose home it cannot read (the catalog's `/etc/streamstack/seat-guarded.d/<user>` marker does the same without this setting) |
 | `STREAMSTACK_CAMLINK_4K` | `false` | let `auto` pick 4K |
 | `STREAMSTACK_CAMERA_EXTERNAL` | `false` | another tool feeds the camera node |
 | `STREAMSTACK_CAMERA_LOSS` | `slate` | when the camera loses its picture: `slate` keeps StreamStack Camera fed with a "camera reconnecting" card, `hold` shows the last frame darkened, `off` writes nothing; see [docs/camera-delivery.md](docs/camera-delivery.md) |

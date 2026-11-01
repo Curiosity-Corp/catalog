@@ -35,7 +35,7 @@ log, fd, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 if mode == "die":
     sys.stderr.write("Device or resource busy\\n"); sys.exit(1)
 out = os.fdopen(fd, "w")
-out.write("fps=20.0\\ndrop_frames=2\\nspeed=1.0x\\nprogress=continue\\n"); out.flush()
+out.write("frame=0\\nfps=20.0\\ndrop_frames=2\\nspeed=1.0x\\nprogress=continue\\n"); out.flush()
 if mode == "stall":  # one frame, then ffmpeg blocks in the V4L2 read: alive, silent, counter stuck
     out.write("frame=1\\nprogress=continue\\n"); out.flush()
 if mode == "flow":  # a healthy child: the counter keeps moving

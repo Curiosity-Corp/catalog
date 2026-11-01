@@ -48,7 +48,28 @@ STALL_FIRST = 10.0  # a camera may need this long to deliver its first frame (a 
 NOT_READY_POLL = 1.0  # how often a source that is not ready is asked again
 BeforeChild = Callable[[Spec], str | None]
 OnExit = Callable[[str, int], None]
+LOG_REPEAT_SECONDS = 300.0  # an identical warning is logged once per this long; the rest are counted
 KEY_SETTLE = 0.6  # seconds a look must rest on a new baked step before the child is rebuilt for it
+
+
+class _RepeatLimit:
+    """Lets an identical log line through once per `LOG_REPEAT_SECONDS` and counts the ones it held back, so a camera
+    that stays away writes a few lines an hour, not one per retry (#177). Not thread-safe on its own: callers hold
+    the engine lock."""
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self._seen: dict[str, tuple[float, int]] = {}
+
+    def check(self, message: str) -> str | None:
+        """The line to log now (with a repeat count when earlier ones were held back), or None to stay quiet."""
+        now = self._clock()
+        last, held = self._seen.get(message, (None, 0))
+        if last is not None and now - last < LOG_REPEAT_SECONDS:
+            self._seen[message] = (last, held + 1)
+            return None
+        self._seen[message] = (now, 0)
+        return message if not held else f"{message} (repeated {held} more times since the last line)"
 
 
 class VideoEngine:
@@ -95,6 +116,8 @@ class VideoEngine:
         self._frame_cond = threading.Condition()
         self._last_apply_ms: float | None = None
         self._stalled: str | None = None  # set by the watchdog for the child it is stopping
+        self._stall_exit = False  # the child that just ended was stopped by the watchdog (a fault, whatever its uptime)
+        self._repeats = _RepeatLimit(clock)
         self._not_ready: str | None = None  # why the source is not ready now, None when it is
         self._built_key: graph.GraphKey | None = None  # what the running child has baked in
         self._key_timer: threading.Timer | None = None
@@ -357,6 +380,9 @@ class VideoEngine:
             failures = 0 if ran >= STABLE_SECONDS else failures + 1
             with self.lock:
                 planned, self._planned = self._planned, False
+                stall_exit, self._stall_exit = self._stall_exit, False
+            if stall_exit:
+                failures = max(failures, 1)  # a source that went silent is a fault however long it ran: cover the node
             if planned:
                 failures = 0  # a deliberate restart (a new baked step): straight back up
             wait = BACKOFF[min(failures, len(BACKOFF)) - 1] if failures else 0.1
@@ -387,7 +413,7 @@ class VideoEngine:
             if reason is not None:
                 self._state, self._error = "waiting", reason
         if reason is not None and changed:
-            log.warning("engine: %s", reason)
+            self._warn(reason)
         return reason is not None
 
     def _child_exited(self, reason: str, failures: int) -> None:
@@ -402,9 +428,16 @@ class VideoEngine:
         with self.lock:
             repeat = self._state == "error" and self._error == message
             self._state, self._error = "error", message
-        log.warning("engine: %s", message)
+        self._warn(message)
         if not repeat:
             self._toast("warn", message)  # a camera that stays unplugged must not toast every retry
+
+    def _warn(self, message: str) -> None:
+        """Log `engine: <message>`, at most once per LOG_REPEAT_SECONDS for the same message."""
+        with self.lock:
+            line = self._repeats.check(message)
+        if line is not None:
+            log.warning("engine: %s", line)
 
     def _toast(self, level: str, text: str) -> None:
         if self._notify:
@@ -483,6 +516,7 @@ class VideoEngine:
         with self.lock:
             self._proc, self._sent = None, None
             stalled, self._stalled = self._stalled, None
+            self._stall_exit = bool(stalled) and not self._halt.is_set()
         if stalled and not self._halt.is_set():
             self._fail(stalled)
             return
@@ -504,7 +538,9 @@ class VideoEngine:
                 now_frame = self._progress.get("frame")
             now = self._clock()
             if now_frame != frame:
-                frame, last_move, moved = now_frame, now, True
+                frame, last_move = now_frame, now
+                count = _float(now_frame)
+                moved = moved or (count is not None and count > 0)  # ffmpeg reports frame=0 before any frame
             limit = STALL_SECONDS if moved else STALL_FIRST
             if now - (last_move if moved else began) < limit:
                 continue
@@ -515,7 +551,7 @@ class VideoEngine:
                     if moved
                     else f"the camera delivered no frame in {seconds:.0f} s"
                 )
-            log.warning("engine: %s", self._stalled)
+            self._warn(self._stalled)
             self._terminate(proc)
             return
 

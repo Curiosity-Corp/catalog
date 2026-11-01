@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import pytest
@@ -422,3 +423,102 @@ def test_stop_forgets_the_park(world: World) -> None:
     delivery.park()
     delivery.stop()
     assert not delivery.parked
+
+
+# -- proving a picture before the engine child takes the node back (#177) -------------------------------------------
+
+
+def faulted(world: World, answers: list[bool | None]):
+    delivery, slate, clock, said = make(world, delivers=lambda src: answers.pop(0) if len(answers) > 1 else answers[0])
+    delivery.on_exit("the camera stopped delivering frames (4 s without one)", 1)
+    return delivery, slate, clock, said
+
+
+def test_a_healthy_source_is_never_probed(world: World) -> None:
+    asked: list[Source] = []
+    delivery, slate, *_ = make(world, delivers=lambda src: asked.append(src) or True)
+    assert delivery.guard(SPEC) is None and asked == [] and slate.cleared == 1
+
+
+def test_after_a_fault_the_slate_holds_until_a_frame_is_read_then_releases_once(world: World) -> None:
+    delivery, slate, clock, _ = faulted(world, [False, False, True])
+    assert slate.active and len(slate.shown) == 1
+    clock.now += 1.0
+    first = delivery.guard(SPEC)
+    assert first and "delivers no picture" in first and slate.active and slate.cleared == 0
+    assert delivery.guard(SPEC) == first  # inside the pause: same sentence, no new probe
+    clock.now += 2.0
+    assert delivery.guard(SPEC) == first and slate.cleared == 0
+    clock.now += 4.0
+    assert delivery.guard(SPEC) is None and slate.cleared == 1 and not slate.active
+
+
+def test_the_pause_grows_and_is_capped(world: World) -> None:
+    calls: list[float] = []
+    delivery, _, clock, _ = make(world, delivers=lambda src: calls.append(clock.now) is None and False)
+    delivery.on_exit("stalled", 1)
+    for _ in range(400):
+        clock.now += 0.5
+        delivery.guard(SPEC)
+    gaps = [b - a for a, b in itertools.pairwise(calls)]
+    assert gaps[0] < gaps[-1] and max(gaps) <= 15.5 and min(gaps) >= 1.0
+    assert len(calls) < 30  # 200 seconds of polling asked the camera a few dozen times, not 400
+
+
+def test_a_child_that_dies_soon_after_a_good_proof_waits_longer_each_time(world: World) -> None:
+    delivery, _, clock, _ = make(world, delivers=lambda src: True)
+    delivery.on_exit("stalled", 1)
+    clock.now += 1.0
+    assert delivery.guard(SPEC) is None  # proven at once
+    delivery.on_exit("stalled", 2)  # died within HEALTHY_AFTER: the second pause
+    assert delivery.guard(SPEC)  # too early: still waiting
+    clock.now += 2.0
+    assert delivery.guard(SPEC) is None
+    clock.now += 100.0  # a long healthy run, then a fault: the pauses start over
+    delivery.on_exit("stalled", 1)
+    clock.now += 1.0
+    assert delivery.guard(SPEC) is None
+
+
+def test_a_probe_that_cannot_run_lets_the_engine_try(world: World) -> None:
+    delivery, slate, clock, _ = faulted(world, [None])
+    clock.now += 1.0
+    assert delivery.guard(SPEC) is None and slate.cleared == 1
+
+
+def test_a_probe_that_raises_lets_the_engine_try(world: World) -> None:
+    def broken(src: Source) -> bool:
+        raise RuntimeError("boom")
+
+    delivery, _slate, clock, _ = make(world, delivers=broken)
+    delivery.on_exit("stalled", 1)
+    clock.now += 1.0
+    assert delivery.guard(SPEC) is None
+
+
+def test_read_one_frame_reads_the_source_and_never_names_the_program_node(monkeypatch) -> None:
+    import subprocess
+
+    from streamstack import system
+    from streamstack.console import delivery as mod
+
+    seen: list[list[str]] = []
+
+    def run(argv: list[str], timeout: float = 10):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, code[0], "", "")
+
+    code = [0]
+    monkeypatch.setattr(system, "have", lambda tool: True)
+    monkeypatch.setattr(system, "run", run)
+    assert mod.read_one_frame(LINK_SRC) is True
+    argv = seen[0]
+    assert argv[argv.index("-i") + 1] == "/dev/video0" and "/dev/video43" not in argv
+    assert argv[argv.index("-input_format") + 1] == "yuyv422" and argv[argv.index("-video_size") + 1] == "1920x1080"
+    assert argv[-5:] == ["-frames:v", "1", "-f", "null", "-"]
+    code[0] = 1
+    assert mod.read_one_frame(LINK_SRC) is False
+    monkeypatch.setattr(system, "run", lambda argv, timeout=10: None)  # timed out: the source is silent
+    assert mod.read_one_frame(LINK_SRC) is False
+    monkeypatch.setattr(system, "have", lambda tool: False)
+    assert mod.read_one_frame(LINK_SRC) is None

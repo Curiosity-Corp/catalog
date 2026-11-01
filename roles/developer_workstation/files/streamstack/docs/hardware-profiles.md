@@ -127,8 +127,11 @@ log lines (derived from the driver's format strings); the capture from the real 
 
 `streamstack seat-policy status` (also the `hw-seat` doctor row) says whether another user's lingering PipeWire and
 WirePlumber can open the seat user's cards. `streamstack seat-policy script --user NAME [--option dropin|groups|stop]`
-prints, never runs, the root script that keeps them off (default: a WirePlumber profile drop-in). After applying it,
-set `STREAMSTACK_SEAT_GUARDED=NAME`. The decision and its reasons are in `docs/adr/0007-seat-policy.md`.
+prints, never runs, the root script that keeps them off (default: a WirePlumber profile drop-in that disables the ALSA,
+ALSA-MIDI, V4L2 and libcamera monitors, plus a root-owned marker in `/etc/streamstack/seat-guarded.d/`). The catalog's
+workstation role applies the same policy to every non-seat user, so the doctor reads the marker and reports it ok
+(`restart-pending` until that user's WirePlumber has restarted outside a call); `STREAMSTACK_SEAT_GUARDED=NAME` remains
+for a policy applied some other way. The decision and its reasons are in `docs/adr/0007-seat-policy.md`.
 
 Whether it cures lost-input faults is measured with `tools/seat_replug_trial.py`, a human run at an idle desk (it
 replugs the Wave XLR through sysfs and needs root; it refuses during a call and never touches the default source):

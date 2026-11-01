@@ -517,6 +517,7 @@ take seconds (studio start, mic check, auto once) return at once with
 | `preflight.run` | `listen?` (bool, default true) | start the pre-flight check; 409 while one is running |
 | `preflight.fix` | `check` (a check id) | run the Fix of that check's last finding, then re-judge it; 409 without a result or while running |
 | `preflight.demo_fault` | `fault` (`noise_floor`, `no_voice`, `clipping`, `no_face`, `jitter`, `gpu_busy`), `on?` | demo rig only: inject a fault |
+| `preflight.demo_hold` | `on?` (bool, default true) | demo rig only: stay in the spoken-prompt phase until released with `on` false, so a test can read the countdown |
 | `preflight.demo_reset` | none | demo rig only: no faults, no result, no history |
 | `safejoin.set` | `mode?` (`off`\|`warn`\|`safe`), `auto_release_s?` (0 to 600) | what happens when a call app opens the camera, saved in `console-safejoin.json` |
 | `safejoin.go_live` | none | release the privacy and mute Safe join took; a no-op when nothing is held |
