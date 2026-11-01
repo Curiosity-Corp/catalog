@@ -1355,25 +1355,50 @@ streamstack_audio_max_quantum: 1024
 streamstack_audio_node_patterns:
   - "alsa_(input|output)[.]usb-Focusrite_.*"
   - "alsa_(input|output)[.]usb-Elgato_Systems_Elgato_Wave_XLR.*"
-# One WirePlumber per studio card. Every logged-in user runs their own
-# PipeWire + WirePlumber, and two of them probing the same USB audio card at the
-# same time makes the ACP duplex probe fail: the Wave XLR then comes up with
-# output profiles only and the call has no microphone (dm313red, 2026-10-27).
-# WirePlumber 0.5 has no seat/logind switch for the ALSA monitor (only bluez has
-# one), so the role installs ~/.config/wireplumber/wireplumber.conf.d/
-# 50-curiosity-streamstack-exclusive-audio.conf for every dev_users account that
-# is NOT in streamstack_audio_owner_users; it sets `device.disabled = true` on
-# the cards matched by streamstack_audio_card_patterns (anchored regexes on the
-# PipeWire device name, `[.]` for a dot). Takes effect at that user's next
-# WirePlumber start (next login). Nothing is applied when no owner exists on the
-# host, so an unexpected owner name can never silence every user. false removes
-# the drop-ins again.
+# One WirePlumber per studio desk (StreamStack #127, ADR 0007; CEO decision
+# 2026-11-01). Every logged-in or lingering user runs their own PipeWire +
+# WirePlumber, and two of them probing the same USB audio card at the same time
+# makes the ACP duplex probe fail: the Wave XLR then comes up with output
+# profiles only and the call has no microphone (dm313red, 2026-10-27). Through
+# the audio and video groups the second user's WirePlumber can also open every
+# camera. WirePlumber 0.5 has no seat/logind switch for the ALSA monitor (only
+# bluez has one), so the role installs
+# ~/.config/wireplumber/wireplumber.conf.d/<streamstack_seat_guest_dropin> for
+# every dev_users account that is NOT in streamstack_audio_owner_users. It
+# disables the hardware.audio and hardware.video-capture features (the ALSA,
+# ALSA-MIDI, V4L2 and libcamera device monitors); that user's PipeWire and
+# WirePlumber keep running but never open or reserve a card or a camera. The
+# text is what `streamstack seat-policy script` prints. For each such user the
+# role also writes a root-owned marker in streamstack_seat_marker_dir, which is
+# how `streamstack doctor` knows the policy is installed when it cannot read
+# that user's home. Takes effect at that user's next WirePlumber start; nothing
+# is restarted. Nothing is applied when no owner exists on the host, so an
+# unexpected owner name can never silence every user. false removes the
+# drop-ins and markers again. The retired per-card rule
+# (50-curiosity-streamstack-exclusive-audio.conf) is removed on every run.
 streamstack_audio_exclusive: true
 streamstack_audio_owner_users:
   - mrh
-streamstack_audio_card_patterns:
-  - "alsa_card[.]usb-Focusrite_.*"
-  - "alsa_card[.]usb-Elgato_.*"
+streamstack_seat_guest_dropin: 90-streamstack-seat-guest.conf
+streamstack_seat_marker_dir: /etc/streamstack/seat-guarded.d
+streamstack_seat_guest_dropin_content: |
+  # Managed by the curiosity workstation role (streamstack-low-latency task group; StreamStack #127).
+  #
+  # This user is not the person at the studio desk, but their WirePlumber runs all the time (linger). Two WirePlumbers
+  # probing the same USB sound card or camera at the same moment can leave the card output-only (Wave XLR, #125 B).
+  # Switch off the hardware features here; the person at the seat has them. The user's PipeWire and WirePlumber keep
+  # running. To undo: set streamstack_audio_exclusive: false (or delete this file) and restart the user's wireplumber
+  # (systemctl --user restart wireplumber).
+  wireplumber.profiles = {
+    main = {
+      hardware.audio = disabled
+      hardware.video-capture = disabled
+      monitor.alsa = disabled
+      monitor.alsa-midi = disabled
+      monitor.v4l2 = disabled
+      monitor.libcamera = disabled
+    }
+  }
 streamstack_audio_period_size: 128
 streamstack_audio_headroom: 64
 # Restart policy drop-in for a user's canonctl-ptp-webcam.service (the Canon
