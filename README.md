@@ -1,5 +1,7 @@
 # Curiosity Workstation
 
+> **Deliberate split.** This repository (`catalog`) is the reusable, scrubbed open-source base of Curiosity Workstation: no internal hostnames, trust anchors, inventories, credentials or secret-store paths, and it must work without Curiosity network access. Its private downstream is [`Curiosity-Corp/catalog-internal`](https://git.developerdojo.org/Curiosity-Corp/catalog-internal), which carries Curiosity Research Corporation's organization-specific operations (private workstation policy, the `agent_workstation` profile for many concurrent agent sessions per host, internal host inventories). The two repositories are kept separate on purpose and neither is a duplicate to archive. General improvements land here first and are brought into `catalog-internal` deliberately.
+
 Curiosity Workstation is a free, open-source Ansible role and collection for
 maintaining Linux computers and research VMs. It provides a dependable,
 repeatable baseline for students and researchers so they can spend their time
