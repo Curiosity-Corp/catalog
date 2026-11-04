@@ -1,0 +1,82 @@
+#!/bin/sh
+# Managed by curiosity.workstation (agent_cpu_policy_enabled). Do not edit.
+#
+# Run a command inside {{ agent_cpu_policy_slice }}, the systemd user slice that
+# bounds the aggregate CPU of coding agents and IDE processes.
+#
+#   curiosity-agent-run <command> [args...]
+#   curiosity-agent-run --status
+#
+# Escape hatches:
+#   CURIOSITY_AGENT_CPU_POLICY=off   run the command directly, outside the slice
+#   CURIOSITY_AGENT_CPU_STRICT=1     refuse to run (exit 70) instead of running
+#                                    unbounded when the slice is unavailable
+# By default the launcher fails open: if the slice cannot be used it says so on
+# stderr and runs the command normally, so a policy problem never blocks work.
+slice='{{ agent_cpu_policy_slice }}'
+
+usage() {
+    echo "usage: curiosity-agent-run <command> [args...] | --status" >&2
+}
+
+unavailable() {
+    # $1: reason, the rest: the command to run instead
+    reason=$1
+    shift
+    if [ "${CURIOSITY_AGENT_CPU_STRICT:-0}" = 1 ]; then
+        echo "curiosity-agent-run: $reason; refusing to run unbounded (CURIOSITY_AGENT_CPU_STRICT=1)" >&2
+        exit 70
+    fi
+    echo "curiosity-agent-run: $reason; running without the CPU bound" >&2
+    exec "$@"
+}
+
+if [ "$#" -eq 0 ]; then
+    usage
+    exit 64
+fi
+
+if [ "$1" = --status ]; then
+    systemctl --user show "$slice" -p LoadState -p ActiveState -p CPUQuotaPerSecUSec -p CPUWeight || exit 1
+    uid=$(id -u)
+    controllers=/sys/fs/cgroup/user.slice/user-"$uid".slice/user@"$uid".service/cgroup.controllers
+    if [ -r "$controllers" ]; then
+        echo "delegated controllers: $(cat "$controllers")"
+    fi
+    exit 0
+fi
+
+if [ "$1" = --help ] || [ "$1" = -h ]; then
+    usage
+    exit 0
+fi
+
+if ! command -v "$1" >/dev/null 2>&1; then
+    echo "curiosity-agent-run: $1: command not found" >&2
+    exit 127
+fi
+
+if [ "${CURIOSITY_AGENT_CPU_POLICY:-on}" = off ]; then
+    exec "$@"
+fi
+
+# Already inside the slice (a wrapped tool starting another wrapped tool): the
+# children inherit the slice, so do not nest scopes.
+if grep -qF "/$slice" "${CURIOSITY_AGENT_CGROUP_FILE:-/proc/self/cgroup}" 2>/dev/null; then
+    exec "$@"
+fi
+
+if ! command -v systemd-run >/dev/null 2>&1; then
+    unavailable "systemd-run is not installed" "$@"
+fi
+
+# The user manager must be reachable and must know the slice. The slice is gone
+# when the policy has been switched off, so a shell that still wraps the command
+# falls back to a plain run.
+state=$(systemctl --user show "$slice" -p LoadState --value 2>/dev/null) || state=
+if [ "$state" != loaded ]; then
+    unavailable "the systemd user manager does not have $slice loaded (policy off, or no user session)" "$@"
+fi
+
+exec systemd-run --user --scope --quiet --collect --slice="$slice" \
+    --description="curiosity agent: $1" -- "$@"
