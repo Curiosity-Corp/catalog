@@ -1,0 +1,22 @@
+# Managed by curiosity.workstation (tasks/cpu-thermal-guard.yml). Do not edit.
+[Unit]
+Description=Curiosity CPU thermal logger (temperatures and throttling to the journal)
+Documentation=file:///usr/local/sbin/curiosity-thermal-log
+ConditionVirtualization=!container
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/curiosity-thermal-log
+Restart=always
+RestartSec=10
+SyslogIdentifier=curiosity-thermal-log
+Nice=10
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

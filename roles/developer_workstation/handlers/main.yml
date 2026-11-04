@@ -17,6 +17,12 @@
     state: restarted
     daemon_reload: true
 
+- name: Restart the CPU thermal logger
+  ansible.builtin.systemd:
+    name: curiosity-thermal-log.service
+    state: restarted
+    daemon_reload: true
+
 - name: Reload systemd-logind
   ansible.builtin.command: systemctl kill -s HUP systemd-logind
   changed_when: true

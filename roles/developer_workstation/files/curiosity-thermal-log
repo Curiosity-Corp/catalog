@@ -1,0 +1,270 @@
+#!/usr/bin/python3
+# Managed by curiosity.workstation (tasks/cpu-thermal-guard.yml).
+"""Log CPU temperatures and thermal throttling to the journal.
+
+Samples the coretemp sensors every SAMPLE seconds and writes one summary line
+per WINDOW seconds: package peak and mean, the hottest core, how many times
+cores and the package throttled during the window, fan speeds, the highest
+current CPU frequency and the intel_pstate max_perf_pct cap. A throttle-counter
+increase is also logged at once, as a warning, so the moment of a thermal
+event is on record even if the machine freezes before the window closes.
+
+Run by curiosity-thermal-log.service. Lines go to stdout; journald adds the
+time and keeps them (SyncIntervalSec keeps the last minutes after a freeze).
+Lines prefixed <4> are warnings (journald SyslogLevelPrefix).
+
+Usage:
+  curiosity-thermal-log            run until stopped
+  curiosity-thermal-log --once     take one sample and print one summary
+
+Environment (tests):
+  CURIOSITY_SYSFS_ROOT             sysfs root, default /sys
+  CURIOSITY_THERMAL_SAMPLE         seconds between samples, default 2
+  CURIOSITY_THERMAL_WINDOW         seconds per summary line, default 60
+"""
+
+from __future__ import annotations
+
+import os
+import signal
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+WARNING = "<4>"
+
+
+def log(message: str, warning: bool = False) -> None:
+    print(f"{WARNING if warning else ''}{message}", flush=True)
+
+
+def read_int(path: Path) -> int | None:
+    """Return the integer in a sysfs file, or None when it is absent or unreadable.
+
+    Sensors come and go (hwmon renumbering, a CPU offlined); a missing reading is
+    reported as missing rather than stopping the logger.
+    """
+    try:
+        return int(path.read_text().strip())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return None
+
+
+def find_hwmon(root: Path, prefix: str) -> list[Path]:
+    """hwmon directories whose name starts with prefix, sorted for stable output."""
+    found = []
+    for name_file in sorted((root / "class/hwmon").glob("hwmon*/name")):
+        try:
+            if name_file.read_text().strip().startswith(prefix):
+                found.append(name_file.parent)
+        except OSError:
+            continue
+    return found
+
+
+@dataclass
+class Sample:
+    package_c: float | None
+    cores_c: dict[str, float]
+    core_throttles: dict[str, int]
+    package_throttles: int | None
+    fans_rpm: dict[str, int]
+    freq_max_mhz: int | None
+
+
+def read_coretemp(root: Path) -> tuple[float | None, dict[str, float]]:
+    package: float | None = None
+    cores: dict[str, float] = {}
+    for hwmon in find_hwmon(root, "coretemp"):
+        for label_file in sorted(hwmon.glob("temp*_label")):
+            try:
+                label = label_file.read_text().strip()
+            except OSError:
+                continue
+            value = read_int(label_file.with_name(label_file.name.replace("_label", "_input")))
+            if value is None:
+                continue
+            celsius = value / 1000
+            if label.startswith("Package id"):
+                package = celsius if package is None else max(package, celsius)
+            elif label.startswith("Core "):
+                cores[label.split()[1]] = celsius
+    return package, cores
+
+
+def read_throttles(root: Path) -> tuple[dict[str, int], int | None]:
+    """Core throttle counts keyed by core id, plus the package count.
+
+    Hyperthread siblings share a core's counter, so each core id is read once.
+    """
+    cores: dict[str, int] = {}
+    package: int | None = None
+    for cpu in sorted((root / "devices/system/cpu").glob("cpu[0-9]*")):
+        core_id = read_int(cpu / "topology/core_id")
+        throttle = cpu / "thermal_throttle"
+        if core_id is not None and str(core_id) not in cores:
+            count = read_int(throttle / "core_throttle_count")
+            if count is not None:
+                cores[str(core_id)] = count
+        if package is None:
+            package = read_int(throttle / "package_throttle_count")
+    return cores, package
+
+
+def read_fans(root: Path) -> dict[str, int]:
+    fans: dict[str, int] = {}
+    for hwmon in find_hwmon(root, "nct"):
+        for fan_file in sorted(hwmon.glob("fan*_input")):
+            rpm = read_int(fan_file)
+            if rpm:  # 0 is an unconnected header
+                fans[fan_file.name.removesuffix("_input")] = rpm
+    return fans
+
+
+def read_freq_max_mhz(root: Path) -> int | None:
+    values = [
+        value
+        for path in (root / "devices/system/cpu").glob("cpu[0-9]*/cpufreq/scaling_cur_freq")
+        if (value := read_int(path)) is not None
+    ]
+    return max(values) // 1000 if values else None
+
+
+def take_sample(root: Path) -> Sample:
+    package, cores = read_coretemp(root)
+    core_throttles, package_throttles = read_throttles(root)
+    return Sample(
+        package_c=package,
+        cores_c=cores,
+        core_throttles=core_throttles,
+        package_throttles=package_throttles,
+        fans_rpm=read_fans(root),
+        freq_max_mhz=read_freq_max_mhz(root),
+    )
+
+
+@dataclass
+class Window:
+    """Aggregates the samples of one summary line."""
+
+    package: list[float] = field(default_factory=list)
+    core_peaks: dict[str, float] = field(default_factory=dict)
+    core_throttle_delta: dict[str, int] = field(default_factory=dict)
+    package_throttle_delta: int = 0
+    fans_rpm: dict[str, int] = field(default_factory=dict)
+    freq_max_mhz: int | None = None
+
+    def add(self, sample: Sample) -> None:
+        if sample.package_c is not None:
+            self.package.append(sample.package_c)
+        for core, celsius in sample.cores_c.items():
+            self.core_peaks[core] = max(celsius, self.core_peaks.get(core, celsius))
+        self.fans_rpm = sample.fans_rpm or self.fans_rpm
+        if sample.freq_max_mhz is not None:
+            self.freq_max_mhz = max(sample.freq_max_mhz, self.freq_max_mhz or 0)
+
+    def summary(self, max_perf_pct: int | None) -> str:
+        parts = ["thermal"]
+        if self.package:
+            mean = sum(self.package) / len(self.package)
+            parts.append(f"pkg_max={max(self.package):.0f}C pkg_avg={mean:.0f}C")
+        else:
+            parts.append("pkg=unavailable")
+        if self.core_peaks:
+            core, celsius = max(self.core_peaks.items(), key=lambda item: (item[1], -int(item[0])))
+            hot = sorted((c for c, t in self.core_peaks.items() if t >= 90), key=int)
+            parts.append(f"hottest=core{core}:{celsius:.0f}C")
+            parts.append(f"cores_ge_90C={','.join(hot) if hot else 'none'}")
+        throttled = {c: d for c, d in self.core_throttle_delta.items() if d}
+        parts.append(
+            "throttle_core="
+            + (",".join(f"core{c}+{d}" for c, d in sorted(throttled.items(), key=lambda i: int(i[0]))) or "0")
+        )
+        parts.append(f"throttle_pkg=+{self.package_throttle_delta}")
+        for fan, rpm in sorted(self.fans_rpm.items()):
+            parts.append(f"{fan}={rpm}rpm")
+        if self.freq_max_mhz is not None:
+            parts.append(f"freq_max={self.freq_max_mhz}MHz")
+        parts.append(f"max_perf_pct={max_perf_pct if max_perf_pct is not None else 'n/a'}")
+        return " ".join(parts)
+
+
+def throttle_events(previous: Sample, current: Sample, window: Window) -> list[str]:
+    """Record counter increases into the window and describe each one."""
+    events = []
+    for core, count in current.core_throttles.items():
+        before = previous.core_throttles.get(core)
+        if before is not None and count > before:
+            window.core_throttle_delta[core] = window.core_throttle_delta.get(core, 0) + count - before
+            temp = current.cores_c.get(core)
+            at = f" at {temp:.0f}C" if temp is not None else ""
+            events.append(f"thermal event: core {core} throttled ({before} -> {count}){at}")
+    if (
+        previous.package_throttles is not None
+        and current.package_throttles is not None
+        and current.package_throttles > previous.package_throttles
+    ):
+        window.package_throttle_delta += current.package_throttles - previous.package_throttles
+        at = f" at {current.package_c:.0f}C" if current.package_c is not None else ""
+        events.append(
+            f"thermal event: package throttled ({previous.package_throttles} -> {current.package_throttles}){at}"
+        )
+    return events
+
+
+def env_seconds(name: str, default: float) -> float:
+    raw = os.environ.get(name, "")
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        log(f"curiosity-thermal-log: ignoring {name}={raw!r}, not a number", warning=True)
+        return default
+    return value if value > 0 else default
+
+
+def main(argv: list[str]) -> int:
+    root = Path(os.environ.get("CURIOSITY_SYSFS_ROOT", "/sys"))
+    sample_seconds = env_seconds("CURIOSITY_THERMAL_SAMPLE", 2)
+    window_seconds = env_seconds("CURIOSITY_THERMAL_WINDOW", 60)
+    once = argv[1:] == ["--once"]
+    if argv[1:] and not once:
+        log("usage: curiosity-thermal-log [--once]", warning=True)
+        return 2
+    pstate = root / "devices/system/cpu/intel_pstate/max_perf_pct"
+
+    previous = take_sample(root)
+    if previous.package_c is None and not previous.cores_c:
+        log("curiosity-thermal-log: no coretemp sensors found; is the coretemp module loaded?", warning=True)
+    window = Window()
+    window.add(previous)
+    if once:
+        log(window.summary(read_int(pstate)))
+        return 0
+
+    since_boot = ",".join(
+        f"core{c}={n}" for c, n in sorted(previous.core_throttles.items(), key=lambda i: int(i[0])) if n
+    )
+    log(
+        f"curiosity-thermal-log: sampling every {sample_seconds:g}s, summary every {window_seconds:g}s; "
+        f"throttles since boot: cores {since_boot or 'none'}, package {previous.package_throttles}"
+    )
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    window_end = time.monotonic() + window_seconds
+    while True:
+        time.sleep(sample_seconds)
+        current = take_sample(root)
+        for event in throttle_events(previous, current, window):
+            log(event, warning=True)
+        window.add(current)
+        previous = current
+        if time.monotonic() >= window_end:
+            log(window.summary(read_int(pstate)))
+            window = Window()
+            window_end = time.monotonic() + window_seconds
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
