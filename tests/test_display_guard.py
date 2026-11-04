@@ -469,14 +469,48 @@ def test_a_hotplug_in_the_window_with_the_mode_correct_repairs_nothing_and_keeps
 # --- wake detection -------------------------------------------------------------
 
 
+def _unanswered(d: "guard.WakeDetector", polls: int) -> list[str]:
+    events: list[str] = []
+    for _ in range(polls):
+        events += d.feed("off", None, None, None)
+    return events
+
+
 def test_tv_power_edge_off_to_on_is_a_wake_and_startup_is_not() -> None:
     d = guard.WakeDetector()
     assert d.feed("on", None, None, None) == []  # already on at start
-    assert d.feed("off", None, None, None) == []
+    assert _unanswered(d, d.UNREACHABLE_CONFIRM_SAMPLES) == []
+    assert d.tv == "off"
     assert d.feed("on", None, None, None) == ["tv-wake"]
-    assert d.feed("standby", None, None, None) == []
+    assert d.feed("standby", None, None, None) == []  # the TV's own answer counts at once
     assert d.feed("on", None, None, None) == ["tv-wake"]
     assert d.feed("on", None, None, None) == []
+
+
+def test_unanswered_polls_shorter_than_the_confirm_window_are_not_a_wake() -> None:
+    """catalog#138: one missed Wi-Fi poll made a running TV look like it powered on,
+    and the forced repair blanked a healthy 8K60 picture (2026-11-04, four times)."""
+    d = guard.WakeDetector()
+    d.feed("on", None, None, None)
+    for _ in range(3):
+        assert _unanswered(d, d.UNREACHABLE_CONFIRM_SAMPLES - 1) == []
+        assert d.tv == "on"
+        assert d.feed("on", None, None, None) == []
+    assert d.tv_unanswered == 0
+
+
+def test_an_unanswered_first_poll_is_not_a_known_off_state() -> None:
+    d = guard.WakeDetector()
+    assert d.feed("off", None, None, None) == []
+    assert d.tv is None
+    assert d.feed("on", None, None, None) == []
+
+
+def test_a_short_api_gap_during_idle_does_not_reapply_on_return() -> None:
+    d = guard.WakeDetector()
+    d.feed("on", None, None, 400_000)
+    _unanswered(d, 2)
+    assert d.feed("on", None, None, 500) == []
 
 
 def test_sink_edid_returning_and_dpms_unblank_are_wakes() -> None:
@@ -492,9 +526,13 @@ def test_input_after_long_idle_reapplies_only_if_the_tv_could_have_slept() -> No
     assert d.feed("on", None, None, 500) == []  # TV was on the whole time
     d = guard.WakeDetector()
     d.feed("on", None, None, 400_000)
-    d.feed("off", None, None, 410_000)
+    for _ in range(d.UNREACHABLE_CONFIRM_SAMPLES):
+        d.feed("off", None, None, 410_000)
     events = d.feed("off", None, None, 500)
     assert events == ["idle-wake"]
+    d = guard.WakeDetector()  # an unwatched TV could always have slept
+    d.feed(None, None, None, 400_000)
+    assert d.feed(None, None, None, 500) == ["idle-wake"]
 
 
 def test_tv_power_test_seam(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

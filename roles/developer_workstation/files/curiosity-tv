@@ -63,7 +63,7 @@ from typing import Any, Callable, Iterator
 sys.path.insert(0, os.environ.get("CURIOSITY_LIB", "/usr/local/lib/curiosity"))
 import curiosity_tv_locate as tvlocate  # noqa: E402  (shared with the display guard)
 
-DEFAULT_HOST = "192.168.1.5"  # fallback only: the TV is found by MAC (curiosity_tv_locate)
+DEFAULT_HOST = "192.168.1.11"  # fallback only: the TV is found by MAC (curiosity_tv_locate)
 DEFAULT_MAC = "70:09:71:93:5A:20"
 WOL_TARGETS = ("192.168.1.255", "255.255.255.255")
 WOL_PORT = 9

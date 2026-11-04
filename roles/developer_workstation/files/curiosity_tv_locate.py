@@ -1,9 +1,13 @@
 """Find the Samsung TV on the LAN by MAC address (shared by curiosity-tv and the display guard).
 
-DHCP moves the TV (it left 192.168.1.250 for 192.168.1.5), so a fixed address
+DHCP moves the TV (192.168.1.250, then .5, then .11), so a fixed address
 goes stale. The MAC does not change: look it up in the kernel neighbour table
 and, when it is not there, make the kernel ARP the local subnet once a minute.
-The fixed host stays as the fallback. Installed to /usr/local/lib/curiosity/.
+While the entry is missing, the last address found by MAC wins over the fixed
+host: the TV is on Wi-Fi, its entry ages out of the table, and falling back to
+a dead lease made a running TV look powered off (catalog#138). The fixed host
+is the fallback only until the MAC has been seen once. Installed to
+/usr/local/lib/curiosity/.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ SWEEP_INTERVAL = 60
 MAX_SWEEP_PREFIX = 22  # never sweep a subnet larger than a /22
 
 _sweep_at = 0.0
+_last_found: dict[str, str] = {}  # MAC -> last address the neighbour table gave
 
 
 def _ip(*args: str) -> str:
@@ -58,14 +63,19 @@ def arp_sweep() -> None:
 
 
 def resolve_tv_host(host: str, mac: str) -> str:
-    """The TV's current address: found by MAC when one is given, else (or when not found) `host`."""
+    """The TV's current address: found by MAC when one is given, else the last
+    address found by MAC, else `host`."""
     global _sweep_at
     if not mac:
         return host
+    key = mac.lower()
     found = neighbour_ip(mac)
     if found is None and time.time() - _sweep_at >= SWEEP_INTERVAL:
         _sweep_at = time.time()
         arp_sweep()
         time.sleep(2)
         found = neighbour_ip(mac)
-    return found or host
+    if found:
+        _last_found[key] = found
+        return found
+    return _last_found.get(key, host)

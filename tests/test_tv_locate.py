@@ -34,6 +34,7 @@ def test_neighbour_lookup_is_case_insensitive_and_skips_failed(monkeypatch: pyte
 
 
 def test_resolve_prefers_the_mac_over_the_stale_fixed_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(loc, "_last_found", {})
     monkeypatch.setattr(loc, "_ip", lambda *a: NEIGH)
     assert loc.resolve_tv_host("192.168.1.250", "70:09:71:93:5a:20") == "192.168.1.5"
     assert loc.resolve_tv_host("192.168.1.250", "") == "192.168.1.250"
@@ -45,6 +46,7 @@ def test_unknown_mac_sweeps_once_a_minute_then_falls_back(monkeypatch: pytest.Mo
     monkeypatch.setattr(loc, "arp_sweep", lambda: sweeps.append(1))
     monkeypatch.setattr(loc.time, "sleep", lambda s: None)
     monkeypatch.setattr(loc, "_sweep_at", 0.0)
+    monkeypatch.setattr(loc, "_last_found", {})
     assert loc.resolve_tv_host("192.168.1.5", "70:09:71:93:5a:20") == "192.168.1.5"
     assert loc.resolve_tv_host("192.168.1.5", "70:09:71:93:5a:20") == "192.168.1.5"
     assert sweeps == [1]
@@ -85,3 +87,16 @@ def test_a_missing_ip_command_means_no_answer_not_a_crash(monkeypatch: pytest.Mo
     monkeypatch.setattr(loc.subprocess, "run", boom)
     assert loc.neighbour_ip("70:09:71:93:5a:20") is None
     assert isinstance(subprocess.CompletedProcess, type)
+
+
+def test_an_aged_out_entry_keeps_the_last_address_found_by_mac(monkeypatch: pytest.MonkeyPatch) -> None:
+    """catalog#138: the TV's entry aged out and the stale fixed host made it look off."""
+    table = {"now": "192.168.1.11 dev wlp8s0 lladdr 70:09:71:93:5a:20 REACHABLE\n"}
+    monkeypatch.setattr(loc, "_ip", lambda *a: table["now"])
+    monkeypatch.setattr(loc, "arp_sweep", lambda: None)
+    monkeypatch.setattr(loc.time, "sleep", lambda s: None)
+    monkeypatch.setattr(loc, "_last_found", {})
+    assert loc.resolve_tv_host("192.168.1.5", "70:09:71:93:5A:20") == "192.168.1.11"
+    table["now"] = ""
+    assert loc.resolve_tv_host("192.168.1.5", "70:09:71:93:5a:20") == "192.168.1.11"
+    assert loc.resolve_tv_host("192.168.1.5", "aa:bb:cc:dd:ee:ff") == "192.168.1.5"
