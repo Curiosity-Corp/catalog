@@ -26,3 +26,19 @@ collection:
 
 sbom: collection
 	python3 scripts/build_collection_sbom.py "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" collection.cdx.json
+
+# Supply chain (docs/supply-chain.md): re-resolve the CI toolchain lock in the CI
+# image (needs podman or docker), run the supply-chain checks, verify the artifact.
+.PHONY: lock-ci supply-chain verify-collection
+
+lock-ci:
+	scripts/lock_ci_toolchain.sh
+
+supply-chain:
+	$(PYTHON) -m pytest -q tests/test_supply_chain.py tests/test_dependency_register.py tests/test_release_evidence.py
+	$(PYTHON) scripts/check_dependency_register.py
+	$(PYTHON) scripts/run_dependency_audit.py
+	$(PYTHON) scripts/scan_secrets.py
+
+verify-collection: sbom
+	$(PYTHON) scripts/verify_collection_artifact.py "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" --rebuild --install-check

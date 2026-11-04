@@ -33,6 +33,9 @@ build_ignore:
   - .gitattributes
   - .editorconfig
   - .ansible-lint
+  - .yamllint
+  - ci
+  - renovate.json
   - .gitlab-ci.yml
   - .ansible
   - .ansible_async

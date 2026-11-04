@@ -1,0 +1,8 @@
+# Direct CI tools (unpinned on purpose). `make lock-ci` resolves these, and
+# everything they pull in, into the exact pins in ci/requirements.txt.
+ansible-core
+ansible-lint
+yamllint
+pyyaml
+pytest
+pip-audit

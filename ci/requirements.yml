@@ -1,0 +1,9 @@
+---
+# Exact collection versions CI installs (the published collection keeps its
+# `>=9.0.0` range in galaxy.yml and requirements.yml for downstream users).
+# Renovate's ansible-galaxy manager updates these pins.
+collections:
+  - name: community.general
+    version: "14.0.0"
+  - name: community.library_inventory_filtering_v1
+    version: "1.1.5"

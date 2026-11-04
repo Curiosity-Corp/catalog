@@ -1,0 +1,875 @@
+---
+# Dependency register for the curiosity.workstation collection.
+#
+# One row per external tool the role installs and one per external host it
+# reaches. scripts/check_dependency_register.py compares this file with the
+# role (every application contract and every host found by
+# scripts/external_sources.py needs a row, and rows for things the role no
+# longer uses are errors) and validates the fields. See docs/dependency-lifecycle.md
+# for how to review it and what to do about an abandoned or at-risk entry.
+#
+# installer_types supplies defaults that a tool row inherits when it does not
+# set the field itself.
+schema: curiosity.workstation.dependency-register/v1
+reviewed: '2026-11-04'
+installer_types:
+  github-archive:
+    update_channel: GitHub Releases (latest); SHA-256 asset digest checked
+    verification: github-asset-digest
+    fallback: Pin the previous release in the role variables, or install from the distro package or source.
+    criticality: standard
+    status: active
+  github-binary:
+    update_channel: GitHub Releases (latest); SHA-256 asset digest checked
+    verification: github-asset-digest
+    fallback: Pin the previous release in the role variables, or install from the distro package or source.
+    criticality: standard
+    status: active
+  github-deb:
+    update_channel: GitHub Releases (latest); SHA-256 asset digest checked
+    verification: github-asset-digest
+    fallback: Pin the previous release, or use the vendor apt repository or package page.
+    criticality: standard
+    status: active
+  aws-cli-pgp:
+    criticality: standard
+    status: active
+  claude-native:
+    criticality: standard
+    status: active
+  deployment-buildinfo:
+    criticality: standard
+    status: active
+  codex-standalone:
+    criticality: standard
+    status: active
+  composer-installer:
+    criticality: standard
+    status: active
+  gitlab-release:
+    criticality: standard
+    status: active
+  go-release:
+    criticality: standard
+    status: active
+  go-module:
+    criticality: standard
+    status: active
+  kubectl-release:
+    criticality: standard
+    status: active
+  npm:
+    criticality: standard
+    status: active
+  apt:
+    criticality: standard
+    status: active
+  hashicorp-release:
+    criticality: standard
+    status: active
+  rclone-release:
+    criticality: standard
+    status: active
+  pipx:
+    criticality: standard
+    status: active
+  helm-release:
+    criticality: standard
+    status: active
+  mattermost-release:
+    criticality: standard
+    status: active
+tools:
+  act:
+    source: https://github.com/nektos/act
+    owner: nektos
+    owner_type: company
+    license: MIT
+    last_reviewed: '2026-11-04'
+  age:
+    source: https://github.com/FiloSottile/age
+    owner: FiloSottile
+    owner_type: individual
+    license: BSD-3-Clause
+    last_reviewed: '2026-11-04'
+    criticality: security-critical
+    fallback: Pin the previous release in the role variables; verify with the vendor signature or checksum by hand.
+  argocd:
+    source: https://github.com/argoproj/argo-cd
+    owner: argoproj
+    owner_type: foundation
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  aws:
+    source: https://awscli.amazonaws.com
+    owner: Amazon Web Services
+    owner_type: company
+    license: Apache-2.0
+    update_channel: awscli.amazonaws.com latest installer
+    verification: aws-cli-signing-key
+    fallback: Install from the distro package or pin a previous installer URL.
+    criticality: security-critical
+    status: active
+    last_reviewed: '2026-11-04'
+  bitwarden_desktop:
+    source: https://github.com/bitwarden/clients
+    owner: bitwarden
+    owner_type: company
+    license: see upstream repository (not machine-readable)
+    last_reviewed: '2026-11-04'
+  bun:
+    source: https://github.com/oven-sh/bun
+    owner: oven-sh
+    owner_type: company
+    license: see upstream repository (not machine-readable)
+    last_reviewed: '2026-11-04'
+  chezmoi:
+    source: https://github.com/twpayne/chezmoi
+    owner: twpayne
+    owner_type: individual
+    license: MIT
+    last_reviewed: '2026-11-04'
+  claude:
+    source: https://github.com/anthropics/claude-code
+    owner: Anthropic
+    owner_type: company
+    license: proprietary (see upstream terms)
+    update_channel: vendor native installer, per-user
+    verification: official-installer
+    fallback: 'Skip the tool: it is optional and installed per user.'
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  coder:
+    source: https://github.com/coder/coder
+    owner: Coder
+    owner_type: company
+    license: AGPL-3.0
+    update_channel: downloaded from the user's own Coder deployment
+    verification: deployment-version
+    fallback: Use the CLI bundled with the deployment; disable with coder_cli_enabled.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  codex:
+    source: https://github.com/openai/codex
+    owner: OpenAI
+    owner_type: company
+    license: Apache-2.0
+    update_channel: vendor standalone installer, per-user
+    verification: official-installer
+    fallback: 'Skip the tool: it is optional and installed per user.'
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  composer:
+    source: https://github.com/composer/composer
+    owner: Composer
+    owner_type: community
+    license: MIT
+    update_channel: getcomposer.org installer with published SHA-384
+    verification: composer-sha384
+    fallback: Install composer from the distro package.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  cosign:
+    source: https://github.com/sigstore/cosign
+    owner: sigstore
+    owner_type: foundation
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+    criticality: security-critical
+    fallback: Pin the previous release in the role variables; verify with the vendor signature or checksum by hand.
+  crane:
+    source: https://github.com/google/go-containerregistry
+    owner: google
+    owner_type: company
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  delta:
+    source: https://github.com/dandavison/delta
+    owner: dandavison
+    owner_type: individual
+    license: MIT
+    last_reviewed: '2026-11-04'
+  deno:
+    source: https://github.com/denoland/deno
+    owner: denoland
+    owner_type: company
+    license: MIT
+    last_reviewed: '2026-11-04'
+  duf:
+    source: https://github.com/muesli/duf
+    owner: muesli
+    owner_type: individual
+    license: see upstream repository (not machine-readable)
+    last_reviewed: '2026-11-04'
+  dust:
+    source: https://github.com/bootandy/dust
+    owner: bootandy
+    owner_type: individual
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  filebrowser:
+    source: https://github.com/filebrowser/filebrowser
+    owner: filebrowser
+    owner_type: company
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+    status: at-risk
+    note: Upstream repository is archived (read-only, no further fixes). Decide whether to drop it from the role defaults or replace it.
+  flux:
+    source: https://github.com/fluxcd/flux2
+    owner: fluxcd
+    owner_type: foundation
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  glab:
+    source: https://gitlab.com/gitlab-org/cli
+    owner: GitLab
+    owner_type: company
+    license: MIT
+    update_channel: GitLab project releases (permalink latest)
+    verification: gitlab-checksum
+    fallback: Pin the previous release in the role variables.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  glow:
+    source: https://github.com/charmbracelet/glow
+    owner: charmbracelet
+    owner_type: community
+    license: MIT
+    last_reviewed: '2026-11-04'
+  go:
+    source: https://go.dev/dl
+    owner: Go project (Google)
+    owner_type: company
+    license: BSD-3-Clause
+    update_channel: go.dev/dl latest
+    verification: go-sha256
+    fallback: Pin the previous Go release in the role variables.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  golangci_lint:
+    source: https://github.com/golangci/golangci-lint
+    owner: golangci
+    owner_type: community
+    license: GPL-3.0
+    last_reviewed: '2026-11-04'
+  grpcurl:
+    source: https://github.com/fullstorydev/grpcurl
+    owner: fullstorydev
+    owner_type: company
+    license: MIT
+    update_channel: go install at the latest module version
+    verification: go-module-sumdb
+    fallback: Drop the tool; grpcurl is a convenience client.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  gum:
+    source: https://github.com/charmbracelet/gum
+    owner: charmbracelet
+    owner_type: community
+    license: MIT
+    last_reviewed: '2026-11-04'
+  helm:
+    source: https://github.com/helm/helm
+    owner: helm
+    owner_type: foundation
+    license: Apache-2.0
+    update_channel: get.helm.sh release (latest tag from GitHub)
+    verification: helm-sha256
+    fallback: Pin the previous Helm release in the role variables.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  hyperfine:
+    source: https://github.com/sharkdp/hyperfine
+    owner: sharkdp
+    owner_type: individual
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  just:
+    source: https://github.com/casey/just
+    owner: casey
+    owner_type: individual
+    license: CC0-1.0
+    last_reviewed: '2026-11-04'
+  k9s:
+    source: https://github.com/derailed/k9s
+    owner: derailed
+    owner_type: individual
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  krew:
+    source: https://github.com/kubernetes-sigs/krew
+    owner: kubernetes-sigs
+    owner_type: foundation
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  kubeconform:
+    source: https://github.com/yannh/kubeconform
+    owner: yannh
+    owner_type: individual
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  kubectl:
+    source: https://dl.k8s.io
+    owner: Kubernetes
+    owner_type: foundation
+    license: Apache-2.0
+    update_channel: dl.k8s.io stable release
+    verification: kubectl-sha256
+    fallback: Install from the Kubernetes apt repository.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  kubectx:
+    source: https://github.com/ahmetb/kubectx
+    owner: ahmetb
+    owner_type: individual
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  kubeseal:
+    source: https://github.com/bitnami-labs/sealed-secrets
+    owner: bitnami
+    owner_type: company
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+    criticality: security-critical
+    fallback: Pin the previous release in the role variables; verify with the vendor signature or checksum by hand.
+  kustomize:
+    source: https://github.com/kubernetes-sigs/kustomize
+    owner: kubernetes-sigs
+    owner_type: foundation
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  lazygit:
+    source: https://github.com/jesseduffield/lazygit
+    owner: jesseduffield
+    owner_type: individual
+    license: MIT
+    last_reviewed: '2026-11-04'
+  litra:
+    source: https://github.com/timrogers/litra-rs
+    owner: timrogers
+    owner_type: individual
+    license: MIT
+    last_reviewed: '2026-11-04'
+  m365-cli:
+    source: https://www.npmjs.com/package/@pnp/cli-microsoft365
+    owner: PnP community
+    owner_type: community
+    license: MIT
+    update_channel: npm registry latest
+    verification: npm-registry-integrity
+    fallback: Pin the previous version with npm.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  mattermost:
+    source: https://github.com/mattermost/mattermost
+    owner: mattermost
+    owner_type: company
+    license: see upstream repository (not machine-readable)
+    update_channel: releases.mattermost.com package + published SHA-256
+    verification: mattermost-package-sha256
+    fallback: Pin the previous release; mmctl is optional tooling.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  mattermost_desktop:
+    source: https://github.com/mattermost/desktop
+    owner: mattermost
+    owner_type: company
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  mkcert:
+    source: https://github.com/FiloSottile/mkcert
+    owner: FiloSottile
+    owner_type: individual
+    license: BSD-3-Clause
+    update_channel: Ubuntu/Debian apt package
+    verification: apt-signature
+    fallback: Use a private CA through step or openssl.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  nerd_fonts:
+    source: https://github.com/ryanoasis/nerd-fonts
+    owner: ryanoasis
+    owner_type: individual
+    license: see upstream repository (not machine-readable)
+    last_reviewed: '2026-11-04'
+  packer:
+    source: https://github.com/hashicorp/packer
+    owner: HashiCorp
+    owner_type: company
+    license: BUSL-1.1
+    update_channel: releases.hashicorp.com latest
+    verification: hashicorp-sha256
+    fallback: Pin the previous release, or use OpenTofu-era alternatives.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  rclone:
+    source: https://github.com/rclone/rclone
+    owner: rclone
+    owner_type: community
+    license: MIT
+    update_channel: downloads.rclone.org latest
+    verification: rclone-sha256
+    fallback: Install from the distro package.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  sops:
+    source: https://github.com/getsops/sops
+    owner: getsops
+    owner_type: company
+    license: MPL-2.0
+    last_reviewed: '2026-11-04'
+    criticality: security-critical
+    fallback: Pin the previous release in the role variables; verify with the vendor signature or checksum by hand.
+  starship:
+    source: https://github.com/starship/starship
+    owner: starship
+    owner_type: company
+    license: ISC
+    last_reviewed: '2026-11-04'
+  step:
+    source: https://github.com/smallstep/cli
+    owner: smallstep
+    owner_type: company
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+    criticality: security-critical
+    fallback: Pin the previous release in the role variables; verify with the vendor signature or checksum by hand.
+  stern:
+    source: https://github.com/stern/stern
+    owner: stern
+    owner_type: company
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  sunshine:
+    source: https://github.com/LizardByte/Sunshine
+    owner: LizardByte
+    owner_type: company
+    license: GPL-3.0
+    last_reviewed: '2026-11-04'
+  talhelper:
+    source: https://github.com/budimanjojo/talhelper
+    owner: budimanjojo
+    owner_type: individual
+    license: BSD-3-Clause
+    last_reviewed: '2026-11-04'
+    status: at-risk
+    note: Upstream repository is archived (read-only, no further fixes). Decide whether to drop it from the role defaults or replace it.
+  talos:
+    source: https://github.com/siderolabs/talos
+    owner: siderolabs
+    owner_type: community
+    license: MPL-2.0
+    last_reviewed: '2026-11-04'
+  terraform:
+    source: https://github.com/hashicorp/terraform
+    owner: HashiCorp
+    owner_type: company
+    license: BUSL-1.1
+    update_channel: releases.hashicorp.com latest
+    verification: hashicorp-sha256
+    fallback: Use OpenTofu (also installed by the role) or pin the previous release.
+    criticality: standard
+    status: watch
+    note: BUSL-1.1 source-available license; OpenTofu is the open-source drop-in.
+    last_reviewed: '2026-11-04'
+  tofu:
+    source: https://github.com/opentofu/opentofu
+    owner: opentofu
+    owner_type: foundation
+    license: MPL-2.0
+    last_reviewed: '2026-11-04'
+  trivy:
+    source: https://github.com/aquasecurity/trivy
+    owner: aquasecurity
+    owner_type: community
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+    criticality: security-critical
+    fallback: Pin the previous release in the role variables; verify with the vendor signature or checksum by hand.
+  uv:
+    source: https://github.com/astral-sh/uv
+    owner: Astral
+    owner_type: company
+    license: MIT OR Apache-2.0
+    update_channel: PyPI via pipx
+    verification: pypi-integrity
+    fallback: Use pip in a venv.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  vault:
+    source: https://github.com/hashicorp/vault
+    owner: HashiCorp
+    owner_type: company
+    license: BUSL-1.1
+    update_channel: releases.hashicorp.com latest
+    verification: hashicorp-sha256
+    fallback: Pin the previous release; OpenBao is the open fork.
+    criticality: security-critical
+    status: watch
+    note: BUSL-1.1 source-available license.
+    last_reviewed: '2026-11-04'
+  velero:
+    source: https://github.com/vmware-tanzu/velero
+    owner: velero-io
+    owner_type: company
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  watchexec:
+    source: https://github.com/watchexec/watchexec
+    owner: watchexec
+    owner_type: company
+    license: Apache-2.0
+    last_reviewed: '2026-11-04'
+  yq:
+    source: https://github.com/mikefarah/yq
+    owner: mikefarah
+    owner_type: individual
+    license: MIT
+    last_reviewed: '2026-11-04'
+  zoxide:
+    source: https://github.com/ajeetdsouza/zoxide
+    owner: ajeetdsouza
+    owner_type: individual
+    license: MIT
+    last_reviewed: '2026-11-04'
+sources:
+  api.github.com:
+    owner: GitHub
+    owner_type: company
+    source: https://api.github.com
+    license: n/a (hosting service)
+    update_channel: Release metadata lookup
+    verification: github-asset-digest (digest field from the API)
+    fallback: Pin versions in the role variables if the API is unavailable.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  api.sdkman.io:
+    owner: SDKMAN
+    owner_type: community
+    source: https://api.sdkman.io
+    license: n/a (hosting service)
+    update_channel: SDK candidate list
+    verification: TLS only; version names are validated before use
+    fallback: Install the JDK from the distro package.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  awscli.amazonaws.com:
+    owner: Amazon Web Services
+    owner_type: company
+    source: https://awscli.amazonaws.com
+    license: n/a (hosting service)
+    update_channel: Latest AWS CLI installer
+    verification: aws-cli-signing-key (PGP signature)
+    fallback: Install from the distro package.
+    criticality: security-critical
+    status: active
+    last_reviewed: '2026-11-04'
+  brave-browser-apt-release.s3.brave.com:
+    owner: Brave
+    owner_type: company
+    source: https://brave-browser-apt-release.s3.brave.com
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  checkpoint-api.hashicorp.com:
+    owner: HashiCorp
+    owner_type: company
+    source: https://checkpoint-api.hashicorp.com
+    license: n/a (hosting service)
+    update_channel: Latest version lookup for HashiCorp tools
+    verification: version lookup only; the download is checksum-verified
+    fallback: Pin versions in the role variables.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  cli.github.com:
+    owner: GitHub
+    owner_type: company
+    source: https://cli.github.com
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: security-critical
+    status: active
+    last_reviewed: '2026-11-04'
+  composer.github.io:
+    owner: Composer
+    owner_type: community
+    source: https://composer.github.io/installer.sig
+    license: n/a (hosting service)
+    update_channel: Published installer signature
+    verification: composer-sha384
+    fallback: Install composer from the distro package.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  deb.nodesource.com:
+    owner: NodeSource
+    owner_type: company
+    source: https://deb.nodesource.com
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: security-critical
+    status: active
+    last_reviewed: '2026-11-04'
+  dl.google.com:
+    owner: Google
+    owner_type: company
+    source: https://dl.google.com
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  dl.k8s.io:
+    owner: Kubernetes
+    owner_type: foundation
+    source: https://dl.k8s.io
+    license: n/a (hosting service)
+    update_channel: stable.txt + release binary
+    verification: kubectl-sha256
+    fallback: Install from the Kubernetes apt repository.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  downloads.1password.com:
+    owner: 1Password
+    owner_type: company
+    source: https://downloads.1password.com
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  downloads.rclone.org:
+    owner: rclone
+    owner_type: community
+    source: https://downloads.rclone.org
+    license: n/a (hosting service)
+    update_channel: Latest version + SHA256SUMS
+    verification: rclone-sha256
+    fallback: Install from the distro package.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  get.helm.sh:
+    owner: Helm
+    owner_type: foundation
+    source: https://get.helm.sh
+    license: n/a (hosting service)
+    update_channel: Release tarball by version
+    verification: helm-sha256
+    fallback: Pin the previous release.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  getcomposer.org:
+    owner: Composer
+    owner_type: community
+    source: https://getcomposer.org/installer
+    license: n/a (hosting service)
+    update_channel: Installer script, run only after its SHA-384 matches the published signature
+    verification: composer-sha384
+    fallback: Install composer from the distro package.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  github.com:
+    owner: GitHub
+    owner_type: company
+    source: https://github.com
+    license: n/a (hosting service)
+    update_channel: git clones and release downloads (nvm, pyenv, sdkman, oh-my-zsh, wee-slack, tmux)
+    verification: git over TLS; release tarballs unpinned in some tasks
+    fallback: Mirror the repositories internally or pin to a commit.
+    criticality: standard
+    status: watch
+    last_reviewed: '2026-11-04'
+    note: Several git clones track the default branch without a pinned commit; pin them to a tag or commit when they next change.
+  gitlab.com:
+    owner: GitLab
+    owner_type: company
+    source: https://gitlab.com/gitlab-org/cli
+    license: n/a (hosting service)
+    update_channel: glab release permalink
+    verification: gitlab-checksum
+    fallback: Pin the previous release.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  go.dev:
+    owner: Go project
+    owner_type: company
+    source: https://go.dev/dl
+    license: n/a (hosting service)
+    update_channel: Latest Go release
+    verification: go-sha256
+    fallback: Pin the previous Go release.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  packages.cloud.google.com:
+    owner: Google
+    owner_type: company
+    source: https://packages.cloud.google.com
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  packages.microsoft.com:
+    owner: Microsoft
+    owner_type: company
+    source: https://packages.microsoft.com
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: security-critical
+    status: active
+    last_reviewed: '2026-11-04'
+  packages.mozilla.org:
+    owner: Mozilla
+    owner_type: foundation
+    source: https://packages.mozilla.org
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  packages.openziti.org:
+    owner: NetFoundry
+    owner_type: company
+    source: https://packages.openziti.org
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  pypi.org:
+    owner: Python Packaging Authority
+    owner_type: foundation
+    source: https://pypi.org
+    license: n/a (hosting service)
+    update_channel: pip/pipx installs
+    verification: pypi-integrity (hashes recorded by pip)
+    fallback: Use a pinned requirements file with hashes.
+    criticality: standard
+    status: watch
+    last_reviewed: '2026-11-04'
+    note: Role-level pip installs are not hash-pinned; CI tooling is, see ci/requirements-ci.txt.
+  registry.npmjs.org:
+    owner: npm, Inc. (GitHub)
+    owner_type: company
+    source: https://registry.npmjs.org
+    license: n/a (hosting service)
+    update_channel: npm global installs
+    verification: npm-registry-integrity
+    fallback: Pin versions in the role variables.
+    criticality: standard
+    status: watch
+    last_reviewed: '2026-11-04'
+    note: Global npm packages track latest.
+  releases.hashicorp.com:
+    owner: HashiCorp
+    owner_type: company
+    source: https://releases.hashicorp.com
+    license: n/a (hosting service)
+    update_channel: terraform, vault, packer releases
+    verification: hashicorp-sha256 (SHA256SUMS fetched with the release)
+    fallback: Pin the previous release.
+    criticality: security-critical
+    status: active
+    last_reviewed: '2026-11-04'
+  releases.mattermost.com:
+    owner: Mattermost
+    owner_type: company
+    source: https://releases.mattermost.com
+    license: n/a (hosting service)
+    update_channel: mmctl package
+    verification: mattermost-package-sha256
+    fallback: Skip mmctl; it is optional.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  repo.mongodb.org:
+    owner: MongoDB
+    owner_type: company
+    source: https://repo.mongodb.org
+    license: n/a (hosting service)
+    update_channel: apt update (rolling)
+    verification: apt-signature
+    fallback: Download the package by hand from the vendor, or skip the optional application.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  s3.amazonaws.com:
+    owner: Amazon S3 (MongoDB repository index)
+    owner_type: company
+    source: https://s3.amazonaws.com/repo.mongodb.org
+    license: n/a (hosting service)
+    update_channel: MongoDB repository listing
+    verification: listing only; packages come from the signed apt repo
+    fallback: Pin the Ubuntu release used for MongoDB.
+    criticality: standard
+    status: active
+    last_reviewed: '2026-11-04'
+  weechat.org:
+    owner: WeeChat
+    owner_type: community
+    source: https://weechat.org/files/scripts/go.py
+    license: n/a (hosting service)
+    update_channel: Single script download
+    verification: TLS only; no published checksum
+    fallback: Drop the go.py script; it is a convenience.
+    criticality: standard
+    status: watch
+    last_reviewed: '2026-11-04'
+    note: No checksum is published for this script; it is cosmetic.
+  www.privateinternetaccess.com:
+    owner: Private Internet Access
+    owner_type: company
+    source: https://www.privateinternetaccess.com/download
+    license: n/a (hosting service)
+    update_channel: Download page scraped for the installer URL
+    verification: TLS only; installer is run after download
+    fallback: Skip the optional VPN client; install by hand from the vendor.
+    criticality: standard
+    status: watch
+    last_reviewed: '2026-11-04'
+    note: Installer URL is discovered from a web page and has no pinned checksum.

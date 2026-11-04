@@ -3,10 +3,26 @@
   "extends": ["config:recommended"],
   "dependencyDashboard": true,
   "labels": ["dependencies"],
+  "vulnerabilityAlerts": {
+    "labels": ["dependencies", "security"]
+  },
   "packageRules": [
     {
       "matchUpdateTypes": ["digest", "pinDigest"],
       "groupName": "container image digests"
+    },
+    {
+      "matchDatasources": ["docker"],
+      "pinDigests": true
+    },
+    {
+      "matchManagers": ["pip_requirements"],
+      "groupName": "CI Python toolchain",
+      "schedule": ["before 6am on the first day of the month"]
+    },
+    {
+      "matchManagers": ["ansible-galaxy"],
+      "groupName": "CI Ansible collections"
     }
   ]
 }

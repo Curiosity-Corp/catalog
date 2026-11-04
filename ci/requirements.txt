@@ -1,0 +1,64 @@
+# CI toolchain lock. Every Python package the pipeline installs, pinned to the
+# exact version that was resolved for the CI base image's Python (see the
+# `image:` line in .gitlab-ci.yml). Installed with `pip install -r`.
+#
+# Update path: Renovate proposes bumps to individual lines (pip_requirements
+# manager); review the diff, let the pipeline run, merge. To re-resolve the whole
+# closure by hand, run `make lock-ci` (needs podman or docker).
+# See docs/supply-chain.md.
+ansible-compat==26.10.0
+ansible-core==2.22.0
+ansible-lint==26.10.1
+attrs==26.1.0
+black==26.10.1
+boolean.py==5.0
+bracex==3.2.1
+CacheControl==0.14.4
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+click==8.5.0
+cryptography==50.0.2
+cyclonedx-python-lib==11.12.0
+defusedxml==0.7.1
+distro==1.9.0
+filelock==4.2.8
+idna==3.20
+iniconfig==2.3.1
+Jinja2==3.1.6
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+license-expression==30.4.4
+markdown-it-py==4.2.0
+MarkupSafe==3.0.4
+mdurl==0.1.2
+msgpack==1.2.4
+mypy_extensions==1.2.0
+packageurl-python==0.17.6
+packaging==26.3
+pathspec==1.1.1
+pip_api==0.0.35
+pip_audit==2.10.1
+pip-requirements-parser==32.0.1
+platformdirs==4.14.4
+pluggy==1.7.0
+py-serializable==2.1.0
+pycparser==3.12
+Pygments==2.21.0
+pyparsing==3.3.3
+pytest==9.2.0
+pytokens==0.4.1
+PyYAML==6.0.3
+referencing==0.37.0
+requests==2.34.2
+resolvelib==1.2.1
+rich==15.0.0
+rpds-py==2026.9.1
+ruamel.yaml==0.19.1
+sortedcontainers==2.4.0
+subprocess-tee==0.4.2
+tomli==2.5.0
+tomli_w==1.2.0
+urllib3==2.8.0
+wcmatch==12.0
+yamllint==1.38.0
