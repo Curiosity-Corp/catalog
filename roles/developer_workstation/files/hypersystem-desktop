@@ -1,0 +1,324 @@
+#!/usr/bin/python3
+"""hypersystem-desktop: open the suite's web apps in their dedicated browser profile and check the install.
+
+Managed by the curiosity.workstation role (tasks/hypersystem-desktop.yml). It reads
+/etc/hypersystem-desktop/config.json, which the role writes, and never changes it.
+
+  hypersystem-desktop list [--json]        the apps this machine installs
+  hypersystem-desktop open APP [--local]   open one app in an app window
+  hypersystem-desktop browser [URL]        open the suite browser profile
+  hypersystem-desktop doctor [--json]      check browser, policy, Ziti tunnel, DNS and HTTPS
+
+Exit codes: 0 ok, 1 a doctor check failed, 2 usage or configuration error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import os
+import shlex
+import shutil
+import ssl
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+DEFAULT_CONFIG = "/etc/hypersystem-desktop/config.json"
+CONFIG_SCHEMA = "hypersystem-desktop/v1"
+EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
+
+
+class ConfigError(Exception):
+    """The configuration file is missing or does not match the schema."""
+
+
+@dataclass
+class Check:
+    name: str
+    status: str  # ok | warn | fail
+    detail: str
+
+
+@dataclass
+class Report:
+    checks: list[Check] = field(default_factory=list)
+
+    def add(self, name: str, status: str, detail: str) -> None:
+        self.checks.append(Check(name, status, detail))
+
+    @property
+    def failed(self) -> bool:
+        return any(check.status == "fail" for check in self.checks)
+
+
+def load_config(path: str) -> dict[str, Any]:
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError as error:
+        raise ConfigError(f"cannot read {path}: {error.strerror or error}") from error
+    try:
+        config = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ConfigError(f"{path} is not valid JSON: {error}") from error
+    if not isinstance(config, dict) or config.get("schema") != CONFIG_SCHEMA:
+        raise ConfigError(f"{path} is not a {CONFIG_SCHEMA} document")
+    browser = config.get("browser")
+    if not isinstance(browser, dict) or not all(isinstance(browser.get(key), str) and browser[key] for key in ("name", "binary", "policy_file", "user_data_dir")):
+        raise ConfigError(f"{path}: browser must name name, binary, policy_file and user_data_dir")
+    apps = config.get("apps")
+    if not isinstance(apps, list) or not all(isinstance(app, dict) and isinstance(app.get("id"), str) and isinstance(app.get("urls"), dict) and isinstance(app["urls"].get("web"), str) for app in apps):
+        raise ConfigError(f"{path}: apps must be a list of entries with an id and urls.web")
+    ziti = config.get("ziti")
+    if not isinstance(ziti, dict) or not isinstance(ziti.get("required"), bool):
+        raise ConfigError(f"{path}: ziti must be a mapping with a boolean `required`")
+    return config
+
+
+def user_data_dir(config: dict[str, Any]) -> Path:
+    """The suite profile directory for the user running the command (relative paths are under $HOME)."""
+    configured = Path(config["browser"]["user_data_dir"])
+    if configured.is_absolute():
+        return configured
+    home = os.environ.get("HOME") or str(Path.home())
+    return Path(home) / configured
+
+
+def browser_argv(config: dict[str, Any], extra: list[str]) -> list[str]:
+    return [
+        config["browser"]["binary"],
+        f"--user-data-dir={user_data_dir(config)}",
+        "--no-default-browser-check",
+        *config["browser"].get("extra_args", []),
+        *extra,
+    ]
+
+
+def find_app(config: dict[str, Any], app_id: str) -> dict[str, Any]:
+    for app in config["apps"]:
+        if app["id"] == app_id:
+            return app
+    known = ", ".join(app["id"] for app in config["apps"]) or "none"
+    raise ConfigError(f"no app {app_id!r} on this machine (installed: {known})")
+
+
+def launch(argv: list[str]) -> int:
+    binary = argv[0]
+    if not os.access(binary, os.X_OK):
+        print(f"hypersystem-desktop: browser {binary} is not installed or not executable; run the workstation role", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        os.makedirs(argv[1].split("=", 1)[1], mode=0o700, exist_ok=True)
+        os.execv(binary, argv)
+    except OSError as error:
+        print(f"hypersystem-desktop: cannot start {binary}: {error.strerror or error}", file=sys.stderr)
+        return EXIT_USAGE
+    return EXIT_OK  # not reached: execv replaces the process
+
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+def _run(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "", f"timed out after {timeout:g}s")
+
+
+def check_browser(config: dict[str, Any], report: Report) -> None:
+    binary = config["browser"]["binary"]
+    if os.access(binary, os.X_OK):
+        report.add("browser", "ok", f"{config['browser']['name']} at {binary}")
+    else:
+        report.add("browser", "fail", f"{binary} is missing or not executable")
+
+
+def check_policy(config: dict[str, Any], report: Report) -> None:
+    path = config["browser"]["policy_file"]
+    try:
+        policy = json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as error:
+        report.add("policy", "fail", f"cannot read {path}: {error.strerror or error}")
+        return
+    except json.JSONDecodeError as error:
+        report.add("policy", "fail", f"{path} is not valid JSON: {error}")
+        return
+    listed = {item.get("url") for item in policy.get("WebAppInstallForceList", []) if isinstance(item, dict)}
+    wanted = {app["urls"]["web"] for app in config["apps"]}
+    missing = sorted(wanted - listed)
+    extra = sorted(listed - wanted)
+    if missing:
+        report.add("policy", "fail", f"{path} does not force-install {', '.join(missing)}")
+    elif extra:
+        report.add("policy", "warn", f"{path} also force-installs {', '.join(str(url) for url in extra)}")
+    else:
+        report.add("policy", "ok", f"{path} force-installs {len(wanted)} app(s)")
+
+
+def check_ziti_service(config: dict[str, Any], report: Report, timeout: float) -> None:
+    ziti = config["ziti"]
+    service = ziti.get("service") or "ziti-edge-tunnel.service"
+    result = _run(["systemctl", "is-active", service], timeout)
+    if result is None:
+        report.add("ziti", "fail" if ziti["required"] else "warn", "systemctl not found; cannot check the tunnel")
+        return
+    state = (result.stdout or result.stderr).strip() or "unknown"
+    if state == "active":
+        report.add("ziti", "ok", f"{service} is active")
+    else:
+        report.add("ziti", "fail" if ziti["required"] else "warn", f"{service} is {state}")
+
+
+def resolve(host: str, timeout: float) -> list[str] | None:
+    """Addresses for host through NSS (getent ahosts), or None when it does not resolve."""
+    result = _run(["getent", "ahosts", host], timeout)
+    if result is None or result.returncode != 0:
+        return None
+    addresses: list[str] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if parts and parts[0] not in addresses:
+            addresses.append(parts[0])
+    return addresses or None
+
+
+def check_dns(config: dict[str, Any], report: Report, timeout: float) -> None:
+    ziti = config["ziti"]
+    try:
+        intercept = ipaddress.ip_network(ziti.get("dns_ip_range") or "100.64.0.0/10", strict=False)
+    except ValueError as error:
+        report.add("dns", "fail", f"ziti.dns_ip_range is invalid: {error}")
+        return
+    for app in config["apps"]:
+        host = app.get("host") or ""
+        addresses = resolve(host, timeout)
+        name = f"dns {app['id']}"
+        if addresses is None:
+            report.add(name, "fail", f"{host} does not resolve")
+            continue
+        through_ziti = any(ipaddress.ip_address(addr) in intercept for addr in addresses if _is_ip(addr))
+        if ziti["required"] and not through_ziti:
+            report.add(name, "fail", f"{host} resolves to {', '.join(addresses)}, outside the Ziti range {intercept}; traffic would bypass the tunnel")
+        else:
+            report.add(name, "ok", f"{host} -> {', '.join(addresses)}")
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201 - urllib signature
+        return None
+
+
+def check_https(config: dict[str, Any], report: Report, timeout: float) -> None:
+    """Any HTTP answer (a sign-in redirect or 401 included) proves the app is reachable through TLS."""
+    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+    for app in config["apps"]:
+        url = app["urls"]["web"]
+        name = f"https {app['id']}"
+        request = urllib.request.Request(url, method="GET", headers={"User-Agent": "hypersystem-desktop-doctor"})
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                report.add(name, "ok", f"{url} answered HTTP {response.status}")
+        except urllib.error.HTTPError as error:
+            status = "fail" if error.code >= 500 else "ok"
+            report.add(name, status, f"{url} answered HTTP {error.code}")
+        except urllib.error.URLError as error:
+            report.add(name, "fail", f"{url}: {error.reason}")
+        except (TimeoutError, OSError) as error:
+            report.add(name, "fail", f"{url}: {error}")
+
+
+def doctor(config: dict[str, Any], timeout: float, network: bool) -> Report:
+    report = Report()
+    check_browser(config, report)
+    check_policy(config, report)
+    if config["ziti"]["required"] or shutil.which("systemctl"):
+        check_ziti_service(config, report, timeout)
+    if not config["apps"]:
+        report.add("apps", "warn", "no app is selected for this machine")
+    if network:
+        check_dns(config, report, timeout)
+        check_https(config, report, timeout)
+    return report
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="hypersystem-desktop", description="Open and check the suite's desktop web apps.")
+    parser.add_argument("--config", default=os.environ.get("HYPERSYSTEM_DESKTOP_CONFIG", DEFAULT_CONFIG), help=argparse.SUPPRESS)
+    sub = parser.add_subparsers(dest="command", required=True)
+    listing = sub.add_parser("list", help="list the apps this machine installs")
+    listing.add_argument("--json", action="store_true")
+    opening = sub.add_parser("open", help="open one app in an app window")
+    opening.add_argument("app")
+    opening.add_argument("--local", action="store_true", help="open the app's per-machine address (urls.local)")
+    opening.add_argument("--print", action="store_true", help="print the browser command instead of running it")
+    browsing = sub.add_parser("browser", help="open the suite browser profile")
+    browsing.add_argument("url", nargs="?")
+    browsing.add_argument("--print", action="store_true", help="print the browser command instead of running it")
+    checking = sub.add_parser("doctor", help="check browser, policy, Ziti tunnel, DNS and HTTPS")
+    checking.add_argument("--json", action="store_true")
+    checking.add_argument("--offline", action="store_true", help="skip the DNS and HTTPS checks")
+    checking.add_argument("--timeout", type=float, default=5.0)
+    args = parser.parse_args(argv)
+
+    try:
+        config = load_config(args.config)
+        if args.command == "list":
+            if args.json:
+                print(json.dumps(config["apps"], indent=2))
+            else:
+                for app in config["apps"]:
+                    print(f"{app['id']:<20} {app.get('name', '')}  {app['urls']['web']}")
+            return EXIT_OK
+        if args.command == "open":
+            app = find_app(config, args.app)
+            url = app["urls"].get("local") if args.local else app["urls"]["web"]
+            if not url:
+                raise ConfigError(f"{args.app} has no per-machine address (urls.local)")
+            command = browser_argv(config, [f"--app={url}"])
+        elif args.command == "browser":
+            command = browser_argv(config, [args.url] if args.url else [])
+        else:
+            if args.timeout <= 0:
+                parser.error("--timeout must be positive")
+            report = doctor(config, args.timeout, network=not args.offline)
+            if args.json:
+                print(json.dumps({"ok": not report.failed, "checks": [check.__dict__ for check in report.checks]}, indent=2))
+            else:
+                for check in report.checks:
+                    print(f"{check.status.upper():<5} {check.name}: {check.detail}")
+            return EXIT_FAILED if report.failed else EXIT_OK
+    except ConfigError as error:
+        print(f"hypersystem-desktop: {error}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if args.print:
+        print(shlex.join(command))
+        return EXIT_OK
+    return launch(command)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

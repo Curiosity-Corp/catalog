@@ -646,6 +646,16 @@ one-line failed check naming where it looked (nothing is restarted). Set
 `ziti_health_check_enabled: false` to remove it. Activity:
 `journalctl -u curiosity-ziti-health --since today`.
 
+### Suite web apps on a laptop (hypersystem-desktop)
+
+`hypersystem_desktop_enabled: true` reads a suite app catalog
+(`hypersystem_desktop_catalog_src`, or `hypersystem_desktop_apps`), keeps the apps
+`hypersystem_desktop_roles` allow, and force-installs each as a web app in one
+Chromium-family browser with a launcher and a dedicated suite profile. It relies
+on the tunnel above and fails with the setting to change when `ziti_enabled` is
+off (and no hand-managed tunnel exists) or an app host is outside
+`ziti_intercept_domains`. See [hypersystem-desktop](hypersystem-desktop.md).
+
 ## Fleet agent (fleetd)
 
 `fleetd_enabled` (default `false`) installs a site-built fleetd package
