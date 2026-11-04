@@ -280,10 +280,12 @@ def test_a_package_replacement_try_restarts_the_lights_and_deck_services() -> No
     # StreamStack #185: the lights service kept running pre-fix code after the
     # 0.0.28 upgrade because only the Console was restarted.
     managers = _task("Check which desktop users have a running user manager")
-    assert managers["when"] == "_streamstack_package_replaced is changed"
+    # gated through the loop (an empty list otherwise), not `when: ... is changed`, which ansible-lint's no-handler rejects
     assert "dev_users" in managers["loop"]
+    assert managers["loop"].endswith("if _streamstack_package_replaced is changed else [] }}")
+    assert "when" not in managers
     task = _task("Try-restart the StreamStack lights and deck user services after a package replacement")
-    assert task["when"] == "_streamstack_package_replaced is changed"
+    assert "when" not in task
     argv = task["ansible.builtin.command"]["argv"]
     assert argv[:3] == ["runuser", "-u", "{{ item.0.item.name }}"]
     assert any(a.startswith("XDG_RUNTIME_DIR=/run/user/") for a in argv)
