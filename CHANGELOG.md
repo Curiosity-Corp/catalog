@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format follows
 
 - CPU thermal guard: `developer_workstation_cpu_max_perf_pct` (hardware-profile key `cpu_max_perf_pct`, off by default, `70` on `deskmeet-b760`) installs `curiosity-cpu-max-perf.service`, a boot oneshot that caps `intel_pstate/max_perf_pct` where the BIOS locks RAPL, and skips cleanly without intel_pstate. `deskmeet-b760` also loads the `nct6775` hwmon module at boot for fan and temperature sensors.
 - Researcher quickstarts (catalog#8, #11, #12, #17, #28, #30, #35): `docs/quickstarts/` (laptop, research VM, cloud-init and libvirt, thin client and shared lab, restricted networks, notebooks) and `docs/update-rings.md`, with matching public-variables-only files in `examples/` (`laptop.yml`, `research-vm.yml`, `thin-client.yml`, `shared-lab.yml`, `update-ring-early.yml`, `restricted-network-site.yml`, `cloud-init/`, `notebooks/`). `tests/test_quickstarts.py` checks every example variable against the role defaults, previews each documented tag set with `ansible-playbook --list-tasks`, resolves links and anchors, and pins the cloud-init and notebook security posture; `tests/test_restricted_network.py` fails release discovery through a refusing stand-in proxy and checks that the run stops with no stale fallback. New `quickstarts` CI job and `make quickstarts`.
+- Governance and security process (catalog#3, #5, #20, #23, #40, #52, #54): `GOVERNANCE.md`, `docs/decisions/` (decision-record template and two retroactive records), `docs/project-identity.md`, `docs/threat-model.md` (risks mapped to tests or stated limitations), `docs/vulnerability-response.md` with `docs/security-tabletop.md`, `docs/telemetry-and-evidence.md`, a draft `docs/stable-contract-1.0-draft.md`, `docs/infrastructure-patterns.md` and the `examples/lab-pull-maintenance.yml` host-local example. `tests/test_governance_docs.py` and `tests/test_telemetry_policy.py` check them, including that the annual governance review is not overdue.
 
 ### Changed
 
@@ -415,3 +416,11 @@ All notable changes to this project are documented here. The format follows
 The first supported public collection release. The release is complete only
 when the checklist, compatibility evidence, and registry artifact are
 published.
+
+## Security and supported versions
+
+Only the latest released collection and the default branch receive routine
+security fixes ([`SECURITY.md`](SECURITY.md)). No security advisory has been
+published yet. When one is, the release that fixes it lists it under `### Security`
+with the fixed and affected versions and a link to the advisory, and the advisory
+names the same versions (see [`docs/vulnerability-response.md`](docs/vulnerability-response.md)).

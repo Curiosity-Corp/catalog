@@ -1,0 +1,36 @@
+# Host-local variables for a lab that keeps its own reviewed copy of this
+# collection and lets each machine pull updates from it overnight.
+#
+# Pattern: the lab forks or mirrors the repository, reviews and signs the
+# commits it accepts, and points every machine at that copy. Machines then
+# take only changes the lab has reviewed. Every value below is a placeholder;
+# nothing here names a real service.
+#
+# Applies to the desktop, thin-client and byod-kiosk profiles (the pull timer
+# is not installed on the workspace profile). Install it with
+#   ansible-playbook playbooks/site.yml --tags ansible-pull
+# and see docs/infrastructure-patterns.md for what the pattern does and does
+# not protect against.
+---
+workstation_profile: desktop
+hardware_profile: generic
+
+# The lab's own reviewed copy, never an unreviewed upstream branch.
+ansible_pull_repo: "https://git.example.edu/lab/workstation-config.git"
+ansible_pull_branch: "main"
+ansible_pull_dir: "/opt/lab-workstation-config"
+
+# Take the update a few hours after the lab's canary machines so a bad
+# change shows up there first (see docs/update-rings.md).
+workstation_update_ring: general
+
+# Refuse a pulled commit unless it is signed by the lab's release key. Put
+# the 40-character fingerprint of the lab's signing key in the line below
+# before enabling enforce; the role fails the run if it is missing.
+# catalog_integrity_mode: enforce
+# catalog_signing_key_fingerprint: "<40-character fingerprint of the lab key>"
+catalog_integrity_mode: warn
+
+# Optional: send a failed-unit alert to a lab chat or ticket endpoint.
+# Leave empty to alert nobody.
+failed_sweep_webhook_url: ""

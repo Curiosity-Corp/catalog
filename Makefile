@@ -16,6 +16,9 @@ syntax:
 lint:
 	ANSIBLE_ROLES_PATH=$(ANSIBLE_ROLES_PATH) ansible-lint playbooks/site.yml roles
 
+governance:
+	$(PYTHON) -m pytest -q tests/test_governance_docs.py tests/test_telemetry_policy.py
+
 quickstarts:
 	$(PYTHON) -m pytest -q tests/test_quickstarts.py tests/test_restricted_network.py
 

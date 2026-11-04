@@ -52,3 +52,6 @@ resolver state`. Maintainers use semantic versioning for collection releases:
 - major: removed variables, changed defaults, or incompatible role APIs.
 
 Release work follows [`docs/release-checklist.md`](docs/release-checklist.md).
+Maintainer roles, review rules, who approves breaking changes and releases, and
+the decision-record format for changes to defaults and public variables are in
+[`GOVERNANCE.md`](GOVERNANCE.md).
