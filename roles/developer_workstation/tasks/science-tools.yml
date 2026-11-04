@@ -11,6 +11,25 @@
 # and caused OOM crashes when compiling C extensions on constrained machines.
 # =============================================================================
 
+# science_python_packages is the operator's list (docs/python-research-profile.md).
+# The kernel registration and the jupyter/ipython links below need ipykernel, so
+# refuse a list without it before any venv is touched.
+- name: Validate the scientific Python package list
+  ansible.builtin.assert:
+    that:
+      - science_python_packages is sequence
+      - science_python_packages is not string
+      - science_python_packages | length > 0
+      - science_python_packages | map('regex_replace', '^([A-Za-z0-9._-]+).*$', '\\1') | map('lower') | map('regex_replace', '[_.]', '-') | list | select('equalto', 'ipykernel') | list | length > 0
+      - science_python_upgrade_packages is sequence
+      - science_python_upgrade_packages is not string
+    fail_msg: >-
+      science_python_packages must be a non-empty list of pip requirements that
+      includes ipykernel (the Python 3 (Science) kernel and the jupyter and
+      ipython links depend on it). Requirement specifiers such as 'numpy>=2' are
+      allowed.
+    quiet: true
+
 # A venv built on a Python minor the distro has since replaced (3.13 -> 3.14 on
 # Ubuntu 26.04) keeps bin/activate, but its site-packages and pip are invisible
 # to the new interpreter, so a creates: guard never rebuilt it and every pip
@@ -39,39 +58,8 @@
 
 - name: Install/upgrade scientific Python packages into venv  # noqa: args package-latest
   ansible.builtin.pip:
-    name:
-      # --- Core data science ---
-      - numpy
-      - scipy
-      - pandas
-      - matplotlib
-      - sympy
-      - scikit-learn
-      - seaborn
-      # --- Common utilities ---
-      - requests
-      - httpx
-      - pytest
-      - boto3
-      - openpyxl
-      - Pillow
-      # --- Jupyter interactivity ---
-      - ipykernel
-      - ipywidgets
-      - ipympl
-      - plotly
-      # --- Physics simulation ---
-      - vpython
-      - pymunk
-      - pybullet
-      # --- 3D visualization ---
-      - pyvista
-      - trame
-      - k3d
-      # --- Domain-specific ---
-      - h5py
-      - qutip
-      - astropy
+    name: "{{ science_python_packages }}"
+    extra_args: "{{ science_python_pip_extra_args }}"
     virtualenv: /opt/science-venv
     state: latest
 
@@ -114,25 +102,8 @@
 # scientific ecosystem.
 - name: Upgrade all pip packages in science-venv (periodic)  # noqa: package-latest
   ansible.builtin.pip:
-    name:
-      # Core data-science stack — upgrade all declared packages
-      - numpy
-      - scipy
-      - pandas
-      - matplotlib
-      - sympy
-      - scikit-learn
-      - seaborn
-      - requests
-      - httpx
-      - pytest
-      - boto3
-      - Pillow
-      - ipykernel
-      - ipywidgets
-      - ipympl
-      - plotly
-      - h5py
+    name: "{{ science_python_upgrade_packages }}"
+    extra_args: "{{ science_python_pip_extra_args }}"
     virtualenv: /opt/science-venv
     state: latest
 

@@ -163,6 +163,10 @@ public-surface checks, and collection building. See
 - [Telemetry and evidence policy](docs/telemetry-and-evidence.md)
 - [Researcher quickstarts](docs/quickstarts/README.md)
 - [Update rings](docs/update-rings.md)
+- [Python research profile](docs/python-research-profile.md)
+- [Accessibility and localization](docs/accessibility-and-localization.md)
+- [Maintenance summary](docs/maintenance-summary.md)
+- [Low-bandwidth and offline maintenance](docs/low-bandwidth-and-offline.md)
 - [Roadmap](docs/roadmap.md)
 
 Please do not put passwords, tokens, private keys, internal inventories, or

@@ -1,31 +1,28 @@
 ---
 # =============================================================================
-# Keyboard layout — enforce US for thin-client and byod-kiosk profiles
+# Keyboard layout (variables: keyboard_layout, keyboard_model, keyboard_variant,
+# keyboard_options; gate: keyboard_manage)
 # =============================================================================
-# Physical keyboards in the fleet are US layout.  Raspberry Pi OS and Ubuntu
-# Server both default to GB (en-GB locale), producing the classic mismatch
-# where @ produces " at the login prompt.  These tasks set XKBLAYOUT=us in
-# /etc/default/keyboard, reconfigure keyboard-configuration, and reload the
-# console keymap.  Works identically on arm64 (Pi 4/5) and x86_64 (T460).
+# The fleet's physical keyboards are US layout, so the thin-client and
+# byod-kiosk profiles write US by default. Raspberry Pi OS and Ubuntu Server
+# default to GB (en-GB), producing the classic mismatch where @ produces " at
+# the login prompt. Set keyboard_layout (and the other keyboard_* variables) for
+# a different physical keyboard, or keyboard_manage: true to manage it on
+# another profile. These tasks write /etc/default/keyboard, reconfigure
+# keyboard-configuration, and reload the console keymap. Works identically on
+# arm64 (Pi 4/5) and x86_64 (T460).
 # =============================================================================
 
-- name: Write /etc/default/keyboard (XKBLAYOUT=us)
-  ansible.builtin.copy:
+- name: Validate keyboard and locale variables
+  ansible.builtin.import_tasks: keyboard-locale-validate.yml
+
+- name: Write /etc/default/keyboard
+  ansible.builtin.template:
+    src: default-keyboard.j2
     dest: /etc/default/keyboard
     owner: root
     group: root
     mode: "0644"
-    content: |
-      # KEYBOARD CONFIGURATION FILE
-      # Managed by Ansible — do not edit manually.
-      # Consult the keyboard(5) manual page.
-
-      XKBMODEL="pc105"
-      XKBLAYOUT="us"
-      XKBVARIANT=""
-      XKBOPTIONS=""
-
-      BACKSPACE="guess"
 
 - name: Reconfigure keyboard-configuration (dpkg non-interactive)
   ansible.builtin.command:

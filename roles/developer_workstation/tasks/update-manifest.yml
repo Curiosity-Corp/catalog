@@ -102,6 +102,20 @@
     - workstation_update_sbom_enabled | default(true)
     - not (_workstation_trivy_stat.stat.exists and (_workstation_trivy_sbom.rc | default(1) == 0))
 
+# An optional integration is skipped when its application contract names a
+# feature flag (`enabled_when`) and that flag is false on this host. Same rule
+# as update-health.yml. Recorded so the maintenance summary can say what was left out.
+- name: List optional integrations that are switched off on this host
+  ansible.builtin.set_fact:
+    workstation_update_skipped_integrations: >-
+      {{ workstation_update_skipped_integrations | default([]) + [item.key] }}
+  loop: "{{ (workstation_all_application_contracts | default(latest_release_contracts)) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - item.value.enabled_when is defined
+    - not (lookup('vars', item.value.enabled_when, default=true) | bool)
+
 - name: Write the local workstation update manifest
   ansible.builtin.copy:
     content: >-
@@ -130,6 +144,7 @@
           'after': workstation_update_after_inventory | default([]),
           'healthcheck_failures': workstation_update_healthcheck_failures | default([]),
           'healthcheck_warnings': workstation_update_healthcheck_warnings | default([]),
+          'skipped_integrations': workstation_update_skipped_integrations | default([]),
           'failure': workstation_update_failure | default({}),
           'package_inventory': {
             'dpkg': _workstation_dpkg_inventory.stdout | default(''),
@@ -143,3 +158,28 @@
     owner: root
     group: root
     mode: "0640"
+
+# A researcher cannot read the root-only manifest above, so the run also saves a
+# scrubbed plain-language summary (text and JSON, schema
+# curiosity.workstation.update-summary/v1) that anyone on the machine can read.
+# docs/maintenance-summary.md describes it. A problem here never fails an update.
+- name: Install the maintenance summary helper
+  ansible.builtin.copy:
+    src: curiosity-update-summary
+    dest: /usr/local/bin/curiosity-update-summary
+    owner: root
+    group: root
+    mode: "0755"
+  failed_when: false
+
+- name: Save the plain-language maintenance summary
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/curiosity-update-summary
+      - --manifest
+      - "{{ workstation_update_manifest_path }}"
+      - --summary-dir
+      - "{{ workstation_update_summary_dir }}"
+      - --write
+  changed_when: false
+  failed_when: false

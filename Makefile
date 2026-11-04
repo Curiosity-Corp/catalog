@@ -22,6 +22,9 @@ governance:
 quickstarts:
 	$(PYTHON) -m pytest -q tests/test_quickstarts.py tests/test_restricted_network.py
 
+research-profile:
+	$(PYTHON) -m pytest -q tests/test_python_research.py tests/test_accessibility_defaults.py tests/test_update_summary.py
+
 test:
 	$(PYTHON) tests/test_update_policy.py
 	$(PYTHON) -m pytest -q tests/test_public_contract.py tests/test_console_tuning.py tests/test_tmp_hygiene.py tests/test_workstation_posture.py tests/test_hardware_profiles.py tests/test_desktop_multiuser.py tests/test_apt_keyring_policy.py tests/test_user_systemd_policy.py tests/test_pipx_repair.py tests/test_science_venv_repair.py tests/test_m365_cli_entrypoints.py tests/test_sunshine_asset_selection.py tests/test_update_rollback_symlinks.py tests/test_healthcheck_disabled_apps.py tests/test_litra_cli.py tests/test_minimal_desktop_panel.py tests/test_bitwarden_desktop.py tests/test_deskmeet_8k_display.py tests/test_display_guard.py tests/test_logitech_g604.py tests/test_authd_broker_conf.py tests/test_samsung_tv_cli.py tests/test_pro_mimic.py tests/test_firewall_posture.py tests/test_streamstack.py tests/test_streamstack_low_latency.py tests/test_streamstack_ai_deps.py tests/test_hhtest.py tests/test_workstation_storage.py tests/test_cpu_thermal_guard.py

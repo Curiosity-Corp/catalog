@@ -1,0 +1,35 @@
+# Host-local variables for a small Python research baseline: Python, pip, uv,
+# JupyterLab, compilers and common data libraries, without the desktop stack.
+# Every value is public and synthetic. See docs/python-research-profile.md.
+#
+# Preview, then apply only the pieces you need:
+#   ansible-playbook playbooks/site.yml --tags packages,python,science --check --diff
+#   ansible-playbook playbooks/site.yml --tags packages,python,science
+---
+workstation_profile: workspace
+hardware_profile: generic
+
+# Replaces the default list of 26 packages. Keep ipykernel: the "Python 3
+# (Science)" notebook kernel and the jupyter and ipython links depend on it.
+# Packages come from PyPI at the latest version on every run; to freeze them,
+# add a constraints file below instead of pinning versions here.
+science_python_packages:
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - ipykernel
+  - ipywidgets
+science_python_upgrade_packages:
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - ipykernel
+  - ipywidgets
+
+# Optional: a lab mirror and/or a constraints file (one requirement per line).
+# science_python_pip_extra_args: "--index-url https://pypi.example.edu/simple --constraint /etc/lab/constraints.txt"
+science_python_pip_extra_args: ""
