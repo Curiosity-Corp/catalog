@@ -5,6 +5,28 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.28] - 2026-11-04
+
+### Changed
+- v0.0.27 was never published: its tag pipeline stopped at secret scanning because a test key (`auto.key`, with `auto.crt`, written by MediaMTX into the repository root) had been committed with the #82 fix, and tags cannot be moved. Everything listed under 0.0.27 below shipped in this release instead (#82).
+
+### Fixed
+- A MediaMTX started by the ingest tests no longer leaves its self-signed `auto.key` / `auto.crt` in the repository root (the pair merged by mistake with the #82 fix is removed); it runs in the test's temp directory, and a test fails the build if any tracked file holds a PEM private key outside the allowlisted fixtures (#82).
+
+## [0.0.27] - 2026-11-03
+
+### Added
+- A new CI gate (`ingest-e2e`) pushes the YouTube-shaped output (AV1 over enhanced RTMP and RTMPS, trusting a private CA through `ca_file`) and the Twitch-shaped outputs (H.264 and HEVC over RTMP) from the shipped presets at a real MediaMTX ingest and checks what arrives with ffprobe: codec, size, frame rate, keyframe spacing and AAC audio. A destination that does not trust the CA is proven never to reach the ingest (#82).
+- A stereo or two-capsule microphone can now steer the speaker hand-off. Setting `STREAMSTACK_VOICE_DIRECTION_SOURCE` to a stereo source (off by default) makes StreamStack estimate where the voice comes from by time and level difference and use it to pick who is talking, with a read-only capture that runs only while "follow the speaker" is on (#144).
+
+### Fixed
+- Software AV1 streams (SVT-AV1 4.x, the encoder behind the YouTube AV1 preset on a host without a GPU AV1 encoder) no longer stop at start: the rate mode now goes to the encoder in its own parameters, because SVT-AV1 4.x refuses a maximum bitrate and buffer size outside constant-quality mode (#82).
+- Opening the Console no longer stops Chromium, Edge, Teams or Zoom from starting StreamStack Camera: the live preview used to run its own `ffmpeg -f v4l2` reader on `/dev/video43` (and on the Canon node `/dev/video42`), and v4l2loopback answers a second opener's `VIDIOC_S_FMT` with `EBUSY` while a reader streams, so `getUserMedia` failed with `NotReadableError`. The engine now writes the graded program picture to a JPEG file (`~/.local/state/streamstack/preview/program.jpg`) from its own graph, and the Console reads that file; no loopback node is opened by the preview any more (#181).
+- A Litra Beam no longer stays on overnight. The lights service no longer mistakes its own writes for a hand on the light (a Beam that keeps its brightness at 204 lm whatever it is told was "changed by hand" after every write and every 30-minute hold), and a write by the AI Director, an agent or a test is no longer a hand either. A hard rule now switches every light off after 4 minutes with no camera user, and after 1 minute at night (22:00 to 07:00), whatever any hold or setting says. Tests switch the lights they turn on off again in a shared teardown (#182).
+- While no engine child runs (camera lost, or the idle placeholder), the Console's program preview now shows the same card as StreamStack Camera: the slate writes the preview picture too, instead of leaving a stale frame or nothing (#184, #181).
+
+  A running recording or stream no longer keeps a call app from opening StreamStack Camera: the encoders used to read `/dev/video43` through their own `ffmpeg -f v4l2`, which makes the call app's `VIDIOC_S_FMT` fail with `EBUSY`. The engine now hands its finished program picture (raw NV12, from the same split the encode taps use) to a frame hub on a Unix socket (`~/.local/state/streamstack/feed.sock`), and every encoder generation reads that. A slow encoder loses its own frames, never the engine's, and the last frame is held while the engine is silent. `STREAMSTACK_ENGINE_FEED=off` goes back to reading the loopback (#184, #181).
+
 ## [0.0.26] - 2026-11-01
 
 ### Fixed

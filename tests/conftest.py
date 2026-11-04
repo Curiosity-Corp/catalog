@@ -9,8 +9,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from light_support import SimulatedBeam, switch_everything_off, track
 
-from streamstack import cli, crash, store, system
+from streamstack import cli, crash, lighting, store, system
 from streamstack.audiochain import runtime as chain_runtime
 from streamstack.director import adapters, faces
 
@@ -130,3 +131,29 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool 
 def no_real_audio_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     """No test may start a `pipewire -c` host on the machine running the tests (tests that want one use fakes)."""
     monkeypatch.setattr(chain_runtime, "start_host", lambda conf, log_path=None: None)
+
+
+@pytest.fixture(autouse=True)
+def beams_off(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every light a test turns on is turned off in its teardown (#182).
+
+    Each simulated Litra a test creates is tracked, as is every plain fake light that calls `light_support.track`;
+    when the test ends they are all switched off, and the teardown fails if one stays on."""
+    original = lighting.SimulatedTransport.__init__
+
+    def tracked_init(
+        self: lighting.SimulatedTransport,
+        model: lighting.Model,
+        *,
+        on: bool = False,
+        lumen: int | None = None,
+        kelvin: int = 4500,
+        lumen_ceiling: int | None = None,
+    ) -> None:
+        original(self, model, on=on, lumen=lumen, kelvin=kelvin, lumen_ceiling=lumen_ceiling)
+        track(SimulatedBeam(self))
+
+    monkeypatch.setattr(lighting.SimulatedTransport, "__init__", tracked_init)
+    switch_everything_off()  # nothing carried over from a test that did not get to tear down
+    yield
+    switch_everything_off()

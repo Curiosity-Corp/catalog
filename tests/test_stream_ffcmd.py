@@ -36,6 +36,15 @@ def test_every_encoder_builds_for_every_rate_control(choice: EncoderChoice, rc: 
     assert "60" in args  # keyframe interval reaches the encoder
 
 
+@pytest.mark.parametrize(("rc", "mode"), [("cbr", "rc=2:pred-struct=1"), ("vbr", "rc=1")])
+def test_software_av1_sets_its_rate_mode_in_its_own_parameters(rc: str, mode: str) -> None:
+    """SVT-AV1 4.x rejects -maxrate and -bufsize outside CRF mode, which stopped every software AV1 stream (#82)."""
+    args = ffcmd.encoder_args(SVT, EncoderSettings(rate_control=rc), 1500, 60)
+    assert value(args, "-b:v") == "1500k"
+    assert "-maxrate" not in args and "-bufsize" not in args
+    assert value(args, "-svtav1-params").endswith(f":{mode}")
+
+
 def test_cbr_pins_min_max_and_buffer() -> None:
     args = ffcmd.encoder_args(X264, EncoderSettings(), 4000, 60)
     assert value(args, "-b:v") == value(args, "-maxrate") == value(args, "-bufsize") == "4000k"
@@ -187,3 +196,26 @@ def test_whip_is_not_an_ffmpeg_sink() -> None:
     """The token must never reach an ffmpeg argv (where `ps` shows it): WHIP is published in-process."""
     with pytest.raises(ValueError, match="published by StreamStack itself"):
         ffcmd.sink_argv(FF, dest("whip"), "h264", secret="tok")
+
+
+def test_the_feed_source_reads_the_engines_frame_socket() -> None:
+    argv = ffcmd.video_generation_argv(
+        FF, Source("feed", "/run/user/1000/feed.sock", 1920, 1080, 30.0), X264, EncoderSettings(), 0.0
+    )
+    head = argv[: argv.index("-vf")]
+    assert head[head.index("-f") + 1] == "rawvideo" and value(head, "-pix_fmt") == "nv12"
+    assert value(head, "-i") == "unix:/run/user/1000/feed.sock"
+    assert value(head, "-video_size") == "1920x1080" and value(head, "-framerate") == "30"
+    assert value(head, "-use_wallclock_as_timestamps") == "1"  # the same clock the loopback source was stamped with
+
+
+@pytest.mark.parametrize("choice", [VA, QS, NV, X264, X265, SVT])
+@pytest.mark.parametrize("tier", ["source", "720p"])
+def test_no_recording_or_stream_encoder_opens_a_camera_node_as_input(choice: EncoderChoice, tier: str) -> None:
+    """#184: a reader on /dev/video42 or /dev/video43 makes a call app's VIDIOC_S_FMT fail with EBUSY, so the
+    encoders take the engine's frames from the hub instead."""
+    source = Source("feed", "/run/user/1000/feed.sock", 1920, 1080, 30.0)
+    argv = ffcmd.video_generation_argv(FF, source, choice, EncoderSettings(tier=tier), 0.0)
+    assert not [a for a in argv if "/dev/video" in a] and "v4l2" not in argv
+    inputs = [argv[i + 1] for i, a in enumerate(argv) if a == "-i"]
+    assert inputs == ["unix:/run/user/1000/feed.sock"]

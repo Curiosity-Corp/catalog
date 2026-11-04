@@ -51,6 +51,10 @@ def test_every_job_that_verifies_apt_signatures_runs_where_gpgv_exists() -> None
 
 def test_gitleaks_blocks_on_merge_requests_too() -> None:
     assert re.search(r'^  GITLEAKS_STRICT: "true"$', CI, re.MULTILINE)
+    # The template's `.sast:scan` sets GITLEAKS_STRICT: "false" in the job's own variables, and a job's variables beat
+    # the pipeline-level ones: v0.0.27's stray test key passed every merge request's sast (leaks found: 1, exit 0)
+    # and failed only the tag's. The job must say it itself (launch-sequence#250).
+    assert re.search(r'variables:\n\s+GITLEAKS_STRICT: "true"', job("sast")), "sast does not set GITLEAKS_STRICT itself"
 
 
 def test_the_apt_key_fingerprint_is_a_file_not_a_ci_variable() -> None:

@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from streamstack import config
@@ -42,8 +43,8 @@ from streamstack.console.video import (
     FRAME_TTL,
     NEUTRAL,
     RESET_SECONDS,
-    CameraStream,
     LookLibrary,
+    PreviewFile,
     clamp_width,
     empty_state,
     required_flag,
@@ -52,6 +53,7 @@ from streamstack.console.video import (
 )
 from streamstack.engine import graph, idle, probe, source
 from streamstack.engine.cropper import SCENE, EngineCropper
+from streamstack.engine.framehub import FrameHub
 from streamstack.engine.graph import Source, Spec
 from streamstack.engine.process import VideoEngine
 from streamstack.hardware import camera as hwcamera
@@ -140,7 +142,8 @@ class NativeVideo:
         self._ramp_thread: threading.Thread | None = None
         self._ramp_cancel = threading.Event()
         self._saved_at = 0.0
-        self._streams: dict[str, CameraStream] = {}
+        self._preview = PreviewFile(config.preview_file())
+        self._hub: FrameHub | None = None
         self._frames: dict[tuple[str, int], tuple[float, bytes]] = {}
         self._warned: dict[str, float] = {}
         self._load()
@@ -251,8 +254,9 @@ class NativeVideo:
             engine.stop()
         self.delivery.stop()
         self.arc.stop()
-        for stream in self._streams.values():
-            stream.stop()
+        hub, self._hub = self._hub, None
+        if hub is not None:
+            hub.stop()
         self.canon.stop()
         self._save(force=True)
 
@@ -435,7 +439,7 @@ class NativeVideo:
         self._engine_node = node
         out = source.output_plan(self.cfg, src)
         backend = self._backend_for_engine(node)
-        return Spec(
+        spec = Spec(
             src,
             hwcamera.device_for("program", self.cfg, self._plan()),
             out.width,
@@ -445,6 +449,7 @@ class NativeVideo:
             detect_fps=_detect_fps(self.cfg),
             lut=(self.cfg.get("STREAMSTACK_ENGINE_LUT") or "").strip(),
             shaders=self._shader_dir(),
+            preview_path=str(self._preview.path),
             scaler=self._scaler(),
             denoise=self._denoise() if backend == "vulkan" else "",
             blur=self.arc.graph if self.arc.capable else None,
@@ -452,6 +457,29 @@ class NativeVideo:
             out_fps=out.fps,
             letterbox=out.letterbox,
         )
+        return self._with_feed(spec)
+
+    def _with_feed(self, spec: Spec) -> Spec:
+        """Give the spec the raw frame branch and start (or re-describe) the frame hub the recording and the stream
+        read, so neither opens /dev/video43 (#184). Without the hub (STREAMSTACK_ENGINE_FEED=off, or the socket cannot
+        be made) the spec stays as it was and the encoders read the loopback."""
+        if not config.feed_enabled(self.cfg):
+            return spec
+        fps = spec.out_fps if spec.out_fps > 0 else spec.source.fps
+        with self.lock:
+            hub = self._hub
+            if hub is None:
+                hub = FrameHub(config.feed_socket(), spec.out_width, spec.out_height, fps)
+                try:
+                    hub.start()
+                except OSError as exc:
+                    self._warn_once(
+                        "feed", f"The frame hub cannot start ({exc}); recording and streaming read the loopback."
+                    )
+                    return spec
+                self._hub = hub
+        hub.set_geometry(spec.out_width, spec.out_height, fps)
+        return replace(spec, raw_feed=True)
 
     def _scaler(self) -> str:
         """The libplacebo scaler (STREAMSTACK_ENGINE_SCALER); only a benchmarked name is used, else the default."""
@@ -505,12 +533,14 @@ class NativeVideo:
             )
             engine.set_blackout(privacy)
             self._wire_blur(engine, spec)
+            self._wire_feed(engine, spec)
             with self.lock:
                 self._engine = engine
             engine.start()
         else:
             engine.apply_look(look)
             self._wire_blur(engine, spec)
+            self._wire_feed(engine, spec)
             engine.set_spec(spec)  # a no-op unless the graph changed
 
     def _wire_blur(self, engine: VideoEngine, spec: Spec) -> None:
@@ -520,6 +550,10 @@ class NativeVideo:
             return
         engine.attach_blur(feed)
         engine.set_blur(self.arc.on, self.arc.strength, self.arc.rate)
+
+    def _wire_feed(self, engine: VideoEngine, spec: Spec) -> None:
+        if spec.raw_feed and self._hub is not None:
+            engine.attach_feed(self._hub)
 
     # -- looks --------------------------------------------------------------------------------------------------
 
@@ -852,27 +886,19 @@ class NativeVideo:
             self._frames.pop(key, None)
         return data
 
-    def _stream(self, device: str) -> CameraStream:
-        with self.lock:
-            stream = self._streams.get(device)
-            if stream is None:
-                stream = self._streams[device] = CameraStream(device)
-            return stream
-
     def _grab(self, name: str, width: int) -> bytes | None:
         with self.lock:
             src, cameras = self._source, list(self._cameras)
-            program = hwcamera.device_for("program", self.cfg, self._plan())
         if name == "program":
-            return self._stream(program).latest(width) or self.detect_frame(src.label if src else "")
+            # the engine's own graded picture, from its preview file: never a read of /dev/video43 (#181)
+            return self._preview.latest() or self.detect_frame(src.label if src else "")
         label = src.label if src and name == "camera" else name
         camera = next((c for c in cameras if c.label == label), None)
         if camera is None:
             return None
-        if camera.kind == "canon":
-            # a fed loopback can be read by many; the engine's own reader does not block ours
-            return self._stream(camera.device).latest(width) or self.detect_frame(label)
-        return self.detect_frame(label)  # a capture card has one reader, and it is the engine
+        # a capture card or the Canon loopback has one reader, and it is the engine: the preview takes the engine's
+        # own detection frame and never opens the node (an extra opener on a loopback makes S_FMT fail with EBUSY)
+        return self.detect_frame(label)
 
 
 def _detect_fps(cfg: dict[str, str]) -> float:

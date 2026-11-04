@@ -44,6 +44,9 @@ class FakeEngine:
     def stop(self) -> None:
         self.running = False
 
+    def attach_feed(self, hub) -> None:
+        self.feed = hub
+
     def set_spec(self, spec: Spec) -> None:
         self.spec = spec
         self.specs.append(spec)
@@ -315,6 +318,77 @@ def test_framing_gets_the_engine_picture(video: NativeVideo) -> None:
     assert (connected, program, scenes, cameras) == (True, "Program", ["Program"], {"Canon EOS 50D"})
     assert video.detect_frame("Canon EOS 50D").startswith(b"\xff\xd8")  # type: ignore[union-attr]
     assert video.detect_frame("Cam Link 4K") is None
+
+
+def test_the_engine_is_told_to_write_the_preview_picture(video: NativeVideo) -> None:
+    spec = video.made[0].spec  # type: ignore[attr-defined]
+    assert spec.preview_path == str(config.state_dir() / "preview" / "program.jpg")
+
+
+def test_the_engine_feeds_the_frame_hub_that_recording_and_streaming_read(video: NativeVideo) -> None:
+    """#184: the encoders take the program picture from the hub, never from /dev/video43."""
+    from streamstack.engine import framehub
+
+    engine = video.made[0]  # type: ignore[attr-defined]
+    assert engine.spec.raw_feed and engine.feed is video._hub  # type: ignore[attr-defined]
+    info = framehub.read_info(config.feed_socket())
+    assert info is not None and (info["width"], info["height"]) == (engine.spec.out_width, engine.spec.out_height)
+    assert config.feed_socket().exists()
+
+
+def test_the_frame_hub_can_be_turned_off(tmp_path: Path) -> None:
+    from streamstack.engine.segment import Arc
+
+    made: list[FakeEngine] = []
+
+    def factory(spec: Spec, look: dict | None = None, **kwargs) -> FakeEngine:
+        made.append(FakeEngine(spec, look, **kwargs))
+        return made[-1]
+
+    controller = NativeVideo(
+        {**config.DEFAULTS, "STREAMSTACK_ENGINE_FEED": "off"},
+        arc=ArcBlur({**config.DEFAULTS}, probe=lambda wanted: Arc(False, "no openvino")),
+        state_file=tmp_path / "video.json",
+        discover=lambda cfg: [CANON],
+        resolve=lambda camera, cfg: CANON_SRC,
+        engine_factory=factory,
+        backend=lambda node: ("vulkan", ""),
+    )
+    controller.start()
+    try:
+        assert wait_for(lambda: made and made[0].running)
+        assert not made[0].spec.raw_feed and not config.feed_socket().exists()
+    finally:
+        controller.stop()
+
+
+def test_the_program_preview_never_opens_a_loopback_node(video: NativeVideo, monkeypatch) -> None:
+    """#181: an extra reader on /dev/video43 made Chromium's VIDIOC_S_FMT fail with EBUSY (NotReadableError).
+
+    Whatever the preview serves, no subprocess is started and no /dev/video* node is opened.
+    """
+    opened: list[str] = []
+    real_open = open
+
+    def watch(file, *args, **kwargs):
+        opened.append(str(file))
+        return real_open(file, *args, **kwargs)
+
+    def no_process(*args, **kwargs):
+        raise AssertionError("the preview started a process")
+
+    monkeypatch.setattr("builtins.open", watch)
+    monkeypatch.setattr("subprocess.Popen", no_process)
+    preview = video._preview.path  # type: ignore[attr-defined]
+    preview.parent.mkdir(parents=True, exist_ok=True)
+    preview.write_bytes(b"\xff\xd8\xff\xe0graded\xff\xd9")
+    assert video.frame("program", 640) == b"\xff\xd8\xff\xe0graded\xff\xd9"
+    preview.unlink()
+    video._frames.clear()  # type: ignore[attr-defined]
+    assert video.frame("program", 640) == b"\xff\xd8\xff\xe0det\xff\xd9"  # no file yet: the engine's detect frame
+    video._frames.clear()  # type: ignore[attr-defined]
+    assert video.frame("camera", 640) == b"\xff\xd8\xff\xe0det\xff\xd9"  # the Canon node is not read either
+    assert not [path for path in opened if path.startswith("/dev/video")]
 
 
 def test_cropper_turns_framing_margins_into_an_engine_window(video: NativeVideo) -> None:

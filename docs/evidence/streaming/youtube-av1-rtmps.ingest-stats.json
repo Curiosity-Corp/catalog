@@ -1,0 +1,545 @@
+{
+  "path": {
+    "name": "live/hostrun-REDACTED",
+    "confName": "all_others",
+    "ready": true,
+    "readyTime": "2026-11-03T17:42:31.0725245-05:00",
+    "available": true,
+    "availableTime": "2026-11-03T17:42:31.0725245-05:00",
+    "online": true,
+    "onlineTime": "2026-11-03T17:42:31.072527912-05:00",
+    "source": {
+      "type": "rtmpsConn",
+      "id": "65eff61d-c78b-4727-82c6-a8502e062dfa"
+    },
+    "tracks": [
+      "AV1",
+      "MPEG-4 Audio"
+    ],
+    "tracks2": [
+      {
+        "codec": "AV1",
+        "codecProps": {
+          "width": 0,
+          "height": 0,
+          "profile": 0,
+          "level": 0,
+          "tier": 0
+        }
+      },
+      {
+        "codec": "MPEG-4 Audio",
+        "codecProps": {
+          "sampleRate": 48000,
+          "channelCount": 2
+        }
+      }
+    ],
+    "readers": [],
+    "inboundBytes": 17105780,
+    "outboundBytes": 15947106,
+    "inboundFramesInError": 0,
+    "bytesReceived": 17105780,
+    "bytesSent": 15947106
+  },
+  "connections_every_5s": [
+    {
+      "t": 5.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 1127999,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 1127999,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 10.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 2207143,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 2207143,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 15.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 3245586,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 3245586,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 20.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 4313771,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 4313771,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 25.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 5356560,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 5356560,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 30.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 6419661,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 6419661,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 35.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 7464431,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 7464431,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 40.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 8526229,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 8526229,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 45.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 9575599,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 9575599,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 50.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 10634040,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 10634040,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 55.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 11686254,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 11686254,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 60.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 12741779,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 12741779,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 65.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 13795664,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 13795664,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 70.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 14851898,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 14851898,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 75.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 15905463,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 15905463,
+          "bytesSent": 3467
+        }
+      ]
+    },
+    {
+      "t": 80.0,
+      "connections": [
+        {
+          "id": "65eff61d-c78b-4727-82c6-a8502e062dfa",
+          "created": "2026-11-03T17:42:29.072808675-05:00",
+          "remoteAddr": "127.0.0.1:41956",
+          "state": "publish",
+          "path": "live/hostrun-REDACTED",
+          "query": "",
+          "user": "",
+          "userAgent": "FMLE/3.0 (compatible; Lavf62.3.100)",
+          "inboundBytes": 16963048,
+          "outboundBytes": 3467,
+          "outboundFramesDiscarded": 0,
+          "bytesReceived": 16963048,
+          "bytesSent": 3467
+        }
+      ]
+    }
+  ],
+  "console_every_5s": [
+    {
+      "t": 5.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1635.8,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": null,
+      "gpu_percent": null
+    },
+    {
+      "t": 10.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1745.5,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.8,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 15.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1668.4,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.4,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 20.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1733.6,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.4,
+      "gpu_percent": 2.9
+    },
+    {
+      "t": 25.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1689.0,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.0,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 30.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1730.8,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.0,
+      "gpu_percent": 2.9
+    },
+    {
+      "t": 35.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1691.2,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 6.6,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 40.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1710.1,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 404,
+      "cpu_percent": 6.8,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 45.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1700.8,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 6.8,
+      "gpu_percent": 2.9
+    },
+    {
+      "t": 50.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1710.1,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.0,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 55.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1705.0,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.2,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 60.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1704.4,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 404,
+      "cpu_percent": 7.0,
+      "gpu_percent": 2.9
+    },
+    {
+      "t": 65.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1698.8,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.0,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 70.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1706.0,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 404,
+      "cpu_percent": 6.8,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 75.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1700.6,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 405,
+      "cpu_percent": 7.4,
+      "gpu_percent": 2.8
+    },
+    {
+      "t": 80.0,
+      "state": "live",
+      "codec": "av1",
+      "bitrate_kbps": 1699.6,
+      "dropped_frames": 0,
+      "encoder": "av1_vaapi",
+      "latency_ms": 404,
+      "cpu_percent": 7.0,
+      "gpu_percent": 2.9
+    }
+  ]
+}

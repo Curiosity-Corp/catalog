@@ -325,6 +325,7 @@ def attach_demo(controller: Any) -> None:
         sleep=lambda seconds: None,
         where="console",
         director_check_seconds=0,
+        hard_off=False,  # the demo's simulated lights start on with no camera; the specs drive them for minutes
         **clock,
     )
     controller.panel = AutomationPanel(controller.plan, engine, scripted, **clock)

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from light_support import track
 
 from streamstack import lightauto, lighting, lightplan
 from streamstack.camerause import Consumer, Usage
@@ -29,8 +30,10 @@ class FakeLights:
             i: {"power": on, "lumen": lighting.percent_to_lumen(BEAM, percent), "kelvin": kelvin} for i in ids
         }
         self.names: dict[str, str] = {i: f"Light {n}" for n, i in enumerate(ids, 1)}
+        track(self)  # the shared teardown (conftest.beams_off) puts every fake light out when the test ends
         self.writes: list[tuple[str, dict[str, Any]]] = []
         self.fail: str | None = None
+        self.ceilings: dict[str, int] = {}  # lumen a light will not show above, whatever it is told
         self.gone: set[str] = set()
         self.after_view: Callable[[], None] | None = None  # runs once, right after the engine took its snapshot
 
@@ -62,7 +65,8 @@ class FakeLights:
         percent: float | None = None,
         kelvin: float | None = None,
         expect: tuple[bool | None, int | None, int | None] | None = None,
-    ) -> None:
+        verify: bool = True,
+    ) -> tuple[bool | None, int | None, int | None]:
         if self.fail:
             raise ActionError(self.fail, 409)
         s = self.state[light_id]
@@ -81,6 +85,21 @@ class FakeLights:
             s["lumen"] = lighting.percent_to_lumen(BEAM, percent)
         if kelvin is not None:
             s["kelvin"] = lighting.clamp_kelvin(kelvin)
+        ceiling = self.ceilings.get(light_id)
+        if ceiling is not None and percent is not None:
+            s["lumen"] = min(s["lumen"], ceiling)  # a light that keeps its own limit (#182)
+        return (
+            power,
+            s["lumen"] if percent is not None else None,
+            s["kelvin"] if kelvin is not None else None,
+        )
+
+    def power_off(self) -> None:
+        for s in self.state.values():
+            s["power"] = False
+
+    def is_on(self) -> bool:
+        return any(s["power"] for s in self.state.values())
 
     def percent(self, light_id: str) -> int:
         return lighting.lumen_to_percent(BEAM, self.state[light_id]["lumen"])
@@ -122,6 +141,7 @@ class Bench:
             lambda: self.director,
             clock=lambda: self.mono,
             now=lambda: self.wall,
+            epoch=lambda: self.wall.timestamp(),
             location=lambda when: BERLIN,
             status_file=self.status_file,
             sleep=lambda seconds: self.on_sleep(seconds),

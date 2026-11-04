@@ -13,6 +13,15 @@ closed) and, in the demo rig, inside the Console. Each tick it
    they changed by hand are left exactly as they are.
 3. applies the **schedule** to every light that is on, not held and not manual: the level for this time of day,
    faded when it is a big jump, stepped in small writes when the sun moves it gradually.
+4. enforces the **hard rule** (#182), after 1 and before 2 and 3, whatever any hold, role or setting says: with no
+   camera user, every light that is on is switched off once nothing has used the camera for `NO_CAMERA_OFF_SECONDS`
+   (5 minutes at most), and at night (local 22:00 to 07:00) once nothing has for `NIGHT_OFF_SECONDS`. Nothing stays on
+   overnight without a camera open. It is not a setting and no override reaches it.
+
+What is *not* a change by hand (#182): the engine's own writes, read back right after they are made (a light may keep
+its own limit: a Beam that shows at most 204 lm is not "changed by hand" when asked for 265, the engine learns the
+limit instead); and any write by software that `lightjournal` has a line for (the AI Director, an agent, a test, a
+script), which the engine adopts without holding the light.
 
 Who owns what (one owner at a time, and nobody fights):
 
@@ -43,7 +52,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from streamstack import config, lighting, lightplan, system
+from streamstack import config, lighting, lightjournal, lightplan, system
 from streamstack.camerause import CameraWatcher, Usage, watched_devices
 from streamstack.console.errors import ActionError, Superseded
 from streamstack.director import daylight, settings
@@ -54,6 +63,11 @@ TICK_SECONDS = 1.0
 LUMEN_EPS = 4  # lumen: below this a difference is rounding, above it somebody moved the light
 KELVIN_EPS = 100  # one step of the light's own scale
 SETTLE_SECONDS = 2.0  # after the engine's own write the light's answer is not compared
+NO_CAMERA_OFF_SECONDS = 240.0  # hard rule: nothing uses the camera this long and every light goes off (under 5 minutes)
+NIGHT_OFF_SECONDS = 60.0  # the same at night, when nothing may be on without a camera
+NIGHT_START_HOUR, NIGHT_END_HOUR = 22, 7  # local time: night is 22:00 up to 07:00
+OFF_RETRY_SECONDS = 30.0  # a light that would not switch off is tried again this often
+JOURNAL_WINDOW_SECONDS = 20.0  # a write by software this recent can explain a change the engine finds on a light
 DIRECTOR_CHECK_SECONDS = 10.0
 DIRECTOR_UNIT = "streamstack-auto.service"
 HEARTBEAT_SECONDS = 3.0
@@ -83,7 +97,10 @@ class Lights(Protocol):
         percent: float | None = None,
         kelvin: float | None = None,
         expect: tuple[bool | None, int | None, int | None] | None = None,
-    ) -> None: ...
+        verify: bool = True,
+    ) -> tuple[bool | None, int | None, int | None] | None:
+        """Write the light. Returns what it showed when read back (power, lumen, kelvin; None for a field not written),
+        or None when the implementation does not read back."""
 
 
 class Watcher(Protocol):
@@ -105,10 +122,22 @@ class _Run:
         self.held_wall: datetime | None = None
         self.session = 0  # the last camera session this light was handled for
         self.state = ""  # one line for the page
+        # the limits the light itself keeps, learned when a write was read back different (#182): a Beam that shows
+        # 204 lm at most, whatever it is asked for. The schedule aims inside them and does not ask again.
+        self.lumen_floor: int | None = None
+        self.lumen_ceiling: int | None = None
+        self.kelvin_floor: int | None = None
+        self.kelvin_ceiling: int | None = None
+        self.off_tried = float("-inf")  # when the hard rule last tried to switch this light off
 
 
 def _clock(when: datetime) -> str:
     return when.strftime("%H:%M")
+
+
+def is_night(wall: datetime) -> bool:
+    """Local 22:00 up to 07:00."""
+    return wall.hour >= NIGHT_START_HOUR or wall.hour < NIGHT_END_HOUR
 
 
 class Automation:
@@ -128,10 +157,19 @@ class Automation:
         tick_seconds: float = TICK_SECONDS,
         where: str = "service",
         director_check_seconds: float = DIRECTOR_CHECK_SECONDS,
+        epoch: Callable[[], float] = time.time,
+        journal: Callable[[str, float], list[dict[str, Any]]] = lightjournal.recent,
+        hard_off: bool = True,
     ) -> None:
+        """`epoch` and `journal` are the wall clock the write journal is stamped with and the journal itself.
+
+        `hard_off` is False only for the demo rig, whose simulated lights start on with no camera and whose specs
+        drive them for minutes; the service never passes it."""
         self.lights, self.store, self.watcher, self.devices = lights, store, watcher, devices
         self._director = director_active
         self.clock, self.now = clock, now
+        self._epoch, self._journal, self._hard_off_enabled = epoch, journal, hard_off
+        self._idle_since: float | None = None  # since when nothing has used the camera, for the hard rule
         self._location_of = location or (
             lambda when: daylight.resolve_location(settings.load(), config.load_settings(), when)
         )
@@ -196,6 +234,7 @@ class Automation:
             self._forget_gone(views)
             self._usage = self.watcher.poll(data["follow"], self.devices())
             self._observe(views, data, now, wall)
+            self._hard_off(views, data, now, wall)
             self._follow(views, data, now, wall)
             self._schedule(views, data, now, wall)
             self._publish(views, data, now, wall)
@@ -215,6 +254,7 @@ class Automation:
             self._active_since = None
             self._last_active = 0.0
             self._usage = Usage()
+            self._idle_since = None
             self._seen_resume = self.store.load()["resume"]
             self._director_cache = (float("-inf"), False)
             self.tick()
@@ -278,7 +318,12 @@ class Automation:
                 continue
             name = view["name"]
             if power != run.power:
+                writer = self._written_by_software(view["id"], power=power)
                 run.power, run.lumen, run.kelvin = power, lumen, kelvin
+                if writer:
+                    self._event(wall, "software", f"{name} was switched {'on' if power else 'off'} by {writer}")
+                    run.ours = run.ours and bool(power)
+                    continue
                 run.held_at = run.held_wall = None
                 if power:
                     self._event(wall, "manual", f"{name} was switched on by hand")
@@ -294,10 +339,55 @@ class Automation:
                 kelvin is not None and run.kelvin is not None and abs(kelvin - run.kelvin) >= KELVIN_EPS
             )
             if moved:
+                writer = self._written_by_software(
+                    view["id"],
+                    lumen=lumen
+                    if lumen is not None and run.lumen is not None and abs(lumen - run.lumen) >= LUMEN_EPS
+                    else None,
+                    kelvin=kelvin
+                    if kelvin is not None and run.kelvin is not None and abs(kelvin - run.kelvin) >= KELVIN_EPS
+                    else None,
+                )
                 run.lumen, run.kelvin = lumen, kelvin
+                if writer:
+                    self._event(wall, "software", f"{name} was set by {writer}; that is not a change by hand")
+                    continue
                 run.held_at, run.held_wall = now, wall
                 until = f"for {hold_minutes} min" if hold_minutes else "until the next camera session"
                 self._event(wall, "manual", f"{name} was changed by hand; the schedule leaves it alone {until}")
+
+    def _written_by_software(
+        self, light_id: str, *, power: bool | None = None, lumen: int | None = None, kelvin: int | None = None
+    ) -> str:
+        """The writer (the AI Director, an agent, a test, a script) whose recent write explains what a light now shows,
+        or "" when nothing but a person can have done it. The engine's own writes are not looked up here: they are read
+        back when they are made (`_write`).
+
+        Every given field must be explained by a write of a non-person writer in the last `JOURNAL_WINDOW_SECONDS`."""
+        try:
+            entries = self._journal(light_id, self._epoch() - JOURNAL_WINDOW_SECONDS)
+        except Exception:
+            log.exception("could not read the light write journal")
+            return ""
+        writers: list[str] = []
+        for key, value, eps in (("power", power, 0), ("lumen", lumen, LUMEN_EPS), ("kelvin", kelvin, KELVIN_EPS)):
+            if value is None:
+                continue
+            match = next(
+                (
+                    str(e.get("writer"))
+                    for e in reversed(entries)
+                    if not lightjournal.is_person(str(e.get("writer", "")))
+                    and e.get("writer") != "engine"
+                    and isinstance(e.get(key), (int, float, bool))
+                    and (e[key] == value if key == "power" else abs(e[key] - value) < eps)
+                ),
+                None,
+            )
+            if match is None:
+                return ""
+            writers.append(match)
+        return ", ".join(dict.fromkeys(writers))
 
     def _resume(self, views: list[dict[str, Any]], now: float, wall: datetime, why: str) -> None:
         """Hand the lights back to the schedule, starting from what they show now.
@@ -316,6 +406,50 @@ class Automation:
             run.wrote = float("-inf")
         if held:
             self._event(wall, "resume", f"{why}; the schedule has the lights again")
+
+    # -- the hard rule -------------------------------------------------------------------
+
+    def _camera_open(self, data: dict[str, Any]) -> bool:
+        """Does anything use the camera? Counted whatever the camera follow settings say about apps."""
+        if self._usage.active:
+            return True
+        follow = data["follow"]
+        if follow.get("apps", True):
+            return False
+        try:
+            return self.watcher.poll({**follow, "apps": True}, self.devices()).active
+        except Exception:
+            log.exception("could not tell whether anything uses the camera")
+            return True  # unknown: never put a call's lights out on a guess
+
+    def _hard_off(self, views: list[dict[str, Any]], data: dict[str, Any], now: float, wall: datetime) -> None:
+        """With no camera user, every light that is on goes off: after `NO_CAMERA_OFF_SECONDS`, at night after
+        `NIGHT_OFF_SECONDS`. No hold, role, schedule or setting stops it, and nothing here asks what the light was
+        doing or who started it: a light that is on and has no camera is switched off."""
+        if not self._hard_off_enabled:
+            return
+        if self._camera_open(data):
+            self._idle_since = None
+            return
+        if self._idle_since is None:
+            self._idle_since = now
+        limit = NIGHT_OFF_SECONDS if is_night(wall) else NO_CAMERA_OFF_SECONDS
+        if now - self._idle_since < limit:
+            return
+        why = "at night with no camera open" if is_night(wall) else "with no camera in use"
+        for view in views:
+            run = self._run_for(view["id"])
+            if view["power"] is not True or view.get("identifying") or now - run.off_tried < OFF_RETRY_SECONDS:
+                continue
+            run.off_tried = now
+            try:
+                self._write(view, run, now, power=False, verify=False, force=True)
+            except ActionError as exc:
+                self._event(wall, "error", f"Could not switch {view['name']} off {why}: {exc}")
+                continue
+            run.ours = False
+            run.held_at = run.held_wall = None
+            self._event(wall, "hard-off", f"{view['name']} switched off {why} at {_clock(wall)}")
 
     # -- 2. camera follow ---------------------------------------------------------------
 
@@ -485,8 +619,9 @@ class Automation:
                 continue
             percent, kelvin = goal
             model = lighting.MODELS[int(view["pid"], 16)]
-            lumen = lighting.percent_to_lumen(model, percent)
-            if abs(lumen - view["lumen"]) < LUMEN_EPS and abs(kelvin - view["kelvin"]) < KELVIN_EPS:
+            lumen = self._within(lighting.percent_to_lumen(model, percent), run.lumen_floor, run.lumen_ceiling)
+            aimed_kelvin = self._within(kelvin, run.kelvin_floor, run.kelvin_ceiling)
+            if abs(lumen - view["lumen"]) < LUMEN_EPS and abs(aimed_kelvin - view["kelvin"]) < KELVIN_EPS:
                 continue
             try:
                 if fade > 0 and lightplan.fade_needed(model, view["lumen"], percent, view["kelvin"], kelvin):
@@ -528,27 +663,81 @@ class Automation:
         power: bool | None = None,
         percent: float | None = None,
         kelvin: float | None = None,
+        verify: bool = True,
+        force: bool = False,
     ) -> None:
-        """One write through the controller; remembers it as the engine's own so it is not mistaken for a person.
+        """One write through the controller; remembers what the light showed afterwards, so it is never mistaken for
+        a person's change.
 
         The write is a compare-and-set against what the engine last knew the light to show: a person's change that
         landed since (while a fade was walking, or between this tick's snapshot and now) is never written over.
-        The write is dropped (`Superseded`) and the next tick sees the change and holds the light."""
+        The write is dropped (`Superseded`) and the next tick sees the change and holds the light. `force` (the hard
+        rule only) writes whatever the light shows.
+
+        The light is read back right after the write (`verify`): what it shows is what the engine believes from then
+        on, and a value it would not take (the limit the light itself keeps) is learned, not held as a hand."""
+        expect = None if force else (run.power, run.lumen, run.kelvin)
         try:
-            self.lights.write(
-                view["id"], power=power, percent=percent, kelvin=kelvin, expect=(run.power, run.lumen, run.kelvin)
+            applied = self.lights.write(
+                view["id"], power=power, percent=percent, kelvin=kelvin, expect=expect, verify=verify
             )
         except Superseded:
             run.wrote = float("-inf")  # nothing of ours is in flight: the next tick compares at once and holds it
             raise
         model = lighting.MODELS[int(view["pid"], 16)]
         run.wrote = now
+        _, shown_lumen, shown_kelvin = applied if applied is not None else (None, None, None)
         if power is not None:
             run.power = power
         if percent is not None:
-            run.lumen = lighting.percent_to_lumen(model, percent)
+            asked = lighting.percent_to_lumen(model, percent)
+            run.lumen = asked if shown_lumen is None else shown_lumen
+            if shown_lumen is not None:
+                run.lumen_floor, run.lumen_ceiling = self._learn(
+                    asked, shown_lumen, LUMEN_EPS, run.lumen_floor, run.lumen_ceiling, view["name"], "brightness"
+                )
         if kelvin is not None:
-            run.kelvin = lighting.clamp_kelvin(kelvin)
+            asked_kelvin = lighting.clamp_kelvin(kelvin)
+            run.kelvin = asked_kelvin if shown_kelvin is None else shown_kelvin
+            if shown_kelvin is not None:
+                run.kelvin_floor, run.kelvin_ceiling = self._learn(
+                    asked_kelvin,
+                    shown_kelvin,
+                    KELVIN_EPS,
+                    run.kelvin_floor,
+                    run.kelvin_ceiling,
+                    view["name"],
+                    "temperature",
+                )
+
+    @staticmethod
+    def _learn(
+        asked: int, shown: int, eps: int, floor: int | None, ceiling: int | None, name: str, what: str
+    ) -> tuple[int | None, int | None]:
+        """Update a light's known limits from one write: asked for `asked`, the light showed `shown`."""
+        if asked - shown >= eps:
+            if ceiling != shown:
+                log.info("lights: %s keeps its %s at most %s (asked for %s)", name, what, shown, asked)
+            return floor, shown
+        if shown - asked >= eps:
+            if floor != shown:
+                log.info("lights: %s keeps its %s at least %s (asked for %s)", name, what, shown, asked)
+            return shown, ceiling
+        # it took the value: a limit learned earlier that this value lies beyond no longer holds
+        if ceiling is not None and shown > ceiling:
+            ceiling = None
+        if floor is not None and shown < floor:
+            floor = None
+        return floor, ceiling
+
+    @staticmethod
+    def _within(value: float, floor: int | None, ceiling: int | None) -> float:
+        """`value` inside the limits the light keeps."""
+        if ceiling is not None:
+            value = min(value, ceiling)
+        if floor is not None:
+            value = max(value, floor)
+        return value
 
     def _fade(
         self,
@@ -573,6 +762,7 @@ class Automation:
                 now,
                 percent=start + (end - start) * fraction,
                 kelvin=kelvin_start + (kelvin_end - kelvin_start) * fraction,
+                verify=i == steps,  # read the light back once, when the walk has arrived
             )
             if i < steps:
                 self._sleep(seconds / steps)

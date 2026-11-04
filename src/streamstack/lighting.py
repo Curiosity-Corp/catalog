@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from streamstack import lightjournal
+
 VENDOR_ID = 0x046D
 REPORT_ID = 0x11
 DEVICE_BYTE = 0xFF
@@ -357,17 +359,23 @@ class Litra:
         value = self._ask(CMD_GET_TEMPERATURE)
         return None if value is None else decode_word(value)
 
-    def set_power(self, on: bool) -> None:
-        self.transport.write(report_power(self.model, on))
+    # Every write is noted in the shared write journal (`lightjournal`) with `writer`, or with this process's own tag
+    # (STREAMSTACK_LIGHT_WRITER), so the lights service can tell a write by software from a person's hand.
 
-    def set_lumen(self, lumen: int) -> int:
+    def set_power(self, on: bool, writer: str | None = None) -> None:
+        self.transport.write(report_power(self.model, on))
+        lightjournal.record(self.found.id, writer=writer, power=on)
+
+    def set_lumen(self, lumen: int, writer: str | None = None) -> int:
         lumen = int(min(self.model.lumen_max, max(self.model.lumen_min, lumen)))
         self.transport.write(report_brightness(self.model, lumen))
+        lightjournal.record(self.found.id, writer=writer, lumen=lumen)
         return lumen
 
-    def set_kelvin(self, kelvin: int) -> int:
+    def set_kelvin(self, kelvin: int, writer: str | None = None) -> int:
         kelvin = clamp_kelvin(kelvin)
         self.transport.write(report_temperature(self.model, kelvin))
+        lightjournal.record(self.found.id, writer=writer, kelvin=kelvin)
         return kelvin
 
 
@@ -379,8 +387,19 @@ class Litra:
 class SimulatedTransport:
     """Behaves like a Litra's vendor interface: parses output reports, queues the answers to gets."""
 
-    def __init__(self, model: Model, *, on: bool = False, lumen: int | None = None, kelvin: int = 4500) -> None:
+    def __init__(
+        self,
+        model: Model,
+        *,
+        on: bool = False,
+        lumen: int | None = None,
+        kelvin: int = 4500,
+        lumen_ceiling: int | None = None,
+    ) -> None:
+        """`lumen_ceiling` makes it behave like the Beam on dm313red (#182) that reads back 204 lm whatever it was
+        told to show: a write above it is accepted and the light keeps showing the ceiling."""
         self.model = model
+        self.lumen_ceiling = lumen_ceiling
         self.on = on
         self.lumen = lumen if lumen is not None else (model.lumen_min + model.lumen_max) // 2
         self.kelvin = kelvin
@@ -403,7 +422,11 @@ class SimulatedTransport:
         if command == CMD_SET_POWER:
             self.on = payload[0] == 1
         elif command == CMD_SET_BRIGHTNESS:
-            self.lumen = min(self.model.lumen_max, max(self.model.lumen_min, (payload[0] << 8) | payload[1]))
+            asked = (payload[0] << 8) | payload[1]
+            limit = self.model.lumen_max
+            if self.lumen_ceiling is not None:
+                limit = min(limit, self.lumen_ceiling)
+            self.lumen = min(limit, max(self.model.lumen_min, asked))
         elif command == CMD_SET_TEMPERATURE:
             self.kelvin = clamp_kelvin((payload[0] << 8) | payload[1])
         elif command == CMD_GET_POWER:
