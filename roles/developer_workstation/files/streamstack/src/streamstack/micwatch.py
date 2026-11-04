@@ -47,6 +47,12 @@ and the Console only raised a toast ("Press Revive mic"); nobody was looking, so
 `streamstack doctor` was run. The Console now runs `revive_mic` itself, a few seconds after a *stall* is confirmed,
 call or no call, with a budget (`AUTO_REVIVE_MAX` tries per `AUTO_REVIVE_WINDOW_S`) so a dead device cannot be cycled
 forever. Digital silence is still only reported: its fix re-writes mixer controls and is the person's call.
+
+Never giving up (2026-11-04, #188): the budget is a *burst* cap, not a stop. A real replug trial exhausted the three
+tries in 40 s and the mic then stayed stalled for good until a person ran `streamstack mic-revive`. After the burst the
+Console keeps reviving with exponential backoff (`AUTO_REVIVE_BACKOFF_S`, doubling up to `AUTO_REVIVE_BACKOFF_MAX_S`)
+for as long as the stall is confirmed, and starts over from the burst when the mic recovers. A try is not spent while
+the source or its ALSA card is absent (a device that is still re-enumerating cannot be revived).
 """
 
 from __future__ import annotations
@@ -75,8 +81,10 @@ PROFILE_OFF_S = 1.0
 SOURCE_BACK_S = 6.0  # how long to wait for the source to reappear after a profile cycle
 PROC_ASOUND = Path("/proc/asound")
 AUTO_REVIVE_MAX = 3  # the Console revives a stall on its own at most this many times ...
-AUTO_REVIVE_WINDOW_S = 300.0  # ... within this long; then it stops and leaves the manual advice standing
+AUTO_REVIVE_WINDOW_S = 300.0  # ... within this long; then it backs off (below), it never stops
 AUTO_REVIVE_RETRY_S = 20.0  # at least this long between two automatic tries
+AUTO_REVIVE_BACKOFF_S = 20.0  # after the burst: the wait before the next try, doubling each time ...
+AUTO_REVIVE_BACKOFF_MAX_S = 120.0  # ... up to this (a revive is cheap, and nobody on a call waits longer than 2 min)
 SILENCE_WINDOW_S = 4.0  # exact zeros for this long on a running capture are digital silence, never a quiet room
 VERIFY_SIGNAL_S = 3.0  # a revive step is judged on this much captured audio when the fault was digital silence
 SIGNAL_RATE = 48000
@@ -287,6 +295,40 @@ class SignalSample:
         if self.nonzero:
             return False
         return True if self.seconds >= min_seconds else None
+
+
+class ZeroRun:
+    """The unbroken run of exact-zero audio at the end of a stream, measured in AUDIO time (bytes received), never in
+    clock time between frames (#187). The Console used to stamp the first zero frame and call everything since then
+    "digital silence", so a few zero frames with a gap in the data (a source re-negotiating while a browser opened
+    the mic) read as seconds of zeros. Here the run counts only the audio that arrived, restarts at any chunk with
+    signal, and restarts across a delivery gap longer than `gap_s` (the audio on either side is not contiguous)."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic, gap_s: float = 0.5) -> None:
+        self._clock = clock
+        self._gap_s = gap_s
+        self._bytes = 0
+        self._last: float | None = None
+
+    def feed(self, chunk: bytes) -> None:
+        """One chunk of float32le mono samples, as it arrives."""
+        if not chunk:
+            return
+        now = self._clock()
+        if self._last is not None and now - self._last > self._gap_s:
+            self._bytes = 0  # a hole in the stream: the zeros before it are not adjacent to these
+        self._last = now
+        if chunk.count(0) == len(chunk):  # +0.0 in float32 is four zero bytes: no decoding needed
+            self._bytes += len(chunk)
+        else:
+            self._bytes = 0
+
+    def seconds(self) -> float | None:
+        """Seconds of contiguous exact zeros up to the latest chunk; None when the latest chunk had signal, nothing
+        has arrived, or the stream has gone quiet for longer than the gap (that is a stall, not digital silence)."""
+        if not self._bytes or self._last is None or self._clock() - self._last > self._gap_s:
+            return None
+        return self._bytes / SIGNAL_BYTES_PER_S
 
 
 class SignalCapture:

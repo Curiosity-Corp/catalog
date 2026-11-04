@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import array
+import itertools
 import json
 import math
 import os
@@ -1178,17 +1179,89 @@ def test_the_automatic_revive_waits_out_the_detection_window(rig: Rig) -> None:
     assert pactl_mutations(rig) == []
 
 
-def test_the_automatic_revive_is_bounded_and_then_leaves_the_manual_advice(rig: Rig) -> None:
-    probe = Probe(STALLED)
-    ctl, _ = watcher(rig, probe, Verify([True]), env=AUTO_ON)  # nothing ever helps
-    for _ in range(12):
-        tick(rig, ctl, int(micwatch.AUTO_REVIVE_RETRY_S) + 1)
+def revive_times(rig: Rig, ctl: AudioController, seconds: int) -> list[float]:
+    """The clock times at which a suspend-source 1 (one automatic try) happened, ticking one second at a time."""
+    times: list[float] = []
+    seen = 0
+    for step in range(seconds + 1):
+        if step:
+            tick(rig, ctl, 1)
         wait_idle_thread(ctl)
-    suspends = [m for m in pactl_mutations(rig) if m[0] == "suspend-source" and m[2] == "1"]
-    assert len(suspends) == micwatch.AUTO_REVIVE_MAX
-    revive = ctl.state()["mic"]["revive"]
-    assert revive["state"] == "failed" and "replug" in revive["message"].lower()
-    assert ctl.state()["mic"]["stalled"] is True
+        count = len([m for m in pactl_mutations(rig) if m[0] == "suspend-source" and m[2] == "1"])
+        if count > seen:
+            times.extend([rig.clock()] * (count - seen))
+            seen = count
+    return times
+
+
+def test_a_stall_that_outlasts_the_burst_keeps_being_revived_on_the_backoff_schedule(rig: Rig) -> None:
+    """#188: three tries, then 20 s, 40 s, 80 s, 120 s, 120 s ... apart for as long as the stall is confirmed."""
+    ctl, _ = watcher(rig, Probe(STALLED), Verify([True]), env=AUTO_ON)  # nothing ever helps
+    times = revive_times(rig, ctl, 700)
+    gaps = [b - a for a, b in itertools.pairwise(times)]
+    retry, base, cap = micwatch.AUTO_REVIVE_RETRY_S, micwatch.AUTO_REVIVE_BACKOFF_S, micwatch.AUTO_REVIVE_BACKOFF_MAX_S
+    assert gaps[: micwatch.AUTO_REVIVE_MAX - 1] == [retry] * (micwatch.AUTO_REVIVE_MAX - 1)  # the burst
+    after = gaps[micwatch.AUTO_REVIVE_MAX - 1 :]
+    assert after[:5] == [base, base * 2, base * 4, cap, cap]
+    assert len(after) >= 5
+    assert ctl.state()["mic"]["stalled"] is True  # still stalled, and still being worked on
+
+
+def test_the_backoff_starts_over_when_the_mic_recovers(rig: Rig) -> None:
+    probe = Probe(STALLED)
+    ctl, _ = watcher(rig, probe, Verify([True]), env=AUTO_ON)
+    revive_times(rig, ctl, 200)  # burst and the first backoff tries
+    assert ctl._auto_backoff is not None and ctl._auto_backoff >= 2
+    probe.probe = HEALTHY
+    tick(rig, ctl, 10)
+    wait_idle_thread(ctl)
+    assert ctl.state()["mic"]["stalled"] is False
+    assert ctl._auto_backoff is None  # recovered: the next stall gets a fresh burst
+    before = len([m for m in pactl_mutations(rig) if m[0] == "suspend-source" and m[2] == "1"])
+    probe.probe = STALLED
+    tick(rig, ctl, 10)
+    wait_idle_thread(ctl)
+    after = len([m for m in pactl_mutations(rig) if m[0] == "suspend-source" and m[2] == "1"])
+    assert after == before + 1  # revived again at once, not held back by the old backoff
+
+
+def test_a_revive_ok_also_resets_the_backoff(rig: Rig) -> None:
+    probe = Probe(STALLED)
+
+    class Revives(Verify):
+        def __call__(self, mic: str) -> bool | None:
+            probe.probe = HEALTHY
+            return super().__call__(mic)
+
+    ctl, _ = watcher(rig, probe, Revives([False]), env=AUTO_ON)
+    ctl._auto_backoff = 4
+    wait_idle_thread(ctl)
+    tick(rig, ctl, 3)
+    assert ctl._auto_backoff is None
+
+
+def test_no_try_is_spent_while_the_source_or_its_card_is_missing(rig: Rig, caplog: pytest.LogCaptureFixture) -> None:
+    """A device that is still re-enumerating cannot be revived: wait for the source and the ALSA card."""
+    present = {"card": False}
+    props = {"device.api": "alsa", "alsa.card": "2", "alsa.device": "0"}
+    listed = json.dumps([{"name": MIC, "description": "Wave:3", "mute": False, "volume": {}, "properties": props}])
+    rig.pactl_out = listed
+    ctl, _ = watcher(rig, Probe(STALLED), env=AUTO_ON, pcm_present=lambda pcm: present["card"])
+    caplog.set_level("WARNING", logger=audio.log.name)
+    tick(rig, ctl, 60)
+    assert pactl_mutations(rig) == []  # the card is not there: nothing tried
+    assert ctl._auto_tries == []
+    assert len([r for r in caplog.records if "not there yet" in r.getMessage()]) == 1  # said once
+    present["card"] = True
+    tick(rig, ctl, 2)
+    wait_idle_thread(ctl)
+    assert pactl_mutations(rig)[:1] == [["suspend-source", MIC, "1"]]
+    present["card"] = False
+    rig.pactl_out = json.dumps([])  # and a source that is not listed at all
+    ctl2, _ = watcher(rig, Probe(STALLED), env=AUTO_ON)
+    before = len(pactl_mutations(rig))
+    tick(rig, ctl2, 30)
+    assert len(pactl_mutations(rig)) == before
 
 
 def test_the_automatic_revive_never_touches_digital_silence_or_a_muted_mic(rig: Rig) -> None:
@@ -1204,7 +1277,7 @@ def test_the_automatic_revive_never_touches_digital_silence_or_a_muted_mic(rig: 
 
 def test_the_automatic_revive_can_be_switched_off(rig: Rig) -> None:
     ctl, _ = watcher(rig, Probe(STALLED), env={"STREAMSTACK_MIC_AUTO_REVIVE": "off"})
-    tick(rig, ctl, 10)
+    tick(rig, ctl, 600)  # through the burst and every backoff step: still nothing
     assert pactl_mutations(rig) == [] and ctl.state()["mic"]["revive"]["state"] == "idle"
 
 
@@ -1510,11 +1583,13 @@ def zero_frame() -> bytes:
 
 
 def feed_zeros_for(rig: Rig, ctl: AudioController, seconds: int) -> None:
+    """`seconds` of real-time zeros: fifty 20 ms frames per second, a probe at the end of each second."""
     for _ in range(seconds):
-        rig.clock.advance(1.0)
         reader = ctl._readers["mic"]
         assert reader is not None
-        reader.feed(zero_frame())
+        for _ in range(50):
+            rig.clock.advance(0.02)
+            reader.feed(zero_frame())
         ctl._probe()
 
 
@@ -1534,13 +1609,102 @@ def test_a_run_of_exact_zeros_is_flagged_as_digital_silence_not_a_stall(rig: Rig
 def test_a_noise_floor_breaks_the_run_of_zeros(rig: Rig) -> None:
     ctl, _ = watcher(rig, Probe(HEALTHY))
     feed_zeros_for(rig, ctl, 3)
-    rig.clock.advance(1.0)
+    rig.clock.advance(0.02)
     reader = ctl._readers["mic"]
     assert reader is not None
     reader.feed(frame(1000))
     ctl._probe()
     feed_zeros_for(rig, ctl, 3)
     assert ctl.state()["mic"]["stalled"] is False
+
+
+def test_a_few_zero_frames_around_a_gap_in_the_data_are_not_seconds_of_digital_silence(rig: Rig) -> None:
+    """#187: the run was timed from the first zero frame by the clock, so one zero frame, a gap with no data at all
+    (the capture re-negotiating while a browser opened the mic) and another zero frame read as six seconds of
+    digital silence while the microphone was live. Only audio that arrived counts."""
+    ctl, toasts = watcher(rig, Probe(HEALTHY))
+    reader = ctl._readers["mic"]
+    assert reader is not None
+    reader.feed(zero_frame())
+    for _ in range(6):
+        rig.clock.advance(1.0)  # no bytes at all
+        reader.feed(b"")
+        ctl._probe()
+    rig.clock.advance(0.02)
+    reader.feed(zero_frame())
+    ctl._probe()
+    assert ctl.state()["mic"]["stalled"] is False and toasts == []
+    assert reader.zero_for() == pytest.approx(0.02)
+
+
+# -- doctor and Console are one check -----------------------------------------------------------------------------
+
+
+def _doctor_says(stream: list[tuple[float, bytes]]) -> str:
+    """The doctor's verdict on a byte stream: `watch_microphone`'s parec capture, through the shared helper."""
+    import tempfile
+
+    class Proc:
+        def __init__(self) -> None:
+            self.stdout = tempfile.TemporaryFile()  # noqa: SIM115 - closed with the process object
+            self.stdout.write(b"".join(chunk for _, chunk in stream))
+            self.stdout.seek(0)
+
+        def poll(self) -> int | None:
+            return 0
+
+        def terminate(self) -> None:
+            return None
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    class Healthy(micwatch.StallMonitor):
+        def probe(self, mic: str, sources_json: str, silent: bool = False) -> micwatch.StallProbe:
+            return HEALTHY
+
+    def spawn(*args: Any, **kwargs: Any) -> Any:
+        return Proc()
+
+    def run(argv: list[str], timeout: float = 10) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 0, "{}", "")
+
+    probe = micwatch.watch_microphone(MIC, run=run, sleep=lambda s: None, monitor=Healthy(), spawn=spawn, parec=True)
+    return probe.kind or "ok"
+
+
+def _console_says(stream: list[tuple[float, bytes]]) -> str:
+    """The Console's verdict on the same stream, timed as it arrived (seconds to wait before each chunk)."""
+    clock = Clock()
+    reader = LevelReader(MIC, clock, lambda *a, **k: FakeProc())
+    for wait, chunk in stream:
+        frames = [chunk[i : i + audio.FRAME_BYTES] for i in range(0, len(chunk), audio.FRAME_BYTES)] or [chunk]
+        for piece in frames:  # a chunk of audio arrives spread over `wait`, frame by frame, as parec delivers it
+            clock.advance(wait / len(frames))
+            reader.feed(piece)
+    probe = micwatch.silence_verdict(HEALTHY, reader.zero_for())
+    return probe.kind or "ok"
+
+
+ONE_SECOND = zero_frame() * 50
+STREAMS = {
+    "six seconds of exact zeros": [(1.0, ONE_SECOND)] * 6,
+    "a noise floor": [(1.0, frame(1e-6) * 50)] * 6,
+    "zeros, one live frame, zeros": [(1.0, ONE_SECOND)] * 3 + [(0.02, frame(0.06))] + [(1.0, ONE_SECOND)] * 3,
+    "sparse zero frames with gaps": [(0.0, zero_frame())] + [(1.0, b"")] * 6 + [(0.02, zero_frame())],
+    "two seconds of zeros": [(1.0, ONE_SECOND)] * 2,
+}
+
+
+@pytest.mark.parametrize("name", sorted(STREAMS))
+def test_doctor_and_console_give_the_same_answer_on_the_same_audio(name: str) -> None:
+    stream = STREAMS[name]
+    assert _console_says(stream) == _doctor_says(stream)
+    expected = "silence" if name == "six seconds of exact zeros" else "ok"
+    assert _console_says(stream) == expected
 
 
 def test_revive_of_digital_silence_resyncs_the_capture_controls_first(rig: Rig) -> None:

@@ -21,9 +21,14 @@ disappears and is probed again exactly as after a cable pull. A cycle ends `dupl
 has an input part and the Wave XLR's source exists within --wait seconds and audio flows from it, `stalled` when the
 source exists but its ALSA hw_ptr does not advance or no samples arrive (the #186 fault: RUNNING, but silent; judged
 by the same check as `streamstack doctor` and `mic-revive`, which adds about six seconds per cycle), `no-input` when
-the card is back but with output profiles only (the #125 B fault), and `no-card` when it never came back. Exit
-status 1 when any cycle was `stalled`, `no-input` or `no-card`. Results are appended, one JSON line per cycle,
-to --results so they can be pasted on the issue.
+the card is back but with output profiles only (the #125 B fault), and `no-card` when it never came back.
+
+A stall is judged over a window, not at one look (#188): the Console revives a stalled mic by itself, a few seconds
+after the stall is confirmed, so a cycle that is stalled at first look is checked again until --recover-window seconds
+after the replug. `duplex` is healthy at first look, `recovered` is stalled first and healthy within the window (the
+line carries `recovered_after_s`, counted from the replug), `stalled` is still stalled when the window ends. Exit
+status 1 when any cycle was `stalled`, `no-input` or `no-card`; `recovered` passes. Results are appended,
+one JSON line per cycle, to --results so they can be pasted on the issue.
 
 Safety, all checked before the first cycle and again before every cycle:
 
@@ -64,6 +69,8 @@ DUPLEX = "duplex"
 NO_INPUT = "no-input"
 NO_CARD = "no-card"
 STALLED = "stalled"
+RECOVERED = "recovered"
+PASSING = (DUPLEX, RECOVERED)
 
 Run = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
@@ -172,6 +179,7 @@ class Outcome:
     seconds: float
     profile: str = ""
     detail: str = ""
+    recovered_after_s: float | None = None  # seconds from the replug to the first healthy look (recovered only)
 
     def line(self) -> str:
         return json.dumps(
@@ -182,6 +190,11 @@ class Outcome:
                 "seconds": round(self.seconds, 1),
                 "profile": self.profile,
                 "detail": self.detail,
+                **(
+                    {"recovered_after_s": round(self.recovered_after_s, 1)}
+                    if self.recovered_after_s is not None
+                    else {}
+                ),
             }
         )
 
@@ -264,12 +277,37 @@ def wait_for_outcome(
         sleep(1.0)
 
 
+def await_recovery(
+    runner: Run,
+    source_match: str,
+    began: float,
+    window: float,
+    check: StallCheck,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    detail: str = "",
+) -> tuple[str, str, float | None]:
+    """A cycle that was stalled at first look: check again until `window` seconds after the replug (`began`).
+    Returns (RECOVERED, "", seconds since the replug) at the first healthy look, else (STALLED, the last reason,
+    None) when the window ends. A source that is momentarily not listed is waited for, not called healthy."""
+    while clock() - began < window:
+        name = source_name(runner(["pactl", "list", "short", "sources"]).stdout, source_match)
+        if name is None:
+            sleep(1.0)
+            continue
+        result, why = judge_flow(name, check)
+        if result == DUPLEX:
+            return RECOVERED, "", clock() - began
+        detail = why or detail
+    return STALLED, detail, None
+
+
 def summarize(outcomes: list[Outcome]) -> str:
     label = outcomes[0].label if outcomes else "?"
-    counts = {r: sum(1 for o in outcomes if o.result == r) for r in (DUPLEX, STALLED, NO_INPUT, NO_CARD)}
+    counts = {r: sum(1 for o in outcomes if o.result == r) for r in (DUPLEX, RECOVERED, STALLED, NO_INPUT, NO_CARD)}
     return (
-        f"{label}: {len(outcomes)} cycles, {counts[DUPLEX]} duplex, {counts[STALLED]} stalled, "
-        f"{counts[NO_INPUT]} no-input, {counts[NO_CARD]} no-card"
+        f"{label}: {len(outcomes)} cycles, {counts[DUPLEX]} duplex, {counts[RECOVERED]} recovered, "
+        f"{counts[STALLED]} stalled, {counts[NO_INPUT]} no-input, {counts[NO_CARD]} no-card"
     )
 
 
@@ -320,7 +358,12 @@ def trial(
             result, profile, detail = wait_for_outcome(
                 runner, args.card_match, args.source_match, args.wait, clock, sleep, check
             )
-            outcome = Outcome(n, args.label, result, clock() - began, profile, detail)
+            recovered_after: float | None = None
+            if result == STALLED and check is not None:
+                result, detail, recovered_after = await_recovery(
+                    runner, args.source_match, began, args.recover_window, check, clock, sleep, detail
+                )
+            outcome = Outcome(n, args.label, result, clock() - began, profile, detail, recovered_after)
             outcomes.append(outcome)
             out(outcome.line())
             if args.results:
@@ -342,6 +385,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--card-match", default="Wave_XLR", help="part of the PipeWire card name")
     parser.add_argument("--source-match", default="Wave_XLR", help="part of the PipeWire source name")
     parser.add_argument("--wait", type=float, default=20.0, help="seconds to wait for the input to return per cycle")
+    parser.add_argument(
+        "--recover-window",
+        type=float,
+        default=45.0,
+        help="a stalled cycle passes as `recovered` when the mic is healthy within this many seconds of the replug",
+    )
     parser.add_argument("--settle", type=float, default=5.0, help="seconds to rest between cycles")
     parser.add_argument("--stop-other-wireplumber", metavar="USER", help="stop this user's wireplumber for the run")
     parser.add_argument("--results", help="append one JSON line per cycle to this file")
@@ -359,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
     except TrialError as exc:
         print(f"seat_replug_trial: {exc}", file=sys.stderr)
         return 2
-    return 1 if any(o.result != DUPLEX for o in outcomes) else 0
+    return 1 if any(o.result not in PASSING for o in outcomes) else 0
 
 
 if __name__ == "__main__":

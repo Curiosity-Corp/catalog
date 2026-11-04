@@ -5,6 +5,12 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.30] - 2026-11-04
+
+### Fixed
+- The Console no longer reports "Microphone delivers digital silence" while a browser captures a live StreamStack Mic (#187). Its meter reader timed a run of zero frames by the clock from the first zero frame, so one zero frame, a gap with no data (the capture re-negotiating as a browser opened the mic) and another zero frame counted as seconds of exact zeros while `streamstack doctor` rightly said the microphone delivered audio. The run is now counted in audio actually received (a shared `micwatch.ZeroRun`), restarts on any sample with signal and across a delivery gap, so the Console and doctor give one answer on the same audio.
+- A stalled microphone no longer stays stalled once the Console's automatic revive has used its three quick tries (#188, refs #186). After that burst the Console keeps reviving on an exponential backoff (20 s, 40 s, 80 s, then every 2 minutes) for as long as the stall is confirmed, logs every try at warning level, and starts over from the burst when the microphone recovers. A try is not spent while the source or its sound card is still missing after a USB re-enumeration. `STREAMSTACK_MIC_AUTO_REVIVE=0` still switches it off, and digital silence or a muted microphone are still never touched. The replug trial (`tools/seat_replug_trial.py`) now scores each cycle over a window: `duplex`, `recovered` (healthy within 45 s of the replug, with `recovered_after_s`) or `stalled`, and only `stalled` fails the run.
+
 ## [0.0.29] - 2026-11-04
 
 ### Fixed

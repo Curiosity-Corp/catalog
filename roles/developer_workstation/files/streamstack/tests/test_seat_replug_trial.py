@@ -82,6 +82,7 @@ def args(**kw: object) -> argparse.Namespace:
         "source_match": "Wave_XLR",
         "wait": 3.0,
         "settle": 0.0,
+        "recover_window": 45.0,
         "stop_other_wireplumber": None,
         "results": None,
         "execute": True,
@@ -205,26 +206,79 @@ def test_no_input_cards_are_never_stall_checked() -> None:
     assert got[0] == t.NO_INPUT
 
 
-def test_a_stalled_cycle_is_counted_written_and_fails_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The 2026-11-04 trial: every cycle had the duplex profile and the source, yet the second one was frozen."""
-    root = fake_sysfs(tmp_path)
-    results = tmp_path / "r.jsonl"
-    probes = iter([HEALTHY, FROZEN])
+class FakeClock:
+    """A clock that only moves when the trial sleeps or a check takes its few seconds."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def run_cycles(tmp_path: Path, probes: list[Any], window: float = 45.0, check_s: float = 6.0, cycles: int = 1) -> Any:
+    """Run the trial with a scripted stall check (the last probe repeats); each check takes `check_s` seconds."""
+    clock = FakeClock()
+    script = iter(probes)
+    last: list[Any] = [probes[-1]]
+
+    def check(source: str) -> Any:
+        clock.now += check_s
+        last[0] = next(script, last[0])
+        return last[0]
+
     lines: list[str] = []
+    results = tmp_path / "r.jsonl"
     outcomes = t.trial(
-        args(cycles=2, wait=0.0, results=str(results)),
+        args(cycles=cycles, wait=0.0, results=str(results), recover_window=window),
         Desk(),
-        sleep=lambda s: None,
-        sysfs=root,
+        sleep=clock.sleep,
+        clock=clock,
+        sysfs=fake_sysfs(tmp_path),
         out=lines.append,
-        check=lambda source: next(probes),
+        check=check,
     )
-    assert [o.result for o in outcomes] == [t.DUPLEX, t.STALLED]
-    written = [json.loads(line) for line in results.read_text().splitlines()]
-    assert written[1]["result"] == "stalled" and "hw_ptr" in written[1]["detail"]
-    assert "1 duplex, 1 stalled, 0 no-input" in lines[-1]
+    return outcomes, [json.loads(line) for line in results.read_text().splitlines()], lines
+
+
+def test_a_cycle_healthy_at_first_look_is_duplex(tmp_path: Path) -> None:
+    outcomes, written, _ = run_cycles(tmp_path, [HEALTHY])
+    assert [o.result for o in outcomes] == [t.DUPLEX]
+    assert "recovered_after_s" not in written[0]
+
+
+def test_a_cycle_stalled_then_healthy_within_the_window_is_recovered_and_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#188: the Console's auto-revive brings the mic back a few seconds after the stall is confirmed."""
+    outcomes, written, lines = run_cycles(tmp_path, [FROZEN, FROZEN, HEALTHY])
+    assert [o.result for o in outcomes] == [t.RECOVERED]
+    assert written[0]["result"] == "recovered" and written[0]["recovered_after_s"] > 0
+    assert written[0]["recovered_after_s"] <= 45
+    assert "1 recovered, 0 stalled" in lines[-1]
     monkeypatch.setattr(t, "trial", lambda a: outcomes)
-    assert t.main(["--cycles", "2"]) == 1
+    assert t.main(["--cycles", "1"]) == 0  # only `stalled` fails the run
+
+
+def test_a_cycle_still_stalled_when_the_window_ends_is_stalled_and_fails_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outcomes, written, lines = run_cycles(tmp_path, [FROZEN], window=20.0)
+    assert [o.result for o in outcomes] == [t.STALLED]
+    assert written[0]["result"] == "stalled" and "hw_ptr" in written[0]["detail"]
+    assert "recovered_after_s" not in written[0]
+    assert "0 duplex, 0 recovered, 1 stalled" in lines[-1]
+    monkeypatch.setattr(t, "trial", lambda a: outcomes)
+    assert t.main(["--cycles", "1"]) == 1
+
+
+def test_a_recovery_after_the_window_is_not_counted(tmp_path: Path) -> None:
+    """Healthy only at the 50 s look: past a 45 s window it is stalled (the check takes 6 s a look)."""
+    outcomes, _, _ = run_cycles(tmp_path, [FROZEN] * 8 + [HEALTHY], window=45.0, check_s=6.0)
+    assert [o.result for o in outcomes] == [t.STALLED]
 
 
 def test_cycles_are_counted_and_results_written(tmp_path: Path) -> None:
@@ -244,7 +298,7 @@ def test_cycles_are_counted_and_results_written(tmp_path: Path) -> None:
     )
     assert [o.result for o in outcomes] == [t.NO_INPUT, t.DUPLEX]
     assert len(results.read_text().splitlines()) == 2
-    assert "1 duplex, 0 stalled, 1 no-input" in lines[-1]
+    assert "1 duplex, 0 recovered, 0 stalled, 1 no-input" in lines[-1]
     assert (root / "1-3" / "authorized").read_text() == "1\n"
     assert not any(c[:2] == ["pactl", "set-default-source"] for c in desk.calls)
 
