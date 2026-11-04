@@ -161,6 +161,8 @@ provenance:
     - sha256sum *.tar.gz collection.cdx.json | tee collection.sha256
     - mkdir -p evidence
     - python scripts/release_evidence.py build "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" collection.cdx.json evidence
+    # Verification checks the files next to the checksums, so evidence/ carries the artifact and SBOM too.
+    - cp -- ./*.tar.gz collection.cdx.json evidence/
     - python scripts/release_evidence.py verify evidence --commit "$CI_COMMIT_SHA"
   artifacts:
     paths:

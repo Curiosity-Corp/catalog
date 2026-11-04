@@ -94,7 +94,8 @@ artifact, and `provenance` lists it as a subject.
 
 ## Provenance and release evidence
 
-The `provenance` job writes `evidence/`:
+The `provenance` job writes `evidence/`, which also holds copies of the artifact and the
+SBOM so `sha256sum --check SHA256SUMS` works inside the directory:
 
 * `SHA256SUMS`, checkable with `sha256sum --check SHA256SUMS`;
 * `toolchain.json`: Python and package versions, lock-file digests, CI image;
@@ -112,7 +113,7 @@ key holder's machine, never in CI, so no signing key lives in the pipeline; see
 ```bash
 # 1. The files agree with each other (and with the commit you expect).
 python scripts/release_evidence.py verify evidence --commit <full-commit-sha>
-sha256sum --check evidence/SHA256SUMS            # run next to the artifact and SBOM
+(cd evidence && sha256sum --check SHA256SUMS)    # the artifact and SBOM are inside evidence/
 
 # 2. The artifact contains only intended files, is internally consistent,
 #    rebuilds to the same digest, and installs into an empty collections path.
