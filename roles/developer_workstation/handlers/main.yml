@@ -11,6 +11,12 @@
   ansible.builtin.systemd:
     daemon_reload: true
 
+- name: Apply the CPU max performance cap
+  ansible.builtin.systemd:
+    name: curiosity-cpu-max-perf.service
+    state: restarted
+    daemon_reload: true
+
 - name: Reload systemd-logind
   ansible.builtin.command: systemctl kill -s HUP systemd-logind
   changed_when: true
