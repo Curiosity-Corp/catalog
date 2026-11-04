@@ -1,0 +1,10 @@
+# Managed by curiosity.workstation (agent_cpu_policy_enabled). Do not edit.
+# Aggregate CPU bound for agent and IDE processes started with
+# curiosity-agent-run. Remove by setting agent_cpu_policy_enabled: false.
+[Unit]
+Description=Curiosity agent and IDE processes (bounded CPU)
+
+[Slice]
+CPUAccounting=yes
+CPUWeight={{ agent_cpu_policy_weight }}
+CPUQuota={{ _agent_cpu_policy_quota }}

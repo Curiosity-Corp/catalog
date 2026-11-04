@@ -49,6 +49,29 @@
   changed_when: true
   failed_when: false
 
+# `systemctl --user daemon-reload` makes each running user manager re-read the
+# agent slice, so a changed CPUQuota/CPUWeight applies to scopes already in it.
+# A user without a running manager has nothing to reload (it reads the unit at
+# its next start), so a missing runtime directory is skipped, and a failure
+# never fails the run.
+- name: Reload agent CPU policy in user managers
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -c
+      - |
+        uid=$(id -u "$1") || exit 0
+        [ -d "/run/user/$uid" ] || exit 0
+        exec runuser -u "$1" -- env \
+          XDG_RUNTIME_DIR="/run/user/$uid" \
+          DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+          systemctl --user daemon-reload
+      - reload-agent-cpu-policy
+      - "{{ item }}"
+  loop: "{{ dev_users | map(attribute='name') | list }}"
+  changed_when: true
+  failed_when: false
+
 - name: Restart earlyoom
   ansible.builtin.systemd:
     name: earlyoom

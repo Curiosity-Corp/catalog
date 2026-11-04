@@ -1,0 +1,160 @@
+---
+# =============================================================================
+# Agent CPU policy: bound the aggregate CPU of agents and IDE processes
+# =============================================================================
+# Concurrent coding agents (Claude Code, Codex), the test runs and language
+# servers they start, and IDE servers can take every CPU of a research
+# workstation and starve latency-sensitive work (networking, DNS, the desktop).
+# This group is opt-in (agent_cpu_policy_enabled, default false) and uses only
+# native systemd/cgroup v2 features:
+#
+#   * /etc/systemd/user/curiosity-agents.slice: a user-manager slice with a hard
+#     CPUQuota and a lowered CPUWeight, known to every user's systemd --user;
+#   * curiosity-agent-run: starts a command in that slice with
+#     `systemd-run --user --scope`; it fails open when the slice is unusable;
+#   * /etc/profile.d/curiosity-agent-cpu.sh: optional shell functions that send
+#     chosen commands (default: claude) through the launcher;
+#   * curiosity-agent-cpu-bench: the before/after measurement tool
+#     (docs/agent-cpu-policy.md).
+#
+# Nothing already running is moved or restarted, nothing outside these files is
+# edited, and no unit of any other feature is touched. When the switch is off
+# (or the host has no usable cgroup v2 cpu controller) the files this group
+# installed are removed. Included from main.yml on systemd hosts outside
+# containers and the workspace profile.
+# =============================================================================
+
+- name: Validate agent CPU policy inputs
+  ansible.builtin.assert:
+    that:
+      - agent_cpu_policy_quota | string is match('^(auto|[1-9][0-9]*%)$')
+      - agent_cpu_policy_share_percent | string is match('^[0-9]+$')
+      - agent_cpu_policy_share_percent | int >= 1
+      - agent_cpu_policy_share_percent | int <= 100
+      - agent_cpu_policy_reserve_cpus | string is match('^[0-9]+$')
+      - agent_cpu_policy_min_quota_percent | string is match('^[0-9]+$')
+      - agent_cpu_policy_min_quota_percent | int >= 1
+      - agent_cpu_policy_split_across_users is boolean
+      - agent_cpu_policy_weight | string is match('^[0-9]+$')
+      - agent_cpu_policy_weight | int >= 1
+      - agent_cpu_policy_weight | int <= 10000
+      - agent_cpu_policy_wrapped_commands is sequence
+      - agent_cpu_policy_wrapped_commands is not string
+      - >-
+        agent_cpu_policy_wrapped_commands
+        | reject('match', '^[A-Za-z_][A-Za-z0-9_]*$') | list | length == 0
+      - agent_cpu_policy_slice is match('^[A-Za-z0-9_.@-]+[.]slice$')
+    fail_msg: >-
+      agent_cpu_policy_quota must be auto or a systemd percentage such as 800%,
+      agent_cpu_policy_share_percent must be 1-100, agent_cpu_policy_reserve_cpus
+      a whole number, agent_cpu_policy_min_quota_percent at least 1,
+      agent_cpu_policy_weight 1-10000, agent_cpu_policy_split_across_users a
+      boolean, every agent_cpu_policy_wrapped_commands entry a plain shell
+      identifier (letters, digits, underscore) and agent_cpu_policy_slice a
+      *.slice unit name.
+  when: agent_cpu_policy_enabled | bool
+
+# The quota is only enforced when the kernel runs cgroup v2 with the cpu
+# controller. On anything else the slice would silently bound nothing, so the
+# policy is reported and not installed.
+- name: Read the root cgroup's controllers
+  ansible.builtin.slurp:
+    src: /sys/fs/cgroup/cgroup.controllers
+  register: _agent_cpu_policy_controllers
+  failed_when: false
+  when: agent_cpu_policy_enabled | bool
+
+- name: Record whether the cpu controller is available
+  ansible.builtin.set_fact:
+    _agent_cpu_policy_supported: >-
+      {{ _agent_cpu_policy_controllers.content is defined
+         and 'cpu' in (_agent_cpu_policy_controllers.content | b64decode).split() }}
+  when: agent_cpu_policy_enabled | bool
+
+- name: Report a host that cannot enforce the agent CPU policy
+  ansible.builtin.debug:
+    msg: >-
+      agent_cpu_policy_enabled is true but /sys/fs/cgroup/cgroup.controllers
+      does not list the cpu controller (cgroup v1 or no cpu controller); not
+      installing a quota that would not be enforced.
+  when:
+    - agent_cpu_policy_enabled | bool
+    - not (_agent_cpu_policy_supported | bool)
+
+- name: Resolve the per-user agent CPU quota
+  ansible.builtin.set_fact:
+    _agent_cpu_policy_quota: >-
+      {%- set requested = agent_cpu_policy_quota | string | trim -%}
+      {%- if requested == 'auto' -%}
+      {%- set cpus = ansible_facts['processor_vcpus'] | default(1) | int -%}
+      {%- set budget = [cpus * (agent_cpu_policy_share_percent | int), (cpus - (agent_cpu_policy_reserve_cpus | int)) * 100] | min -%}
+      {%- set users = ([dev_users | length, 1] | max) if (agent_cpu_policy_split_across_users | bool) else 1 -%}
+      {{- ([budget // users, agent_cpu_policy_min_quota_percent | int] | max) ~ '%' -}}
+      {%- else -%}
+      {{- requested -}}
+      {%- endif -%}
+  when:
+    - agent_cpu_policy_enabled | bool
+    - _agent_cpu_policy_supported | bool
+
+- name: Install the agent CPU policy
+  when:
+    - agent_cpu_policy_enabled | bool
+    - _agent_cpu_policy_supported | bool
+  block:
+    - name: Install the agent slice for every user manager
+      ansible.builtin.template:
+        src: curiosity-agents.slice.j2
+        dest: "{{ agent_cpu_policy_slice_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload agent CPU policy in user managers
+
+    - name: Install the agent launcher
+      ansible.builtin.template:
+        src: curiosity-agent-run.j2
+        dest: "{{ agent_cpu_policy_runner_path }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the agent CPU measurement tool
+      ansible.builtin.copy:
+        src: curiosity-agent-cpu-bench
+        dest: "{{ agent_cpu_policy_bench_path }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the shell functions for the wrapped commands
+      ansible.builtin.template:
+        src: curiosity-agent-cpu-shell.sh.j2
+        dest: "{{ agent_cpu_policy_shell_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when: agent_cpu_policy_wrapped_commands | length > 0
+
+    - name: Remove the shell functions when no command is wrapped
+      ansible.builtin.file:
+        path: "{{ agent_cpu_policy_shell_path }}"
+        state: absent
+      when: agent_cpu_policy_wrapped_commands | length == 0
+
+# Safe disable: the launcher and the shell functions go away together with the
+# slice, and a shell that still has the functions falls back to a plain run
+# (the function checks for the launcher, the launcher checks for the slice).
+- name: Retire the agent CPU policy
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ agent_cpu_policy_shell_path }}"
+    - "{{ agent_cpu_policy_runner_path }}"
+    - "{{ agent_cpu_policy_bench_path }}"
+    - "{{ agent_cpu_policy_slice_path }}"
+  notify: Reload agent CPU policy in user managers
+  when: >-
+    not ((agent_cpu_policy_enabled | bool)
+         and (_agent_cpu_policy_supported | default(false) | bool))

@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""Before/after measurement for the agent CPU policy (docs/agent-cpu-policy.md).
+
+Runs N concurrent copies of a real workload (a test suite, a build, a headless
+agent session) while sampling how responsive the machine stays, then compares
+two runs:
+
+  curiosity-agent-cpu-bench run --label before --mode bare   --workload-preset catalog-tests --workdir CHECKOUT --json before.json
+  curiosity-agent-cpu-bench run --label after  --mode policy --workload-preset catalog-tests --workdir CHECKOUT --json after.json
+  curiosity-agent-cpu-bench compare before.json after.json --quota-percent 600
+
+`--mode bare` starts the workers directly; `--mode policy` starts each one
+through curiosity-agent-run, so it lands in the agent slice. Everything else is
+identical. The tool only starts the commands you give it and reads /proc and
+/sys; it changes no system setting. Standard library only.
+
+Responsiveness is measured three ways while the workers run:
+  wakeup   how late a 10 ms sleep returns (scheduler wake-up latency)
+  forkexec time to start and reap `true` (what every shell command pays)
+  resolver time of `getent hosts <name>` (the NSS/DNS path; default localhost)
+plus the kernel's CPU pressure (PSI) and the slice's throttling counters.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import resource
+import shlex
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+DEFAULT_RUNNER = "curiosity-agent-run"
+DEFAULT_SLICE = "curiosity-agents.slice"
+WAKEUP_SLEEP_S = 0.010
+
+# Real workloads, run in the --workdir checkout. Add your own with --workload
+# (any shell command; it is repeated until the duration ends).
+PRESETS = {
+    "catalog-tests": "python3 -m pytest -q -p no:cacheprovider tests",
+    "python-compile": "python3 -m compileall -q -f .",
+}
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (unit-tested)
+# ---------------------------------------------------------------------------
+
+
+def percentile(values: list[float], pct: float) -> float:
+    """Nearest-rank percentile; 0.0 for an empty sample."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = max(1, -(-len(ordered) * pct // 100))  # ceil
+    return ordered[min(int(rank), len(ordered)) - 1]
+
+
+def summarize(values: list[float]) -> dict[str, float]:
+    return {
+        "count": len(values),
+        "p50": percentile(values, 50),
+        "p95": percentile(values, 95),
+        "p99": percentile(values, 99),
+        "max": max(values) if values else 0.0,
+    }
+
+
+def parse_keyed_counters(text: str) -> dict[str, int]:
+    """Parse `key value` lines such as cgroup cpu.stat."""
+    result: dict[str, int] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lstrip("-").isdigit():
+            result[parts[0]] = int(parts[1])
+    return result
+
+
+def parse_cpu_pressure(text: str) -> dict[str, float]:
+    """Parse /proc/pressure/cpu: `some avg10=0.00 avg60=0.00 avg300=0.00 total=0`."""
+    result: dict[str, float] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts or parts[0] != "some":
+            continue
+        for item in parts[1:]:
+            key, _, value = item.partition("=")
+            try:
+                result["some_" + key] = float(value)
+            except ValueError:
+                continue
+    return result
+
+
+def slice_cgroup_path(proc_cgroup: str, slice_name: str) -> str | None:
+    """The cgroup path of `slice_name` from the text of /proc/<pid>/cgroup."""
+    for line in proc_cgroup.splitlines():
+        _, _, path = line.partition("::")
+        if not path:
+            continue
+        parts = path.split("/")
+        if slice_name in parts:
+            return "/".join(parts[: parts.index(slice_name) + 1])
+    return None
+
+
+def default_workers(vcpus: int) -> int:
+    """Oversubscribe: twice the CPUs reproduces the starvation the policy targets."""
+    return max(2, 2 * vcpus)
+
+
+def quota_percent_of(value: str) -> float:
+    """`600%` or `600` to 600.0."""
+    return float(value.strip().rstrip("%"))
+
+
+def compare_runs(before: dict, after: dict, quota_percent: float | None, tolerance: float) -> dict:
+    """Build the comparison table and the pass/fail checks from two result files."""
+    rows = []
+
+    def row(name: str, unit: str, path: tuple[str, ...], lower_is_better: bool) -> None:
+        def pick(run: dict) -> float:
+            node = run["results"]
+            for key in path:
+                node = node[key]
+            return float(node)
+
+        b, a = pick(before), pick(after)
+        change = ((a - b) / b * 100.0) if b else 0.0
+        rows.append(
+            {
+                "metric": name,
+                "unit": unit,
+                "before": b,
+                "after": a,
+                "change_percent": change,
+                "lower_is_better": lower_is_better,
+            }
+        )
+
+    row("agent CPU (all workers)", "%", ("agent_cpu_percent",), True)
+    row("wake-up latency p95", "ms", ("probes", "wakeup_ms", "p95"), True)
+    row("wake-up latency p99", "ms", ("probes", "wakeup_ms", "p99"), True)
+    row("fork+exec p95", "ms", ("probes", "forkexec_ms", "p95"), True)
+    row("resolver lookup p95", "ms", ("probes", "resolver_ms", "p95"), True)
+    row("CPU pressure (some, avg10 at end)", "%", ("pressure", "some_avg10_end"), True)
+    row("workload iterations completed", "", ("iterations",), False)
+
+    checks = []
+    if quota_percent is not None:
+        limit = quota_percent * (1.0 + tolerance)
+        used = float(after["results"]["agent_cpu_percent"])
+        checks.append(
+            {
+                "check": f"after: agent CPU <= quota {quota_percent:g}% + {tolerance * 100:g}%",
+                "ok": used <= limit,
+                "detail": f"{used:.0f}% used, limit {limit:.0f}%",
+            }
+        )
+    for name in ("wakeup_ms", "forkexec_ms"):
+        b = float(before["results"]["probes"][name]["p99"])
+        a = float(after["results"]["probes"][name]["p99"])
+        checks.append(
+            {
+                "check": f"after: {name} p99 not worse than before",
+                "ok": a <= b * (1.0 + tolerance),
+                "detail": f"before {b:.2f}, after {a:.2f}",
+            }
+        )
+    return {"rows": rows, "checks": checks, "ok": all(c["ok"] for c in checks)}
+
+
+def render_markdown(comparison: dict, before: dict, after: dict) -> str:
+    lines = [
+        f"| metric | {before['label']} ({before['mode']}) | {after['label']} ({after['mode']}) | change |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for r in comparison["rows"]:
+        unit = f" {r['unit']}" if r["unit"] else ""
+        lines.append(
+            f"| {r['metric']} | {r['before']:.2f}{unit} | {r['after']:.2f}{unit} | {r['change_percent']:+.0f}% |"
+        )
+    lines.append("")
+    for c in comparison["checks"]:
+        lines.append(f"- {'PASS' if c['ok'] else 'FAIL'}: {c['check']} ({c['detail']})")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Measurement
+# ---------------------------------------------------------------------------
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text()
+    except OSError:
+        return ""
+
+
+def _vcpus() -> int:
+    return len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+
+
+def build_worker_command(args: argparse.Namespace, counter_dir: str) -> list[str]:
+    """The argv one worker runs: the workload, plain or through the launcher.
+
+    The loop restarts the workload until the harness stops the process group. A
+    successful run appends a byte to `ok`, a failed one to `fail` (and waits a
+    second so a broken workload cannot spin), which gives the throughput. The
+    workload runs in the background and the loop waits for it, so a SIGTERM to
+    the group runs the trap at once, which reaps every child; the harness then
+    sees all of their CPU time in its own child resource usage.
+    """
+    workload = args.workload or PRESETS[args.workload_preset]
+    ok = shlex.quote(os.path.join(counter_dir, "ok"))
+    fail = shlex.quote(os.path.join(counter_dir, "fail"))
+    script = (
+        "trap 'wait; exit 0' TERM; "
+        f"while :; do ( {workload}\n) & "
+        f"if wait $!; then printf . >> {ok}; "
+        f"else printf x >> {fail}; sleep 1 & wait $!; fi; done"
+    )
+    command = ["sh", "-c", script]
+    if args.mode == "policy":
+        command = [args.runner, *command]
+    return command
+
+
+def _probe_once(kind: str, resolver_name: str) -> float:
+    start = time.perf_counter()
+    if kind == "wakeup":
+        time.sleep(WAKEUP_SLEEP_S)
+        return (time.perf_counter() - start - WAKEUP_SLEEP_S) * 1000.0
+    if kind == "forkexec":
+        subprocess.run(["true"], check=False)
+    else:
+        subprocess.run(
+            ["getent", "hosts", resolver_name],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    return (time.perf_counter() - start) * 1000.0
+
+
+def run_measurement(args: argparse.Namespace) -> dict:
+    vcpus = _vcpus()
+    workers = args.workers or default_workers(vcpus)
+    counter_dir = tempfile.mkdtemp(prefix="agent-cpu-bench-")
+    command = build_worker_command(args, counter_dir)
+    env = dict(os.environ)
+    if args.mode == "bare":
+        # Make sure a stale shell function or variable cannot change the mode.
+        env["CURIOSITY_AGENT_CPU_POLICY"] = "off"
+
+    pressure_start = parse_cpu_pressure(_read(Path("/proc/pressure/cpu")))
+    slice_cgroup: Path | None = None
+    slice_stat_start: dict[str, int] = {}
+    usage_start = resource.getrusage(resource.RUSAGE_CHILDREN)
+
+    procs = [
+        subprocess.Popen(
+            command,
+            cwd=args.workdir,
+            env=env,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        for _ in range(workers)
+    ]
+    wall_start = time.perf_counter()
+
+    # The workers are started; find the slice's cgroup from the first worker
+    # that already sits in it (policy mode) for the throttling counters.
+    probes: dict[str, list[float]] = {"wakeup": [], "forkexec": [], "resolver": []}
+    deadline = wall_start + args.duration
+    tick = 0
+    kinds = ("wakeup", "forkexec", "resolver")
+    try:
+        time.sleep(min(1.0, args.duration / 4))
+        if args.mode == "policy":
+            for proc in procs:
+                path = slice_cgroup_path(_read(Path(f"/proc/{proc.pid}/cgroup")), args.slice)
+                if path:
+                    slice_cgroup = CGROUP_ROOT / path.lstrip("/")
+                    break
+            if slice_cgroup:
+                slice_stat_start = parse_keyed_counters(_read(slice_cgroup / "cpu.stat"))
+        while time.perf_counter() < deadline:
+            kind = kinds[tick % len(kinds)]
+            probes[kind].append(_probe_once(kind, args.resolver_name))
+            tick += 1
+            time.sleep(args.probe_interval_ms / 1000.0)
+        wall = time.perf_counter() - wall_start
+        slice_stat_end = parse_keyed_counters(_read(slice_cgroup / "cpu.stat")) if slice_cgroup else {}
+        pressure_end = parse_cpu_pressure(_read(Path("/proc/pressure/cpu")))
+    finally:
+        for proc in procs:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        for proc in procs:
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                proc.wait()
+    usage_end = resource.getrusage(resource.RUSAGE_CHILDREN)
+    cpu_seconds = (usage_end.ru_utime - usage_start.ru_utime) + (usage_end.ru_stime - usage_start.ru_stime)
+
+    throttle = {}
+    if slice_stat_end:
+        for key in ("nr_periods", "nr_throttled", "throttled_usec", "usage_usec"):
+            throttle[key] = slice_stat_end.get(key, 0) - slice_stat_start.get(key, 0)
+
+    def _count(name: str) -> int:
+        try:
+            return os.path.getsize(os.path.join(counter_dir, name))
+        except OSError:
+            return 0
+
+    iterations, failures = _count("ok"), _count("fail")
+    for name in ("ok", "fail"):
+        try:
+            os.unlink(os.path.join(counter_dir, name))
+        except OSError:
+            pass
+    try:
+        os.rmdir(counter_dir)
+    except OSError:
+        pass
+
+    return {
+        "label": args.label,
+        "mode": args.mode,
+        "meta": {
+            "vcpus": vcpus,
+            "kernel": platform.release(),
+            "workers": workers,
+            "duration_s": round(wall, 2),
+            "workload": args.workload or args.workload_preset,
+            "slice": args.slice if args.mode == "policy" else None,
+            "resolver_name": args.resolver_name,
+        },
+        "results": {
+            # The workers burn CPU for the whole window, so cpu seconds over
+            # wall seconds is their aggregate share in percent of one CPU.
+            "agent_cpu_percent": round(cpu_seconds / wall * 100.0, 1) if wall else 0.0,
+            "iterations": iterations,
+            "workload_failures": failures,
+            "probes": {
+                "wakeup_ms": summarize(probes["wakeup"]),
+                "forkexec_ms": summarize(probes["forkexec"]),
+                "resolver_ms": summarize(probes["resolver"]),
+            },
+            "pressure": {
+                "some_avg10_start": pressure_start.get("some_avg10", 0.0),
+                "some_avg10_end": pressure_end.get("some_avg10", 0.0),
+                "some_total_delta_usec": int(
+                    pressure_end.get("some_total", 0.0) - pressure_start.get("some_total", 0.0)
+                ),
+            },
+            "slice_cpu_stat_delta": throttle,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="curiosity-agent-cpu-bench",
+        description="Measure agent CPU and interactive responsiveness, before and after the policy.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    run = sub.add_parser("run", help="run concurrent workers and sample responsiveness")
+    run.add_argument("--label", required=True, help="name of this run, e.g. before or after")
+    run.add_argument("--mode", choices=("bare", "policy"), required=True)
+    group = run.add_mutually_exclusive_group(required=True)
+    group.add_argument("--workload", help="shell command to repeat in every worker")
+    group.add_argument("--workload-preset", choices=sorted(PRESETS))
+    run.add_argument("--workdir", default=".", help="directory the workers run in (a real checkout)")
+    run.add_argument("--workers", type=int, default=0, help="default: 2 x vCPUs")
+    run.add_argument("--duration", type=float, default=120.0, help="seconds of measurement")
+    run.add_argument("--probe-interval-ms", type=float, default=100.0)
+    run.add_argument("--resolver-name", default="localhost", help="name for the resolver probe")
+    run.add_argument("--runner", default=DEFAULT_RUNNER, help="launcher used in policy mode")
+    run.add_argument("--slice", default=DEFAULT_SLICE)
+    run.add_argument("--json", dest="json_path", help="write the result here")
+
+    cmp_ = sub.add_parser("compare", help="compare a before and an after result")
+    cmp_.add_argument("before")
+    cmp_.add_argument("after")
+    cmp_.add_argument("--quota-percent", help="the slice CPUQuota, e.g. 600%% (enables the quota check)")
+    cmp_.add_argument("--tolerance", type=float, default=0.10, help="allowed slack, default 0.10")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    if args.command == "run":
+        if args.duration <= 0 or args.probe_interval_ms <= 0 or args.workers < 0:
+            print("duration and probe interval must be positive", file=sys.stderr)
+            return 2
+        if not Path(args.workdir).is_dir():
+            print(f"--workdir {args.workdir} is not a directory", file=sys.stderr)
+            return 2
+        result = run_measurement(args)
+        text = json.dumps(result, indent=2, sort_keys=True) + "\n"
+        if args.json_path:
+            Path(args.json_path).write_text(text)
+        print(text, end="")
+        return 0
+
+    before = json.loads(Path(args.before).read_text())
+    after = json.loads(Path(args.after).read_text())
+    quota = quota_percent_of(args.quota_percent) if args.quota_percent else None
+    comparison = compare_runs(before, after, quota, args.tolerance)
+    print(render_markdown(comparison, before, after), end="")
+    return 0 if comparison["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

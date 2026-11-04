@@ -648,7 +648,7 @@ from `byod-kiosk`.
 ## Safety-sensitive switches
 
 `sunshine_enabled`, `profile_cleanup_enabled`, `tmp_hygiene_enabled`,
-`ziti_enabled`, and all
+`agent_cpu_policy_enabled`, `ziti_enabled`, and all
 identity-provider integrations default to `false`. If enabling Sunshine,
 provide a non-default credential from a protected variable or configure it
 interactively. If enabling cleanup, test the retention window on a disposable
@@ -715,6 +715,21 @@ tmpfs holding `/tmp` is nearly full. Variables:
 It is skipped on the `workspace` profile and in containers. See
 [`docs/tmp-hygiene.md`](tmp-hygiene.md) for the design, safety properties, and
 how to retire a hand-installed cleaner.
+
+## Agent CPU policy
+
+`agent_cpu_policy_enabled` (default `false`) bounds the aggregate CPU of coding
+agents and IDE processes with a systemd user slice (`curiosity-agents.slice`,
+`CPUQuota` plus a lowered `CPUWeight`) and a launcher, `curiosity-agent-run`, so
+concurrent sessions cannot starve DNS, networking and the desktop. The quota is
+derived from the CPU count (`agent_cpu_policy_quota: auto`) or set explicitly.
+Variables: `agent_cpu_policy_quota`, `agent_cpu_policy_share_percent` (`75`),
+`agent_cpu_policy_reserve_cpus` (`1`), `agent_cpu_policy_split_across_users`
+(`true`), `agent_cpu_policy_min_quota_percent` (`50`), `agent_cpu_policy_weight`
+(`50`), `agent_cpu_policy_wrapped_commands` (`[claude]`). It is skipped on the
+`workspace` profile and in containers, and `false` removes everything it
+installed. See [`docs/agent-cpu-policy.md`](agent-cpu-policy.md) for sizing,
+escape hatches, failure modes, safe disable and the before/after measurement.
 
 ## hhtest test-bed account
 

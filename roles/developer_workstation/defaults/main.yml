@@ -787,6 +787,45 @@ tmp_hygiene_pressure_config_path: /etc/curiosity/tmp-pressure-tmpfiles.conf
 tmp_hygiene_nr_inodes: auto
 tmp_hygiene_nr_inodes_dropin_path: /etc/systemd/system/tmp.mount.d/50-curiosity-inodes.conf
 
+# Agent CPU policy (opt-in): bound the aggregate CPU of coding agents and IDE
+# processes (Claude Code, Codex, language servers, test runs they start) so a
+# fleet of concurrent sessions cannot starve interactive work or latency-
+# sensitive services (networking, DNS). It installs a systemd *user* slice,
+# curiosity-agents.slice, with CPUQuota (a hard ceiling) and a lowered CPUWeight,
+# and a launcher, curiosity-agent-run, that starts a command inside it. Nothing
+# already running is moved and nothing is restarted. Off by default; set it per
+# host or group in inventory. Skipped on workspace profiles and in containers.
+# See docs/agent-cpu-policy.md (escape hatches, failure modes, safe disable,
+# before/after measurement).
+agent_cpu_policy_enabled: false
+# Per-user ceiling. `auto` derives it from the CPU count: the agents may use
+# agent_cpu_policy_share_percent of all vCPUs, but always leave
+# agent_cpu_policy_reserve_cpus whole CPUs free (matters on small machines), and
+# the result is split across dev_users when agent_cpu_policy_split_across_users
+# is true, so the sum over users stays inside the budget. An explicit systemd
+# percentage such as "800%" is used as written for every user (no split).
+agent_cpu_policy_quota: auto
+agent_cpu_policy_share_percent: 75
+agent_cpu_policy_reserve_cpus: 1
+agent_cpu_policy_split_across_users: true
+# Lower bound for an auto quota, in percent of one CPU (100 = one full CPU).
+agent_cpu_policy_min_quota_percent: 50
+# CPUWeight of the slice (1-10000, systemd default 100). It only matters among
+# siblings in the same user manager (for example app.slice); the quota is what
+# bounds the agents against everything else.
+agent_cpu_policy_weight: 50
+# Commands that get a shell function sending them through curiosity-agent-run
+# (installed as /etc/profile.d/curiosity-agent-cpu.sh, read by login shells).
+# Plain shell identifiers only. Empty installs no function; run
+# `curiosity-agent-run <command>` explicitly instead.
+agent_cpu_policy_wrapped_commands:
+  - claude
+agent_cpu_policy_slice: curiosity-agents.slice
+agent_cpu_policy_slice_path: /etc/systemd/user/curiosity-agents.slice
+agent_cpu_policy_runner_path: /usr/local/bin/curiosity-agent-run
+agent_cpu_policy_bench_path: /usr/local/bin/curiosity-agent-cpu-bench
+agent_cpu_policy_shell_path: /etc/profile.d/curiosity-agent-cpu.sh
+
 # Minimal desktop (Openbox + LightDM + Firefox)
 # Lightweight GUI for machines that only need a browser and terminal.
 # Mutually exclusive with display_config_enabled (GDM/GNOME).

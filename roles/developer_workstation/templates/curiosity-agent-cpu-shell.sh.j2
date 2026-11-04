@@ -1,0 +1,14 @@
+# Managed by curiosity.workstation (agent_cpu_policy_enabled). Do not edit.
+# Sends the wrapped commands through curiosity-agent-run, which keeps their
+# aggregate CPU inside {{ agent_cpu_policy_slice }}. Escape hatches: run
+# `command <tool>` to bypass the function once, or export
+# CURIOSITY_AGENT_CPU_POLICY=off to bypass it for the whole shell.
+{% for tool in agent_cpu_policy_wrapped_commands %}
+{{ tool }}() {
+    if [ "${CURIOSITY_AGENT_CPU_POLICY:-on}" != off ] && command -v curiosity-agent-run >/dev/null 2>&1; then
+        curiosity-agent-run {{ tool }} "$@"
+    else
+        command {{ tool }} "$@"
+    fi
+}
+{% endfor %}

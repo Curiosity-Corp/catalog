@@ -466,6 +466,21 @@
     - ansible_service_mgr | default('') == 'systemd'
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
+- name: Include agent CPU policy (bounded agent and IDE CPU)
+  ansible.builtin.include_tasks:
+    file: agent-cpu-policy.yml
+    apply:
+      tags: [agent-cpu-policy, system]
+  tags: [agent-cpu-policy, system]
+  # Machine-level systemd policy, opt-in (agent_cpu_policy_enabled). Skip the
+  # container-safe workspace profile and containers. The task file retires what
+  # it installed when the switch is off, so setting it to false converges.
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_system == 'Linux'
+    - ansible_service_mgr | default('') == 'systemd'
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include shell RC fallback
   ansible.builtin.include_tasks:
     file: user-shell-fallback.yml
