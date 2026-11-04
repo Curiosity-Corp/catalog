@@ -64,12 +64,23 @@
     label: "{{ item.name }}"
   register: _modprobe_options_result
 
+# A file an earlier role version wrote must not outlive the profile entry that
+# created it: a stale options line for a parameter the running kernel no longer
+# has is logged as an error at every boot.
+- name: Remove retired modprobe options
+  ansible.builtin.file:
+    path: "/etc/modprobe.d/{{ item }}.conf"
+    state: absent
+  loop: "{{ retired_modprobe_options | default([]) }}"
+
 - name: Load hardware-specific kernel modules at boot ({{ hardware_profile }})
   ansible.builtin.copy:
     dest: /etc/modules-load.d/curiosity-hardware.conf
     content: |
       # Managed by the curiosity workstation role (hardware profile: {{ hardware_profile }})
-      {{ hardware_profiles[hardware_profile].kernel_modules | default([]) | join('\n') }}
+      {% for module in hardware_profiles[hardware_profile].kernel_modules | default([]) %}
+      {{ module }}
+      {% endfor %}
     owner: root
     group: root
     mode: "0644"

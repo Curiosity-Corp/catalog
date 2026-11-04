@@ -47,7 +47,7 @@ Settings each hardware profile defines in `hardware_profiles` (names only):
 | `arm-thin-client` | ARM thin client | `packages`, `services`, `pia_vpn` |
 | `x86-byod-laptop` | x86_64 BYOD laptop (Lenovo T460 and similar) | `packages`, `disable_sleep`, `performance_mode`, `services`, `pia_vpn`, `console_diagnostics` |
 | `z590` | ASUS TUF Gaming Z590 — iGPU passthrough VM host | `packages`, `services`, `pipx_packages`, `udev_rules`, `pia_vpn` |
-| `deskmeet-b760` | ASRock DeskMeet B760 — Intel Arc A380 + desk USB hub peripherals | `hhtest_host`, `hhtest_authorized_keys`, `firewall`, `firewall_ssh_interfaces`, `firewall_mosh`, `untrusted_lan`, `dns_over_tls_interfaces`, `packages`, `services`, `disable_sleep`, `performance_mode`, `litra_cli`, `logitech_g604`, `samsung_tv_cli`, `streamstack`, `double_click_ms`, `idle_lock_minutes`, `i915_pcon_frl_444`, `display_outputs`, `console_video`, `display_guard`, `console_tuning`, `broadcast_rgb`, `display_scale`, `compositor_enabled`, `greeter`, `xorg_accel_method`, `xorg_auto_add_gpu`, `xorg_gdb_trace`, `xorg_preferred_modes`, `pointer_accel_speed`, `pipx_packages`, `udev_rules`, `modprobe_options`, `kernel_modules`, `pia_vpn` |
+| `deskmeet-b760` | ASRock DeskMeet B760 — Intel Arc A380 + desk USB hub peripherals | `hhtest_host`, `hhtest_authorized_keys`, `firewall`, `firewall_ssh_interfaces`, `firewall_mosh`, `untrusted_lan`, `dns_over_tls_interfaces`, `packages`, `services`, `disable_sleep`, `performance_mode`, `litra_cli`, `logitech_g604`, `samsung_tv_cli`, `streamstack`, `double_click_ms`, `idle_lock_minutes`, `i915_pcon_frl_444`, `display_outputs`, `console_video`, `display_guard`, `console_tuning`, `broadcast_rgb`, `display_scale`, `compositor_enabled`, `greeter`, `xorg_accel_method`, `xorg_auto_add_gpu`, `xorg_gdb_trace`, `xorg_preferred_modes`, `pointer_accel_speed`, `pipx_packages`, `udev_rules`, `kernel_modules`, `cpu_max_perf_pct`, `pia_vpn` |
 | `t460` | Lenovo ThinkPad T460/T560— Intel HD 520 (Skylake GT2) + Validity VFS5011 fingerprint | `packages`, `disable_sleep`, `performance_mode`, `services`, `pipx_packages`, `udev_rules`, `pia_vpn`, `console_diagnostics` |
 
 ## Tags: `developer_workstation`
@@ -69,6 +69,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `coder` | supported | 10 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `collaboration` | supported | 10 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `console` | supported | 3 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
+| `cpu-thermal` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `data-science` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `devops` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `display` | supported | 7 | `main.yml`, `minimal-desktop.yml`, `pro-mimic.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
@@ -83,7 +84,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `git` | supported | 2 | `main.yml` | `workspace` |  |
 | `grub` | supported | 2 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `gtk` | supported | 1 | `minimal-desktop.yml` |  |  |
-| `hardware` | supported | 18 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Hardware profile packages, services, udev rules and device helpers. |
+| `hardware` | supported | 19 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Hardware profile packages, services, udev rules and device helpers. |
 | `hhtest` | supported | 1 | `main.yml` |  |  |
 | `i915` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `integrity` | supported | 1 | `minimal-desktop.yml` |  |  |
@@ -215,6 +216,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `m365_cli_command_links` | `developer_workstation` | internal |
 | `minimal_desktop_greeter_effective` | `developer_workstation` | internal |
 | `npm_global_command_links` | `developer_workstation` | internal |
+| `retired_modprobe_options` | `developer_workstation` | internal |
 | `streamstack_seat_guest_dropin_content` | `developer_workstation` | internal |
 | `t460_console_status_path` | `developer_workstation` | internal |
 | `workstation_application_contracts` | `developer_workstation` | internal |
@@ -261,7 +263,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-353 variables, from `roles/developer_workstation/defaults/main.yml`.
+355 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -518,6 +520,8 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `samsung_tv_key_vault_secret` | string | (redacted) |  | private-hook | secret | (undocumented) |
 | `minimal_desktop_double_click_ms` | string (template) | template expression |  | supported |  | Double-click interval in milliseconds for Openbox (rc.xml) and GTK apps. Derived from the hardware profile's optional `double_click_ms`; a shorter interval makes a double-click more deliberate (DeskMeet1's G604 chatters). |
 | `i915_pcon_frl_444_enabled` | string (template) | template expression |  | supported | boot | Patched i915 module (RGB 4:4:4 over a DP -&gt; HDMI 2.1 PCON), rebuilt for every installed kernel by tasks/i915-pcon-frl-444.yml. Derived from the selected hardware profile's optional `i915_pcon_frl_444` flag; only deskmeet-b760 opts in. (...) |
+| `developer_workstation_cpu_max_perf_pct` | string (template) | template expression |  | supported |  | CPU thermal guard (tasks/cpu-thermal-guard.yml): cap intel_pstate max_perf_pct at boot through a oneshot unit. Empty (the default) installs nothing and removes a unit an earlier run installed. (...) |
+| `retired_modprobe_options` | list | `["curiosity-i915-pcon-frl-444"]` |  | internal |  | Retired /etc/modprobe.d/&lt;name&gt;.conf files that tasks/hardware-drivers.yml removes from every host (state: absent), so a file an earlier role version wrote does not outlive the profile entry that created it. (...) |
 | `console_video` | string (template) | template expression |  | experimental | boot | Kernel video= argument that makes every VT (fbcon, boot console, X) come up at the display's own EDID/CTA mode so switching VTs causes no modeset. Derived from the hardware profile's optional `console_video`; empty (the default) installs nothing and removes a previously installed drop-in. (...) |
 | `console_video_dropin_path` | string | `"/etc/default/grub.d/92-curiosity-console-video.cfg"` |  | internal |  | (undocumented) |
 | `minimal_desktop_compositor_enabled` | string (template) | template expression |  | supported |  | Whether the Openbox session starts the picom compositor, from the hardware profile's optional `compositor_enabled` (default true, so every other machine is unchanged). (...) |

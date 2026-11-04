@@ -4,6 +4,15 @@
 # files and symlinks older than N days under the directories given (the service passes ~/work and /tmp), then prunes the
 # empty directories they leave behind. Sockets (a live tmux server's) and
 # anything newer than the age are left alone. Never follows symlinks.
+#
+# Go makes its module cache read-only (directories 0555, files 0444), and
+# unlinking a file needs write permission on its DIRECTORY, so a plain find
+# -delete failed with "Permission denied" on ~/work/gomodcache and the nightly
+# unit ended up failed. Before deleting, the owner's write permission is given
+# back on the directories this account owns under each root. The chmod pass
+# only matches real directories (-type d, symlinks are never followed), stays
+# on the root's filesystem (-xdev), skips the root itself and anything owned by
+# another uid, and touches directory modes only, never file contents.
 set -euo pipefail
 
 usage="usage: hhtest-cleanup <age-days> <dir>..."
@@ -24,8 +33,18 @@ if [[ "$me" -eq 0 ]]; then
   exit 2
 fi
 
+# Directories another uid owns (systemd-private-*, other users' tmux and socket
+# directories under /tmp) can neither be searched nor are ours to clean: they are
+# pruned, so find never descends into them and never reports "Permission denied"
+# for them. Everything below acts only on entries owned by this account.
 for root in "$@"; do
   [[ -d "$root" ]] || continue
-  find "$root" -xdev -mindepth 1 -uid "$me" \( -type f -o -type l \) -mtime "+$age_days" -delete
-  find "$root" -xdev -mindepth 1 -depth -uid "$me" -type d -empty -mmin +60 -delete
+  if ! find "$root" -xdev -mindepth 1 \( -type d ! -uid "$me" -prune \) -o \
+    \( -type d -uid "$me" ! -perm -u=rwx -exec chmod u+rwx -- {} + \); then
+    echo "hhtest-cleanup: could not restore owner permissions under $root; deleting what is possible" >&2
+  fi
+  find "$root" -xdev -mindepth 1 \( -type d ! -uid "$me" -prune \) -o \
+    \( -uid "$me" \( -type f -o -type l \) -mtime "+$age_days" -exec rm -f -- {} + \)
+  find "$root" -xdev -mindepth 1 \( -type d ! -uid "$me" -prune \) -o \
+    \( -uid "$me" -type d -empty -mmin +60 -exec rmdir -- {} + \)
 done

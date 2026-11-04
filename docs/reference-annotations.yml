@@ -59,6 +59,8 @@ variables:
   streamstack_seat_marker_dir: {stability: supported}
   streamstack_retired_packages: {stability: supported}
   workstation_update_managed_paths: {stability: supported}
+  # Table of files to delete, not a configuration input.
+  retired_modprobe_options: {stability: internal}
 
   # Private integration hooks: shipped empty, set from protected host variables.
   failed_sweep_webhook_url: {stability: private-hook}

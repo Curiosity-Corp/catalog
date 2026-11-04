@@ -231,13 +231,17 @@ compressed, RGB 4:4:4, 12 bpc uncompressed, no dithering, Broadcast RGB Full).
 The PCON settings below were tuned for the StarTech/VL605 cable on DP-3, which
 stays connected as the 8K30 fallback; they are unchanged.
 
-The module parameter `i915.pcon_frl_444` turns the 4:4:4 path on or off without
-a rebuild. `deskmeet-b760` sets it to `0` through the profile's
-`curiosity-i915-pcon-frl-444` modprobe option: on its Samsung 8K TV, 8K30 RGB
-4:4:4 runs FRL at 40G (the TV's maximum) and the TV lost the signal about once a
-minute while the PCON still reported the HDMI link up with no FRL errors. With
-the parameter at `0`, i915 sends 8K30 the stock way (HBR3, no DSC) at the same
-resolution. To test 4:4:4 live, write `1` to
+The patched module's parameter `i915.pcon_frl_444` turns the 4:4:4 path on or
+off without a rebuild. Until 2026-11-03 `deskmeet-b760` set it to `0` (and
+`pcon_max_frl_gbps=32`) through a `curiosity-i915-pcon-frl-444` modprobe option.
+That option is retired: the 7.0.0-42 i915 rejects both parameters as unknown at
+every boot, so the profile no longer writes it and the role removes
+`/etc/modprobe.d/curiosity-i915-pcon-frl-444.conf` from every host
+(`retired_modprobe_options`, `state: absent`). Background: on its Samsung 8K TV,
+8K30 RGB 4:4:4 runs FRL at 40G (the TV's maximum) and the TV lost the signal
+about once a minute while the PCON still reported the HDMI link up with no FRL
+errors. With the parameter at `0`, i915 sends 8K30 the stock way (HBR3, no DSC)
+at the same resolution. On a kernel that runs the patched module, to test 4:4:4 live, write `1` to
 `/sys/module/i915/parameters/pcon_frl_444` and force a modeset (for example
 `xrandr --output DP-3 --mode 7680x4320 --rate 25`, then `--rate 30`); write `0`
 and modeset again to go back.
@@ -249,8 +253,8 @@ PCON's and the sink's (EDID) maximum. It only changes FRL link training in
 `pcon_frl_444`. FRL only has the rates 9, 18, 24, 32, 40 and 48 Gbps, so any other
 value is rounded down to the next of these (`35` trains at 32G; `1` to `8` train
 at 9G); `dmesg` with `drm.debug=0x4` (KMS) logs the cap and the rate used.
-`deskmeet-b760` sets `pcon_max_frl_gbps=32` in the same modprobe option
-(`options i915 pcon_frl_444=0 pcon_max_frl_gbps=32`): both paths trained its
+`deskmeet-b760` used to set `pcon_max_frl_gbps=32` in the same (now retired)
+modprobe option: both paths trained its
 VL605 PCON at FRL 40G (the TV's EDID maximum) and the TV still blanked about every
 20 minutes on the stock path. 8K30 over HDMI is 8 bpc RGB (~28.5 Gbps including
 blanking, ~23.9 Gbps active), which fits FRL 32G (8G x 4 lanes) with more per-lane
@@ -266,6 +270,31 @@ module (the marker's patch SHA-256 changes) and a reboot is needed before
 `/sys/module/i915/parameters/pcon_max_frl_gbps` exists. After that it can be
 written at runtime (root, mode `0600`) and applies at the next FRL training,
 i.e. the next modeset or hotplug.
+
+### CPU thermal guard (intel_pstate cap)
+
+`developer_workstation_cpu_max_perf_pct` (derived from the hardware profile's
+optional `cpu_max_perf_pct`; empty, meaning off, everywhere except
+`deskmeet-b760`, which sets `70`) caps `intel_pstate/max_perf_pct` at boot.
+deskmeet1 (ASRock B760-ITX DeskMeet, i7-14700) ran 83-92 C at modest load and
+had growing memory corruption and freezes; its BIOS locks RAPL (MSR 0x610 bit 63
+set, powercap `constraint_*_power_limit_uw` writes return `ENODATA`), so the
+performance-state cap is the only OS-side lever. To tune one host, set
+`developer_workstation_cpu_max_perf_pct: 60` in `/etc/ansible/local-vars.yml`
+(a whole number from 1 to 100); an empty string turns the cap off.
+
+When set, the role installs `/usr/local/sbin/curiosity-cpu-max-perf` and
+`curiosity-cpu-max-perf.service` (oneshot, `RemainAfterExit`, enabled at boot,
+started at once when its definition changes). The unit has
+`ConditionPathExists=/sys/devices/system/cpu/intel_pstate/max_perf_pct`, and the
+helper also exits 0 with a log line when the knob is missing, so a host without
+intel_pstate skips cleanly. A bad percentage or a failed write exits non-zero.
+Stopping the unit restores 100; emptying the setting stops and removes it.
+Check with `cat /sys/devices/system/cpu/intel_pstate/max_perf_pct`.
+
+`deskmeet-b760` also lists `nct6775` in its profile `kernel_modules`, so the
+Nuvoton hwmon driver (fan and temperature sensors) is loaded now and at boot
+through `/etc/modules-load.d/curiosity-hardware.conf`.
 
 ### StreamStack call and stream studio
 

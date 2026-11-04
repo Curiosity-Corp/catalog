@@ -68,7 +68,9 @@ def test_deskmeet_b760_profile_shape() -> None:
     assert profile["disable_sleep"] is True
     assert profile["performance_mode"] is True
     assert profile["pia_vpn"] is False
-    assert profile["kernel_modules"] == ["v4l2loopback"]
+    # nct6775: Nuvoton Super I/O hwmon (fan and temperature sensors).
+    assert profile["kernel_modules"] == ["v4l2loopback", "nct6775"]
+    assert profile["cpu_max_perf_pct"] == 70
 
 
 def test_udev_rule_names_precede_seat_late_and_are_unique() -> None:
@@ -135,7 +137,7 @@ def test_deskmeet_b760_hands_the_loopback_cameras_to_streamstack() -> None:
     profile = _profiles()["deskmeet-b760"]
     assert profile["streamstack"] is True
     # Two modprobe files setting v4l2loopback options would fight each other.
-    assert not [o for o in profile["modprobe_options"] if "v4l2loopback" in o["content"]]
+    assert not [o for o in profile.get("modprobe_options", []) if "v4l2loopback" in o["content"]]
 
 
 def test_modprobe_and_module_entries_are_well_formed() -> None:
