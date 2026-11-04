@@ -40,7 +40,13 @@ is to re-write the card's capture switch and volume so the device receives them 
 `feature_unit_resync`). The signal is the sample content: the Console's meter reader tracks how long the unbroken run
 of zeros is, the CLI captures a few seconds with `parec` (`SignalCapture`).
 
-Nothing here ever revives a microphone by itself: that is an explicit action (Console button, CLI).
+Reviving (2026-11-04, #186): a stall is revived by the Console on its own
+--------------------------------------------------------------------------
+After ten soft replugs of the Wave XLR the source came back RUNNING with a duplex profile but its hw_ptr stood still,
+and the Console only raised a toast ("Press Revive mic"); nobody was looking, so the call mic stayed silent until
+`streamstack doctor` was run. The Console now runs `revive_mic` itself, a few seconds after a *stall* is confirmed,
+call or no call, with a budget (`AUTO_REVIVE_MAX` tries per `AUTO_REVIVE_WINDOW_S`) so a dead device cannot be cycled
+forever. Digital silence is still only reported: its fix re-writes mixer controls and is the person's call.
 """
 
 from __future__ import annotations
@@ -68,6 +74,9 @@ SETTLE_S = 1.5  # let the node come back before looking again
 PROFILE_OFF_S = 1.0
 SOURCE_BACK_S = 6.0  # how long to wait for the source to reappear after a profile cycle
 PROC_ASOUND = Path("/proc/asound")
+AUTO_REVIVE_MAX = 3  # the Console revives a stall on its own at most this many times ...
+AUTO_REVIVE_WINDOW_S = 300.0  # ... within this long; then it stops and leaves the manual advice standing
+AUTO_REVIVE_RETRY_S = 20.0  # at least this long between two automatic tries
 SILENCE_WINDOW_S = 4.0  # exact zeros for this long on a running capture are digital silence, never a quiet room
 VERIFY_SIGNAL_S = 3.0  # a revive step is judged on this much captured audio when the fault was digital silence
 SIGNAL_RATE = 48000
@@ -461,6 +470,47 @@ class StallMonitor:
                 break
             sleep(0.5)
         return True if judge(samples).stalled else None
+
+
+def watch_microphone(
+    mic: str,
+    *,
+    run: Run | None = None,
+    sleep: Callable[[float], object] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+    monitor: StallMonitor | None = None,
+    spawn: Callable[..., subprocess.Popen[bytes]] | None = None,
+    parec: bool | None = None,
+    require_samples: bool = False,
+) -> StallProbe:
+    """Judge the microphone for a full window (blocks ~5 s): its ALSA PCM once a second for a stall, and, from a
+    parec capture running alongside, whether the samples are all exact zeros (digital silence).
+
+    `require_samples`: a capture that received no bytes at all while the pointers look fine is a stall too (the
+    2026-11-04 fault: RUNNING, `parec` got nothing). Off for the doctor, where a sandboxed parec hears nothing."""
+    run = run or system.run
+    monitor = monitor or StallMonitor(clock)
+    capture = SignalCapture(mic, spawn) if (system.have("parec") if parec is None else parec) else None
+    listening = capture is not None and capture.start()
+    if listening:
+        sleep(0.5)  # let our own capture wake the source, so the PCM is judged while it runs
+    deadline = clock() + WINDOW_S + 1.5
+    try:
+        while True:
+            listing = run(["pactl", "-f", "json", "list", "sources"], timeout=PACTL_TIMEOUT)
+            probe = monitor.probe(mic, listing.stdout if listing and listing.returncode == 0 else "")
+            if probe.state != "watching" or clock() >= deadline:
+                break
+            sleep(SAMPLE_S)
+    finally:
+        sample = capture.stop() if capture is not None and listening else None
+    if sample is not None and sample.digital_silence() is True:
+        probe = silence_verdict(probe, sample.seconds)
+    elif require_samples and sample is not None and sample.received == 0 and probe.stalled is False:
+        probe = StallProbe(
+            True, "stalled", "the source is running but a capture received no samples from it", KIND_STALL
+        )
+    return probe
 
 
 # ---------------------------------------------------------------------------

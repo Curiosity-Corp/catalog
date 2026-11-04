@@ -794,7 +794,9 @@ Code lives in `src/streamstack/data/console/` (no build step, ES modules, CSP sa
 
 A USB microphone can stay `RUNNING` in pactl while nothing reaches the call. The watchdog
 (`streamstack/micwatch.py`, shared by the CLI and the Console) detects this and offers a one-press
-**Revive mic**. It never revives by itself.
+**Revive mic**. A confirmed stall (not digital silence, not a muted mic) is also revived by the Console itself, a few
+seconds after it is confirmed, call or no call (#186): at most 3 tries per 5 minutes, logged as `mic revive ...` at
+warning level in the `streamstack-console` journal, and `STREAMSTACK_MIC_AUTO_REVIVE=0` turns it off.
 
 Signal. The ground truth is the kernel's ALSA PCM, not PipeWire's own views: `pw-dump` dumps a stalled
 node like a healthy one, and `pw-top -b` only reports the driver that ran in the sampled cycle (a healthy

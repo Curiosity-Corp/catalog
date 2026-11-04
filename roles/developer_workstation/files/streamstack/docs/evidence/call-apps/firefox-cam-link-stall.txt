@@ -1,0 +1,14 @@
+# Firefox 159.0.1, headless, MOZ_LOG=MediaManager:4,CamerasChild:4,CamerasParent:4,webrtc_trace:4, 2026-11-04
+# A getUserMedia({video:true}) that never returned; this is the last camera line before the 70 s deadline.
+# Firefox listed all three cameras first (Cam Link 4K, Canon EOS 50D, StreamStack Camera), then probed the Cam Link:
+[Parent: IPDL Background]: D/CamerasParent Returning Cam Link 4K: Cam Link 4K name usb-0000:00:14.0-6 id (pid = 0)
+[Parent: IPDL Background]: D/CamerasParent Returning Canon EOS 50D name platform:v4l2loopback-042 id (pid = 0)
+[Parent: IPDL Background]: D/CamerasParent Returning StreamStack Camera name platform:v4l2loopback-043 id (pid = 0)
+[Child: MediaSupervisor #1]: D/MediaManager GetMediaDevices: appending device=StreamStack Camera
+[Child: MediaSupervisor #1]: D/CamerasChild NumberOfCapabilities for usb-0000:00:14.0-6
+[Parent: VideoCapture]: D/webrtc_trace (device_info_v4l2.cc:311): CreateCapabilityMap called for device usb-0000:00:14.0-6
+(nothing after this line until the page's own 10 s timeout: "video=TIMEOUT", then enumerateDevices also TIMEOUT)
+
+# Same Firefox, same page, with /dev/video0, /dev/video1 and /dev/media0 (the Cam Link) masked from that one process
+# (bwrap --ro-bind /dev/null): video=ok, labels "Canon EOS 50D" and "StreamStack Camera".
+# Later in the same session the unmasked run passed (firefox-streamstack-devices.json), so the stall is intermittent.

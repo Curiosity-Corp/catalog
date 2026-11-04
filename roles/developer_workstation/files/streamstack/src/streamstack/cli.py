@@ -850,26 +850,8 @@ def cmd_mic_check(args: argparse.Namespace) -> int:
 
 
 def _watch_microphone(mic: str) -> micwatch.StallProbe:
-    """Judge the microphone for a full window (blocks ~5 s): its ALSA PCM once a second for a stall, and, from a
-    parec capture running alongside, whether the samples are all exact zeros (digital silence)."""
-    monitor = micwatch.StallMonitor()
-    capture = micwatch.SignalCapture(mic) if have("parec") else None
-    listening = capture is not None and capture.start()
-    if listening:
-        time.sleep(0.5)  # let our own capture wake the source, so the PCM is judged while it runs
-    deadline = time.monotonic() + micwatch.WINDOW_S + 1.5
-    try:
-        while True:
-            listing = system.run(["pactl", "-f", "json", "list", "sources"], timeout=micwatch.PACTL_TIMEOUT)
-            probe = monitor.probe(mic, listing.stdout if listing and listing.returncode == 0 else "")
-            if probe.state != "watching" or time.monotonic() >= deadline:
-                break
-            time.sleep(micwatch.SAMPLE_S)
-    finally:
-        sample = capture.stop() if capture is not None and listening else None
-    if sample is not None and sample.digital_silence() is True:
-        probe = micwatch.silence_verdict(probe, sample.seconds)
-    return probe
+    """Judge the microphone for a full window (blocks ~5 s): stall, and digital silence from a parec capture."""
+    return micwatch.watch_microphone(mic)
 
 
 def _voice_chain_silence_row() -> dict[str, str] | None:

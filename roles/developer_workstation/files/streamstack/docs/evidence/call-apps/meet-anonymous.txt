@@ -1,0 +1,6 @@
+https://meet.google.com/landing -> https://accounts.google.com/v3/signin/identifier
+   Sign in | Use your Google Account | Email or phone | Forgot email? | Not your computer? Use a private browsing window to sign in. Learn more about using Guest mode | Next | Create account | Afrikaans | azərbaycan | bosan
+https://meet.google.com/new -> https://accounts.google.com/v3/signin/identifier
+   Sign in | Use your Google Account | Email or phone | Forgot email? | Not your computer? Use a private browsing window to sign in. Learn more about using Guest mode | Next | Create account | Afrikaans | azərbaycan | bosan
+https://meet.google.com/abc-defg-hij -> https://meet.google.com/meet/abc-defg-hij
+   You can't join this video call | Return to home screen | Submit feedback | Your meeting is safe | No one can join a meeting unless invited or admitted by the host | Learn more | 56 | Returning to home screen | Returning 

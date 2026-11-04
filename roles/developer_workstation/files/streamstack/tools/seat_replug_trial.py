@@ -18,14 +18,17 @@ A manual tool, not shipped. It needs the owner at the machine, root for the USB 
 
 A "replug" is the kernel's own soft one: the device's `authorized` attribute in sysfs goes 0, then 1, so the card
 disappears and is probed again exactly as after a cable pull. A cycle ends `duplex` when the card's PipeWire profile
-has an input part and the Wave XLR's source exists within --wait seconds, `no-input` when the card is back but with
-output profiles only (the #125 B fault), and `no-card` when it never came back. Exit status 1 when any cycle was
-`no-input` or `no-card`. Results are appended, one JSON line per cycle, to --results so they can be pasted on the issue.
+has an input part and the Wave XLR's source exists within --wait seconds and audio flows from it, `stalled` when the
+source exists but its ALSA hw_ptr does not advance or no samples arrive (the #186 fault: RUNNING, but silent; judged
+by the same check as `streamstack doctor` and `mic-revive`, which adds about six seconds per cycle), `no-input` when
+the card is back but with output profiles only (the #125 B fault), and `no-card` when it never came back. Exit
+status 1 when any cycle was `stalled`, `no-input` or `no-card`. Results are appended, one JSON line per cycle,
+to --results so they can be pasted on the issue.
 
 Safety, all checked before the first cycle and again before every cycle:
 
 * no call app (msedge, teams, zoom, chrome, ...) holds a capture stream (`pactl list source-outputs`), and nothing
-  has the program or camera loopbacks open (`fuser /dev/video42 /dev/video43`);
+  but StreamStack's own services has the program or camera loopbacks open (`fuser /dev/video42 /dev/video43`);
 * the default source is `streamstack_mic` and stays whatever it is; this tool never sets it and never touches a
   mixer control, the voice chain, PipeWire or the seat user's WirePlumber;
 * --stop-other-wireplumber only stops and starts that other user's own `wireplumber.service` (and restarts it in a
@@ -46,16 +49,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from streamstack import micwatch
 from streamstack.hardware import duplex
 
 CALL_APPS = re.compile(r"msedge|microsoft[- ]edge|teams|zoom|chrome|chromium|webex|slack|discord|skype|firefox", re.I)
 LOOPBACKS = ("/dev/video42", "/dev/video43")
+# StreamStack's own services write and read the loopbacks all the time (the engine, the Canon bridge); they are not a
+# call. A PID counts as StreamStack's own when its cgroup is one of these user units.
+OWN_UNITS = re.compile(r"/(streamstack-[\w.-]+|canonctl-ptp-webcam)\.service$", re.M)
 DEFAULT_SOURCE = "streamstack_mic"
 SYSFS_USB = Path("/sys/bus/usb/devices")
 
 DUPLEX = "duplex"
 NO_INPUT = "no-input"
 NO_CARD = "no-card"
+STALLED = "stalled"
 
 Run = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
@@ -92,7 +100,15 @@ def fuser_pids(output: str) -> list[int]:
     return [int(token) for token in output.split() if token.isdigit()]
 
 
-def guard(runner: Run) -> list[str]:
+def own_pid(pid: int, proc: Path = Path("/proc")) -> bool:
+    """Whether this PID runs inside one of StreamStack's own user services (read from its cgroup)."""
+    try:
+        return bool(OWN_UNITS.search((proc / str(pid) / "cgroup").read_text()))
+    except OSError:
+        return False  # gone or unreadable: count it, so an unknown holder never lets the trial run
+
+
+def guard(runner: Run, own: Callable[[int], bool] = own_pid) -> list[str]:
     """Why the trial must not run right now; empty when the desk is idle. Read-only."""
     reasons: list[str] = []
     outputs = runner(["pactl", "list", "source-outputs"])
@@ -102,9 +118,9 @@ def guard(runner: Run) -> list[str]:
             reasons.append(f"a call app holds a capture stream: {', '.join(apps)}")
     else:
         reasons.append(f"cannot read the capture streams (pactl: {outputs.stderr.strip() or outputs.returncode})")
-    held = runner(["fuser", *LOOPBACKS])
-    if fuser_pids(held.stdout):
-        reasons.append(f"{' and '.join(LOOPBACKS)} are open (pids {', '.join(map(str, fuser_pids(held.stdout)))})")
+    held = [pid for pid in fuser_pids(runner(["fuser", *LOOPBACKS]).stdout) if not own(pid)]
+    if held:
+        reasons.append(f"{' and '.join(LOOPBACKS)} are open (pids {', '.join(map(str, held))})")
     return reasons
 
 
@@ -155,6 +171,7 @@ class Outcome:
     result: str
     seconds: float
     profile: str = ""
+    detail: str = ""
 
     def line(self) -> str:
         return json.dumps(
@@ -164,6 +181,7 @@ class Outcome:
                 "result": self.result,
                 "seconds": round(self.seconds, 1),
                 "profile": self.profile,
+                "detail": self.detail,
             }
         )
 
@@ -191,6 +209,32 @@ def classify(cards_json: str, card_match: str, sources: str, source_match: str) 
     return NO_INPUT, profile
 
 
+def source_name(sources: str, source_match: str) -> str | None:
+    """The full name of the capture source that matches, from `pactl list short sources` (never a monitor)."""
+    for line in sources.splitlines():
+        fields = line.split("\t")
+        if len(fields) > 1 and source_match in fields[1] and not fields[1].endswith(".monitor"):
+            return fields[1]
+    return None
+
+
+StallCheck = Callable[[str], "micwatch.StallProbe"]
+
+
+def stall_check(source: str) -> micwatch.StallProbe:
+    """The doctor's / mic-revive's check on a real source: its ALSA PCM must advance and samples must arrive."""
+    return micwatch.watch_microphone(source, require_samples=True)
+
+
+def judge_flow(source: str, check: StallCheck) -> tuple[str, str]:
+    """(DUPLEX, "") when audio flows from the source, (STALLED, why) when it is stalled or only zeros. A source the
+    check cannot judge (not ALSA, unreadable) is not called stalled: it keeps the duplex verdict."""
+    probe = check(source)
+    if probe.stalled is True:
+        return STALLED, probe.detail or "the source delivers no audio"
+    return DUPLEX, ""
+
+
 def wait_for_outcome(
     runner: Run,
     card_match: str,
@@ -198,25 +242,34 @@ def wait_for_outcome(
     wait: float,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
-) -> tuple[str, str]:
-    """Poll until the card is duplex or `wait` seconds pass; the last classification is the answer."""
+    check: StallCheck | None = None,
+) -> tuple[str, str, str]:
+    """Poll until the card is duplex or `wait` seconds pass; the last classification is the answer. A duplex card
+    whose source does not deliver audio is `stalled` (`check` is the stall check; None skips it).
+    Returns (result, profile, detail)."""
     deadline = clock() + wait
     result, profile = NO_CARD, ""
     while True:
         cards = runner(["pactl", "-f", "json", "list", "cards"]).stdout
         sources = runner(["pactl", "list", "short", "sources"]).stdout
         result, profile = classify(cards, card_match, sources, source_match)
-        if result == DUPLEX or clock() >= deadline:
-            return result, profile
+        if result == DUPLEX:
+            name = source_name(sources, source_match)
+            if check is not None and name is not None:
+                result, detail = judge_flow(name, check)
+                return result, profile, detail
+            return result, profile, ""
+        if clock() >= deadline:
+            return result, profile, ""
         sleep(1.0)
 
 
 def summarize(outcomes: list[Outcome]) -> str:
     label = outcomes[0].label if outcomes else "?"
-    counts = {r: sum(1 for o in outcomes if o.result == r) for r in (DUPLEX, NO_INPUT, NO_CARD)}
+    counts = {r: sum(1 for o in outcomes if o.result == r) for r in (DUPLEX, STALLED, NO_INPUT, NO_CARD)}
     return (
-        f"{label}: {len(outcomes)} cycles, {counts[DUPLEX]} duplex, {counts[NO_INPUT]} no-input, "
-        f"{counts[NO_CARD]} no-card"
+        f"{label}: {len(outcomes)} cycles, {counts[DUPLEX]} duplex, {counts[STALLED]} stalled, "
+        f"{counts[NO_INPUT]} no-input, {counts[NO_CARD]} no-card"
     )
 
 
@@ -238,6 +291,7 @@ def trial(
     clock: Callable[[], float] = time.monotonic,
     sysfs: Path = SYSFS_USB,
     out: Callable[[str], None] = print,
+    check: StallCheck | None = stall_check,
 ) -> list[Outcome]:
     reasons = guard(runner)
     if reasons:
@@ -263,8 +317,10 @@ def trial(
                 raise TrialError(f"stopped before cycle {n}: " + "; ".join(reasons))
             began = clock()
             soft_replug(device, sleep)
-            result, profile = wait_for_outcome(runner, args.card_match, args.source_match, args.wait, clock, sleep)
-            outcome = Outcome(n, args.label, result, clock() - began, profile)
+            result, profile, detail = wait_for_outcome(
+                runner, args.card_match, args.source_match, args.wait, clock, sleep, check
+            )
+            outcome = Outcome(n, args.label, result, clock() - began, profile, detail)
             outcomes.append(outcome)
             out(outcome.line())
             if args.results:

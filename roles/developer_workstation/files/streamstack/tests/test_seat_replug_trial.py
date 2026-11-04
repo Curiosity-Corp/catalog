@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -101,6 +102,20 @@ def test_guard_blocks_on_call_and_loopback() -> None:
     assert any("zoom" in r for r in reasons) and any("4242" in r for r in reasons)
 
 
+def test_guard_ignores_streamstacks_own_loopback_users(tmp_path: Path) -> None:
+    for pid, cgroup in (
+        (11, "0::/user.slice/user-1000.slice/user@1000.service/app.slice/streamstack-console.service\n"),
+        (12, "0::/user.slice/user-1000.slice/user@1000.service/app.slice/canonctl-ptp-webcam.service\n"),
+        (13, "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-chrome-1234.scope\n"),
+    ):
+        (tmp_path / str(pid)).mkdir()
+        (tmp_path / str(pid) / "cgroup").write_text(cgroup)
+    own = lambda pid: t.own_pid(pid, tmp_path)  # noqa: E731
+    assert t.guard(Desk(fuser="11 12"), own) == []
+    reasons = t.guard(Desk(fuser="11 12 13 99"), own)
+    assert reasons == ["/dev/video42 and /dev/video43 are open (pids 13, 99)"]
+
+
 @pytest.mark.parametrize(
     ("cards", "result"),
     [(CARDS_DUPLEX, t.DUPLEX), (CARDS_OUTPUT_ONLY, t.NO_INPUT), ("[]", t.NO_CARD), ("not json", t.NO_CARD)],
@@ -137,6 +152,81 @@ def test_refuses_during_a_call_and_on_wrong_default_source(tmp_path: Path) -> No
     assert (root / "1-3" / "authorized").read_text() == "1\n"
 
 
+HEALTHY = t.micwatch.StallProbe(False, "healthy", "the microphone is captured and consumed")
+FROZEN = t.micwatch.StallProbe(
+    True, "stalled", "the device's hw_ptr is not advancing: the microphone delivers no audio", "stall"
+)
+NO_SAMPLES = t.micwatch.StallProbe(True, "stalled", "the source is running but a capture received no samples", "stall")
+WAVE_SOURCE = "alsa_input.usb-Elgato_Wave_XLR-00.mono-fallback"
+
+
+def test_source_name_is_the_capture_source_never_a_monitor() -> None:
+    sources = "4\talsa_output.usb-Elgato_Wave_XLR-00.analog-stereo.monitor\tPipeWire\n" + SOURCES
+    assert t.source_name(sources, "Wave_XLR") == WAVE_SOURCE
+    assert t.source_name("6\tstreamstack_mic\tPipeWire\n", "Wave_XLR") is None
+
+
+@pytest.mark.parametrize(
+    ("probe", "result"),
+    [
+        (HEALTHY, t.DUPLEX),
+        (FROZEN, t.STALLED),
+        (NO_SAMPLES, t.STALLED),
+        (t.micwatch.StallProbe(True, "digital-silence", "every sample is zero", "silence"), t.STALLED),
+        (t.micwatch.StallProbe(None, "unsupported", "not an ALSA device"), t.DUPLEX),
+    ],
+)
+def test_a_duplex_card_is_judged_by_the_doctors_stall_check(probe: Any, result: str) -> None:
+    seen: list[str] = []
+
+    def check(source: str) -> Any:
+        seen.append(source)
+        return probe
+
+    got, _, detail = t.wait_for_outcome(Desk(), "Wave_XLR", "Wave_XLR", 3.0, sleep=lambda s: None, check=check)
+    assert got == result and seen == [WAVE_SOURCE]
+    assert bool(detail) == (result == t.STALLED)
+
+
+def test_no_input_cards_are_never_stall_checked() -> None:
+    def check(source: str) -> Any:
+        raise AssertionError("the card has no input; there is nothing to check")
+
+    ticks = iter(range(100))
+    got = t.wait_for_outcome(
+        Desk(cards=[CARDS_OUTPUT_ONLY]),
+        "Wave_XLR",
+        "Wave_XLR",
+        2.0,
+        clock=lambda: float(next(ticks)),
+        sleep=lambda s: None,
+        check=check,
+    )
+    assert got[0] == t.NO_INPUT
+
+
+def test_a_stalled_cycle_is_counted_written_and_fails_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 2026-11-04 trial: every cycle had the duplex profile and the source, yet the second one was frozen."""
+    root = fake_sysfs(tmp_path)
+    results = tmp_path / "r.jsonl"
+    probes = iter([HEALTHY, FROZEN])
+    lines: list[str] = []
+    outcomes = t.trial(
+        args(cycles=2, wait=0.0, results=str(results)),
+        Desk(),
+        sleep=lambda s: None,
+        sysfs=root,
+        out=lines.append,
+        check=lambda source: next(probes),
+    )
+    assert [o.result for o in outcomes] == [t.DUPLEX, t.STALLED]
+    written = [json.loads(line) for line in results.read_text().splitlines()]
+    assert written[1]["result"] == "stalled" and "hw_ptr" in written[1]["detail"]
+    assert "1 duplex, 1 stalled, 0 no-input" in lines[-1]
+    monkeypatch.setattr(t, "trial", lambda a: outcomes)
+    assert t.main(["--cycles", "2"]) == 1
+
+
 def test_cycles_are_counted_and_results_written(tmp_path: Path) -> None:
     root = fake_sysfs(tmp_path)
     results = tmp_path / "r.jsonl"
@@ -150,10 +240,11 @@ def test_cycles_are_counted_and_results_written(tmp_path: Path) -> None:
         clock=lambda: float(clock()),
         sysfs=root,
         out=lines.append,
+        check=lambda source: HEALTHY,
     )
     assert [o.result for o in outcomes] == [t.NO_INPUT, t.DUPLEX]
     assert len(results.read_text().splitlines()) == 2
-    assert "1 duplex, 1 no-input" in lines[-1]
+    assert "1 duplex, 0 stalled, 1 no-input" in lines[-1]
     assert (root / "1-3" / "authorized").read_text() == "1\n"
     assert not any(c[:2] == ["pactl", "set-default-source"] for c in desk.calls)
 
