@@ -640,6 +640,97 @@ ziti_health_check_min_interval: 600
 ziti_health_check_timeout: 15
 ziti_health_check_script_path: /usr/local/sbin/curiosity-ziti-health
 
+# hypersystem-desktop: a suite's web apps on a laptop (tasks/hypersystem-desktop.yml,
+# tag hypersystem-desktop, docs/hypersystem-desktop.md). OFF by default. When on, the
+# role reads a suite app catalog, keeps the apps whose `roles` share one with
+# hypersystem_desktop_roles (an app with no roles is for everyone) and whose status
+# is in hypersystem_desktop_statuses, force-installs each as a web app (PWA) in one
+# Chromium-family browser through managed policy (WebAppInstallForceList), and writes
+# one menu launcher per app that opens it in a dedicated suite browser profile. The
+# apps are reached through the Ziti tunnel of the ziti task group, which this group
+# only checks (ziti_enabled or a hand-managed tunnel unit, and every app host inside
+# ziti_intercept_domains); it never installs or configures Ziti itself. Turning it
+# off removes the policy file, the launchers, the helper and its configuration.
+# Supported on the desktop and thin-client profiles of Debian and Ubuntu.
+hypersystem_desktop_enabled: false
+# Exactly one source of apps. The catalog is the compiled `hypersystem-catalog/v1`
+# document ({"schema": "hypersystem-catalog/v1", "apps": [...]}), given as an https
+# URL or an absolute path on the managed host. The public role names no catalog.
+hypersystem_desktop_catalog_src: ""
+# Optional lowercase hex SHA-256 the fetched document must match.
+hypersystem_desktop_catalog_sha256: ""
+# Extra request headers for a URL source, for example a registry token read from
+# Ansible Vault. Never logged.
+hypersystem_desktop_catalog_headers: {}
+hypersystem_desktop_catalog_timeout: 30
+# Or the apps themselves, in the catalog entry shape: id, name, urls.web (https)
+# required; roles (default [] = everyone), status (default ga), purpose, icon,
+# urls.local and ssh optional. Example:
+#   - id: notebooks
+#     name: Notebooks
+#     purpose: Shared research notebooks.
+#     roles: [researchers]
+#     urls: {web: "https://notebooks.lab.example.edu/"}
+hypersystem_desktop_apps: []
+# Fail on any malformed or duplicate catalog entry (true), or skip it with a warning.
+hypersystem_desktop_catalog_strict: true
+# The person's suite roles on this laptop.
+hypersystem_desktop_roles: []
+# Statuses that get installed. planned and retired apps are never usable.
+hypersystem_desktop_statuses: [beta, ga]
+# An install that selects no app is almost always a roles typo; fail unless allowed.
+hypersystem_desktop_allow_empty: false
+# Require the Ziti tunnel and that ziti_intercept_domains covers every app host.
+# Set false only for apps that are reachable without Ziti.
+hypersystem_desktop_require_ziti: true
+# ziti-edge-tunnel's DNS range; `hypersystem-desktop doctor` fails an app host
+# that resolves outside it while Ziti is required.
+hypersystem_desktop_ziti_dns_ip_range: 100.64.0.0/10
+# Browser: auto picks chromium (Debian's .deb) on Debian and chromium-snap on Ubuntu,
+# where Chromium ships only as a snap. google-chrome uses an existing Chrome install.
+hypersystem_desktop_browser: auto
+hypersystem_desktop_install_browser: true
+# user_data_dir is the suite profile, relative to each user's home. The snap can
+# write only below ~/snap/chromium, so its profile lives there.
+hypersystem_desktop_browser_targets:
+  chromium:
+    install: apt
+    package: chromium
+    binary: /usr/bin/chromium
+    policy_dir: /etc/chromium/policies/managed
+    user_data_dir: .config/hypersystem-desktop/chromium
+  chromium-snap:
+    install: snap
+    package: chromium
+    binary: /snap/bin/chromium
+    # The Chromium snap reads managed policy from the Ubuntu path, not /etc/chromium.
+    policy_dir: /etc/chromium-browser/policies/managed
+    user_data_dir: snap/chromium/common/hypersystem-desktop
+  google-chrome:
+    install: none
+    package: google-chrome-stable
+    binary: /opt/google/chrome/chrome
+    policy_dir: /etc/opt/chrome/policies/managed
+    user_data_dir: .config/hypersystem-desktop/google-chrome
+hypersystem_desktop_policy_file_name: 30-hypersystem-desktop.json
+hypersystem_desktop_config_dir: /etc/hypersystem-desktop
+hypersystem_desktop_helper_path: /usr/local/bin/hypersystem-desktop
+hypersystem_desktop_applications_dir: /usr/local/share/applications
+# Menu name of the launcher that opens the suite browser profile itself.
+hypersystem_desktop_suite_name: HyperSystem
+# Catalog `icon` names are the bar's symbolic names; map them to icon theme names
+# or absolute image paths. Unmapped icons use the default.
+hypersystem_desktop_icon_map: {}
+hypersystem_desktop_default_icon: web-browser
+# Optional hyperharness install for dev_user, off by default. The public role knows
+# no installer, so supply the command as an argv list and a path that exists once
+# it is installed (the install runs only while that path is missing), for example
+#   hypersystem_desktop_hyperharness_install_argv: [/opt/hyperharness/install.sh, --release]
+#   hypersystem_desktop_hyperharness_creates: "{{ dev_user_home }}/.local/bin/hyperharness"
+hypersystem_desktop_hyperharness_enabled: false
+hypersystem_desktop_hyperharness_install_argv: []
+hypersystem_desktop_hyperharness_creates: ""
+
 # Optional certificates for private lab services. `src` is read from the
 # Ansible controller, which is also the target when using ansible-pull.
 # Example (keep the source outside this repository):

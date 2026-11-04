@@ -631,6 +631,16 @@
     - ziti_enabled | default(false)
     - ziti_intercept_domains | default([]) | length > 0
 
+# After the ziti task group, which owns the tunnel this one only checks. Always
+# included: with hypersystem_desktop_enabled false it removes what an earlier run
+# installed and otherwise does nothing.
+- name: Include hypersystem-desktop (suite web apps, launchers, suite browser profile)
+  ansible.builtin.include_tasks:
+    file: hypersystem-desktop.yml
+    apply:
+      tags: [hypersystem-desktop]
+  tags: [hypersystem-desktop]
+
 - name: Include profile cleanup timer
   ansible.builtin.include_tasks:
     file: profile-cleanup.yml

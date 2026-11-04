@@ -1,0 +1,419 @@
+---
+# =============================================================================
+# hypersystem-desktop: a suite's web apps on a laptop
+# =============================================================================
+# Reads a suite app catalog (the compiled hypersystem-catalog/v1 document, or
+# hypersystem_desktop_apps), keeps the apps the person's roles allow, force-installs
+# each as a web app in one Chromium-family browser through managed policy, and
+# writes one menu launcher per app plus /usr/local/bin/hypersystem-desktop, which
+# opens an app in the dedicated suite browser profile and checks the install
+# (`hypersystem-desktop doctor`). The apps are reached through the ziti task group's
+# tunnel, which this file only checks. Always included, so turning the feature off
+# (or dropping an app) removes what an earlier run wrote. See
+# docs/hypersystem-desktop.md.
+# =============================================================================
+
+- name: Resolve the hypersystem-desktop browser target
+  ansible.builtin.set_fact:
+    _hsd_browser_name: >-
+      {{
+        hypersystem_desktop_browser
+        if hypersystem_desktop_browser != 'auto'
+        else ('chromium-snap' if ansible_distribution == 'Ubuntu' else 'chromium')
+      }}
+
+# The configuration directory is written before anything else of an install, so
+# its presence marks a host that has something to retire. A host that never had
+# the feature skips the retirement without touching the filesystem.
+- name: Check for an earlier hypersystem-desktop install
+  ansible.builtin.stat:
+    path: "{{ hypersystem_desktop_config_dir }}"
+  register: _hsd_installed
+  when: not (hypersystem_desktop_enabled | bool)
+
+- name: Retire hypersystem-desktop when it is off
+  when:
+    - not (hypersystem_desktop_enabled | bool)
+    - _hsd_installed.stat.exists
+  block:
+    - name: Remove the hypersystem-desktop browser policy files
+      ansible.builtin.file:
+        path: "{{ item.value.policy_dir }}/{{ hypersystem_desktop_policy_file_name }}"
+        state: absent
+      loop: "{{ hypersystem_desktop_browser_targets | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Find hypersystem-desktop launchers to retire
+      ansible.builtin.find:
+        paths: "{{ hypersystem_desktop_applications_dir }}"
+        patterns: "hypersystem-desktop*.desktop"
+      register: _hsd_retired_launchers
+
+    - name: Remove hypersystem-desktop launchers
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _hsd_retired_launchers.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Remove the hypersystem-desktop helper and its configuration
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ hypersystem_desktop_helper_path }}"
+        - "{{ hypersystem_desktop_config_dir }}"
+
+- name: Install hypersystem-desktop
+  when: hypersystem_desktop_enabled | bool
+  block:
+    # -------------------------------------------------------------------------
+    # Inputs
+    # -------------------------------------------------------------------------
+    - name: Validate hypersystem-desktop settings
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == 'Debian'
+          - workstation_profile in ['desktop', 'thin-client']
+          - _hsd_browser_name in hypersystem_desktop_browser_targets
+          - (hypersystem_desktop_catalog_src | length > 0) != (hypersystem_desktop_apps | length > 0)
+          - hypersystem_desktop_catalog_src | length == 0 or hypersystem_desktop_catalog_src is match('^(https://|/)')
+          - hypersystem_desktop_catalog_sha256 | length == 0 or hypersystem_desktop_catalog_sha256 is match('^[0-9a-f]{64}$')
+          - hypersystem_desktop_catalog_headers is mapping
+          - hypersystem_desktop_apps is sequence and hypersystem_desktop_apps is not string
+          - hypersystem_desktop_roles is sequence and hypersystem_desktop_roles is not string
+          - hypersystem_desktop_statuses is sequence and hypersystem_desktop_statuses is not string
+          - hypersystem_desktop_statuses | length > 0
+          - hypersystem_desktop_statuses | difference(['beta', 'ga']) | length == 0
+          - hypersystem_desktop_icon_map is mapping
+        fail_msg: >-
+          hypersystem-desktop needs a Debian-family host on the desktop or thin-client
+          profile (this is {{ ansible_distribution }} with workstation_profile
+          {{ workstation_profile }}); hypersystem_desktop_browser auto or one of
+          {{ hypersystem_desktop_browser_targets.keys() | list | join(', ') }} (got
+          {{ hypersystem_desktop_browser }}); exactly one of hypersystem_desktop_catalog_src
+          (an https URL or an absolute path) and hypersystem_desktop_apps; an optional
+          64-character lowercase hex hypersystem_desktop_catalog_sha256; lists for
+          hypersystem_desktop_apps, _roles and _statuses, where _statuses holds only
+          beta and/or ga (planned and retired apps are not usable).
+        quiet: true
+
+    - name: Validate the hyperharness install hook
+      ansible.builtin.assert:
+        that:
+          - hypersystem_desktop_hyperharness_install_argv is sequence
+          - hypersystem_desktop_hyperharness_install_argv is not string
+          - hypersystem_desktop_hyperharness_install_argv | length > 0
+          - hypersystem_desktop_hyperharness_creates is match('^/')
+        fail_msg: >-
+          hypersystem_desktop_hyperharness_enabled needs
+          hypersystem_desktop_hyperharness_install_argv (the installer command as a list)
+          and hypersystem_desktop_hyperharness_creates (an absolute path that exists once
+          hyperharness is installed).
+        quiet: true
+      when: hypersystem_desktop_hyperharness_enabled | bool
+
+    - name: Fetch the suite catalog
+      ansible.builtin.uri:
+        url: "{{ hypersystem_desktop_catalog_src }}"
+        method: GET
+        headers: "{{ {'Accept': 'application/json'} | combine(hypersystem_desktop_catalog_headers) }}"
+        return_content: true
+        status_code: 200
+        timeout: "{{ hypersystem_desktop_catalog_timeout | int }}"
+      register: _hsd_catalog_http
+      no_log: "{{ hypersystem_desktop_catalog_headers | length > 0 }}"
+      # A read-only GET: the catalog must be read in check mode too, so a dry run
+      # previews the real app list.
+      check_mode: false
+      when: hypersystem_desktop_catalog_src is match('^https://')
+
+    - name: Read the suite catalog file
+      ansible.builtin.slurp:
+        src: "{{ hypersystem_desktop_catalog_src }}"
+      register: _hsd_catalog_file
+      when: hypersystem_desktop_catalog_src is match('^/')
+
+    - name: Keep the catalog document text
+      ansible.builtin.set_fact:
+        _hsd_catalog_text: >-
+          {{
+            _hsd_catalog_http.content
+            if hypersystem_desktop_catalog_src is match('^https://')
+            else (_hsd_catalog_file.content | b64decode)
+          }}
+      when: hypersystem_desktop_catalog_src | length > 0
+
+    - name: Verify the catalog checksum
+      ansible.builtin.assert:
+        that:
+          - (_hsd_catalog_text | hash('sha256')) == hypersystem_desktop_catalog_sha256
+        fail_msg: >-
+          The catalog from {{ hypersystem_desktop_catalog_src }} has SHA-256
+          {{ _hsd_catalog_text | hash('sha256') }}, not the pinned
+          hypersystem_desktop_catalog_sha256 {{ hypersystem_desktop_catalog_sha256 }}.
+        quiet: true
+      when:
+        - hypersystem_desktop_catalog_src | length > 0
+        - hypersystem_desktop_catalog_sha256 | length > 0
+
+    - name: Parse the suite apps
+      ansible.builtin.set_fact:
+        _hsd_parsed: >-
+          {{
+            (_hsd_catalog_text | hypersystem_desktop_parse_catalog(hypersystem_desktop_catalog_src, 'document'))
+            if hypersystem_desktop_catalog_src | length > 0
+            else (hypersystem_desktop_apps | hypersystem_desktop_parse_catalog('hypersystem_desktop_apps', 'variables'))
+          }}
+
+    - name: Refuse a catalog with malformed entries
+      ansible.builtin.fail:
+        msg: >-
+          The suite catalog has {{ _hsd_parsed.problems | length }} problem(s):
+          {{ _hsd_parsed.problems | join('; ') }}. Fix the catalog, or set
+          hypersystem_desktop_catalog_strict: false to skip those entries.
+      when:
+        - _hsd_parsed.problems | length > 0
+        - hypersystem_desktop_catalog_strict | bool
+
+    - name: Report skipped catalog entries
+      ansible.builtin.debug:
+        msg: "Skipped malformed catalog entries: {{ _hsd_parsed.problems | join('; ') }}"
+      when: _hsd_parsed.problems | length > 0
+
+    - name: Select the apps this person may use
+      ansible.builtin.set_fact:
+        _hsd_apps: "{{ _hsd_parsed.apps | hypersystem_desktop_select(hypersystem_desktop_roles, hypersystem_desktop_statuses) }}"
+
+    - name: Refuse an install with no app
+      ansible.builtin.assert:
+        that:
+          - _hsd_apps | length > 0 or hypersystem_desktop_allow_empty | bool
+        fail_msg: >-
+          No app in the catalog is {{ hypersystem_desktop_statuses | join(' or ') }} and
+          open to the roles {{ hypersystem_desktop_roles | to_json }}
+          ({{ _hsd_parsed.apps | length }} app(s) read). Check hypersystem_desktop_roles,
+          or set hypersystem_desktop_allow_empty: true.
+        quiet: true
+
+    # -------------------------------------------------------------------------
+    # Ziti: owned by the ziti task group; checked here, never configured.
+    # -------------------------------------------------------------------------
+    - name: Look for the Ziti tunnel unit  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: "systemctl list-unit-files --no-legend -- {{ ziti_service_name }}"
+      register: _hsd_ziti_unit
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - hypersystem_desktop_require_ziti | bool
+        - not (ziti_enabled | default(false) | bool)
+
+    - name: Require the Ziti tunnel
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ziti_enabled | default(false) | bool)
+            or (_hsd_ziti_unit.stdout | default('') | trim | length > 0)
+        fail_msg: >-
+          hypersystem-desktop reaches the suite apps through the Ziti tunnel, but this
+          host has none: set ziti_enabled: true (with ziti_oidc_provider and
+          ziti_intercept_domains; see docs/configuration.md), or enrol a hand-managed
+          tunnel so {{ ziti_service_name }} exists. Only for apps that are reachable
+          without Ziti, set hypersystem_desktop_require_ziti: false.
+        quiet: true
+      when: hypersystem_desktop_require_ziti | bool
+
+    - name: Require every app host inside the Ziti intercept domains
+      ansible.builtin.assert:
+        that:
+          - _hsd_uncovered | length == 0
+        fail_msg: >-
+          These app hosts are not inside ziti_intercept_domains
+          ({{ ziti_intercept_domains | default([]) | to_json }}), so their traffic would
+          not be routed through the tunnel: {{ _hsd_uncovered | join(', ') }}. Add their
+          domain to ziti_intercept_domains (the ziti task group's split-DNS list).
+        quiet: true
+      vars:
+        _hsd_uncovered: "{{ _hsd_apps | hypersystem_desktop_uncovered_hosts(ziti_intercept_domains | default([])) }}"
+      when: hypersystem_desktop_require_ziti | bool
+
+    - name: Suggest a Ziti health probe on an app host
+      ansible.builtin.debug:
+        msg: >-
+          ziti_health_check_probe_hosts names no suite app host, so the tunnel health
+          guard cannot notice that app names stopped resolving. Add one, for example
+          {{ _hsd_apps[0].host }}.
+      when:
+        - hypersystem_desktop_require_ziti | bool
+        - _hsd_apps | length > 0
+        - ziti_health_check_enabled | default(true) | bool
+        - ziti_health_check_probe_hosts | default([]) | intersect(_hsd_apps | map(attribute='host') | list) | length == 0
+
+    # -------------------------------------------------------------------------
+    # Browser
+    # -------------------------------------------------------------------------
+    - name: Set the hypersystem-desktop browser
+      ansible.builtin.set_fact:
+        _hsd_browser: "{{ hypersystem_desktop_browser_targets[_hsd_browser_name] }}"
+
+    - name: Install the suite browser package
+      ansible.builtin.apt:
+        name: "{{ _hsd_browser.package }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when:
+        - hypersystem_desktop_install_browser | bool
+        - _hsd_browser.install == 'apt'
+
+    - name: Install the suite browser snap
+      community.general.snap:
+        name: "{{ _hsd_browser.package }}"
+        state: present
+      when:
+        - hypersystem_desktop_install_browser | bool
+        - _hsd_browser.install == 'snap'
+
+    - name: Check the suite browser binary
+      ansible.builtin.stat:
+        path: "{{ _hsd_browser.binary }}"
+      register: _hsd_browser_binary
+
+    - name: Require the suite browser
+      ansible.builtin.assert:
+        that:
+          - _hsd_browser_binary.stat.exists
+        fail_msg: >-
+          {{ _hsd_browser_name }} is not installed ({{ _hsd_browser.binary }} is missing).
+          {{ 'Install it, or choose another hypersystem_desktop_browser.' if _hsd_browser.install == 'none'
+             else 'Set hypersystem_desktop_install_browser: true or install ' ~ _hsd_browser.package ~ '.' }}
+        quiet: true
+      # In check mode the package install above was only simulated.
+      when: not ansible_check_mode
+
+    # -------------------------------------------------------------------------
+    # Configuration, helper and policy. The configuration directory comes first:
+    # it marks the host for retirement once the feature is turned off.
+    # -------------------------------------------------------------------------
+    - name: Create the hypersystem-desktop configuration directory
+      ansible.builtin.file:
+        path: "{{ hypersystem_desktop_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the hypersystem-desktop configuration
+      ansible.builtin.copy:
+        content: "{{ _hsd_config | to_nice_json }}\n"
+        dest: "{{ hypersystem_desktop_config_dir }}/config.json"
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        _hsd_config:
+          schema: hypersystem-desktop/v1
+          browser:
+            name: "{{ _hsd_browser_name }}"
+            binary: "{{ _hsd_browser.binary }}"
+            policy_file: "{{ _hsd_browser.policy_dir }}/{{ hypersystem_desktop_policy_file_name }}"
+            user_data_dir: "{{ _hsd_browser.user_data_dir }}"
+          apps: "{{ _hsd_apps }}"
+          ziti:
+            required: "{{ hypersystem_desktop_require_ziti | bool }}"
+            service: "{{ ziti_service_name }}"
+            dns_ip_range: "{{ hypersystem_desktop_ziti_dns_ip_range }}"
+
+    - name: Install the hypersystem-desktop helper
+      ansible.builtin.copy:
+        src: hypersystem-desktop
+        dest: "{{ hypersystem_desktop_helper_path }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create the browser managed policy directory
+      ansible.builtin.file:
+        path: "{{ _hsd_browser.policy_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Force-install the suite apps as web apps
+      ansible.builtin.copy:
+        content: "{{ _hsd_apps | hypersystem_desktop_policy | to_nice_json }}\n"
+        dest: "{{ _hsd_browser.policy_dir }}/{{ hypersystem_desktop_policy_file_name }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Remove the policy file from the browsers not in use
+      ansible.builtin.file:
+        path: "{{ item.value.policy_dir }}/{{ hypersystem_desktop_policy_file_name }}"
+        state: absent
+      loop: "{{ hypersystem_desktop_browser_targets | dict2items | rejectattr('key', 'equalto', _hsd_browser_name) | list }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.value.policy_dir != _hsd_browser.policy_dir
+
+    # -------------------------------------------------------------------------
+    # Launchers
+    # -------------------------------------------------------------------------
+    - name: Create the launcher directory
+      ansible.builtin.file:
+        path: "{{ hypersystem_desktop_applications_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Describe the suite launchers
+      ansible.builtin.set_fact:
+        _hsd_launchers: >-
+          {{ _hsd_apps | hypersystem_desktop_launchers(hypersystem_desktop_suite_name,
+             hypersystem_desktop_icon_map, hypersystem_desktop_default_icon) }}
+
+    - name: Write the suite launchers
+      ansible.builtin.template:
+        src: hypersystem-desktop-app.desktop.j2
+        dest: "{{ hypersystem_desktop_applications_dir }}/{{ _hsd_entry.file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ _hsd_launchers }}"
+      loop_control:
+        loop_var: _hsd_entry
+        label: "{{ _hsd_entry.file }}"
+
+    - name: Find hypersystem-desktop launchers
+      ansible.builtin.find:
+        paths: "{{ hypersystem_desktop_applications_dir }}"
+        patterns: "hypersystem-desktop*.desktop"
+      register: _hsd_current_launchers
+
+    - name: Remove launchers of apps no longer selected
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _hsd_current_launchers.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: (item.path | basename) not in (_hsd_launchers | map(attribute='file') | list)
+
+    # -------------------------------------------------------------------------
+    # Optional hyperharness
+    # -------------------------------------------------------------------------
+    - name: Install hyperharness for the primary user
+      ansible.builtin.command:
+        argv: "{{ hypersystem_desktop_hyperharness_install_argv }}"
+        creates: "{{ hypersystem_desktop_hyperharness_creates }}"
+      become: true
+      become_user: "{{ dev_user }}"
+      environment:
+        HOME: "{{ dev_user_home }}"
+      when: hypersystem_desktop_hyperharness_enabled | bool

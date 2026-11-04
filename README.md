@@ -25,7 +25,9 @@ profiles and independently tagged task groups:
 - hardware-aware drivers and power-management settings;
 - optional firewall, disk-health, firmware, cleanup, and self-healing timers;
 - optional Coder, Keycloak, OpenZiti, remote streaming, custom CA, and chat
-  integrations.
+  integrations;
+- an optional suite desktop package (`hypersystem_desktop`) that installs the
+  web apps a person's roles allow as PWAs on a laptop.
 
 Integrations that depend on an organization's private services are disabled by
 default. The role never ships private hostnames, credentials, CA material, or
@@ -112,6 +114,7 @@ The most important variables are:
 | `keycloak_sso_enabled` | `false` | Opt into Keycloak login integration |
 | `ziti_enabled` | `false` | Opt into OpenZiti and supply local domains/provider |
 | `sunshine_enabled` | `false` | Opt into remote desktop streaming |
+| `hypersystem_desktop_enabled` | `false` | Install a suite's web apps for the person's roles as PWAs in one Chromium-family browser, with launchers and a dedicated suite profile, reached through the `ziti` task group's tunnel ([docs](docs/hypersystem-desktop.md)) |
 | `streamstack_enabled` | profile flag | Teams/Zoom/OBS studio: DSLR + capture card cameras, voice chain, `streamstack doctor` ([docs](docs/streamstack.md)) |
 | `bitwarden_browser_extensions_enabled` | `true` | Force-install the Bitwarden extension in Chrome, Edge and Brave (one managed-policy file per installed browser; `bitwarden_chromium_extension_targets` lists them). Firefox is covered by its own policy. Set `false` where automation-driven browsers must not see the first-run tab |
 | `bitwarden_desktop_enabled` | `true` | Install the official Bitwarden desktop `.deb` system-wide on x86_64 `desktop` workstations (users sign in themselves) and its polkit unlock policy, so the app never runs `pkexec` itself |
