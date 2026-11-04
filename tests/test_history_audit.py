@@ -1,12 +1,19 @@
 """scripts/history_audit.py finds planted material in old commits and never prints it."""
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/history_audit.py"
+# The CI image has no git, and the sweep reads a repository, so these tests run
+# wherever git exists (a developer machine or a runner with git) and skip here.
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+
 SENTINEL_IP = "10.9.8.7"
 SENTINEL_MAIL = "someone-sentinel@corp.example.net"
 SENTINEL_MARKER = "acme-private-sentinel"
@@ -44,6 +51,7 @@ def run(repo: Path, *extra: str) -> subprocess.CompletedProcess:
     )
 
 
+@needs_git
 def test_deleted_material_is_found_in_history_and_counted(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
     markers = tmp_path / "markers.txt"
@@ -59,6 +67,7 @@ def test_deleted_material_is_found_in_history_and_counted(tmp_path: Path) -> Non
     assert data["paths"]["rfc1918-ip"] == ["a.txt"]
 
 
+@needs_git
 def test_output_never_contains_matched_text_or_marker_names(tmp_path: Path) -> None:
     repo = make_repo(tmp_path)
     markers = tmp_path / "markers.txt"
@@ -70,6 +79,7 @@ def test_output_never_contains_matched_text_or_marker_names(tmp_path: Path) -> N
         assert "marker:1" in out
 
 
+@needs_git
 def test_clean_repo_reports_nothing(tmp_path: Path) -> None:
     repo = tmp_path / "c"
     repo.mkdir()
