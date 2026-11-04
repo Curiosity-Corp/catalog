@@ -78,7 +78,9 @@
     dest: /etc/modules-load.d/curiosity-hardware.conf
     content: |
       # Managed by the curiosity workstation role (hardware profile: {{ hardware_profile }})
-      {{ hardware_profiles[hardware_profile].kernel_modules | default([]) | join('\n') }}
+      {% for module in hardware_profiles[hardware_profile].kernel_modules | default([]) %}
+      {{ module }}
+      {% endfor %}
     owner: root
     group: root
     mode: "0644"
