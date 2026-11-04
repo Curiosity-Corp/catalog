@@ -1039,6 +1039,8 @@ pro_mimic_motd_news_enabled: false
 # /usr/local/bin/litra via the latest-release contract; see litra_cli_enabled),
 # i915_pcon_frl_444 (boolean, default false: build the patched i915 that keeps
 # RGB 4:4:4 behind a DP -> HDMI 2.1 PCON; see i915_pcon_frl_444_enabled),
+# cpu_max_perf_pct (whole number 1-100, default unset: cap intel_pstate
+# max_perf_pct at boot; see developer_workstation_cpu_max_perf_pct),
 # console_video (string, default unset: `<connector>:<W>x<H>@<Hz>` appended to
 # the kernel command line as video=...; see console_video and
 # tasks/console-video.yml), console_tuning (mapping, default unset: font, ttys
@@ -1171,6 +1173,24 @@ minimal_desktop_double_click_ms: "{{ (hardware_profiles.get(hardware_profile, {}
 # hardware profile's optional `i915_pcon_frl_444` flag; only deskmeet-b760 opts
 # in. A reboot activates a newly built module; the role never reloads i915.
 i915_pcon_frl_444_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('i915_pcon_frl_444', false) | bool }}"
+
+# CPU thermal guard (tasks/cpu-thermal-guard.yml): cap intel_pstate
+# max_perf_pct at boot through a oneshot unit. Empty (the default) installs
+# nothing and removes a unit an earlier run installed. Derived from the selected
+# hardware profile's optional `cpu_max_perf_pct`; a host-local
+# /etc/ansible/local-vars.yml or host var of the same name as this variable
+# overrides it ("" turns the cap off). Use it where the BIOS locks RAPL (MSR
+# 0x610 bit 63), so the OS cap is the only lever. The unit is skipped when
+# intel_pstate is absent.
+developer_workstation_cpu_max_perf_pct: "{{ (hardware_profiles.get(hardware_profile, {})).get('cpu_max_perf_pct', '') }}"
+
+# Retired /etc/modprobe.d/<name>.conf files that tasks/hardware-drivers.yml
+# removes from every host (state: absent), so a file an earlier role version
+# wrote does not outlive the profile entry that created it.
+#  - curiosity-i915-pcon-frl-444: set i915 parameters pcon_frl_444 and
+#    pcon_max_frl_gbps, which the 7.0.0-42 i915 rejects as unknown at every boot.
+retired_modprobe_options:
+  - curiosity-i915-pcon-frl-444
 
 # Kernel video= argument that makes every VT (fbcon, boot console, X) come up at
 # the display's own EDID/CTA mode so switching VTs causes no modeset. Derived
@@ -1684,12 +1704,11 @@ hardware_profiles:
     #   Broadcast RGB Full; stable, no kernel errors.
     # - Fallback: A380 DP-3 over the StarTech (VL605 PCON) cable, 8K30 only;
     #   left connected but switched off while DP-4 is connected.
-    # The i915_pcon_frl_444 patch and the modprobe option below were made for
+    # The i915_pcon_frl_444 patch was made for
     # the VL605 path on DP-3: there, stock i915 sends 8K30 RGB at 6 bpc with
     # dithering (HBR3, no DSC); the patched module sends RGB 4:4:4 at 8 bpc
-    # (DSC 14 bpp over HBR2, decompressed by the PCON). Built but defaulted off
-    # by the curiosity-i915-pcon-frl-444 modprobe option (the TV drops that
-    # signal).
+    # (DSC 14 bpp over HBR2, decompressed by the PCON). Built, but its 4:4:4 path
+    # stays off (the TV drops that signal).
     i915_pcon_frl_444: true
     # curiosity-display-setup tries DP-4 before the host's own list
     # (/etc/ansible/local-vars.yml: DP-1, DP-2, DP-3, DP-4), so the 8K60 output
@@ -1780,35 +1799,20 @@ hardware_profiles:
         content: |
           # Canon EOS 50D (04a9:319b) — gphoto2 access; keep udisks from mounting it
           SUBSYSTEM=="usb", ATTR{idVendor}=="04a9", ATTR{idProduct}=="319b", MODE="0660", GROUP="plugdev", TAG+="uaccess", ENV{UDISKS_IGNORE}="1"
-    # /etc/modprobe.d/<name>.conf files
-    modprobe_options:
-      # These parameters were tuned for the DP-3 fallback (StarTech/VL605 PCON,
-      # 8K30). The primary DP-4 8K60 DSC path was verified stable with them
-      # exactly as below, so they stay unchanged (2026-10-27).
-      # The patched i915 stays built, but its 4:4:4 path is off by default:
-      # with it on (8K30 RGB 8 bpc, DSC 14 bpp over HBR2) the TV dropped the
-      # signal about once a minute while the PCON still reported the link up
-      # with zero FRL errors (2026-10-14). Off, i915 sends 8K30 the stock way
-      # (RGB 6 bpc dithered, HBR3, no DSC), the path that ran without drops
-      # before the patch.
-      # pcon_max_frl_gbps=32 caps the HDMI FRL rate (#88): both paths trained
-      # the VL605 PCON at FRL 40G (the TV's EDID max), and the TV still blanked
-      # about every 20 minutes on the stock path. 8K30 HDMI is 8 bpc RGB
-      # (~28.5 Gbps incl. blanking, ~23.9 Gbps active), which fits FRL 32G
-      # (8G x 4 lanes) with more per-lane margin. Unverified: the running VL605
-      # echoes the requested rate in DPCD 0x3036 but keeps the TV at 40G (TV
-      # SCDC 0x31 = 0x35); check SCDC 0x31 = 0x34 after a reboot.
-      # To try 4:4:4 again (certified 48G cable, Input Signal Plus), set
-      # pcon_frl_444=1 and reboot, or write 1 to
-      # /sys/module/i915/parameters/pcon_frl_444 and modeset. Both parameters
-      # are read at the next modeset/FRL training; a changed file needs a
-      # reboot (or i915-reload).
-      - name: curiosity-i915-pcon-frl-444
-        content: |
-          options i915 pcon_frl_444=0 pcon_max_frl_gbps=32
+    # No modprobe_options: the curiosity-i915-pcon-frl-444 option (i915
+    # parameters pcon_frl_444 and pcon_max_frl_gbps) is retired: the 7.0.0-42
+    # i915 rejects both as unknown at every boot. retired_modprobe_options removes
+    # the file from hosts; the patched module and the display setup are
+    # untouched.
     # Loaded now and at boot via /etc/modules-load.d/curiosity-hardware.conf
     kernel_modules:
       - v4l2loopback
+      # Nuvoton Super I/O hwmon driver: fan and temperature sensors.
+      - nct6775
+    # The B760-ITX BIOS locks RAPL (MSR 0x610 bit 63; powercap writes return
+    # ENODATA) and the i7-14700 ran 83-92 C at modest load with growing memory
+    # corruption and freezes (2026-11-03), so cap the performance state at 70%.
+    cpu_max_perf_pct: 70
     pia_vpn: false
 
   t460:
