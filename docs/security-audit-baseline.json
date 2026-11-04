@@ -1,0 +1,27 @@
+{
+  "schema": "curiosity.security-audit-baseline/v1",
+  "reviewed": [
+    "no-checksum|roles/developer_workstation/tasks/ai-assistants.yml|Download official Codex standalone installer",
+    "no-checksum|roles/developer_workstation/tasks/apt-keyring.yml|Download vendor APT signing key for {{ apt_keyring_name }}",
+    "no-checksum|roles/developer_workstation/tasks/authd-repo.yml|Download authd archive signing key",
+    "no-checksum|roles/developer_workstation/tasks/claude-code-user.yml|Download official Claude Code native installer",
+    "no-checksum|roles/developer_workstation/tasks/cloud-clis.yml|Download AWS CLI v2 installer",
+    "no-checksum|roles/developer_workstation/tasks/cloud-clis.yml|Download AWS CLI v2 installer signature",
+    "no-checksum|roles/developer_workstation/tasks/coder-cli.yml|Download Coder CLI installer",
+    "no-checksum|roles/developer_workstation/tasks/hardware-drivers.yml|Download latest PIA VPN installer",
+    "no-checksum|roles/developer_workstation/tasks/weechat.yml|Download go.py buffer switcher",
+    "secret-mode|roles/developer_workstation/tasks/coder-workspace-helpers.yml|Install git-credential-coder-gitlab helper",
+    "secret-mode|roles/developer_workstation/tasks/logitech-g604.yml|Render the G604 thumb button settings",
+    "secret-mode|roles/developer_workstation/tasks/samsung-tv-cli.yml|Render the Samsung TV Key Vault settings",
+    "secret-mode|roles/developer_workstation/tasks/streamstack.yml|Render the StreamStack settings",
+    "secret-nolog|roles/developer_workstation/tasks/samsung-tv-cli.yml|Render the Samsung TV Key Vault settings",
+    "unpinned|roles/developer_workstation/tasks/languages.yml|Clone pyenv for merging into a partial directory",
+    "unpinned|roles/developer_workstation/tasks/languages.yml|Install or update SDKMAN from its Git repository",
+    "unpinned|roles/developer_workstation/tasks/languages.yml|Install or update nvm from its Git repository",
+    "unpinned|roles/developer_workstation/tasks/languages.yml|Install pyenv into an empty or missing directory",
+    "unpinned|roles/developer_workstation/tasks/languages.yml|Update an existing pyenv Git checkout",
+    "unpinned|roles/developer_workstation/tasks/user-env.yml|Install or update Oh My Zsh from its Git repository",
+    "unpinned|roles/developer_workstation/tasks/user-env.yml|Install zsh-autosuggestions plugin",
+    "unpinned|roles/developer_workstation/tasks/user-env.yml|Install zsh-syntax-highlighting plugin"
+  ]
+}

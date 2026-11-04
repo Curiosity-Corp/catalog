@@ -197,7 +197,8 @@
     msg: >
       WARNING: Could not fetch the configured Qwen provider API key.
       Qwen Code will be installed but not configured with NVIDIA provider.
-      Authenticate with 'az login' and re-run to configure.
+      Check that qwen_provider_secret_command works for this user (it must
+      print the key and exit 0), then re-run to configure.
   when:
     - qwen_provider_enabled | default(false)
     - _nvidia_api_key.rc | default(1) != 0
