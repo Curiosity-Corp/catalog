@@ -1,0 +1,17 @@
+# Managed by curiosity.workstation (tasks/cpu-thermal-guard.yml). Do not edit.
+[Unit]
+Description=Curiosity CPU thermal guard (intel_pstate max_perf_pct {{ developer_workstation_cpu_max_perf_pct | string | trim }}%)
+Documentation=file:///usr/local/sbin/curiosity-cpu-max-perf
+# Skipped (not failed) when intel_pstate is not the cpufreq driver.
+ConditionPathExists=/sys/devices/system/cpu/intel_pstate/max_perf_pct
+ConditionVirtualization=!container
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/curiosity-cpu-max-perf {{ developer_workstation_cpu_max_perf_pct | string | trim }}
+ExecStop=/usr/local/sbin/curiosity-cpu-max-perf --restore
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

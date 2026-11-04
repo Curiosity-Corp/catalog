@@ -77,17 +77,42 @@ def test_only_the_deskmeet_b760_profile_opts_in() -> None:
             assert key not in profile, f"{name} must not set {key}"
 
 
-def test_deskmeet_keeps_the_4_4_4_path_off_by_modprobe_option() -> None:
-    # 8K30 RGB 4:4:4 (8 bpc, DSC over the PCON) made the TV drop the signal
-    # about once a minute; the profile must load the patched module with the
-    # path off. The stock path still blanked about every 20 minutes at FRL
-    # 40G, so the HDMI FRL rate is also capped at 32G (#88).
-    options = {o["name"]: o["content"] for o in PROFILES["deskmeet-b760"]["modprobe_options"]}
-    assert (
-        options["curiosity-i915-pcon-frl-444"].strip()
-        == "options i915 pcon_frl_444=0 pcon_max_frl_gbps=32"
+def test_the_retired_i915_modprobe_option_is_removed_not_written() -> None:
+    # The 7.0.0-42 i915 rejects pcon_frl_444 and pcon_max_frl_gbps as unknown
+    # parameters at every boot, so no profile may write them any more and the
+    # role must delete the file earlier runs left on the host.
+    for name, profile in PROFILES.items():
+        for option in profile.get("modprobe_options") or []:
+            assert "i915" not in option["content"], f"{name} still sets i915 options"
+            assert "pcon_frl_444" not in option["content"]
+            assert "pcon_max_frl_gbps" not in option["content"]
+            assert option["name"] != "curiosity-i915-pcon-frl-444"
+    assert "curiosity-i915-pcon-frl-444" in DEFAULTS["retired_modprobe_options"]
+    removal = next(
+        task for task in _tasks("hardware-drivers.yml")
+        if task.get("name") == "Remove retired modprobe options"
     )
-    # Every option must name a parameter the patch really defines.
+    assert removal["ansible.builtin.file"] == {
+        "path": "/etc/modprobe.d/{{ item }}.conf",
+        "state": "absent",
+    }
+    assert removal["loop"] == "{{ retired_modprobe_options | default([]) }}"
+    # It must run before the options are (re)installed.
+    names = [task.get("name", "") for task in _tasks("hardware-drivers.yml")]
+    assert names.index("Remove retired modprobe options") < names.index(
+        "Load hardware-specific kernel modules at boot ({{ hardware_profile }})"
+    )
+
+
+def test_the_role_no_longer_references_the_unknown_i915_parameters_outside_the_patch() -> None:
+    needles = ("pcon_frl_444=", "pcon_max_frl_gbps=")
+    for path in [ROLE / "defaults/main.yml", *TASKS.glob("*.yml"), *(ROLE / "templates").glob("*")]:
+        text = path.read_text()
+        for needle in needles:
+            assert needle not in text, f"{path.name} still sets {needle}"
+
+
+def test_the_patch_still_defines_its_module_parameters() -> None:
     patch = (I915 / "i915-pcon-frl-444.patch").read_text()
     assert "module_param_named(pcon_frl_444, pcon_frl_444, bool" in patch
     assert "module_param_named(pcon_max_frl_gbps, pcon_max_frl_gbps, int, 0600)" in patch

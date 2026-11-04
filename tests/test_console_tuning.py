@@ -11,6 +11,7 @@ import importlib.machinery
 import importlib.util
 import re
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -138,7 +139,10 @@ def test_unit_and_udev_rule_are_sane() -> None:
     assert "WantedBy=multi-user.target" in unit
     # Not RemainAfterExit: a finished oneshot must be startable again by udev.
     assert "RemainAfterExit" not in unit
-    assert "StartLimitBurst" in unit
+    # A start limit turned udev burst starts into a failed unit
+    # (start-limit-hit, deskmeet1 2026-11-03); the helper debounces itself.
+    assert "StartLimitIntervalSec=0" in unit
+    assert "StartLimitBurst" not in unit
 
     rules = next(
         t["ansible.builtin.copy"]["content"]
@@ -346,6 +350,88 @@ def test_main_exits_zero_without_a_framebuffer(tmp_path, capsys) -> None:
     )
     assert code == 0
     assert "nothing to do" in capsys.readouterr().out
+
+
+def _deferring_helper(monkeypatch, tmp_path):
+    """Patch the helper so a graphical session owns the VT over a cropped fb."""
+    fb = tmp_path / "fb0"
+    fb.write_text("")
+    monkeypatch.setattr(helper, "in_container", lambda: False)
+    monkeypatch.setattr(helper, "read_fb_var", lambda _path: _fake_var(3840, 2160, 7680, 4320))
+    monkeypatch.setattr(helper, "fb_name", lambda _path: "i915drmfb")
+    monkeypatch.setattr(helper, "vt_text_mode", lambda *_a: helper.KD_GRAPHICS)
+
+    def refuse(*_a, **_k):
+        raise AssertionError("must not resize the framebuffer while deferring")
+
+    monkeypatch.setattr(helper, "put_fb_var", refuse)
+    return [
+        "--fb", str(fb),
+        "--config", str(tmp_path / "none.conf"),
+        "--stamp", str(tmp_path / "stamp"),
+        "--no-wait",
+    ]
+
+
+def test_deferring_to_a_graphical_session_exits_zero(tmp_path, monkeypatch, capsys) -> None:
+    argv = _deferring_helper(monkeypatch, tmp_path)
+    assert helper.main(argv) == 0
+    assert "a graphical session owns the active VT; deferring" in capsys.readouterr().out
+
+
+def test_deferring_exits_zero_as_a_real_process(tmp_path) -> None:
+    """The unit sees the process exit status, not main()'s return value."""
+    driver = tmp_path / "drive.py"
+    driver.write_text(
+        "import importlib.machinery, importlib.util, struct, sys\n"
+        f"loader = importlib.machinery.SourceFileLoader('h', {str(HELPER)!r})\n"
+        "spec = importlib.util.spec_from_loader('h', loader)\n"
+        "h = importlib.util.module_from_spec(spec); sys.modules['h'] = h\n"
+        "loader.exec_module(h)\n"
+        "words = [0] * 40\n"
+        "words[0], words[1], words[2], words[3] = 3840, 2160, 7680, 4320\n"
+        "h.in_container = lambda: False\n"
+        "h.read_fb_var = lambda _p: h.parse_var(struct.pack('=40I', *words))\n"
+        "h.fb_name = lambda _p: 'i915drmfb'\n"
+        "h.vt_text_mode = lambda *_a: h.KD_GRAPHICS\n"
+        f"sys.exit(h.main(['--fb', {str(tmp_path / 'fb0')!r}, '--config', '/nonexistent', "
+        f"'--stamp', {str(tmp_path / 'stamp')!r}, '--no-wait']))\n"
+    )
+    (tmp_path / "fb0").write_text("")
+    result = subprocess.run(
+        [sys.executable, "-I", str(driver)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "deferring" in result.stdout
+
+
+def test_a_second_start_inside_the_window_is_debounced(tmp_path, monkeypatch, capsys) -> None:
+    argv = _deferring_helper(monkeypatch, tmp_path)
+    assert helper.main(argv) == 0
+    assert (tmp_path / "stamp").exists()
+    capsys.readouterr()
+    assert helper.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "debouncing this start" in out
+    assert "deferring" not in out
+
+
+def test_recently_applied_window_edges(tmp_path) -> None:
+    stamp = tmp_path / "stamp"
+    assert helper.recently_applied(str(stamp), 10) is None  # no stamp yet
+    stamp.write_text("")
+    mtime = stamp.stat().st_mtime
+    assert helper.recently_applied(str(stamp), 10, now=lambda: mtime + 3) == pytest.approx(3)
+    assert helper.recently_applied(str(stamp), 10, now=lambda: mtime + 10) is None
+    assert helper.recently_applied(str(stamp), 10, now=lambda: mtime - 5) is None  # clock step
+    assert helper.recently_applied(str(stamp), 0, now=lambda: mtime + 1) is None  # disabled
+
+
+def test_dry_run_neither_debounces_nor_stamps(tmp_path, monkeypatch, capsys) -> None:
+    argv = _deferring_helper(monkeypatch, tmp_path)
+    (tmp_path / "stamp").write_text("")
+    assert helper.main(argv + ["--dry-run"]) == 0
+    assert "debouncing" not in capsys.readouterr().out
 
 
 def test_status_verdicts(tmp_path, monkeypatch, capsys) -> None:

@@ -621,6 +621,16 @@
   tags: [hardware]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
+- name: Include the CPU thermal guard
+  ansible.builtin.include_tasks:
+    file: cpu-thermal-guard.yml
+    apply:
+      tags: [hardware, cpu-thermal]
+  tags: [hardware, cpu-thermal]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Manage the WiFi profile with netplan
   ansible.builtin.include_tasks:
     file: wifi-netplan.yml
