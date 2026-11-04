@@ -48,5 +48,7 @@ build_ignore:
   - scripts
   - Makefile
   - "*.tar.gz"
+  # CI job reports that earlier stages hand to later jobs (secret detection).
+  - "gl-*.json"
   - collection.cdx.json
   - .venv

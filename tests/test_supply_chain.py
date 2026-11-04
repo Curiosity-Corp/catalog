@@ -101,6 +101,14 @@ def test_pipeline_has_supply_chain_jobs():
     assert "evidence/" in ci["provenance"]["artifacts"]["paths"]
 
 
+def test_the_build_tree_holds_no_other_jobs_artifacts():
+    """CI reports (gl-secret-detection-report.json) once ended up inside the published tarball."""
+    ci = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
+    assert ci["collection"].get("dependencies") == [], "collection must not download earlier jobs' artifacts"
+    ignored = yaml.safe_load((ROOT / "galaxy.yml").read_text())["build_ignore"]
+    assert "gl-*.json" in ignored
+
+
 # --- vulnerability audit gate ---------------------------------------------------
 
 def report(*vulns: tuple[str, str, str]) -> dict:

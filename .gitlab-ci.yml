@@ -115,6 +115,10 @@ collection:
   extends: .python_setup
   stage: package
   interruptible: false
+  # Build from the checkout alone. Without this the job downloads the artifacts
+  # of every earlier job (the secret-detection report) into the build tree and
+  # they end up inside the published tarball.
+  dependencies: []
   script:
     - ansible-galaxy collection build --force
     - python scripts/normalize_collection_artifact.py "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
