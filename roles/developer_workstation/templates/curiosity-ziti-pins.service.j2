@@ -1,0 +1,16 @@
+# Managed by curiosity.workstation (ziti_pin_lifecycle_enabled)
+[Unit]
+Description=Refresh the Ziti /etc/hosts pins after {{ ziti_service_name }} starts
+Documentation=file://{{ ziti_pin_script_path }}
+After={{ ziti_service_name }}
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ ziti_pin_env_path }}
+ExecStart={{ ziti_pin_script_path }} refresh --wait {{ ziti_pin_wait | int }}
+TimeoutStartSec={{ (ziti_pin_wait | int) + 30 }}
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelModules=yes
