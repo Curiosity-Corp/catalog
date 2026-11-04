@@ -644,6 +644,45 @@
   when: item.stat.exists | default(false)
   changed_when: true
 
+# The lights service and the Stream Deck service are installed for every desktop
+# user and keep running across an upgrade, so after this run replaced the package
+# they would still execute the old code (the lights fix of StreamStack #182 sat
+# unused on dm313red until a hand restart, #185). `try-restart` restarts a unit
+# that is running and does nothing to one that is not, so a user who ran
+# `streamstack lights disable` or never enabled the deck stays that way. Both
+# touch only HID devices (Litra lights, Stream Deck) and ask the Console for
+# actions, never /dev/video42, /dev/video43 or the audio graph, so a restart is
+# safe in a call. Not restarted here, because they own the camera loopback or the
+# audio graph: streamstack-console (restarted above), streamstack-audio-chain,
+# streamstack-auto, streamstack-canon, streamstack-camera-publish.
+- name: Check which desktop users have a running user manager
+  ansible.builtin.stat:
+    path: "/run/user/{{ getent_passwd[item.name][1] }}/bus"
+  loop: "{{ dev_users | selectattr('name', 'in', getent_passwd.keys()) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _streamstack_user_managers
+  when: _streamstack_package_replaced is changed
+
+- name: Try-restart the StreamStack lights and deck user services after a package replacement
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ item.0.item.name }}"
+      - --
+      - env
+      - "XDG_RUNTIME_DIR=/run/user/{{ getent_passwd[item.0.item.name][1] }}"
+      - systemctl
+      - --user
+      - try-restart
+      - "{{ item.1 }}"
+  loop: "{{ (_streamstack_user_managers.results | default([])) | selectattr('stat.exists') | product(['streamstack-lights.service', 'streamstack-deck.service']) | list }}"
+  loop_control:
+    label: "{{ item.0.item.name }} {{ item.1 }}"
+  when: _streamstack_package_replaced is changed
+  changed_when: true
+
 # StreamStack never touches the default source (docs/audio-chain.md): the host
 # makes the processed voice the default so an app that records from "default"
 # (Teams, Zoom) gets it. Persisted by WirePlumber per user; the sink is left

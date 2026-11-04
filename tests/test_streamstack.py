@@ -276,6 +276,25 @@ def test_lights_follow_the_camera_at_login_for_every_desktop_user() -> None:
         "not (streamstack_lights_autostart | bool)"
 
 
+def test_a_package_replacement_try_restarts_the_lights_and_deck_services() -> None:
+    # StreamStack #185: the lights service kept running pre-fix code after the
+    # 0.0.28 upgrade because only the Console was restarted.
+    managers = _task("Check which desktop users have a running user manager")
+    assert managers["when"] == "_streamstack_package_replaced is changed"
+    assert "dev_users" in managers["loop"]
+    task = _task("Try-restart the StreamStack lights and deck user services after a package replacement")
+    assert task["when"] == "_streamstack_package_replaced is changed"
+    argv = task["ansible.builtin.command"]["argv"]
+    assert argv[:3] == ["runuser", "-u", "{{ item.0.item.name }}"]
+    assert any(a.startswith("XDG_RUNTIME_DIR=/run/user/") for a in argv)
+    assert argv[argv.index("--user") + 1] == "try-restart"  # never start: `lights disable` must stick
+    assert "streamstack-lights.service" in task["loop"]
+    assert "streamstack-deck.service" in task["loop"]
+    # only units that never touch the camera loopback or the audio graph
+    for unit in ("console", "audio-chain", "auto", "canon", "camera-publish"):
+        assert f"streamstack-{unit}.service" not in task["loop"]
+
+
 def _location_ok(**values) -> bool:
     checks = _task("Validate the StreamStack settings")["ansible.builtin.assert"]["that"]
     rules = [c for c in checks if "streamstack_latitude" in c or "streamstack_longitude" in c or "streamstack_property" in c]
