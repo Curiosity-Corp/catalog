@@ -631,6 +631,16 @@
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
+- name: Include crash diagnostics (lockup panics, pstore, hardware watchdog)
+  ansible.builtin.include_tasks:
+    file: crash-diagnostics.yml
+    apply:
+      tags: [hardware, crash-diagnostics]
+  tags: [hardware, crash-diagnostics]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Manage the WiFi profile with netplan
   ansible.builtin.include_tasks:
     file: wifi-netplan.yml

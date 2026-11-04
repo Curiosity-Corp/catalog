@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Crash diagnostics (catalog#139): hardware-profile key `crash_diagnostics` (derived `developer_workstation_crash_diagnostics`, off by default) installs `tasks/crash-diagnostics.yml`: hard and soft lockups panic with all-CPU backtraces and `kernel.panic` reboots the host (`panic_reboot_seconds`, default 30) instead of hanging; systemd-pstore keeps the EFI pstore panic log; journald syncs every `journal_sync_seconds` (default 15); and an optional `watchdog_module` is loaded by name and armed as the systemd hardware watchdog (`watchdog_seconds`, default 120; set live over D-Bus, no PID 1 re-exec). A kernel Oops stays non-fatal, and kdump is not used (a LUKS root stalls the crash kernel). `deskmeet-b760` turns it on with `iTCO_wdt` after seven trace-less hard freezes between 2026-10-10 and 2026-10-31. Dropping the key removes the files, restores the kernel defaults and disarms the watchdog.
 - CPU thermal guard: `developer_workstation_cpu_max_perf_pct` (hardware-profile key `cpu_max_perf_pct`, off by default, `70` on `deskmeet-b760`) installs `curiosity-cpu-max-perf.service`, a boot oneshot that caps `intel_pstate/max_perf_pct` where the BIOS locks RAPL, and skips cleanly without intel_pstate. `deskmeet-b760` also loads the `nct6775` hwmon module at boot for fan and temperature sensors.
 
 ### Changed

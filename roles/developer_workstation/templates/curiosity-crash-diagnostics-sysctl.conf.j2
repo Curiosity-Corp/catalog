@@ -1,0 +1,11 @@
+# Managed by the curiosity workstation role (tasks/crash-diagnostics.yml).
+# A hard or soft lockup panics with a backtrace of every CPU (kept in EFI
+# pstore, archived to /var/lib/systemd/pstore at the next boot) and the
+# kernel reboots instead of hanging until someone pulls the power.
+# A kernel Oops is deliberately left non-fatal.
+kernel.nmi_watchdog = 1
+kernel.hardlockup_panic = 1
+kernel.softlockup_panic = 1
+kernel.hardlockup_all_cpu_backtrace = 1
+kernel.softlockup_all_cpu_backtrace = 1
+kernel.panic = {{ developer_workstation_crash_diagnostics.panic_reboot_seconds | default(30) | int }}
