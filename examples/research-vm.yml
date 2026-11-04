@@ -1,0 +1,18 @@
+---
+# Research VM (docs/quickstarts/research-vm.md): a headless workspace with
+# compilers, Python and data tools. Public variables only.
+dev_user: researcher
+dev_user_home: /home/researcher
+workstation_profile: workspace
+hardware_profile: generic
+
+# Early ring: wait six hours for a newly published upstream release.
+workstation_update_ring: early
+
+cloud_clis_enabled: false
+coder_cli_enabled: false
+keycloak_sso_enabled: false
+ziti_enabled: false
+sunshine_enabled: false
+profile_cleanup_enabled: false
+tmp_hygiene_enabled: false

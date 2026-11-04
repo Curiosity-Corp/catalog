@@ -1,0 +1,38 @@
+---
+# Thin client in front of a remote research VM
+# (docs/quickstarts/thin-client-and-shared-lab.md). The appliance only holds a
+# browser and access tools; the research tools live in the remote VM.
+# Every service name below is synthetic (the .example TLD is reserved).
+dev_user: labuser
+dev_user_home: /home/labuser
+workstation_profile: thin-client
+hardware_profile: generic
+
+# Local identity: no single-sign-on provider and no overlay network. Users sign
+# in to the remote VM with its own SSH keys or its own web login.
+keycloak_sso_enabled: false
+ziti_enabled: false
+
+# Browser: the thin-client profile installs Firefox; the optional Playwright
+# test tooling stays off.
+thin_client_playwright_enabled: false
+
+# Network boundary: UFW default-deny inbound. Allow SSH only on the wired
+# interface of this appliance (replace enp0s31f6 with the real name).
+firewall_enabled: true
+firewall_ssh_interfaces:
+  - enp0s31f6
+firewall_mosh: false
+
+# Optional lab CA for an internal web service, read from the controller. The
+# file is not part of this repository.
+custom_ca_certificates:
+  - name: lab-web
+    src: /etc/ansible/private/lab-web.crt
+    nss_name: Lab web
+
+# Shared-machine, private-integration and streaming switches stay off.
+profile_cleanup_enabled: false
+sunshine_enabled: false
+coder_cli_enabled: false
+missionctl_enabled: false

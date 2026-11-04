@@ -1,0 +1,25 @@
+# User-level systemd unit for a loopback-only JupyterLab server
+# (docs/quickstarts/notebooks.md). Install it as
+# ~/.config/systemd/user/jupyter-loopback.service, then run
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now jupyter-loopback.service
+# Reach it only through an SSH tunnel: ssh -L 8888:127.0.0.1:8888 <vm>
+[Unit]
+Description=JupyterLab bound to loopback only
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/notebooks
+# 127.0.0.1 keeps the server off every network interface; the token stays on
+# (never pass an empty token or password). The pipx-installed jupyter-lab
+# finds the "Python 3 (Science)" kernel the role registers. It prints the login URL
+# with the token to the journal: journalctl --user -u jupyter-loopback.
+ExecStart=%h/.local/bin/jupyter-lab --no-browser --ServerApp.ip=127.0.0.1 --ServerApp.port=8888 --ServerApp.port_retries=0 --ServerApp.root_dir=%h/notebooks
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

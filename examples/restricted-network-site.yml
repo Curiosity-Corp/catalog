@@ -1,0 +1,24 @@
+---
+# Drop-in replacement for playbooks/site.yml on a machine that reaches the
+# internet only through a proxy (docs/quickstarts/restricted-networks.md).
+# Ansible exports the play-level `environment` to every task, including tasks
+# that use become, which a proxy exported in your shell would not reach.
+#
+# Supply the three variables with -e or host variables; an undefined one stops
+# the run before anything changes. Use empty strings for a variable you do not
+# need. The values below are examples only.
+#   -e lab_http_proxy=http://proxy.example.edu:3128
+#   -e lab_https_proxy=http://proxy.example.edu:3128
+#   -e lab_no_proxy=localhost,127.0.0.1
+- name: Curiosity Computer - developer workstation behind a proxy
+  hosts: localhost
+  connection: local
+  become: true
+  force_handlers: true
+  environment:
+    http_proxy: "{{ lab_http_proxy }}"
+    https_proxy: "{{ lab_https_proxy }}"
+    no_proxy: "{{ lab_no_proxy }}"
+  roles:
+    - developer_workstation
+    - workstation_storage

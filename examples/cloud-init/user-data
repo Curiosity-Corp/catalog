@@ -1,0 +1,61 @@
+#cloud-config
+# Provider-neutral cloud-init user-data for a research VM
+# (docs/quickstarts/cloud-init-libvirt.md). It needs no vendor account: it works
+# with a libvirt/QEMU NoCloud seed ISO, a cloud image on any provider, or
+# multipass-style tools. It prepares the machine and does NOT apply the role;
+# applying the role stays a reviewed, manual step.
+#
+# Replace the SSH public key before use. The key below is a documentation
+# placeholder, not a usable key.
+hostname: research-vm
+manage_etc_hosts: true
+timezone: UTC
+
+users:
+  - name: researcher
+    gecos: Research user
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE0 researcher@example.invalid
+
+# SSH boundary: key-only logins, no root login over SSH.
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+package_upgrade: false
+packages:
+  - git
+  - python3-venv
+  - python3-pip
+  - openssh-server
+  - chrony
+
+write_files:
+  # Host-local variables the role loads at the start of every run.
+  - path: /etc/ansible/local-vars.yml
+    owner: root:root
+    permissions: "0644"
+    content: |
+      ---
+      dev_user: researcher
+      dev_user_home: /home/researcher
+      workstation_profile: workspace
+      hardware_profile: generic
+      workstation_update_ring: early
+      cloud_clis_enabled: false
+
+runcmd:
+  - [systemctl, enable, --now, chrony]
+  - [mkdir, -p, /opt/curiosity-catalog-src]
+  # Pin to a reviewed tag or commit instead of a moving branch.
+  - [git, clone, --branch, v0.1.0, --depth, "1", "https://github.com/Curiosity-Corp/catalog.git", /opt/curiosity-catalog-src]
+  - [python3, -m, venv, /opt/curiosity-catalog-src/.venv]
+  - [/opt/curiosity-catalog-src/.venv/bin/pip, install, --quiet, ansible-core]
+  - [/opt/curiosity-catalog-src/.venv/bin/ansible-galaxy, collection, install, -r, /opt/curiosity-catalog-src/requirements.yml]
+  - [chown, -R, "researcher:researcher", /opt/curiosity-catalog-src]
+
+final_message: "Research VM prepared; review /opt/curiosity-catalog-src, then follow the quickstart to apply the role."

@@ -1,0 +1,33 @@
+---
+# Shared lab machine (docs/quickstarts/thin-client-and-shared-lab.md): several
+# people share one desktop. Public variables only; the account names are
+# synthetic.
+dev_user: labadmin
+dev_user_home: /home/labadmin
+dev_users:
+  - name: labadmin
+    home: /home/labadmin
+  - name: student1
+    home: /home/student1
+  - name: student2
+    home: /home/student2
+
+workstation_profile: desktop
+hardware_profile: generic
+workstation_update_ring: general
+
+# Shared-machine hygiene. Both are off by default; enable only after testing
+# the retention window on a disposable machine.
+tmp_hygiene_enabled: true
+tmp_hygiene_max_age: 3d
+# Removes /home/<name>@<domain> directories (directory-joined accounts) idle
+# for profile_cleanup_days. Local accounts such as student1 are never touched.
+profile_cleanup_enabled: false
+
+# No remote streaming, SSO or overlay network on a shared lab desktop.
+sunshine_enabled: false
+keycloak_sso_enabled: false
+ziti_enabled: false
+cloud_clis_enabled: false
+bitwarden_browser_extensions_enabled: false
+bitwarden_desktop_enabled: false

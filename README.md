@@ -163,6 +163,8 @@ public-surface checks, and collection building. See
 - [Python research profile](docs/python-research-profile.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Glossary](docs/glossary.md)
+- [Researcher quickstarts](docs/quickstarts/README.md)
+- [Update rings](docs/update-rings.md)
 - [Roadmap](docs/roadmap.md)
 
 Please do not put passwords, tokens, private keys, internal inventories, or
