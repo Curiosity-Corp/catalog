@@ -7,6 +7,7 @@ host, applied by a oneshot unit, and skips cleanly without intel_pstate.
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -217,3 +218,56 @@ def test_helper_never_touches_rapl_or_powercap() -> None:
     )
     for forbidden in ("powercap", "constraint_", "wrmsr", "/dev/cpu"):
         assert forbidden not in code, forbidden
+
+
+def test_modules_load_file_has_one_module_per_line(tmp_path: Path) -> None:
+    """join('\\n') in a YAML block wrote a literal backslash-n ("v4l2loopback\\nnct6775"),
+    which modules-load cannot load; a second module in a profile exposed it.
+
+    Runs the real task through ansible-playbook with only the destination moved.
+    """
+    ansible_playbook = shutil.which("ansible-playbook")
+    if ansible_playbook is None:
+        pytest.skip("ansible-playbook is not installed")
+    task = next(
+        t for t in _tasks("hardware-drivers.yml")
+        if str(t.get("name", "")).startswith("Load hardware-specific kernel modules at boot")
+    )
+    copy = dict(task["ansible.builtin.copy"])
+    destination = tmp_path / "curiosity-hardware.conf"
+    copy.update(dest=str(destination))
+    copy.pop("owner", None)
+    copy.pop("group", None)
+    playbook = tmp_path / "play.yml"
+    playbook.write_text(
+        yaml.safe_dump(
+            [
+                {
+                    "hosts": "localhost",
+                    "connection": "local",
+                    "gather_facts": False,
+                    "vars": {
+                        "hardware_profile": "deskmeet-b760",
+                        "hardware_profiles": {
+                            "deskmeet-b760": {
+                                "kernel_modules": PROFILES["deskmeet-b760"]["kernel_modules"]
+                            }
+                        },
+                    },
+                    "tasks": [{"name": "write", "ansible.builtin.copy": copy}],
+                }
+            ]
+        )
+    )
+    result = subprocess.run(
+        [ansible_playbook, "-i", "localhost,", str(playbook)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "ANSIBLE_NOCOLOR": "1"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = destination.read_text().splitlines()
+    assert lines[0].startswith("# Managed by the curiosity workstation role")
+    assert [line for line in lines[1:] if line.strip()] == ["v4l2loopback", "nct6775"]
+    assert "\\n" not in destination.read_text()

@@ -33,12 +33,18 @@ if [[ "$me" -eq 0 ]]; then
   exit 2
 fi
 
+# Directories another uid owns (systemd-private-*, other users' tmux and socket
+# directories under /tmp) can neither be searched nor are ours to clean: they are
+# pruned, so find never descends into them and never reports "Permission denied"
+# for them. Everything below acts only on entries owned by this account.
 for root in "$@"; do
   [[ -d "$root" ]] || continue
-  if ! find "$root" -xdev -mindepth 1 -uid "$me" -type d ! -perm -u=rwx \
-    -exec chmod u+rwx {} +; then
+  if ! find "$root" -xdev -mindepth 1 \( -type d ! -uid "$me" -prune \) -o \
+    \( -type d -uid "$me" ! -perm -u=rwx -exec chmod u+rwx -- {} + \); then
     echo "hhtest-cleanup: could not restore owner permissions under $root; deleting what is possible" >&2
   fi
-  find "$root" -xdev -mindepth 1 -uid "$me" \( -type f -o -type l \) -mtime "+$age_days" -delete
-  find "$root" -xdev -mindepth 1 -depth -uid "$me" -type d -empty -mmin +60 -delete
+  find "$root" -xdev -mindepth 1 \( -type d ! -uid "$me" -prune \) -o \
+    \( -uid "$me" \( -type f -o -type l \) -mtime "+$age_days" -exec rm -f -- {} + \)
+  find "$root" -xdev -mindepth 1 \( -type d ! -uid "$me" -prune \) -o \
+    \( -uid "$me" -type d -empty -mmin +60 -exec rmdir -- {} + \)
 done

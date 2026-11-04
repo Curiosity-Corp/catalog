@@ -217,6 +217,29 @@ def test_cleanup_chmod_pass_is_scoped_to_real_directories_of_the_account() -> No
     chmod_lines = [line for line in script.splitlines() if "chmod" in line and not line.lstrip().startswith("#")]
     assert any("chmod u+rwx" in line for line in chmod_lines)
     pass_ = script[script.index("if ! find"):script.index("-exec chmod")]
-    for guard in ('-xdev', '-mindepth 1', '-uid "$me"', "-type d"):
+    for guard in ('-xdev', '-mindepth 1', '-uid "$me"', "-type d", '! -uid "$me" -prune'):
         assert guard in pass_, guard
     assert "chmod -R" not in script and " -L" not in script and "-follow" not in script
+
+
+def test_cleanup_never_descends_into_directories_of_other_uids() -> None:
+    """/tmp holds root-owned 0700 dirs (systemd-private-*); find used to print
+    "Permission denied" for each and exit 1, failing the nightly unit."""
+    foreign = Path("/etc/ssl/private")
+    if not foreign.is_dir() or os.access(foreign, os.R_OK | os.X_OK) or foreign.stat().st_uid == os.getuid():
+        pytest.skip("needs a directory this user cannot search that another uid owns")
+    result = _run_cleanup(foreign.parent)
+    assert result.returncode == 0, result.stderr
+    assert "Permission denied" not in result.stderr
+
+
+def test_every_find_pass_prunes_foreign_directories() -> None:
+    code = "\n".join(
+        line for line in CLEANUP.read_text().splitlines() if not line.lstrip().startswith("#")
+    )
+    passes = code.split("find ")[1:]
+    # chmod pass, delete pass, empty-directory pass.
+    assert len(passes) == 3
+    for part in passes:
+        assert '\\( -type d ! -uid "$me" -prune \\)' in part
+    assert "-delete" not in code
