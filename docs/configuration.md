@@ -323,7 +323,13 @@ ziti_etc_hosts_pins:
 
 Use `ziti_service_name` and `ziti_manage_service: false` when a separate
 operator-managed tunnel unit owns the interface. Pins are refreshed only for
-names explicitly supplied by the operator.
+names explicitly supplied by the operator, and those names belong in host-local
+variables (host_vars, a host-local vars file or `-e`), never in public defaults.
+A pin is re-resolved on every start of `ziti_service_name` through an
+`ExecStartPost` drop-in, and one the tunnel cannot answer is removed rather than
+left stale; `ziti_pin_lifecycle_enabled: false` opts out. See
+[`ziti-pin-lifecycle.md`](ziti-pin-lifecycle.md) for the lifecycle, the opt-out
+and the redacted before/after check.
 
 ### Tunnel health check
 

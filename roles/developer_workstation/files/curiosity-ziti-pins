@@ -1,0 +1,266 @@
+#!/usr/bin/python3
+"""Managed by curiosity.workstation. Keep the Ziti /etc/hosts pins in step with the tunnel.
+
+ziti-edge-tunnel hands out its intercept addresses from a pool, and a restart can
+give a hostname a different address. A pin written before the restart then points
+at nothing, or at another service. This helper rewrites one marked block in
+/etc/hosts from the tunnel's own resolver, and removes a pin the resolver cannot
+answer: a missing pin falls back to ordinary DNS (and fails visibly), a stale pin
+silently reaches the wrong overlay service.
+
+  refresh [--wait SECONDS]   resolve every pin against the tunnel resolver and
+                             rewrite the block. Pins with no answer are dropped
+                             at once and added as soon as they resolve, until
+                             SECONDS have passed (default 0: a single pass).
+  invalidate                 remove the managed block.
+  check [--show-names]       read-only: compare the block with the live resolver.
+                             Names and addresses are redacted (pin-1, addr-1)
+                             unless --show-names is given. Exit 1 on any drift.
+
+Run by curiosity-ziti-pins.service, which the tunnel unit starts through an
+ExecStartPost drop-in on every (re)start, and by the Ansible role.
+
+Environment:
+  ZITI_PINS_HOSTS       comma-separated hostnames to pin (operator supplied;
+                        the public role knows no private names)
+  ZITI_PINS_RESOLVER    tunnel resolver address                  (100.64.0.2)
+  ZITI_PINS_HOSTS_FILE  hosts file to manage                     (/etc/hosts)
+  ZITI_PINS_DIG         dig binary                               (dig)
+  ZITI_PINS_WAIT        default --wait seconds                   (0)
+  ZITI_PINS_INTERVAL    seconds between resolver polls           (2)
+  ZITI_PINS_LOCK        lock file serialising writers            (/run/curiosity-ziti-pins.lock)
+
+Exit status: 0 done / no drift, 1 drift found by check, 2 bad input.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import fcntl
+import ipaddress
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+BEGIN = "# BEGIN ANSIBLE MANAGED BLOCK: Ziti DNS pins"
+END = "# END ANSIBLE MANAGED BLOCK: Ziti DNS pins"
+OVERLAY = ipaddress.ip_network("100.64.0.0/10")
+HOSTNAME = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def env(name: str, default: str) -> str:
+    return os.environ.get(name) or default
+
+
+def pins() -> list[str]:
+    names: list[str] = []
+    for raw in env("ZITI_PINS_HOSTS", "").split(","):
+        name = raw.strip()
+        if not name:
+            continue
+        if not HOSTNAME.fullmatch(name):
+            print(f"curiosity-ziti-pins: invalid pinned hostname {name!r}", file=sys.stderr)
+            sys.exit(2)
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def resolve(name: str, resolver: str) -> str | None:
+    """Return the overlay address the tunnel resolver gives `name`, or None."""
+    try:
+        done = subprocess.run(
+            [env("ZITI_PINS_DIG", "dig"), "+short", "+time=2", "+tries=1", name, f"@{resolver}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    for line in done.stdout.splitlines():  # dig prints CNAME targets before addresses
+        try:
+            address = ipaddress.ip_address(line.strip())
+        except ValueError:
+            continue
+        if address.version == 4 and address in OVERLAY:
+            return str(address)
+    return None
+
+
+def split_block(lines: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Return (before, block body, after); body is empty when there is no block."""
+    try:
+        start = lines.index(BEGIN)
+        stop = lines.index(END, start + 1)
+    except ValueError:
+        return lines, [], []
+    return lines[:start], lines[start + 1 : stop], lines[stop + 1 :]
+
+
+def read_hosts(path: str) -> list[str]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().splitlines()
+    except FileNotFoundError:
+        return []
+
+
+def write_hosts(path: str, lines: list[str]) -> None:
+    data = "\n".join(lines) + "\n"
+    directory = os.path.dirname(os.path.abspath(path))
+    handle, tmp = tempfile.mkstemp(prefix=".hosts.", dir=directory)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(data)
+        with contextlib.suppress(OSError):
+            shutil.copymode(path, tmp)
+            shutil.chown(tmp, os.stat(path).st_uid, os.stat(path).st_gid)
+        os.replace(tmp, path)
+    except OSError:
+        # A bind-mounted hosts file (container) cannot be replaced, only rewritten.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        with open(path, "w", encoding="utf-8") as out:
+            out.write(data)
+
+
+def set_block(path: str, entries: dict[str, str]) -> bool:
+    """Rewrite the managed block to `entries`; return True when the file changed."""
+    lines = read_hosts(path)
+    before, _, after = split_block(lines)
+    block = [f"{address}  {name}" for name, address in entries.items()]
+    updated = before + ([BEGIN, *block, END] if block else []) + after
+    if updated == lines:
+        return False
+    write_hosts(path, updated)
+    return True
+
+
+def current_entries(path: str) -> dict[str, str]:
+    entries: dict[str, str] = {}
+    for line in split_block(read_hosts(path))[1]:
+        fields = line.split()
+        if len(fields) >= 2:
+            for name in fields[1:]:
+                entries[name] = fields[0]
+    return entries
+
+
+@contextlib.contextmanager
+def locked():
+    path = env("ZITI_PINS_LOCK", "/run/curiosity-ziti-pins.lock")
+    try:
+        handle = open(path, "a", encoding="utf-8")  # noqa: SIM115
+    except OSError:
+        yield
+        return
+    with handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+def log(message: str) -> None:
+    print(f"curiosity-ziti-pins: {message}", flush=True)
+
+
+def refresh(wait: float) -> int:
+    names = pins()
+    hosts = env("ZITI_PINS_HOSTS_FILE", "/etc/hosts")
+    resolver = env("ZITI_PINS_RESOLVER", "100.64.0.2")
+    interval = max(float(env("ZITI_PINS_INTERVAL", "2")), 0.1)
+    deadline = time.monotonic() + max(wait, 0.0)
+    changed = False
+    resolved: dict[str, str] = {}
+    with locked():
+        if not names:
+            changed = set_block(hosts, {})
+            log("changed: no pins configured, managed block removed" if changed else "unchanged: no pins configured")
+            return 0
+        while True:
+            for name in names:
+                if name not in resolved:
+                    address = resolve(name, resolver)
+                    if address:
+                        resolved[name] = address
+            # Keep configured order; a pin the resolver cannot answer is not written.
+            entries = {name: resolved[name] for name in names if name in resolved}
+            changed = set_block(hosts, entries) or changed
+            if len(entries) == len(names) or time.monotonic() >= deadline:
+                break
+            time.sleep(min(interval, max(deadline - time.monotonic(), 0.0)))
+    missing = len(names) - len(resolved)
+    state = "changed" if changed else "unchanged"
+    log(f"{state}: {len(resolved)} of {len(names)} pins resolved" + (f", {missing} dropped (no answer from the tunnel resolver)" if missing else ""))
+    return 0
+
+
+def invalidate() -> int:
+    with locked():
+        changed = set_block(env("ZITI_PINS_HOSTS_FILE", "/etc/hosts"), {})
+    log("changed: managed block removed" if changed else "unchanged: no managed block")
+    return 0
+
+
+def check(show_names: bool) -> int:
+    names = pins()
+    hosts = env("ZITI_PINS_HOSTS_FILE", "/etc/hosts")
+    resolver = env("ZITI_PINS_RESOLVER", "100.64.0.2")
+    pinned = current_entries(hosts)
+    labels: dict[str, str] = {}
+
+    def addr_label(address: str | None) -> str:
+        if address is None:
+            return "none"
+        if show_names:
+            return address
+        return labels.setdefault(address, f"addr-{len(labels) + 1}")
+
+    drift = 0
+    for index, name in enumerate(names, 1):
+        live = resolve(name, resolver)
+        have = pinned.get(name)
+        if have is None and live is None:
+            state = "absent"
+        elif have is None:
+            state, drift = "unpinned", drift + 1
+        elif live is None:
+            state, drift = "stale-unresolvable", drift + 1
+        elif have != live:
+            state, drift = "stale", drift + 1
+        else:
+            state = "ok"
+        shown = name if show_names else f"pin-{index}"
+        print(f"{shown} {state} pinned={addr_label(have)} live={addr_label(live)}")
+    for name in sorted(set(pinned) - set(names)):
+        drift += 1
+        print(f"{name if show_names else 'extra-pin'} unconfigured pinned={addr_label(pinned[name])} live=-")
+    print(f"drift={drift} pins={len(names)}")
+    return 1 if drift else 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="curiosity-ziti-pins", description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command")
+    p_refresh = sub.add_parser("refresh")
+    p_refresh.add_argument("--wait", type=float, default=float(env("ZITI_PINS_WAIT", "0")))
+    sub.add_parser("invalidate")
+    p_check = sub.add_parser("check")
+    p_check.add_argument("--show-names", action="store_true")
+    args = parser.parse_args(argv)
+    if args.command in (None, "refresh"):
+        return refresh(getattr(args, "wait", float(env("ZITI_PINS_WAIT", "0"))))
+    if args.command == "invalidate":
+        return invalidate()
+    return check(args.show_names)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -614,8 +614,30 @@ ziti_oidc_provider: ""
 # Override or extend in group_vars / host_vars / -e to add machine-local
 # pins (e.g. lab-only services). To disable entirely on a host, set this
 # to an empty list.
+#
+# Pins are PRIVATE, per-host data: set them in host_vars / group_vars / -e on
+# the machine that needs them, never here and never in a public inventory.
 ziti_etc_hosts_pins: []
 ziti_intercept_domains: []
+
+# Keep the pins correct across tunnel restarts (curiosity-ziti-pins).
+#
+# ziti-edge-tunnel can reallocate its overlay addresses whenever it restarts, so
+# a pin written earlier can point at nothing or at a different service. With
+# ziti_pin_lifecycle_enabled (and a non-empty ziti_etc_hosts_pins) the role adds
+# a drop-in to ziti_service_name whose ExecStartPost starts
+# curiosity-ziti-pins.service on every start, crash restarts included. That
+# oneshot invalidates pins the resolver cannot answer and rewrites the rest,
+# polling for up to ziti_pin_wait seconds while the identities load. It never
+# delays or fails the tunnel (--no-block, "-" prefix) and never restarts it.
+# Set ziti_pin_lifecycle_enabled: false for an operator-managed tunnel unit that
+# must keep its own drop-ins: the role then removes only its own drop-in and
+# service, and still refreshes the pins during each run.
+ziti_pin_lifecycle_enabled: true
+ziti_pin_resolver: "100.64.0.2"
+ziti_pin_wait: 120
+ziti_pin_script_path: /usr/local/sbin/curiosity-ziti-pins
+ziti_pin_env_path: /etc/curiosity/ziti-pins.env
 
 # Tunnel health check (curiosity-ziti-health.service + timer, root).
 #
