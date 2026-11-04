@@ -160,23 +160,7 @@
  	if (dsc && !intel_dp_dsc_compute_pipe_bpp_limits(connector, limits))
  		return false;
  
-@@ -3976,7 +4108,14 @@ static int intel_dp_hdmi_sink_max_frl(st
- 	rate_per_lane = info->hdmi.max_frl_rate_per_lane;
- 	max_frl_rate = max_lanes * rate_per_lane;
- 
--	if (info->hdmi.dsc_cap.v_1p2) {
-+	/*
-+	 * The sink's DSC FRL limit only applies to a compressed HDMI stream,
-+	 * which needs a PCON with a DSC encoder. A PCON without one (it may
-+	 * still decode DSC from the DP side) always sends uncompressed video,
-+	 * so the plain FRL limit applies (i915.pcon_frl_444).
-+	 */
-+	if (info->hdmi.dsc_cap.v_1p2 &&
-+	    (!pcon_frl_444 || drm_dp_pcon_enc_is_dsc_1_2(intel_dp->pcon_dsc_dpcd))) {
- 		max_dsc_lanes = info->hdmi.dsc_cap.max_lanes;
- 		dsc_rate_per_lane = info->hdmi.dsc_cap.max_frl_rate_per_lane;
- 		if (max_dsc_lanes && dsc_rate_per_lane)
-@@ -4003,7 +4142,7 @@ static int intel_dp_pcon_start_frl_train
+@@ -4020,7 +4152,7 @@ static int intel_dp_pcon_start_frl_train
  	struct intel_display *display = to_intel_display(intel_dp);
  #define TIMEOUT_FRL_READY_MS 500
  #define TIMEOUT_HDMI_LINK_ACTIVE_MS 1000
@@ -185,7 +169,7 @@
  	u8 max_frl_bw_mask = 0, frl_trained_mask;
  	bool is_active;
  
-@@ -4016,13 +4155,26 @@ static int intel_dp_pcon_start_frl_train
+@@ -4033,13 +4165,26 @@ static int intel_dp_pcon_start_frl_train
  
  	max_frl_bw = min(max_edid_frl_bw, max_pcon_frl_bw);
  
