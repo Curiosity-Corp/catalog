@@ -230,7 +230,7 @@ class LevelReader:
         self._clock = clock
         self._origin = self.started if idle_since is None else idle_since
         self._last_bytes: float | None = None
-        self._zero_since: float | None = None  # when the current unbroken run of exact-zero frames began
+        self._zeros = micwatch.ZeroRun(clock, STALE_S)  # the unbroken run of exact-zero audio, in audio time
         self._spawn = spawn or subprocess.Popen
         self._lock = threading.Lock()
         self._buffer = b""
@@ -286,11 +286,7 @@ class LevelReader:
         self._buffer += data
         while len(self._buffer) >= FRAME_BYTES:
             frame, self._buffer = self._buffer[:FRAME_BYTES], self._buffer[FRAME_BYTES:]
-            if frame.count(0) == len(frame):  # +0.0 in float32 is four zero bytes: no decoding needed
-                if self._zero_since is None:
-                    self._zero_since = self._clock()
-            else:
-                self._zero_since = None
+            self._zeros.feed(frame)
             samples = array.array("f")
             samples.frombytes(frame)
             if sys.byteorder == "big":
@@ -327,11 +323,10 @@ class LevelReader:
         return max(0.0, self._clock() - self.idle_since())
 
     def zero_for(self) -> float | None:
-        """Seconds of unbroken exact zeros up to the latest frame (digital silence); None while the source delivers
-        nothing at all (that is a stall, not digital silence) or the latest frame had signal."""
-        if self._zero_since is None or self._clock() - self._stamp > STALE_S:
-            return None
-        return max(0.0, self._clock() - self._zero_since)
+        """Seconds of unbroken exact zeros up to the latest frame (digital silence), counted in audio actually
+        received; None while the source delivers nothing at all (that is a stall, not digital silence) or the latest
+        frame had signal."""
+        return self._zeros.seconds()
 
     def take(self) -> dict[str, Any]:
         """Levels since the last call: the loudest peaks (no frame is missed between polls), the latest RMS and LUFS."""
@@ -569,8 +564,10 @@ class AudioController:
         sleep: Callable[[float], object] | None = None,
         signal: Callable[[str, float], micwatch.SignalSample | None] | None = None,
         resync: Callable[[int], Callable[[], str]] | None = None,
+        pcm_present: Callable[[micwatch.AlsaPcm], bool] | None = None,
     ) -> None:
         self._cfg = cfg
+        self._pcm_present = pcm_present or (lambda pcm: pcm.path.exists())
         self.notify = notify
         self._clock = clock
         self._spawn = spawn
@@ -616,7 +613,9 @@ class AudioController:
         self._kind = micwatch.KIND_STALL  # what the current fault is: a stall, or digital silence
         self._revive = {"state": "idle", "message": None, "at": -math.inf}
         self._revive_thread: threading.Thread | None = None
-        self._auto_tries: list[float] = []  # when the watchdog last revived a stall by itself (the budget)
+        self._auto_tries: list[float] = []  # when the watchdog last revived a stall by itself (the burst budget)
+        self._auto_backoff: int | None = None  # None: in the burst; n: n tries made since the burst ran out
+        self._auto_absent = False  # the mic's source or card is missing right now (logged once)
 
         self._outputs = Outputs(
             lambda level, text: _emit(self.notify, level, text),
@@ -795,38 +794,91 @@ class AudioController:
             if event == "started" or (event == "cleared" and self._revive["state"] == "failed"):
                 self._revive.update(state="idle", message=None)  # a new stall, or the old failure resolved itself
             cleared_quietly = event == "cleared" and self._revive["state"] != "ok"
+            if event == "cleared":
+                self._mic_recovered()
         if event == "started":
             title = micwatch.SILENCE_TITLE if self._kind == micwatch.KIND_SILENCE else micwatch.STALL_TITLE
             _emit(self.notify, "warn", f"{title}. Press Revive mic.")
         elif cleared_quietly:
             _emit(self.notify, "ok", "Microphone is delivering audio again")
-        self._auto_revive(mic)
+        self._auto_revive(mic, listing)
 
-    def _auto_revive(self, mic: str) -> None:
+    def _auto_revive(self, mic: str, listing: str = "") -> None:
         """A confirmed stall is revived at once, call or no call: nobody is watching a toast while the desk is idle
         (2026-11-04, #186: the mic stayed silent after a USB re-enumeration until someone ran doctor). Reuses the
-        revive worker of the Revive mic button. Bounded: at most AUTO_REVIVE_MAX tries per AUTO_REVIVE_WINDOW_S,
-        AUTO_REVIVE_RETRY_S apart. Digital silence is never fixed by itself (it re-writes mixer controls)."""
+        revive worker of the Revive mic button. The first AUTO_REVIVE_MAX tries within AUTO_REVIVE_WINDOW_S are a
+        burst, AUTO_REVIVE_RETRY_S apart; after that the tries go on with exponential backoff for as long as the
+        stall is confirmed (#188: giving up left the mic stalled for good). A try is never spent while the source or
+        its ALSA card is missing. Digital silence is never fixed by itself (it re-writes mixer controls)."""
         if str(self._cfg.get("STREAMSTACK_MIC_AUTO_REVIVE", "1")).strip().lower() in {"0", "false", "no", "off"}:
             return
         if not mic or not system.have("pactl"):
             return
         with self._lock:
-            if not self._detector.stalled or self._kind != micwatch.KIND_STALL:
+            if not self._due_for_auto_revive():
                 return
-            if self._revive["state"] == "reviving" or self._stop.is_set():
+        if not self._device_present(mic, listing):
+            return
+        with self._lock:
+            if not self._due_for_auto_revive():  # the state may have moved while the device was looked at
                 return
             now = self._clock()
             self._auto_tries = [t for t in self._auto_tries if now - t < micwatch.AUTO_REVIVE_WINDOW_S]
-            if len(self._auto_tries) >= micwatch.AUTO_REVIVE_MAX:
-                return  # tried enough: the failed state and its advice stand until a person acts or the mic recovers
-            if self._auto_tries and now - self._auto_tries[-1] < micwatch.AUTO_REVIVE_RETRY_S:
-                return
             self._auto_tries.append(now)
-            tries = len(self._auto_tries)
+            if self._auto_backoff is not None:
+                self._auto_backoff += 1
+            elif len(self._auto_tries) >= micwatch.AUTO_REVIVE_MAX:
+                self._auto_backoff = 0  # the burst is spent: the next try waits AUTO_REVIVE_BACKOFF_S
+            try_no, backoff = len(self._auto_tries), self._auto_backoff
             self._begin_revive(mic, micwatch.KIND_STALL)
-        log.warning("microphone stalled: reviving it automatically (try %d of %d)", tries, micwatch.AUTO_REVIVE_MAX)
+        if backoff is None or backoff == 0:
+            log.warning(
+                "microphone stalled: reviving it automatically (try %d of %d)", try_no, micwatch.AUTO_REVIVE_MAX
+            )
+        else:
+            log.warning(
+                "microphone still stalled: reviving it again (backoff try %d, next wait %.0f s)",
+                backoff,
+                self._backoff_wait(),
+            )
         _emit(self.notify, "warn", "Microphone stalled. Reviving it automatically...")
+
+    def _backoff_wait(self) -> float:
+        """How long the next try waits after the burst: 20 s, 40 s, 80 s, then 120 s."""
+        step = self._auto_backoff or 0
+        return min(micwatch.AUTO_REVIVE_BACKOFF_S * 2**step, micwatch.AUTO_REVIVE_BACKOFF_MAX_S)
+
+    def _due_for_auto_revive(self) -> bool:
+        """Whether a stall is confirmed, nothing is running and the burst or backoff schedule allows a try now.
+        The caller holds the lock."""
+        if not self._detector.stalled or self._kind != micwatch.KIND_STALL:
+            return False
+        if self._revive["state"] == "reviving" or self._stop.is_set():
+            return False
+        now = self._clock()
+        last = self._auto_tries[-1] if self._auto_tries else None
+        if self._auto_backoff is not None:
+            return last is None or now - last >= self._backoff_wait()
+        recent = [t for t in self._auto_tries if now - t < micwatch.AUTO_REVIVE_WINDOW_S]
+        if len(recent) >= micwatch.AUTO_REVIVE_MAX:
+            return last is None or now - last >= micwatch.AUTO_REVIVE_BACKOFF_S  # the burst is spent
+        return last is None or now - last >= micwatch.AUTO_REVIVE_RETRY_S
+
+    def _device_present(self, mic: str, listing: str) -> bool:
+        """Whether the source is listed and its ALSA card is there (from the listing the probe already read: no
+        extra call). A device still re-enumerating cannot be revived, so a try would be wasted."""
+        info = micwatch.parse_source(listing, mic) if listing else None
+        present = info is not None and (info.pcm is None or self._pcm_present(info.pcm))
+        with self._lock:
+            was_absent, self._auto_absent = self._auto_absent, not present
+        if not present and not was_absent:
+            log.warning("microphone stalled but its source or sound card is not there yet: waiting for it to return")
+        return present
+
+    def _mic_recovered(self) -> None:
+        """The microphone delivers audio again: the next stall starts from the burst. The caller holds the lock."""
+        self._auto_backoff = None
+        self._auto_absent = False
 
     def _recheck(self, mic: str) -> bool | None:
         """After a revive step: fresh readers, then the same ALSA signal. True stalled, False healthy, None unknown."""
@@ -1127,6 +1179,7 @@ class AudioController:
             if result.ok:
                 self._detector.reset()
                 self._graph = None
+                self._mic_recovered()
             self._set_revive("ok" if result.ok else "failed", result.message)
         log.warning("mic revive %s: %s", "ok" if result.ok else "failed", result.message)
         _emit(self.notify, "ok" if result.ok else "error", result.message)
