@@ -41,6 +41,9 @@ build_ignore:
   - .mypy_cache
   - .ci-venv
   - docs/evidence
+  # Provenance unresolved (screenshots of third-party products, a live camera
+  # frame); see THIRD_PARTY_INVENTORY.yml entry streamstack-evidence.
+  - roles/developer_workstation/files/streamstack/docs/evidence
   - tests
   - scripts
   - Makefile

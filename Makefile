@@ -1,11 +1,11 @@
-.PHONY: validate syntax lint yaml test collection sbom
+.PHONY: validate syntax lint yaml test collection sbom licenses
 
 PYTHON ?= python3
 ANSIBLE_ROLES_PATH ?= roles
 SOURCE_DATE_EPOCH ?= 0
 export SOURCE_DATE_EPOCH
 
-validate: yaml syntax lint test collection sbom
+validate: yaml syntax lint test licenses collection sbom
 
 yaml:
 	yamllint -f parsable .
@@ -26,3 +26,7 @@ collection:
 
 sbom: collection
 	python3 scripts/build_collection_sbom.py "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" collection.cdx.json
+
+licenses:
+	$(PYTHON) scripts/check_third_party_inventory.py --build
+	$(PYTHON) -m pytest -q tests/test_third_party_inventory.py

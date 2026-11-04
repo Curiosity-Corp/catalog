@@ -1,0 +1,460 @@
+---
+# Third-party and vendored material in the curiosity.workstation collection.
+#
+# This file is read by scripts/check_third_party_inventory.py, which scans the
+# BUILT collection tarball (not the source checkout) against it; CI and
+# `make licenses` run that check. Review this file before every release
+# (docs/release-checklist.md) and whenever vendored or pinned material changes.
+#
+# Entry fields
+#   id, name       identify the entry
+#   kind           vendored | derived | first-party | runtime | key-material | patch
+#   status         shipped   - the files are redistributed in the collection artifact
+#                  excluded  - kept in the repository but kept OUT of the artifact via
+#                              galaxy.yml build_ignore until provenance is resolved
+#                  runtime   - fetched from upstream on the managed host; never redistributed
+#   provenance     resolved | needs-review | unresolved. `unresolved` material must be
+#                  excluded. `needs-review` ships (the role needs it) with a recorded open question.
+#   paths          globs relative to the collection root (`*` stays inside a directory,
+#                  `**` crosses directories, a trailing `/` means the whole tree);
+#                  `except` removes matches again. Runtime entries list no paths.
+#   source         where the material comes from; version = release, tag or commit
+#   license        SPDX identifier (or the upstream wording where SPDX cannot say it)
+#   redistribution what a redistributor of the built collection must do
+#   notice         true when NOTICE must carry text for this entry: every `notice_text`
+#                  string must appear in NOTICE; a `license_file`, when given, must be in the artifact
+#   pins           values the checker compares with the artifact (`key` of a YAML file, or a
+#                  `regex` whose first group is the value); they must equal `version`
+#
+# Runtime licences are recorded from the upstream project at the inventory date and are not
+# re-verified by the check; re-read them at release time. Nothing under status `runtime` is
+# shipped, so the redistribution column there is a note on use, not an obligation of this repo.
+
+inventory_reviewed: 2026-11-03
+
+# Files that are this project's own legal and notice files. They are the only files
+# allowed to carry licence text without an entry above.
+first_party_paths:
+  - LICENSE
+  - NOTICE
+  - THIRD_PARTY.md
+  - THIRD_PARTY_INVENTORY.yml
+  - LICENSES/*
+
+entries:
+  # ---------------------------------------------------------------------------
+  # Shipped: third-party works and derivatives
+  # ---------------------------------------------------------------------------
+  - id: wee-most
+    name: wee-most (Mattermost client for WeeChat), locally patched
+    kind: derived
+    status: shipped
+    provenance: resolved
+    paths:
+      - roles/developer_workstation/files/wee_most.py
+    source: https://git.sr.ht/~tardypad/wee-most (Damien Tardy-Panis; itself forked from wee_matter and inspired by wee_slack)
+    version: "0.3.0"
+    license: GPL-3.0-only
+    redistribution: >-
+      GPLv3: keep the copyright and licence notice in the file, ship the licence text
+      (LICENSES/GPL-3.0-only.txt), state that the file was modified, and keep the
+      corresponding source available (the file is the source). The header says "GNU GPLv3"
+      without an "or later" grant, so treat it as GPL-3.0-only.
+    notes: >-
+      Version is the script's own WEECHAT_SCRIPT_VERSION. The upstream commit it was copied
+      from is not recorded. Local changes (Python 3.12 raw-string regex fixes, personal
+      access token login for OIDC-only servers) are described in tasks/weechat.yml. The
+      WeeChat chat profile is optional and off by default.
+    notice: true
+    license_file: LICENSES/GPL-3.0-only.txt
+    notice_text:
+      - "Copyright (c) 2022 Damien Tardy-Panis"
+      - "wee_most.py"
+    pins:
+      - file: roles/developer_workstation/files/wee_most.py
+        regex: 'WEECHAT_SCRIPT_VERSION = "([^"]+)"'
+
+  - id: wee-teams
+    name: teams.py (Microsoft Teams client for WeeChat)
+    kind: first-party
+    status: shipped
+    provenance: needs-review
+    paths:
+      - roles/developer_workstation/files/teams.py
+    source: written for this collection (SCRIPT_AUTHOR curiosity-corp); the header says it follows the patterns of wee_most.py
+    version: "0.1.0"
+    license: GPL-3.0-only
+    redistribution: >-
+      The file is marked GPL3 and follows wee_most.py, so redistribute it under GPLv3 with the
+      licence text (LICENSES/GPL-3.0-only.txt) and its source (the file itself).
+    notes: >-
+      Open question: how much of wee_most.py's structure was copied. About 7% of its distinct
+      longer lines also occur in wee_most.py (imports and idioms). The conservative GPLv3 marking
+      is kept. No copyright holder line in the file; NOTICE names the project.
+    notice: true
+    license_file: LICENSES/GPL-3.0-only.txt
+    notice_text:
+      - "teams.py"
+    pins:
+      - file: roles/developer_workstation/files/teams.py
+        regex: 'SCRIPT_VERSION = "([^"]+)"'
+
+  - id: openbox-onyx-large
+    name: Onyx-Large Openbox theme (Onyx by Dana Jansens, with larger padding)
+    kind: derived
+    status: shipped
+    provenance: resolved
+    paths:
+      - roles/developer_workstation/files/minimal-desktop/onyx-large-themerc
+    source: Openbox 3.6.1, /usr/share/themes/Onyx/openbox-3/themerc (Ubuntu package 3.6.1-12ubuntu3)
+    version: "3.6.1"
+    license: GPL-2.0-or-later
+    redistribution: >-
+      GPLv2+: keep the upstream attribution, state that the file was changed (padding.width
+      2 to 6 and a new padding.height 6; everything else matches Onyx), and ship the licence
+      text (LICENSES/GPL-2.0-or-later.txt). The file is plain text, so it is its own source.
+    notes: >-
+      Upstream licence taken from the Debian copyright file of the openbox package
+      (Files: *, GPL-2+; Copyright 2003-2011 Dana Jansens, Mikael Magnusson, Derek Foreman, Ben Jansens).
+    notice: true
+    license_file: LICENSES/GPL-2.0-or-later.txt
+    notice_text:
+      - "Onyx"
+      - "Dana Jansens"
+
+  - id: openbox-rc-xml
+    name: Openbox rc.xml for the minimal desktop
+    kind: derived
+    status: shipped
+    provenance: needs-review
+    paths:
+      - roles/developer_workstation/files/minimal-desktop/rc.xml
+    source: written for this collection against the Openbox 3.4 rc schema; may start from Openbox's stock /etc/xdg/openbox/rc.xml
+    version: "Openbox 3.6.1 stock file used for comparison"
+    license: GPL-2.0-or-later
+    redistribution: >-
+      If it derives from the stock file, GPLv2+ applies: keep the notice and ship
+      LICENSES/GPL-2.0-or-later.txt. The role needs the file, so it ships under that assumption.
+    notes: >-
+      Open question: 105 of 246 distinct lines also occur in the stock rc.xml (element names and
+      default values dictated by the schema, plus default key bindings). Derivation is not
+      documented. Resolve by rewriting from the schema or recording the authorship.
+    notice: true
+    license_file: LICENSES/GPL-2.0-or-later.txt
+    notice_text:
+      - "rc.xml"
+
+  - id: i915-pcon-frl-444-patch
+    name: i915 PCON 4:4:4 patch to the Linux kernel
+    kind: patch
+    status: shipped
+    provenance: needs-review
+    paths:
+      - roles/developer_workstation/files/i915-pcon-frl-444/i915-pcon-frl-444.patch
+    source: modifies drivers/gpu/drm/i915/display/intel_dp.c of the Ubuntu kernel source that matches the host kernel (fetched on the host by i915-pcon-frl-444-build)
+    version: "no base version recorded; applied to the installed Ubuntu kernel's source package at build time"
+    license: MIT (upstream intel_dp.c header; Linux kernel overall GPL-2.0-only)
+    redistribution: >-
+      The patch adds code to a file under upstream's licence; keep upstream's copyright and
+      permission notice with any redistributed source. Only the patch (no kernel source) is
+      shipped here. The module is built on the host and not redistributed.
+    notes: >-
+      Open question: upstream licence is recorded from the known i915 header and not re-checked
+      against the kernel version in use; the kernel version the patch was written against is
+      not recorded. The helper scripts in the same directory are first-party.
+    notice: true
+    notice_text:
+      - "i915-pcon-frl-444.patch"
+
+  - id: openbox-zone
+    name: openbox-zone window snapping script
+    kind: first-party
+    status: shipped
+    provenance: needs-review
+    paths:
+      - roles/developer_workstation/files/minimal-desktop/openbox-zone
+    source: "ported from the seantech workstation (CHANGELOG, minimal desktop zone snapping); no header names an author or licence"
+    version: no upstream version recorded
+    license: Apache-2.0 (assumed; contributed internally, no header)
+    redistribution: >-
+      Apache-2.0 as part of this collection, provided the contributor confirms the script is
+      theirs to licence.
+    notes: >-
+      Open question: the original author's consent to Apache-2.0 is not recorded. Confirm with
+      the seantech workstation owner and add a header.
+
+  # ---------------------------------------------------------------------------
+  # Shipped: vendored subtree and its assets
+  # ---------------------------------------------------------------------------
+  - id: streamstack
+    name: StreamStack call and stream studio (vendored subtree)
+    kind: vendored
+    status: shipped
+    provenance: resolved
+    paths:
+      - roles/developer_workstation/files/streamstack/
+    except:
+      - "**/*.png"
+      - "**/*.jpg"
+      - "**/*.svg"
+      - roles/developer_workstation/files/streamstack/packaging/apt-public.asc
+      - roles/developer_workstation/files/streamstack/packaging/signing-cert.pem
+    source: StreamStack project (same organisation), squashed git subtree; its repository host is private and deliberately not named here
+    version: "0.0.26"
+    license: Apache-2.0
+    redistribution: >-
+      Apache-2.0: ship its own LICENSE (included in the subtree). The subtree has no NOTICE
+      file. It bundles no third-party code, fonts or models: the DeepFilterNet, OpenVINO and
+      YuNet files it uses are fetched at run time (see the runtime entries).
+    notes: >-
+      Squashed from upstream commit d5dc7178 ("chore(release): 0.0.26", subtree pull a021b2b).
+      Text mentions of third-party licences (models, GPL tools it does not link) are
+      documentation, not bundled code. Its docs/evidence directory is excluded, see below.
+    pins:
+      - file: roles/developer_workstation/files/streamstack/src/streamstack/__init__.py
+        regex: '__version__ = "([^"]+)"'
+
+  - id: streamstack-generated-art
+    name: StreamStack console icons, tray icons and look thumbnails
+    kind: first-party
+    status: shipped
+    provenance: resolved
+    paths:
+      - roles/developer_workstation/files/streamstack/src/streamstack/data/console/icon*.png
+      - roles/developer_workstation/files/streamstack/src/streamstack/data/console/icon.svg
+      - roles/developer_workstation/files/streamstack/src/streamstack/data/icons/*
+      - roles/developer_workstation/files/streamstack/src/streamstack/data/console/presets/looks/*.png
+    source: >-
+      generated by the project's own tools (tools/make_console_icons.py, python -m streamstack.presets.build
+      rendering one synthetic portrait); the tray icons are plain rectangles, a triangle and a circle
+    version: "0.0.26"
+    license: Apache-2.0
+    redistribution: Apache-2.0 with the subtree; no third-party artwork or fonts.
+
+  - id: streamstack-demo-cards
+    name: StreamStack demo test cards
+    kind: first-party
+    status: shipped
+    provenance: needs-review
+    paths:
+      - roles/developer_workstation/files/streamstack/src/streamstack/data/console/demo/*.jpg
+    source: generated test cards (docs/console.md); the generator is not in the tree
+    version: "0.0.26"
+    license: Apache-2.0 (images); lettering looks like Lato (SIL OFL 1.1), not confirmed
+    redistribution: >-
+      Apache-2.0 with the subtree. If the lettering is Lato, the OFL permits it in rendered
+      images; no font file is shipped.
+    notes: >-
+      Open question: the typeface baked into the pixels and the generating command are not
+      recorded. The Be Right Back card is used at run time, so the files ship.
+
+  - id: streamstack-test-fixtures
+    name: StreamStack test-pattern frames
+    kind: first-party
+    status: shipped
+    provenance: resolved
+    paths:
+      - roles/developer_workstation/files/streamstack/tests/fixtures/*.jpg
+    source: synthetic colour-bar test pattern with a timecode overlay (checked by eye), used as camera-frame fixtures
+    version: "0.0.26"
+    license: Apache-2.0
+    redistribution: Apache-2.0 with the subtree; contains no photograph.
+
+  - id: streamstack-release-keys
+    name: StreamStack release verification keys
+    kind: key-material
+    status: shipped
+    provenance: resolved
+    paths:
+      - roles/developer_workstation/files/streamstack/packaging/apt-public.asc
+      - roles/developer_workstation/files/streamstack/packaging/signing-cert.pem
+    source: public key (fingerprint F3AA4E82E815D695089DB4D2456BDF83CAB0C1E8) and CI signing certificate of the StreamStack project itself
+    version: "key and certificate as vendored with 0.0.26"
+    license: public verification material of the project; no licence grant needed
+    redistribution: Public keys, safe to redistribute; they carry no secret.
+
+  # ---------------------------------------------------------------------------
+  # Shipped: third-party key material embedded in task logic
+  # ---------------------------------------------------------------------------
+  - id: aws-cli-public-key
+    name: AWS CLI release signing public key
+    kind: key-material
+    status: shipped
+    provenance: resolved
+    paths:
+      - roles/developer_workstation/tasks/cloud-clis.yml
+    source: AWS CLI team public key published by Amazon for verifying awscli-exe-linux-x86_64.zip signatures
+    version: key embedded in tasks/cloud-clis.yml (the task pins and checks the key)
+    license: public verification key published for that purpose; no licence terms
+    redistribution: Public key; keep it unmodified so signature checks stay meaningful.
+
+  # ---------------------------------------------------------------------------
+  # Excluded from the built collection until provenance is resolved
+  # ---------------------------------------------------------------------------
+  - id: streamstack-evidence
+    name: StreamStack live-call and virtual-device evidence (screenshots and logs)
+    kind: first-party
+    status: excluded
+    provenance: unresolved
+    paths:
+      - roles/developer_workstation/files/streamstack/docs/evidence/
+    source: captured 2026-10-29 and earlier from Zoom's web client, Chromium, Firefox and Edge on the project's own machines
+    version: "StreamStack 0.0.22 captures"
+    license: unresolved
+    redistribution: >-
+      Not redistributed. The screenshots show third-party product interfaces (Zoom, Edge,
+      Chromium, Firefox) and one includes a live camera frame of a private room. Permission
+      to republish is not documented.
+    notes: >-
+      Still in the repository and in the StreamStack subtree; only the built collection omits
+      them (galaxy.yml build_ignore). Resolve by replacing the screenshots with synthetic
+      ones, or by recording the owner's and the vendors' terms, then remove the exclusion.
+
+  # ---------------------------------------------------------------------------
+  # Runtime: fetched on the managed host, never redistributed by this repository
+  # ---------------------------------------------------------------------------
+  - id: wee-slack
+    name: wee-slack (Slack client for WeeChat)
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: https://github.com/wee-slack/wee-slack (cloned, depth 1, built with build.sh by tasks/weechat.yml)
+    version: unpinned, default branch head at install time
+    license: MIT
+    redistribution: Not shipped. The installed slack.py carries upstream's MIT notice.
+
+  - id: weechat-go-py
+    name: go.py (WeeChat buffer switcher)
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: https://weechat.org/files/scripts/go.py (tasks/weechat.yml)
+    version: unpinned, current file at install time
+    license: GPL-3.0-or-later (script header; re-read at release)
+    redistribution: Not shipped; downloaded to the user's WeeChat directory.
+
+  - id: deepfilternet-ladspa
+    name: DeepFilterNet LADSPA plugin
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: https://github.com/Rikorose/DeepFilterNet/releases (pinned asset, sha256 checked)
+    version: "0.5.6"
+    license: MIT OR Apache-2.0
+    redistribution: Not shipped; fetched to /usr/local/lib/ladspa.
+    pins:
+      - file: roles/developer_workstation/defaults/main.yml
+        key: streamstack_deepfilter_release
+
+  - id: openvino
+    name: OpenVINO Python wheel
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: PyPI openvino wheel (pinned URL and sha256), installed with pip --target
+    version: "2026.4.1"
+    license: Apache-2.0
+    redistribution: Not shipped.
+    pins:
+      - file: roles/developer_workstation/defaults/main.yml
+        key: streamstack_openvino_release
+
+  - id: openvino-telemetry
+    name: openvino-telemetry Python wheel
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: PyPI openvino-telemetry wheel (pinned URL and sha256)
+    version: "2025.2.0"
+    license: Apache-2.0
+    redistribution: Not shipped.
+    pins:
+      - file: roles/developer_workstation/defaults/main.yml
+        key: streamstack_openvino_telemetry_release
+
+  - id: yunet-face-model
+    name: YuNet face-detection model
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: https://github.com/opencv/opencv_zoo (models/face_detection_yunet/face_detection_yunet_2023mar.onnx, pinned commit and sha256)
+    version: f12e12798e8314f7c074a6656816c048dcc95b7a
+    license: MIT (Copyright 2020 Shiqi Yu, per the StreamStack documentation)
+    redistribution: Not shipped; copied to each user's StreamStack model directory.
+    pins:
+      - file: roles/developer_workstation/defaults/main.yml
+        regex: 'opencv_zoo/raw/([0-9a-f]{40})/'
+
+  - id: tmux
+    name: tmux (hhtest toolchain)
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: https://github.com/tmux/tmux/releases (release tarball, sha256 pinned, built on the host)
+    version: "3.7b"
+    license: ISC
+    redistribution: Not shipped.
+    pins:
+      - file: roles/developer_workstation/defaults/main.yml
+        key: hhtest_tmux_release
+
+  - id: hashicorp-binaries
+    name: Terraform, Vault and Packer
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: https://releases.hashicorp.com (latest release per checkpoint-api, sha256 sums checked)
+    version: unpinned, latest release at install time
+    license: BUSL-1.1 for current releases (MPL-2.0 for older ones); re-read at release
+    redistribution: >-
+      Not shipped. BUSL-1.1 limits offering the software as a competing hosted product; internal
+      workstation use is the intended use here.
+
+  - id: pia-installer
+    name: Private Internet Access Linux installer
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: installers.privateinternetaccess.com (URL scraped from the vendor download page by tasks/hardware-drivers.yml)
+    version: unpinned, current vendor release
+    license: proprietary vendor installer (vendor terms of service); contains open-source parts under their own licences
+    redistribution: Not shipped and must never be vendored; every host downloads it from the vendor.
+
+  - id: upstream-github-clis
+    name: Command-line tools installed from GitHub releases
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: >-
+      tasks/latest-releases.yml; repositories in defaults latest_github_repositories (lazygit,
+      delta, zoxide, dust, duf, glow, just, watchexec, hyperfine, gum, golangci-lint, trivy, opentofu,
+      helm, kustomize, kubectx, krew, stern, velero, sealed-secrets, sops, age, Sunshine, litra-rs, deno)
+      plus the Bitwarden desktop .deb from bitwarden/clients
+    version: unpinned, latest release at install time (assets verified with GitHub's SHA-256 digest where the task says so)
+    license: per upstream repository and release (mostly MIT, Apache-2.0, BSD, MPL-2.0; Sunshine and Bitwarden desktop are GPL-3.0); re-read at release
+    redistribution: Not shipped; installed from upstream.
+
+  - id: upstream-binary-downloads
+    name: CLIs and runtimes downloaded from vendor sites
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: >-
+      rclone (downloads.rclone.org), kubectl (dl.k8s.io), AWS CLI v2 (awscli.amazonaws.com),
+      GitLab CLI (gitlab.com releases), mmctl (releases.mattermost.com), Go (go.dev), Composer
+      (getcomposer.org), nvm, pyenv, SDKMAN and Oh My Zsh with its plugins (GitHub clones)
+    version: unpinned, latest at install time
+    license: per upstream (mostly MIT, Apache-2.0, BSD-3-Clause); the Mattermost tarball is the full server release, only mmctl is used; re-read at release
+    redistribution: Not shipped; installed from upstream.
+
+  - id: vendor-apt-repositories
+    name: Third-party apt repositories and their signing keys
+    kind: runtime
+    status: runtime
+    provenance: resolved
+    source: >-
+      tasks/repos*.yml and apt-keyring.yml: Microsoft, Google, GitHub CLI, MongoDB, NodeSource, Brave,
+      1Password, Mozilla, OpenZiti and the authd PPA; keys are downloaded and fingerprint-checked
+    version: rolling
+    license: per package; vendor repositories carry proprietary and open-source packages
+    redistribution: Not shipped; packages are installed from the vendors' repositories.

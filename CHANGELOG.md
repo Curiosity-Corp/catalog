@@ -48,6 +48,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Third-party licence inventory (`THIRD_PARTY_INVENTORY.yml`, `NOTICE`, `LICENSES/`, catalog#48): source, version or commit, licence and redistribution conditions for the vendored chat integrations, the Onyx-derived Openbox theme, the i915 kernel patch, the StreamStack subtree and the run-time downloads. `scripts/check_third_party_inventory.py` (`make licenses`, CI job `third_party_inventory`) builds the collection into a temp dir and scans the tarball against it; the StreamStack evidence screenshots (third-party product UIs, provenance unresolved) are now left out of the built collection via `build_ignore`. The release checklist reviews the inventory.
 - `workstation_storage_extra_mounts`: further subvolumes of the encrypted data volume (for example `/var/tmp` and `/var/lib/containers`) are kept in the managed fstab block after the cutover, so hot write paths moved off the OS drive by hand become reproducible; the role refuses a missing subvolume and removes the hand-added duplicate lines.
 - `zam-plugins` joins `streamstack_packages`: the gate, de-esser, compressor and limiter of the StreamStack voice chain.
 - StreamStack hosts: the call users in `streamstack_video_group_users` (default `mrh`, `seantech`; accounts absent from the host are skipped, never created) join the `video` group so apps can open `/dev/video43` "StreamStack Camera" and the Cam Link without a logind seat.

@@ -4,5 +4,58 @@ This project is maintained by Curiosity Research Corporation, a non-profit
 organization focused on helping students and researchers spend less time on
 computer and virtual-machine maintenance.
 
-Some optional WeeChat integration files are distributed under their own GPL
-license notices. See THIRD_PARTY.md before redistributing those files.
+The Ansible automation and documentation are licensed under the Apache License
+2.0 (LICENSE). The files below are separate works or derivatives and keep
+their own licences. THIRD_PARTY_INVENTORY.yml records the source, version,
+licence and redistribution conditions of everything vendored here; THIRD_PARTY.md
+explains it.
+
+wee_most.py (roles/developer_workstation/files/wee_most.py)
+  Mattermost client for WeeChat, version 0.3.0.
+  Copyright (c) 2022 Damien Tardy-Panis <damien.dev@tardypad.me>
+  Forked from wee_matter and inspired by wee_slack; upstream is wee-most,
+  https://git.sr.ht/~tardypad/wee-most.
+  Released under the GNU General Public License version 3
+  (LICENSES/GPL-3.0-only.txt). This copy was modified by Curiosity Research
+  Corporation (Python 3.12 raw-string regular expressions; personal access
+  token login). The modifications predate the first public commit of this
+  repository, 2026-07-19. The file is its own source code.
+
+teams.py (roles/developer_workstation/files/teams.py)
+  Microsoft Teams client for WeeChat, written for this collection after the
+  patterns of wee_most.py and marked GPL3. Distributed under the GNU General
+  Public License version 3 (LICENSES/GPL-3.0-only.txt). The file is its own
+  source code.
+
+onyx-large-themerc (roles/developer_workstation/files/minimal-desktop/onyx-large-themerc)
+  Based on the Onyx theme by Dana Jansens from Openbox 3.6.1, copyright
+  2003-2011 Dana Jansens, Mikael Magnusson, Derek Foreman and Ben Jansens,
+  licensed under the GNU General Public License version 2 or later
+  (LICENSES/GPL-2.0-or-later.txt). Changed by Curiosity Research Corporation:
+  window padding raised to 6 (padding.width) and padding.height 6 added. The
+  file is its own source code.
+
+rc.xml (roles/developer_workstation/files/minimal-desktop/rc.xml)
+  An Openbox configuration that may start from Openbox's stock rc.xml, so it is
+  distributed under the GNU General Public License version 2 or later
+  (LICENSES/GPL-2.0-or-later.txt) until its authorship is confirmed. The file
+  is its own source code.
+
+i915-pcon-frl-444.patch (roles/developer_workstation/files/i915-pcon-frl-444/)
+  A patch to drivers/gpu/drm/i915/display/intel_dp.c of the Linux kernel. The
+  patched file keeps the licence and Intel copyright notice of the upstream
+  kernel source, which is fetched on the managed host and is not part of this
+  collection; the built module is covered by the kernel's GPL-2.0 terms.
+
+StreamStack (roles/developer_workstation/files/streamstack/)
+  Vendored subtree of the StreamStack project, version 0.0.26, licensed under
+  the Apache License 2.0 (its own LICENSE file). It bundles no third-party code.
+
+The chat profile is optional and off by default. Material that the roles
+download on the managed host (wee-slack, go.py, DeepFilterNet, OpenVINO, the
+YuNet model, tmux, HashiCorp tools and other vendor releases) is not
+redistributed here; it keeps its upstream licences.
+
+Files whose provenance is unresolved are left out of the built collection
+(galaxy.yml build_ignore) and listed in THIRD_PARTY_INVENTORY.yml with status
+"excluded". Run `make licenses` after building to check the artifact.
