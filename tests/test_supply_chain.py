@@ -225,6 +225,17 @@ def test_tracked_files_hold_no_credentials():
     assert subprocess.run([sys.executable, str(ROOT / "scripts/scan_secrets.py")], cwd=ROOT).returncode == 0
 
 
+def test_scanner_walks_the_tree_when_git_is_not_installed(tmp_path, monkeypatch):
+    """The CI image has no git; the scan must still cover files, skipping the venv and .git."""
+    (tmp_path / "ok.txt").write_text("nothing here\n")
+    (tmp_path / ".ci-venv").mkdir()
+    (tmp_path / ".ci-venv" / "skipped.txt").write_text("gh" + "p_" + "a" * 36 + "\n")
+    (tmp_path / "bad.txt").write_text("gh" + "p_" + "b" * 36 + "\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    assert [p.name for p in secrets.tracked(Path("."))] == ["bad.txt", "ok.txt"]
+
+
 # --- artifact verification ------------------------------------------------------
 
 def test_artifact_contents_allow_the_real_layout():

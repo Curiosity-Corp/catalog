@@ -8,7 +8,8 @@ password inside a URL). A line that carries ``secret-scan: allow`` is skipped,
 and a line holding only an obviously fake value (``example``, ``changeme``,
 ``<placeholder>``, ``REDACTED``) is skipped.
 
-    python scripts/scan_secrets.py [PATH ...]      # default: git ls-files
+    python scripts/scan_secrets.py [PATH ...]      # default: git ls-files, or every file under
+    the current directory when git is not installed
 
 Findings print as ``path:line: rule`` and never include the matched text, so a
 report cannot leak the value it found. Exit status 1 when anything is found.
@@ -48,8 +49,19 @@ def scan_text(text: str) -> list[tuple[int, str]]:
     return found
 
 
+SKIP_DIRS = {".git", ".ci-venv", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".cache", "evidence"}
+
+
 def tracked(root: Path) -> list[Path]:
-    output = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True).stdout
+    """Files Git tracks; a plain directory walk when git is not installed (CI image)."""
+    try:
+        output = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True).stdout
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return sorted(
+            path
+            for path in root.rglob("*")
+            if path.is_file() and not SKIP_DIRS.intersection(path.relative_to(root).parts)
+        )
     return [root / name for name in output.decode().split("\0") if name]
 
 
