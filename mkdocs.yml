@@ -1,0 +1,82 @@
+---
+site_name: Curiosity Workstation
+site_description: Maintenance automation for research workstations, VMs and thin clients
+repo_url: https://github.com/Curiosity-Corp/catalog
+docs_dir: docs
+exclude_docs: |
+  requirements.txt
+site_dir: site
+strict: true
+hooks:
+  - scripts/mkdocs_hooks.py
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    absolute_links: warn
+    unrecognized_links: warn
+    anchors: warn
+nav:
+  - Home: index.md
+  - Quickstarts:
+      - Overview: quickstarts/README.md
+      - Researcher laptop: quickstarts/laptop.md
+      - Research VM: quickstarts/research-vm.md
+      - cloud-init and libvirt: quickstarts/cloud-init-libvirt.md
+      - Thin client and shared lab: quickstarts/thin-client-and-shared-lab.md
+      - Restricted networks: quickstarts/restricted-networks.md
+      - Notebooks: quickstarts/notebooks.md
+  - Use and configure:
+      - Configuration: configuration.md
+      - Python research profile: python-research-profile.md
+      - Accessibility and localization: accessibility-and-localization.md
+      - Maintenance summary: maintenance-summary.md
+      - Low-bandwidth and offline: low-bandwidth-and-offline.md
+      - Update rings: update-rings.md
+      - Compatibility: compatibility.md
+      - Architecture: architecture.md
+      - Storage: storage.md
+      - Temporary files: tmp-hygiene.md
+      - Console tuning: console-tuning.md
+      - T460 console: t460-console.md
+      - StreamStack: streamstack.md
+      - Wi-Fi and VPN: pia-vpn-and-wifi.md
+      - Disposable VM tests: hhtest.md
+  - Security and trust:
+      - Threat model: threat-model.md
+      - Vulnerability response: vulnerability-response.md
+      - Security tabletop: security-tabletop.md
+      - Telemetry and evidence: telemetry-and-evidence.md
+      - Project identity: project-identity.md
+      - Infrastructure patterns: infrastructure-patterns.md
+  - Releases:
+      - Release checklist: release-checklist.md
+      - Draft 1.0 contract: stable-contract-1.0-draft.md
+      - Roadmap: roadmap.md
+  - Community:
+      - Good-first backlog: community/good-first-issues.md
+      - Maintainer onboarding: community/maintainer-onboarding.md
+      - Pilot kit: community/pilot-kit.md
+      - Contributor session: community/contributor-session.md
+      - Contributor cohorts: community/contributor-cohorts.md
+      - Upstream stewardship: community/upstream-stewardship.md
+      - Adoption and evidence: adoption-and-evidence.md
+  - Decision records:
+      - Overview: decisions/README.md
+      - Template: decisions/0000-template.md
+      - 0001 Public and internal repositories: decisions/0001-public-and-internal-repositories.md
+      - 0002 Optional integrations default off: decisions/0002-optional-integrations-default-off.md
+  - Evidence and templates:
+      - Clean-room run template: evidence/clean-room-run-template.md
+      - Monthly template: evidence/monthly-template.md
+      - Downloads and dependents template: evidence/downloads-dependents-template.md
+      - Pilot feedback template: evidence/pilot-feedback-template.md
+      - Contributor session notes template: evidence/contributor-session-notes-template.md
+      - Tabletop template: evidence/tabletop-template.md
+      - Readiness review template: evidence/readiness-review-template.md
+      - Notebook loopback check: evidence/notebook-loopback-check.md
+      - Python research sample install: evidence/python-research-sample-install.md
+      - v0.1.0 build record: evidence/v0.1.0-build.md

@@ -55,3 +55,9 @@ Release work follows [`docs/release-checklist.md`](docs/release-checklist.md).
 Maintainer roles, review rules, who approves breaking changes and releases, and
 the decision-record format for changes to defaults and public variables are in
 [`GOVERNANCE.md`](GOVERNANCE.md).
+
+Looking for something to start with? The
+[good-first and help-wanted backlog](docs/community/good-first-issues.md) lists small,
+scoped tasks with test guidance, and
+[review areas and maintainer onboarding](docs/community/maintainer-onboarding.md)
+explains how contributors grow into maintainers.

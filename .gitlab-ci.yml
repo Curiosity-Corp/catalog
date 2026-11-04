@@ -105,6 +105,16 @@ research-profile:
   script:
     - python -m pytest -q tests/test_python_research.py tests/test_accessibility_defaults.py tests/test_update_summary.py
 
+# Community and evidence pages, the contributor worksheet, and the documentation
+# site (mkdocs, pinned in docs/requirements.txt) built strictly with no private service.
+community-docs:
+  extends: .python_setup
+  stage: test
+  script:
+    - python -m pip install -r docs/requirements.txt
+    - python -m pytest -q tests/test_community_docs.py tests/test_contributor_cohort.py tests/test_docs_site.py
+    - python -m mkdocs build --strict -d "$CI_PROJECT_DIR/.ci-site"
+
 lint:
   extends: .python_setup
   stage: validate

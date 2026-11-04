@@ -167,6 +167,10 @@ public-surface checks, and collection building. See
 - [Accessibility and localization](docs/accessibility-and-localization.md)
 - [Maintenance summary](docs/maintenance-summary.md)
 - [Low-bandwidth and offline maintenance](docs/low-bandwidth-and-offline.md)
+- [Documentation site index](docs/index.md) (build it with `make docs-site`)
+- [Good-first and help-wanted backlog](docs/community/good-first-issues.md)
+- [Review areas and maintainer onboarding](docs/community/maintainer-onboarding.md)
+- [Pilot kit](docs/community/pilot-kit.md), [contributor session runbook](docs/community/contributor-session.md), [contributor cohorts](docs/community/contributor-cohorts.md) and [upstream stewardship](docs/community/upstream-stewardship.md)
 - [Roadmap](docs/roadmap.md)
 
 Please do not put passwords, tokens, private keys, internal inventories, or
