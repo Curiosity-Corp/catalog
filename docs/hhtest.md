@@ -17,7 +17,12 @@ own uid, so a collision is physically impossible:
   cache in `~/.cache/ms-playwright`;
 - `~/work` as the sync target; a nightly timer that runs as the account and
   removes files under `~/work` and `/tmp` that the account owns and that are
-  older than `hhtest_cleanup_age_days` (3).
+  older than `hhtest_cleanup_age_days` (3). Go makes its module cache
+  read-only (directories `0555`), and a file cannot be unlinked from a
+  read-only directory, so before deleting the helper gives the account its own
+  write permission back on the directories it owns under each root
+  (`find -type d -exec chmod u+rwx`, never following symlinks, never leaving
+  the root's filesystem). Files newer than the age are kept.
 
 ## Opting a machine in
 

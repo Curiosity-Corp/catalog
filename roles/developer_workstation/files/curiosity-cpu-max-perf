@@ -1,0 +1,49 @@
+#!/bin/sh
+# Managed by curiosity.workstation (tasks/cpu-thermal-guard.yml).
+#
+# Cap the CPU's maximum performance state through intel_pstate's max_perf_pct.
+# This is the only OS-side cap on boards whose BIOS locks RAPL (MSR 0x610 bit 63
+# set; writes to powercap constraint_*_power_limit_uw fail with ENODATA).
+#
+# Usage:
+#   curiosity-cpu-max-perf <pct>     cap at <pct> percent (1-100)
+#   curiosity-cpu-max-perf --restore lift the cap (100 percent)
+#
+# Skips cleanly (exit 0, one log line) when intel_pstate is absent: another
+# cpufreq driver, a VM or a container.  A bad argument or a failed write is a
+# real error and exits non-zero.
+set -eu
+
+PSTATE="${CURIOSITY_INTEL_PSTATE_DIR:-/sys/devices/system/cpu/intel_pstate}"
+KNOB="$PSTATE/max_perf_pct"
+
+log() {
+  echo "curiosity-cpu-max-perf: $*"
+}
+
+case "${1:-}" in
+  --restore) pct=100 ;;
+  '' | *[!0-9]*)
+    log "usage: curiosity-cpu-max-perf <pct 1-100> | --restore" >&2
+    exit 2
+    ;;
+  *) pct="$1" ;;
+esac
+
+if [ "$pct" -lt 1 ] || [ "$pct" -gt 100 ]; then
+  log "percentage must be 1-100, got $pct" >&2
+  exit 2
+fi
+
+if [ ! -w "$KNOB" ]; then
+  log "intel_pstate max_perf_pct is not available at $KNOB; nothing to do"
+  exit 0
+fi
+
+if ! echo "$pct" > "$KNOB"; then
+  log "cannot write $pct to $KNOB" >&2
+  exit 1
+fi
+
+now="$(cat "$KNOB")"
+log "max_perf_pct is $now (requested $pct)"
