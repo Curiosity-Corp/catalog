@@ -676,9 +676,18 @@ class WakeDetector:
 
     IDLE_AFTER_MS = 300_000
     ACTIVE_BELOW_MS = 3_000
+    # "off" only means the TV's REST API did not answer within 2 s. The TV is on
+    # Wi-Fi and its address can briefly resolve to a stale DHCP lease, so one
+    # unanswered poll is not a power-off: on 2026-11-04 single misses raised
+    # tv-wake edges whose forced repairs blanked a healthy 8K60 picture four
+    # times (catalog#138). It counts as down only after this many consecutive
+    # unanswered polls (30 s at the 5 s poll). An explicit "standby" from the TV
+    # itself is authoritative and counts at once.
+    UNREACHABLE_CONFIRM_SAMPLES = 6
 
     def __init__(self) -> None:
-        self.tv: str | None = None
+        self.tv: str | None = None  # debounced power state
+        self.tv_unanswered = 0  # consecutive "off" (unanswered) samples
         self.edid: bool | None = None
         self.dpms: str | None = None
         self.idle_since_down = False
@@ -687,11 +696,17 @@ class WakeDetector:
     def feed(self, tv: str | None, edid: bool | None, dpms: str | None, idle: int | None) -> list[str]:
         events: list[str] = []
         if tv is not None:
-            if self.tv in ("off", "standby") and tv == "on":
+            if tv == "off":
+                self.tv_unanswered += 1
+                seen = "off" if self.tv_unanswered >= self.UNREACHABLE_CONFIRM_SAMPLES else self.tv
+            else:
+                self.tv_unanswered = 0
+                seen = tv
+            if self.tv in ("off", "standby") and seen == "on":
                 events.append("tv-wake")
-            if tv != "on":
+            if seen is not None and seen != "on":
                 self.idle_since_down = True
-            self.tv = tv
+            self.tv = seen
         if edid is not None:
             if self.edid is False and edid is True:
                 events.append("sink-wake")
@@ -701,11 +716,13 @@ class WakeDetector:
                 events.append("dpms-on")
             self.dpms = dpms
         if idle is not None:
+            # The debounced state: an unwatched TV (None) could have slept, a
+            # single unanswered poll could not.
             if idle >= self.IDLE_AFTER_MS:
                 if not self.was_idle:
-                    self.idle_since_down = tv != "on"
+                    self.idle_since_down = self.tv != "on"
                 self.was_idle = True
-                if tv != "on":
+                if self.tv != "on":
                     self.idle_since_down = True
             elif self.was_idle and idle < self.ACTIVE_BELOW_MS:
                 self.was_idle = False
@@ -749,7 +766,13 @@ def watch(cfg: Config, interval: float = 5.0) -> int:
         conn = connector_dir(cfg.output)
         edid = edid_readable(conn) if conn else None
         dpms = read_text(f"{conn}/dpms") if conn else None
+        previous_tv = detector.tv
         events = detector.feed(tv, edid, dpms, idle_ms())
+        if detector.tv != previous_tv:
+            log("tv power", state=detector.tv, previous=previous_tv)
+        elif tv == "off" and detector.tv_unanswered == 1:
+            log("tv api unanswered; not counted as off until it persists",
+                state=detector.tv, polls=detector.UNREACHABLE_CONFIRM_SAMPLES)
         quiet = now - load_state().get("last_repair_end", 0) < HOTPLUG_QUIET
         for event in events:
             if quiet and event in ("sink-wake", "dpms-on"):
