@@ -715,6 +715,14 @@
   tags: [hardware, i915]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
+- name: Include the redacted diagnostics command
+  ansible.builtin.include_tasks:
+    file: diagnostics-cli.yml
+    apply:
+      tags: [diagnostics]
+  tags: [diagnostics]
+  when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+
 - name: Include fonts
   ansible.builtin.include_tasks:
     file: fonts.yml

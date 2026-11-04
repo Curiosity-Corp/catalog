@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# curiosity-diagnostics: redacted local support bundle (docs/diagnostics.md)
+# =============================================================================
+# Installs one stdlib-only Python script to /usr/local/bin. It has no network
+# code and only reads the update manifest, /etc/os-release and tool/service/disk
+# state when a person runs it. Setting diagnostics_cli_enabled to false removes
+# it again. Bundles a user wrote under ~/.local/state/curiosity/diagnostics are
+# theirs and are never touched here.
+# =============================================================================
+
+- name: Install the curiosity-diagnostics command
+  ansible.builtin.copy:
+    src: curiosity_diagnostics.py
+    dest: /usr/local/bin/curiosity-diagnostics
+    owner: root
+    group: root
+    mode: "0755"
+  when: diagnostics_cli_enabled | bool
+
+- name: Remove the curiosity-diagnostics command when it is disabled
+  ansible.builtin.file:
+    path: /usr/local/bin/curiosity-diagnostics
+    state: absent
+  when: not (diagnostics_cli_enabled | bool)

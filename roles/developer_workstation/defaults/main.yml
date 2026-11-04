@@ -303,6 +303,10 @@ workstation_update_snapshot_retention: 3
 workstation_update_snapshot_keep: 3
 workstation_update_cache_retention_days: 30
 workstation_update_quarantine_seconds: 3600
+# Install /usr/local/bin/curiosity-diagnostics, the redacted local support-bundle
+# command (docs/diagnostics.md). It sends nothing anywhere. Default on because
+# a failed run is when it is needed; set false to remove the command.
+diagnostics_cli_enabled: true
 workstation_update_healthcheck_enabled: true
 workstation_update_sbom_enabled: true
 workstation_update_managed_paths:

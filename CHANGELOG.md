@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `curiosity-diagnostics` (catalog #18, #25, #41, `docs/diagnostics.md`): a stdlib-only command installed to `/usr/local/bin` on desktop, thin-client and kiosk profiles (`diagnostics_cli_enabled`, default `true`, tag `diagnostics`). `preview` prints a redacted support bundle and writes nothing; `write` asks before saving a `0600` file under `~/.local/state/curiosity/diagnostics/`; `delete` removes it. It hashes user names, host names, IP, MAC and e-mail addresses, replaces tokens, passwords and certificate or key blocks, never collects file contents beyond the update manifest, and has no network code. It also re-checks command availability and version, service state, free disk and artifacts changed since the last run. `tests/test_diagnostics.py` covers redaction, a missing binary, a failed service and a stale artifact.
 - CPU thermal guard: `developer_workstation_cpu_max_perf_pct` (hardware-profile key `cpu_max_perf_pct`, off by default, `70` on `deskmeet-b760`) installs `curiosity-cpu-max-perf.service`, a boot oneshot that caps `intel_pstate/max_perf_pct` where the BIOS locks RAPL, and skips cleanly without intel_pstate. `deskmeet-b760` also loads the `nct6775` hwmon module at boot for fan and temperature sensors.
 
 ### Changed
