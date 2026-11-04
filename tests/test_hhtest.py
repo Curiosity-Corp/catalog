@@ -35,7 +35,7 @@ def test_gate_is_hardware_profile_key_plus_live_hostname() -> None:
         if "hhtest_host" in profile
     ]
     assert gated == ["deskmeet-b760"]
-    assert DEFAULTS["hardware_profiles"]["deskmeet-b760"]["hhtest_host"] == "deskmeet1"
+    assert DEFAULTS["hardware_profiles"]["deskmeet-b760"]["hhtest_host"] == "dm45s2"
     include = _named(MAIN, "Include the hhtest")
     assert "hhtest_enabled | bool" in include["when"]
     assert "ansible_facts['hostname'] == hhtest_required_hostname" in include["when"]

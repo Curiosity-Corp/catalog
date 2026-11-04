@@ -1648,7 +1648,7 @@ hardware_profiles:
     description: "ASRock DeskMeet B760 — Intel Arc A380 + desk USB hub peripherals"
     # Unprivileged, resource-capped test-bed account for local test suites (see
     # the hhtest_* variables). Only converges on this hostname.
-    hhtest_host: deskmeet1
+    hhtest_host: dm45s2
     hhtest_authorized_keys:
       # Operator agent key (public half only).
       - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJKeZmld6PEcb2qywt5Q7/4iwNTgfNhwn2Rthznfoj8O mrh@mrh-ThinkPad-T560"
