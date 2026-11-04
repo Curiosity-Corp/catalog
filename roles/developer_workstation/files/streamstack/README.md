@@ -333,6 +333,7 @@ then `/etc/streamstack/streamstack.env` (or `$STREAMSTACK_ENV_FILE`), then
 | `STREAMSTACK_ENGINE_BACKEND` | `auto` | `auto` (the GPU path when it works, else the CPU), `vulkan` or `cpu` |
 | `STREAMSTACK_ENGINE_RENDER_NODE` | | GPU render node for the engine (grade, blur); empty lets the hardware profile choose by PCI id |
 | `STREAMSTACK_ENGINE_SHARPEN` | `auto` | `auto` runs sharpen as a GPU shader (strength in steps of 0.05); `cpu` keeps the live CPU `cas` filter |
+| `STREAMSTACK_ENGINE_FEED` | `on` | `on`: recording and streaming read the engine's own frames through the frame hub (`~/.local/state/streamstack/feed.sock`) and never open `/dev/video43`, so a call app can always open StreamStack Camera (#184); `off` reads the loopback node again |
 | `STREAMSTACK_ENGINE_MJPEG_DECODE` | `auto` | How a Motion-JPEG camera is decoded: `auto` (probe once per graphics stack, first that works), `vaapi` (zero-copy into libplacebo), `vaapi-copy` (GPU decode, read back, upload) or `software` |
 | `STREAMSTACK_ENGINE_SCALER` | `lanczos` | libplacebo scaler for the crop zoom and size changes; only a scaler that `tools/bench_scalers.py` has measured is accepted (`graph.SCALERS`) |
 | `STREAMSTACK_ENGINE_DENOISE` | `off` | `nlmeans` runs `nlmeans_vulkan` on the GPU before the grade (for a noisy camera feed; about 9 ms of GPU per 720p frame, measured by `tools/bench_video_denoise.py`); the engine crops 2 px off every side to hide that filter's edge artefact |

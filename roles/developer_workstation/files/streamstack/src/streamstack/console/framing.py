@@ -23,7 +23,7 @@ from typing import ClassVar, Protocol
 
 from streamstack import config, speech, store
 from streamstack.console.errors import ActionError
-from streamstack.framing import detector, health, model
+from streamstack.framing import detector, health, model, voicedir
 from streamstack.framing.crop import Crop, Item, face_to_frame, window_to_crop
 from streamstack.framing.engine import MODES, PROFILES, SHOT_AUTO, SHOTS, SUBJECTS, Framer, resolution_zoom_cap
 from streamstack.saving import LatestWriter
@@ -137,9 +137,10 @@ class FramingController:
         self._handoff = False
         self._vad = speech.SpeechDetector()
         self._speaking = False
-        self.voice_x: Callable[[], float | None] | None = (
-            None  # a stereo microphone's voice direction, 0 left to 1 right
-        )
+        # a stereo microphone's voice direction, 0 left to 1 right (#144); only configured when
+        # STREAMSTACK_VOICE_DIRECTION_SOURCE names a stereo source, and only capturing while the hand-off is on
+        self._voice = voicedir.from_config(cfg)
+        self.voice_x: Callable[[], float | None] | None = self._voice[0] if self._voice else None
         self._held = False
         self._framers: dict[str, Framer] = {}
         self._items: list[Item] = []
@@ -237,6 +238,7 @@ class FramingController:
         ]
         for thread in self._threads:
             thread.start()
+        self._sync_voice()
         self._wake.set()
 
     def stop(self) -> None:
@@ -245,6 +247,8 @@ class FramingController:
         for thread in self._threads:
             if thread.is_alive() and thread is not threading.current_thread():
                 thread.join(timeout=3)
+        if self._voice is not None:
+            self._voice[1].stop()
         self._release_crops()
         self._close_detector()
 
@@ -270,6 +274,7 @@ class FramingController:
             for framer in self._framers.values():
                 framer.set_mode(mode)
         self._wake.set()
+        self._sync_voice()
         self._save_mode(report=True)
         return f"Auto-framing: {MODE_LABELS[mode]}"
 
@@ -301,8 +306,22 @@ class FramingController:
             self._handoff = bool(on)
             for framer in self._framers.values():
                 framer.set_handoff(self._handoff)
+        self._sync_voice()
         self._save_mode(report=True)
         return "Following the speaker" if on else "Not following the speaker"
+
+    def _sync_voice(self) -> None:
+        """Read the stereo microphone only while framing runs with the speaker hand-off on; never otherwise."""
+        if self._voice is None:
+            return
+        with self.lock:
+            on = self._handoff and self._mode != "off"
+        source = self._voice[1]
+        if on:
+            if not source.start():
+                log.warning("framing: the voice direction source %s could not be read", source.source)
+        else:
+            source.stop()
 
     def on_meters(self, frame: dict, now: float | None = None) -> None:
         """One meter frame from the hub: the raw microphone's level says whether someone is talking."""

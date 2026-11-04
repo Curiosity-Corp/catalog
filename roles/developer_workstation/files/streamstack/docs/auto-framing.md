@@ -32,7 +32,7 @@ limit. Hold freezes the crop where it is (and stops detecting). Recentre forgets
   microphone's voice activity (the same raw-mic detector as the muted-talk warning, nothing is recorded) says that
   someone talks, and the mouth movement from the YuNet landmarks says who. A new speaker must lead for a second before
   the shot moves; it returns to the group four seconds after the voice stops. A stereo voice direction can break a tie
-  (`FramingController.voice_x`); no stereo source is wired yet.
+  (`FramingController.voice_x`), fed by a stereo microphone when one is configured (below).
 - **Shots.** Auto (the mode decides), Close, Medium, Wide, Presenter (head and shoulders, a little off-centre) and Desk,
   a fixed crop on the desk that runs no detector and uses no CPU. Choosing a shot while framing is off turns it on.
 - **Lost subject.** When nobody is seen the crop holds, widens halfway after the lost timeout, and returns to the
@@ -151,3 +151,40 @@ window at the display rate. The same code runs against synthetic face tracks in 
 The exact packages for the workstation are tracked in Curiosity-Corp/catalog#101. The
 Arc GPU path needs the Intel compute runtime in addition to `openvino`; the CPU path needs only the Python
 extra.
+
+## Voice direction from a stereo microphone
+
+Off by default. Set `STREAMSTACK_VOICE_DIRECTION_SOURCE` to a **stereo** PulseAudio/PipeWire source (a two-capsule or
+array microphone, or a stereo interface input with two mics spaced on the desk) and the speaker hand-off gets a third
+cue next to mouth movement and voice activity. `pactl list short sources` shows the names; a mono source (the Wave
+XLR) has no direction and is not what this is for.
+
+`src/streamstack/framing/voicedir.py` reads the source with a read-only `parec` child, only while framing runs with
+"follow the speaker" on, keeps about 40 ms of audio in memory and writes nothing. Every 100 ms it estimates:
+
+- the **time difference** between the channels (cross-correlation over the lags the capsule spacing allows, refined
+  below one sample), `sin(angle) = 343 m/s x delay / spacing`, then `x = 0.5 + 0.5 tan(angle) / tan(hfov / 2)`
+  so that the picture edge is half the camera's horizontal field of view;
+- the **level difference** (10 dB maps to the edge) when `..._SPACING_MM` is 0 or the correlation is weak.
+
+Silence, a weak signal or no frame for a second give no direction, and the picker then trusts mouth movement alone.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `STREAMSTACK_VOICE_DIRECTION_SOURCE` | empty (off) | the stereo source |
+| `STREAMSTACK_VOICE_DIRECTION_HFOV` | 70 | the camera's horizontal field of view in degrees (from the lens: 2 x atan(sensor width / 2 / focal length); a 22.3 mm wide APS-C sensor with 24 mm is about 49) |
+| `STREAMSTACK_VOICE_DIRECTION_SPACING_MM` | 0 | distance between the capsules; 0 uses levels only |
+| `STREAMSTACK_VOICE_DIRECTION_OFFSET` | 0 | trim in picture widths for a microphone not centred on the camera |
+| `STREAMSTACK_VOICE_DIRECTION_SWAP` | off | set when the left channel is the right-hand capsule |
+
+Calibrate and check it without the Console (nothing is written or changed on the source):
+
+```bash
+python3 -m streamstack.framing.voicedir --source <stereo source> --spacing-mm 120 --hfov 54 --seconds 20
+```
+
+Have one person talk at the far left of the picture, the centre and the far right: `x` should read about 0.1, 0.5 and
+0.9. If left and right are exchanged use `--swap`; if the centre is off, use `--offset`. Then two people at the
+edges: with the hand-off on, the framing should follow whoever talks. The algorithm is tested against synthetic
+signals with known delays and levels (`tests/test_framing_voicedir.py`); the real-room check is still a person's
+(issue #144).

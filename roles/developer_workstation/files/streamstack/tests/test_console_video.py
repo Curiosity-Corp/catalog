@@ -106,48 +106,26 @@ def test_jpeg_splitter_drops_runaway_stream(monkeypatch):
     assert len(splitter.buffer) == 0
 
 
-def test_ffmpeg_argv():
-    single = video.ffmpeg_camera_argv("/dev/video42", 640)
-    assert single[:2] == ["ffmpeg", "-nostdin"] and "-frames:v" in single and "scale=640:-2" in single
-    stream = video.ffmpeg_camera_argv("/dev/video42", 640, 5)
-    assert "-frames:v" not in stream and "fps=5,scale=640:-2" in stream and stream[-1] == "-"
+def test_preview_file_returns_the_fresh_engine_picture(tmp_path):
+    path = tmp_path / "program.jpg"
+    path.write_bytes(JPEG)
+    now = path.stat().st_mtime
+    assert video.PreviewFile(path, clock=lambda: now + 0.5).latest() == JPEG
 
 
-class FakeProc:
-    def __init__(self, data: bytes) -> None:
-        self.stdout = type("S", (), {})()
-        self._chunks = [data[i : i + 7] for i in range(0, len(data), 7)]
-        self.stdout.read = lambda n: self._chunks.pop(0) if self._chunks else b""
-        self.killed = False
-
-    def poll(self):
-        return None if not self.killed and self._chunks else 0
-
-    def kill(self) -> None:
-        self.killed = True
-
-    def wait(self, timeout=None) -> int:
-        return 0
+def test_preview_file_is_none_when_stale_missing_or_not_a_jpeg(tmp_path):
+    path = tmp_path / "program.jpg"
+    assert video.PreviewFile(path).latest() is None  # the engine has not written one
+    path.write_bytes(JPEG)
+    now = path.stat().st_mtime
+    assert video.PreviewFile(path, clock=lambda: now + video.PreviewFile.MAX_AGE + 1).latest() is None  # engine stopped
+    path.write_bytes(b"not a picture")
+    assert video.PreviewFile(path, clock=lambda: now).latest() is None
 
 
-def test_camera_stream_shares_one_process():
-    started: list[list[str]] = []
-
-    def popen(argv, **kwargs):
-        started.append(argv)
-        return FakeProc(JPEG * 3)
-
-    stream = video.CameraStream("/dev/video42", popen=popen)
-    assert stream.latest(640) == JPEG
-    assert len(started) == 1 and "fps=5" in started[0][started[0].index("-vf") + 1]
-    stream.stop()
-
-
-def test_camera_stream_missing_ffmpeg():
-    def popen(argv, **kwargs):
-        raise FileNotFoundError("ffmpeg")
-
-    assert video.CameraStream("/dev/video42", popen=popen).latest(640) is None
+def test_console_video_never_spawns_a_device_reader():
+    """#181: a reader on a v4l2loopback node makes a call app's VIDIOC_S_FMT fail with EBUSY."""
+    assert not hasattr(video, "CameraStream") and not hasattr(video, "ffmpeg_camera_argv")
 
 
 @pytest.fixture

@@ -212,6 +212,16 @@ class Spec:
     # contract's frame rate is repeated up to `out_fps` at the very end of the graph. 0 = the camera's own rate.
     out_fps: float = 0.0
     letterbox: bool = False
+    # The Console's preview of the program picture (#181). Set: the graph also writes the graded, cropped program
+    # picture as a JPEG to this file (replaced atomically, `preview_fps` times a second, `preview_width` wide), so the
+    # Console never has to open /dev/video43 itself: v4l2loopback answers a call app's VIDIOC_S_FMT with EBUSY while any
+    # other opener is streaming from the node. Empty: no preview branch.
+    preview_path: str = ""
+    # The same picture as raw NV12 on a pipe for the recording and streaming encoders (engine.framehub): they used to
+    # open /dev/video43 themselves, which makes a call app's VIDIOC_S_FMT fail with EBUSY (#184).
+    raw_feed: bool = False
+    preview_fps: float = 5.0
+    preview_width: int = 1280
 
     @property
     def rate(self) -> float:
@@ -657,16 +667,26 @@ def build_graph(
         chain += "".join("," + f for f in [*([yuv] if yuv else []), *output_stage(spec)])
     else:
         chain = ",".join([head, *stages, *([yuv] if yuv else []), *output_stage(spec)])
-    if spec.taps:
+    branches = [f"t{i}" for i in range(len(spec.taps))]
+    branches += ["pv"] if spec.preview_path else []
+    branches += ["rw"] if spec.raw_feed else []
+    if branches:
         # split BEFORE the packing step: the taps convert from the program picture's own planar format straight to
         # nv12, instead of from the packed output format (one conversion fewer, and no 4:2:2 repack on the way)
-        outs = ["prog"] + [f"t{i}" for i in range(len(spec.taps))]
+        outs = ["prog", *branches]
         labels = "".join(f"[{o}]" for o in outs)
         graph = (
             f"{chain},split={len(outs)}{labels.replace('[prog]', '[pre]', 1)};[pre]format={spec.output_format}[prog]"
         )
         for i, tap in enumerate(spec.taps):
             graph += f";[t{i}]format=nv12{',hwupload' if tap.upload else ''}[tap{i}]"
+        if spec.preview_path:
+            graph += (
+                f";[pv]fps={fnum(spec.preview_fps)},scale={spec.preview_width}:-2:flags=fast_bilinear,"
+                "format=yuvj420p[prev]"
+            )
+        if spec.raw_feed:
+            graph += ";[rw]format=nv12[raw]"
         return graph
     return f"{chain},format={spec.output_format}[prog]"
 
@@ -732,6 +752,7 @@ def build_argv(
     blur: tuple[bool, float] | None = None,
     blur_fds: tuple[int, int] | None = None,
     key: GraphKey | None = None,
+    feed_fd: int | None = None,
 ) -> list[str]:
     """The whole ffmpeg command line for `spec`. stdin carries commands, stdout carries the detection JPEGs.
 
@@ -740,6 +761,8 @@ def build_argv(
     """
     if spec.blur is not None and blur_fds is None:
         raise GraphError("a blur branch needs its two pipes (blur_fds)")
+    if spec.raw_feed and feed_fd is None:
+        raise GraphError("a raw feed branch needs its pipe (feed_fd)")
     argv = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats", "-y"]
     if progress_fd is not None:
         argv += ["-progress", f"pipe:{progress_fd}", "-stats_period", "0.02"]
@@ -794,6 +817,12 @@ def build_argv(
         # -flush_packets: without it the last 12 KB of every frame waits in ffmpeg's I/O buffer for the next frame
         # one encoder thread: the same one-slot hold as the program output; here it would delay the mask loop a frame
         argv += ["-threads", str(OUTPUT_THREADS), "-flush_packets", "1", "-f", "rawvideo", f"pipe:{blur_fds[0]}"]
+    if spec.preview_path:
+        argv += ["-map", "[prev]", "-fps_mode", "passthrough", "-c:v", "mjpeg", "-q:v", "6"]
+        argv += ["-f", "image2", "-update", "1", "-atomic_writing", "1", spec.preview_path]
+    if spec.raw_feed:
+        argv += ["-map", "[raw]", "-fps_mode", "passthrough", "-c:v", "rawvideo", "-pix_fmt", "nv12"]
+        argv += ["-flush_packets", "1", "-f", "rawvideo", f"pipe:{feed_fd}"]
     for i, tap in enumerate(spec.taps):
         argv += ["-map", f"[tap{i}]", "-c:v", tap.encoder, *tap.args, "-f", tap.format, tap.url]
     return argv

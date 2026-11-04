@@ -269,6 +269,46 @@ def test_taps_split_the_program_picture_into_encoder_branches() -> None:
     assert "av1_qsv" in argv
 
 
+def test_no_preview_branch_unless_asked() -> None:
+    assert "[prev]" not in graph.build_graph(spec(), NEUTRAL)
+    assert "image2" not in graph.build_argv(spec(), NEUTRAL)
+
+
+def test_the_preview_branch_splits_the_program_picture_and_writes_a_jpeg_file(tmp_path) -> None:
+    """#181: the Console's preview comes from the engine's own graph, not from a read of /dev/video43."""
+    out = str(tmp_path / "program.jpg")
+    text = graph.build_graph(spec(preview_path=out), NEUTRAL)
+    assert "split=2[pre][pv];[pre]format=yuyv422[prog]" in text
+    assert ";[pv]fps=5,scale=1280:-2:flags=fast_bilinear,format=yuvj420p[prev]" in text
+    argv = graph.build_argv(spec(preview_path=out), NEUTRAL)
+    assert argv[argv.index("[prev]") - 1] == "-map"
+    tail = argv[argv.index("[prev]") :]
+    assert tail == ["[prev]", "-fps_mode", "passthrough", "-c:v", "mjpeg", "-q:v", "6", "-f", "image2", "-update", "1",
+                    "-atomic_writing", "1", out]  # fmt: skip
+    # the only v4l2 output is the program node, written; nothing reads a loopback
+    assert argv.count("v4l2") == 2 and argv.index("/dev/video43") > argv.index("[prog]")
+
+
+def test_the_raw_feed_branch_is_nv12_on_its_own_pipe() -> None:
+    """#184: the recording and the stream take the program picture from the engine, not from the loopback."""
+    assert "[raw]" not in graph.build_graph(spec(), NEUTRAL)
+    text = graph.build_graph(spec(raw_feed=True), NEUTRAL)
+    assert "split=2[pre][rw];[pre]format=yuyv422[prog]" in text and text.endswith(";[rw]format=nv12[raw]")
+    with pytest.raises(graph.GraphError, match="feed_fd"):
+        graph.build_argv(spec(raw_feed=True), NEUTRAL)
+    argv = graph.build_argv(spec(raw_feed=True), NEUTRAL, feed_fd=9)
+    tail = argv[argv.index("[raw]") :]
+    assert tail == ["[raw]", "-fps_mode", "passthrough", "-c:v", "rawvideo", "-pix_fmt", "nv12", "-flush_packets", "1",
+                    "-f", "rawvideo", "pipe:9"]  # fmt: skip
+
+
+def test_the_preview_and_the_taps_share_one_split() -> None:
+    tap = graph.Tap("pipe:5", "av1_qsv")
+    text = graph.build_graph(spec(taps=(tap,), preview_path="/x/p.jpg"), NEUTRAL)
+    assert "split=3[pre][t0][pv];[pre]format=yuyv422[prog]" in text
+    assert text.count("format=yuyv422") == 1
+
+
 def test_unknown_pixel_format_is_a_clear_error() -> None:
     with pytest.raises(graph.GraphError, match="RGB3"):
         graph.build_graph(spec(Source("x", "/dev/video9", "RGB3", 640, 480, 30.0)), NEUTRAL)

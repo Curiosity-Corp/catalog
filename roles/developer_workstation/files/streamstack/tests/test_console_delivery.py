@@ -121,6 +121,7 @@ def test_guard_covers_the_node_while_the_source_is_gone_and_releases_it_when_bac
     spec, _hold = slate.shown[-1]
     assert (spec.device, spec.width, spec.height) == ("/dev/video43", 1280, 720)  # the engine's own caps
     assert spec.fps == 20.0 and spec.reason == reason
+    assert spec.preview_path == str(config.preview_file())  # the Console preview shows the card too (#181)
     assert said[0][0] == "warn" and "camera reconnecting" in said[0][1]
     delivery.guard(SPEC)  # still gone: one message, not one per poll
     assert len([s for s in said if s[0] == "warn"]) == 1

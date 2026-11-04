@@ -34,7 +34,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from streamstack import store, system
+from streamstack import config, store, system
+from streamstack.engine import framehub
 from streamstack.hardware import camera as hwcamera
 from streamstack.hardware import roles
 from streamstack.presets import catalog
@@ -322,6 +323,9 @@ class StreamService:
             fps = float(self.cfg["STREAMSTACK_FPS"])
         except (KeyError, ValueError):
             width, height, fps = 1920, 1080, 30.0
+        hub = framehub.read_info(config.feed_socket()) if config.feed_enabled(self.cfg) else None
+        if hub is not None:  # the engine's own frames: no reader on the program loopback (#184)
+            return Source("feed", str(config.feed_socket()), hub["width"], hub["height"], hub["fps"])
         device = hwcamera.device_for("program", self.cfg, self._plan())
         return Source("v4l2", device, width, height, fps)
 

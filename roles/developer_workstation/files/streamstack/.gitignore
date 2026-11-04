@@ -11,3 +11,9 @@ htmlcov/
 .venv/
 venv/
 e2e-artifacts/
+
+# Key and certificate files at the repository root are never source (MediaMTX drops auto.key / auto.crt in its
+# working directory). Committed fixtures live under a subdirectory.
+/*.key
+/*.crt
+/*.pem

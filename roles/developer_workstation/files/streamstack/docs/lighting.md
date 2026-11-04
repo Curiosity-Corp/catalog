@@ -146,7 +146,7 @@ released, the session ends after `grace_seconds` (default 120).
 - **Only what we switched on.** At the end of a session the lights StreamStack switched on are faded out and
   switched off. A light that was already on stays on. A light you switched off during the call stays off. A light you
   changed by hand during the call stays on, as you left it.
-- **A person always wins.** The engine compares what the light reports with what it last wrote itself. A difference
+- **A person always wins** (over the schedule and camera follow, not over the hard rule in the lights policy below). The engine compares what the light reports with what it last wrote itself. A difference
   means a person (the Console, the light's own buttons, a preset): that light is held, and the schedule leaves it
   alone for `hold_minutes` (default 90; 0 means until the next camera session), until the next camera session, or
   until you switch it off and on again. **Resume the schedule** (button, `R`) hands the lights back at once.
@@ -159,6 +159,40 @@ released, the session ends after `grace_seconds` (default 120).
 - **Fades.** A big change (more than 15% of the lumen range or 600 K) is faded over `fade_seconds` (default 3) in
   small steps. Smaller changes, such as the sun moving, are plain writes. Switching off fades to 1%, switches off, and
   then puts the brightness back, so the light wakes at its old level next time.
+
+### The lights policy: off with no camera, never "by hand" by mistake
+
+The policy since #182 (a Litra Beam stayed on overnight on dm313red):
+
+1. **With no camera user, the lights are off.** Once nothing has used the camera for 4 minutes
+   (`NO_CAMERA_OFF_SECONDS`, always under 5), every light that is on is switched off. Nothing stops this: not a hold
+   after a change by hand, not the `manual` role, not "Camera follow" or the schedule being off. It is not a setting.
+   A light switched on again with no camera is switched off again (the service retries a failed switch-off every
+   30 s and says so in the log).
+2. **At night nothing is on unless a camera is open.** From local 22:00 to 07:00 the same rule applies after 60
+   seconds with no camera user (`NIGHT_OFF_SECONDS`), so a call ending at night does not wait for the 120 s grace
+   period.
+3. **"A camera user" is any app that has the camera open**, counted even when the "Apps" switch of camera follow is
+   off (that switch decides whether a call *switches lights on*, not whether a light may stay on during one). If the
+   service cannot tell whether anything uses the camera, it does not switch lights off on a guess.
+4. **The engine's own writes are never "by hand".** After each write it reads the light back and believes what the
+   light shows. A light may keep a limit of its own: the Beam `2235FE609J48` on dm313red shows 204 lm at most (a 64 %
+   level is 265 lm), so reading it back never matched the write and it was "changed by hand" 5 s after every write,
+   again 4 s after each hold ran out. The engine now learns such a limit (and a minimum the same way), aims inside it
+   and stays quiet; the limit is forgotten when the light takes a higher value again.
+5. **Software that writes a light is not a hand either.** Every `Litra` write is noted in the write journal
+   (`~/.local/state/streamstack/lights-writes.jsonl`, `streamstack/lightjournal.py`) with a writer tag. The AI Director
+   is tagged `director`; an agent, a script or a test sets `STREAMSTACK_LIGHT_WRITER=agent` (any tag but `person` and
+   `console`) before it writes. A change the service finds on a light that such a recent write (last 20 s) explains
+   is adopted without a hold (the log says "set by agent"). Writes with no tag, and the Console page, count as a
+   person. A tool that talks to the hidraw node itself (the `litra` command, a script not using `Litra`) cannot be
+   tagged, and looks like the light's own button: that is why `litra toggle` on a mouse button still counts as a
+   person. An agent that runs the `litra` CLI to try a light must switch it off when done (the hard rule does it
+   within 5 minutes at the latest).
+
+Tests leave nothing on: the unit suite tracks every simulated light and every fake light and switches them off in a
+shared teardown (`tests/conftest.py`, fixture `beams_off`, with `tests/light_support.py`), and the e2e suite switches
+the demo rig's lights off at the end of the session and asserts that every beam is off.
 
 ### Who owns the light: the schedule and the AI Director
 
@@ -194,7 +228,8 @@ palette). `L` (all lights) is global as before.
 
 The demo rig runs the engine inside the Console over the simulated lights and a scripted camera: two buttons on the
 page pretend Teams opens and releases the camera, and a switch pretends the Director is running. The demo starts with
-the schedule off so the demo lights stay where the specs put them.
+the schedule off so the demo lights stay where the specs put them. The demo engine alone does not apply the hard rule
+(its simulated lights start on with no camera); the service always does.
 
 ### Verified on a real light, and what is assumed
 

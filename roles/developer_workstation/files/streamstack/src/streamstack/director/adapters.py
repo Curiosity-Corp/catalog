@@ -140,9 +140,9 @@ class HidLights:
         device = self._device(label)
         try:
             if kelvin is not None:
-                device.set_kelvin(kelvin)
+                device.set_kelvin(kelvin, writer="director")
             if lumen is not None:
-                device.set_lumen(lumen)
+                device.set_lumen(lumen, writer="director")
         except lighting.LightingError as exc:
             raise ActuatorError(f"{label}: {exc.message}") from exc
         finally:

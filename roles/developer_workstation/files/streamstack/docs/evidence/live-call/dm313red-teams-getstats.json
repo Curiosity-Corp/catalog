@@ -1,0 +1,251 @@
+{
+  "party_a": "dm313red, signed in, StreamStack Camera + StreamStack Mic",
+  "party_b": "anonymous guest, Chromium fake media",
+  "a_captured_tracks": [
+    "audio:StreamStack Mic",
+    "audio:StreamStack Mic",
+    "audio:StreamStack Mic",
+    "video:StreamStack Camera",
+    "video:StreamStack Camera"
+  ],
+  "b_admitted": true,
+  "b_inbound_t0": {
+    "pcs": 2,
+    "inboundVideo": [
+      {
+        "framesReceived": 538,
+        "framesDecoded": 534,
+        "frameWidth": 1280,
+        "frameHeight": 720,
+        "bytesReceived": 6190055,
+        "packetsReceived": 6030
+      }
+    ],
+    "inboundAudio": [
+      {
+        "totalAudioEnergy": 0.020389117422336865,
+        "audioLevel": 0.00027466658528397473,
+        "totalSamplesDuration": 28.60000000000167,
+        "bytesReceived": 62232,
+        "packetsReceived": 963
+      }
+    ],
+    "outboundVideo": [
+      {
+        "framesSent": 484,
+        "frameWidth": 320,
+        "frameHeight": 180,
+        "bytesSent": 395345
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 6,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 8727
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      }
+    ],
+    "outboundAudio": [
+      {
+        "bytesSent": 2723,
+        "packetsSent": 143
+      }
+    ]
+  },
+  "b_inbound_t1": {
+    "pcs": 2,
+    "inboundVideo": [
+      {
+        "framesReceived": 700,
+        "framesDecoded": 700,
+        "frameWidth": 1280,
+        "frameHeight": 720,
+        "bytesReceived": 7799767,
+        "packetsReceived": 7646
+      }
+    ],
+    "inboundAudio": [
+      {
+        "totalAudioEnergy": 0.02193936763932748,
+        "audioLevel": 0.010345774712363049,
+        "totalSamplesDuration": 36.610000000001286,
+        "bytesReceived": 83268,
+        "packetsReceived": 1255
+      }
+    ],
+    "outboundVideo": [
+      {
+        "framesSent": 612,
+        "frameWidth": 320,
+        "frameHeight": 180,
+        "bytesSent": 419315
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 6,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 8727
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      }
+    ],
+    "outboundAudio": [
+      {
+        "bytesSent": 3407,
+        "packetsSent": 181
+      }
+    ]
+  },
+  "a_outbound": {
+    "video": [
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      },
+      {
+        "framesSent": 702,
+        "frameWidth": 1280,
+        "frameHeight": 720,
+        "bytesSent": 8284483
+      },
+      {
+        "framesSent": 0,
+        "frameWidth": null,
+        "frameHeight": null,
+        "bytesSent": 0
+      }
+    ],
+    "audio": [
+      {
+        "bytesSent": 220019,
+        "packetsSent": 3485
+      }
+    ]
+  },
+  "verdict": {
+    "video_framesDecoded": 700,
+    "video_frames_growing": true,
+    "video_resolution": "1280x720",
+    "audio_totalAudioEnergy": 0.02193936763932748,
+    "audio_audioLevel": 0.010345774712363049
+  }
+}

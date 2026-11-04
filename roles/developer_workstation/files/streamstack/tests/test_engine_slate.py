@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -244,3 +245,27 @@ def test_a_dead_pid_in_the_pid_file_is_ignored(feeder) -> None:
     (feeder._work_dir() / slate.PIDFILE).write_text("2147483000\n")
     feeder.show(SPEC)
     assert feeder.state()["writing"]
+
+
+def test_the_card_also_writes_the_preview_picture_when_asked() -> None:
+    """#181: while no engine runs, the Console's preview shows the card, not a stale frame."""
+    plain = slate.slate_argv(SPEC, textfile=Path("/tmp/s"))
+    assert "image2" not in plain
+    argv = slate.slate_argv(replace(SPEC, preview_path="/x/program.jpg"), textfile=Path("/tmp/s"))
+    graph = argv[argv.index("-filter_complex") + 1]
+    assert "split=2[card][pv]" in graph and "[card]format=yuyv422[out]" in graph
+    assert "[pv]fps=2,scale=1280:-2:flags=fast_bilinear,format=yuvj420p[prev]" in graph
+    assert argv[argv.index("[out]") - 1] == "-map"
+    assert argv[-9:] == ["-q:v", "6", "-f", "image2", "-update", "1", "-atomic_writing", "1", "/x/program.jpg"]
+    assert argv[argv.index("v4l2") - 1] == "-f" and argv[argv.index("v4l2") + 1] == "/dev/video43"
+
+
+def test_the_feeder_makes_the_preview_directory_and_survives_one_it_cannot_make(feeder, tmp_path: Path) -> None:
+    good = tmp_path / "state" / "preview" / "program.jpg"
+    feeder.show(replace(SPEC, preview_path=str(good)))
+    assert good.parent.is_dir() and str(good) in feeder.argvs[-1]
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    feeder.clear()
+    feeder.show(replace(SPEC, preview_path=str(blocker / "p" / "program.jpg")))
+    assert "image2" not in feeder.argvs[-1]

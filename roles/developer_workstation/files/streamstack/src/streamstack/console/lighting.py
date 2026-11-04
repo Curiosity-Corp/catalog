@@ -27,10 +27,12 @@ Notify = Callable[[str, str], None]
 Scan = Callable[[], list[Found]]
 Expect = tuple[bool | None, int | None, int | None]  # power, lumen, kelvin a caller believes a light shows
 Opener = Callable[[Found], Transport]
+Applied = tuple[bool | None, int | None, int | None]  # what a write left a light showing; None for a field not written
 
 RESCAN_SECONDS = 3.0
 READBACK_SECONDS = 5.0
 SETTLE_SECONDS = 1.5  # after a write, the light's own answer is not trusted over what we just set
+VERIFY_SECONDS = 0.1  # an engine write is read back this long after it, to learn what the light really accepted
 MAX_NAME = 40
 UNKNOWN_BRIGHTNESS = 50
 UNKNOWN_KELVIN = 4500
@@ -177,6 +179,8 @@ class LightingController:
         readback_seconds: float = READBACK_SECONDS,
         blink_seconds: float = 0.25,
         clock: Callable[[], float] = time.monotonic,
+        verify_seconds: float = VERIFY_SECONDS,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.notify: Notify = _no_notify
         self._scan = scan or lighting.discover
@@ -187,6 +191,7 @@ class LightingController:
         self.engine: Any = None  # the in-process automation engine of the demo rig; the real one is a service
         self.rescan_seconds, self.readback_seconds, self.blink_seconds = rescan_seconds, readback_seconds, blink_seconds
         self._clock = clock
+        self._verify_seconds, self._sleep = verify_seconds, sleep
         self._slots: dict[str, _Slot] = {}
         self._scan_error: str | None = None
         self._scanned = False
@@ -454,14 +459,30 @@ class LightingController:
         percent: float | None = None,
         kelvin: float | None = None,
         expect: Expect | None = None,
-    ) -> None:
+        verify: bool = True,
+    ) -> Applied:
         """Set one light for the automation engine. Raises ActionError when the light cannot be written.
+
+        Returns what the light showed when read back right after the write (`Applied`), which can differ from what
+        was asked: a light may keep its own limit (#182: a Beam that shows at most 204 lm whatever it is told).
+        The write is journalled as the engine's, never a person's.
 
         With `expect` (what the engine believes the light shows) the write is a compare-and-set: under the device
         lock, so no person's write can land between the check and the write, it raises `Superseded` and writes
         nothing when the light no longer shows that. This is what keeps a fade or a schedule step from landing on
         top of a change somebody made a moment ago."""
-        self._write_all({"id": light_id}, power=power, percent=percent, kelvin=kelvin, expect=expect)
+        out: list[Applied] = []
+        self._write_all(
+            {"id": light_id},
+            power=power,
+            percent=percent,
+            kelvin=kelvin,
+            expect=expect,
+            writer="engine",
+            verify=verify,
+            out=out,
+        )
+        return out[0] if out else (power, None, None)
 
     def health_checks(self) -> list[dict[str, str]]:
         state = self.state()
@@ -570,6 +591,9 @@ class LightingController:
         percent: float | None = None,
         kelvin: float | None = None,
         expect: Expect | None = None,
+        writer: str = "console",
+        verify: bool = False,
+        out: list[Applied] | None = None,
     ) -> str | None:
         slots = self._targets(params)
         failures: list[str] = []
@@ -578,7 +602,9 @@ class LightingController:
                 if expect is not None:
                     self._require_unchanged(slot, expect)
                 try:
-                    self._write(slot, power, percent, kelvin)
+                    applied = self._write(slot, power, percent, kelvin, writer=writer, verify=verify)
+                    if out is not None:
+                        out.append(applied)
                 except LightingError as exc:
                     self._fail(slot, exc)
                     failures.append(f"{slot.found.model.name}: {exc.message}")
@@ -598,26 +624,54 @@ class LightingController:
         ):
             raise Superseded()
 
-    def _write(self, slot: _Slot, power: bool | None, percent: float | None, kelvin: float | None) -> None:
-        """Send values to one light and remember them. Caller holds the I/O lock."""
+    def _write(
+        self,
+        slot: _Slot,
+        power: bool | None,
+        percent: float | None,
+        kelvin: float | None,
+        *,
+        writer: str = "console",
+        verify: bool = False,
+    ) -> Applied:
+        """Send values to one light and remember them. Caller holds the I/O lock.
+
+        With `verify` the light is asked what it shows once it has had a moment to apply the write, and that, not
+        what was asked for, is what the slot remembers and what is returned."""
         device = slot.device
         if device is None:
             raise LightingError("not connected", "gone")
         lumen = kelv = None
         if kelvin is not None:
-            kelv = device.set_kelvin(round(kelvin))
+            kelv = device.set_kelvin(round(kelvin), writer)
         if percent is not None:
-            lumen = device.set_lumen(lighting.percent_to_lumen(slot.found.model, percent))
+            lumen = device.set_lumen(lighting.percent_to_lumen(slot.found.model, percent), writer)
         if power is not None:
-            device.set_power(power)
+            device.set_power(power, writer)
+        applied: Applied = (power, lumen, kelv)
+        if verify:
+            applied = self._verify(device, applied)
         with self._lock:
             slot.last_write = self._clock()
-            if kelv is not None:
-                slot.kelvin = kelv
-            if lumen is not None:
-                slot.lumen = lumen
-            if power is not None:
-                slot.power = power
+            if applied[2] is not None:
+                slot.kelvin = applied[2]
+            if applied[1] is not None:
+                slot.lumen = applied[1]
+            if applied[0] is not None:
+                slot.power = applied[0]
+        return applied
+
+    def _verify(self, device: Litra, asked: Applied) -> Applied:
+        """What the light shows for the brightness and temperature just written (the ask when it does not answer)."""
+        self._sleep(self._verify_seconds)
+        power, lumen, kelvin = asked  # power is a plain on or off: it is taken as written
+        if lumen is not None:
+            shown_lumen = device.read_lumen()
+            lumen = lumen if shown_lumen is None else shown_lumen
+        if kelvin is not None:
+            shown_kelvin = device.read_kelvin()
+            kelvin = kelvin if shown_kelvin is None else shown_kelvin
+        return power, lumen, kelvin
 
     def _apply_preset(self, name: str) -> str:
         preset = self.library.get(name)

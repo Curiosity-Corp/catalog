@@ -36,6 +36,8 @@ CAPTION = "Camera reconnecting"
 DEFAULT_SIZE = (1920, 1080)  # the contract in ADR 0004: what the engine writes unless STREAMSTACK_ENGINE_SIZE says
 DEFAULT_FPS = 30.0
 EARLY_EXIT_SECONDS = 3.0  # a child that dies this fast failed to start (no drawtext or font), it did not crash later
+PREVIEW_FPS = 2
+PREVIEW_WIDTH = 1280
 STOP_WAIT = (2.0, 2.0)  # after `q`, after SIGTERM; then SIGKILL
 
 
@@ -51,6 +53,9 @@ class SlateSpec:
     reason: str = ""
     caption: str = CAPTION  # the big line; the idle placeholder says something calmer than "reconnecting"
     hold: bool = False  # use the last delivered frame as the background when the caller has one
+    # Also write the card as a JPEG here (2 fps, replaced atomically) so the Console's preview shows it while no engine
+    # runs, instead of a stale frame or nothing (#181). Empty: no preview output.
+    preview_path: str = ""
 
 
 def _fnum(value: float) -> str:
@@ -114,6 +119,15 @@ def slate_argv(
     chain.append(pulse_filter(spec))
     if text and textfile is not None:
         chain.append(drawtext_filters(spec, textfile))
+    if spec.preview_path:
+        graph = (
+            f"[0:v]{','.join(chain)},split=2[card][pv];[card]format={spec.pix_fmt}[out];"
+            f"[pv]fps={PREVIEW_FPS},scale={PREVIEW_WIDTH}:-2:flags=fast_bilinear,format=yuvj420p[prev]"
+        )
+        argv += ["-filter_complex", graph, "-map", "[out]", "-r", rate, "-pix_fmt", spec.pix_fmt]
+        argv += ["-f", "v4l2", spec.device]
+        argv += ["-map", "[prev]", "-c:v", "mjpeg", "-q:v", "6", "-f", "image2", "-update", "1"]
+        return [*argv, "-atomic_writing", "1", spec.preview_path]
     chain.append(f"format={spec.pix_fmt}")
     argv += ["-vf", ",".join(chain), "-r", rate, "-pix_fmt", spec.pix_fmt, "-f", "v4l2", spec.device]
     return argv
@@ -251,6 +265,7 @@ class SlateFeeder:
             return
         try:
             self._reap_stale()
+            spec = self._with_preview_dir(spec)
             base, hold = self._prepare(spec)
             argv = slate_argv(spec, textfile=base, hold_image=hold, text=not self._plain)
             self._proc = self._popen(
@@ -266,6 +281,17 @@ class SlateFeeder:
         self._starts += 1
         self._error = None
         threading.Thread(target=self._drain, args=(self._proc,), daemon=True, name="streamstack-slate-log").start()
+
+    def _with_preview_dir(self, spec: SlateSpec) -> SlateSpec:
+        """Make the preview file's directory; a directory that cannot be made only drops the preview output."""
+        if not spec.preview_path:
+            return spec
+        try:
+            Path(spec.preview_path).parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.warning("slate: the preview picture cannot be written (%s); the slate shows on the node only", exc)
+            return replace(spec, preview_path="")
+        return spec
 
     def _pidfile(self) -> Path:
         return self._work_dir() / PIDFILE

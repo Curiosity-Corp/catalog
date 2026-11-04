@@ -32,7 +32,7 @@ import threading
 import time
 from collections.abc import Callable
 
-from streamstack import system
+from streamstack import config, system
 from streamstack.engine import source
 from streamstack.engine.graph import Source, Spec
 from streamstack.engine.slate import DEFAULT_FPS, DEFAULT_SIZE, SlateFeeder, SlateSpec
@@ -247,7 +247,15 @@ class Delivery:
     def _slate_spec(self, reason: str) -> SlateSpec:
         with self._lock:
             width, height, fps = self._out or (*self._configured_size(), DEFAULT_FPS)
-        return SlateSpec(self._program_device(), width, height, fps, reason=reason, hold=loss_mode(self.cfg) == "hold")
+        return SlateSpec(
+            self._program_device(),
+            width,
+            height,
+            fps,
+            reason=reason,
+            hold=loss_mode(self.cfg) == "hold",
+            preview_path=str(config.preview_file()),
+        )
 
     def _configured_size(self) -> tuple[int, int]:
         wanted = (self.cfg.get("STREAMSTACK_ENGINE_SIZE") or "source").strip().lower()
@@ -286,6 +294,7 @@ class Delivery:
             reason=IDLE_REASON,
             caption=IDLE_CAPTION,
             hold=loss_mode(self.cfg) == "hold",
+            preview_path=str(config.preview_file()),
         )
         self.slate.show(spec, self._last_frame() if spec.hold else None)
         return True

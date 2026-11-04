@@ -29,9 +29,12 @@ ENHANCED_AUDIO_FOURCC = {"opus": "Opus"}
 
 @dataclass(frozen=True)
 class Source:
-    """Where the program picture comes from. `lavfi` is for tests and measurements only."""
+    """Where the program picture comes from. `feed` is the engine's frame hub (raw NV12 on a Unix socket, `device` is
+    the socket path): the recording and the stream never open the program loopback, because a reader on it makes a
+    call app's VIDIOC_S_FMT fail with EBUSY (#184). `v4l2` reads a loopback node (a host without the hub). `lavfi` is
+    for tests and measurements only."""
 
-    kind: str = "v4l2"  # v4l2 | lavfi
+    kind: str = "v4l2"  # feed | v4l2 | lavfi
     device: str = "/dev/video43"
     width: int = 1920
     height: int = 1080
@@ -123,8 +126,11 @@ def encoder_args(choice: EncoderChoice, settings: EncoderSettings, kbps: int, ke
         args += ["-preset", "veryfast", "-tune", "zerolatency", "-x265-params", params, "-g", str(keyint)]
         args += ["-crf", str(min(qp, 51))] if cqp else rate_args(settings, kbps, backend)
     elif name == "libsvtav1":
-        args += ["-preset", "10", "-g", str(keyint), "-svtav1-params", "tune=0:scd=0:lookahead=0"]
-        args += ["-crf", str(min(qp, 63))] if cqp else rate_args(settings, kbps, backend)
+        # SVT-AV1 4.x refuses -maxrate/-bufsize outside CRF mode ("Max Bitrate only supported with CRF mode") and CBR
+        # outside low-delay prediction, so the rate goes in as -b:v and the mode in the encoder's own parameters (#82)
+        mode = {"cbr": ":rc=2:pred-struct=1", "vbr": ":rc=1", "cqp": ""}[settings.rate_control]
+        args += ["-preset", "10", "-g", str(keyint), "-svtav1-params", f"tune=0:scd=0:lookahead=0{mode}"]
+        args += ["-crf", str(min(qp, 63))] if cqp else ["-b:v", f"{kbps}k"]
     else:
         raise ValueError(f"no argument recipe for encoder {name!r}")
     return args
@@ -189,6 +195,17 @@ def video_generation_argv(
     argv = [ffmpeg, *QUIET, *hw_device_args(choice)]
     if source.kind == "lavfi":
         argv += ["-f", "lavfi", "-i", f"{source.lavfi}=size={source.width}x{source.height}:rate={source.fps:g}"]
+    elif source.kind == "feed":
+        argv += [
+            *CAPTURE_FLAGS,
+            "-f", "rawvideo",
+            "-pix_fmt", "nv12",
+            "-use_wallclock_as_timestamps", "1",
+            "-thread_queue_size", "16",
+            "-framerate", f"{source.fps:g}",
+            "-video_size", f"{source.width}x{source.height}",
+            "-i", f"unix:{source.device}",
+        ]  # fmt: skip
     else:
         argv += [
             *CAPTURE_FLAGS,

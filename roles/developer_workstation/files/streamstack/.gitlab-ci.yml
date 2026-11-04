@@ -85,13 +85,6 @@ variables:
   # The SBOM, the grype scan and the licence gate cover what a user installs with the extras.
   PYTHON_SBOM_EXTRAS: "framing whip shortcuts calendar"
   PYTHON_SBOM_MC_TYPE: "application"
-  # python-vuln-scan (grype) keeps its hydrated vulnerability DB here. The template default
-  # ($CI_PROJECT_DIR/.cache/grype-db in launch-sequence v0.2.14) is on the RAM-backed 3Gi /builds volume of the
-  # runner pods (registry#285), and the grype v6 DB hydrates to ~3.15 GiB: sqlite fails with "database or disk is
-  # full" on every runner (job 1841389, 1842082; v0.0.24 tag pipeline 109101; infrastructure#794). /tmp is the
-  # container's disk-backed layer. The scan is unchanged and fails closed; only where it caches its DB moves.
-  # Drop this once launch-sequence >= the release carrying !479 (same default) is the pinned include.
-  GRYPE_DB_CACHE_DIR: "/tmp/grype-db"
   # The DeepFilterNet plugin package: version = upstream version + build revision. tests/test_dfn_ladspa_ci.py
   # keeps this equal to audiochain/plugin.py and images/dfn-ladspa/Dockerfile.
   DFN_LADSPA_VERSION: "0.5.6-1"
@@ -138,6 +131,60 @@ test-py311:
     when: always
     reports:
       junit: report-py311.xml
+
+# sast comes from the template, whose `.sast:scan` sets GITLEAKS_STRICT: "false" in the job's own variables; those
+# beat the pipeline-level GITLEAKS_STRICT above, so merge request pipelines only warned about a committed private key
+# (v0.0.27, launch-sequence#250). Saying it in the job makes gitleaks block on every pipeline. The tag rule of the
+# template's job and its other keys are kept (GitLab merges this into the included job).
+sast:
+  variables:
+    GITLEAKS_STRICT: "true"
+
+# The YouTube-shaped (AV1, enhanced RTMP, RTMPS) and Twitch-shaped (H.264 and HEVC, RTMP) outputs, pushed at a real
+# ingest and read back with ffprobe (issue #82, tests/test_stream_ingest_platforms.py). The ingest is MediaMTX
+# (pinned and SHA-256 checked by the test) with an RTMPS listener whose certificate comes from a CA the test makes and
+# StreamStack trusts through `ca_file`; verification is never turned off. Debian 13 (trixie) carries an ffmpeg with
+# libsvtav1, libx265, libx264 and libopus, and with the FLV AV1 FourCC muxer (ffmpeg 6.1 and later). The gate sets
+# STREAMSTACK_REQUIRE_INGEST_E2E so a missing tool fails the job instead of skipping the test.
+ingest-e2e:
+  extends: .venv
+  stage: source-security
+  needs: []
+  image: python:3.13-trixie
+  interruptible: true
+  # Software AV1 holds real time only on 8 cores or more (probe.software_ok). The merge request runner (mr-validator,
+  # 4 cores) failed this job twice (jobs 1935676: H.264 sent; 1936044: starved capture). privileged-runner (20 cores)
+  # passes it, but it is ref_protected: it serves main and tags only, and a merge request job tagged for it waits for
+  # ever (job 1936246 sat pending 30 minutes). So the gate runs in the full tier, on main and tags, not on merge requests.
+  # Interim: infrastructure#814 (the infrastructure project) asks for an unprotected merge request runner lane with at least 8 cores;
+  # when it lands, ingest-e2e moves back onto merge request pipelines (rules: !reference [.rules-gate, rules]).
+  rules: !reference [.ls-tier:full, rules]
+  tags: [privileged, docker]
+  variables:
+    STREAMSTACK_REQUIRE_INGEST_E2E: "1"
+    STREAMSTACK_INGEST_EVIDENCE_DIR: $CI_PROJECT_DIR/ingest-evidence
+    FFMPEG_URL: https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-2/jellyfin-ffmpeg_8.1.3-2_portable_linux64-gpl.tar.xz
+    FFMPEG_SHA256: 1df84d04c4322902dba81c290508cdf3d89524d210b9fe03154bea6c4e3bfbb6
+  script:
+    # The runner is non-root, so no apt: a pinned, SHA-256 checked static ffmpeg (libsvtav1, libx264, libx265,
+    # libopus, rtmps) goes into the job directory. The python image carries curl, xz and the openssl CLI.
+    - mkdir -p "$CI_PROJECT_DIR/.ffmpeg" && cd "$CI_PROJECT_DIR/.ffmpeg"
+    - curl -sSfL --retry 3 -o ffmpeg.tar.xz "$FFMPEG_URL"
+    - echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
+    - tar xJf ffmpeg.tar.xz && rm ffmpeg.tar.xz && cd "$CI_PROJECT_DIR"
+    - export PATH="$CI_PROJECT_DIR/.ffmpeg:$PATH"
+    - ffmpeg -hide_banner -version | head -1
+    - nproc; ulimit -u; cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max 2>/dev/null || true
+    - ffmpeg -hide_banner -loglevel info -f lavfi -i testsrc2=size=1280x720:rate=30 -t 3 -c:v libsvtav1 -preset 10 -g 60 -svtav1-params tune=0:scd=0:lookahead=0 -b:v 1500k -f null - 2>&1 | tail -n 25
+    - python -m pip install -e ".[dev]"
+    - python -m pytest tests/test_stream_ingest_platforms.py -v --junitxml=report-ingest.xml
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - ingest-evidence/
+    reports:
+      junit: report-ingest.xml
 
 # Console browser tests against the demo rig. The Playwright image carries the browsers and runs non-root; it
 # ships no python3-venv and an externally-managed Python, so tools go into the user site. The pip package must
