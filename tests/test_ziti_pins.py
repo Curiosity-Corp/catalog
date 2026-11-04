@@ -15,6 +15,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -183,7 +184,7 @@ def _run(lab: Path, *args: str, pins: str = "svc-a.example.test,svc-b.example.te
         "ZITI_PINS_INTERVAL": "0.1",
         **extra,
     }
-    return subprocess.run([str(SCRIPT), *args], capture_output=True, text=True, env=env, timeout=60, check=False)
+    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, env=env, timeout=60, check=False)
 
 
 def _hosts(lab: Path) -> str:
