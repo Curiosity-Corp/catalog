@@ -51,6 +51,7 @@ tooling and research data belong in the remote VM, not on the appliance.
 | Storage | none on the appliance | No data is kept on it; the optional `workstation_storage` role is for a physical second drive and is off by default |
 | Network boundary | `firewall_enabled`, `firewall_ssh_interfaces`, `firewall_mosh` | Default-deny inbound; list only the trusted interface names |
 | Private web CA | `custom_ca_certificates` | Controller-local certificate files, applied for `thin-client` and `byod-kiosk`. Keep the files out of Git |
+| Keyboard layout | `keyboard_layout`, `keyboard_variant`, `keyboard_options` | The profile writes a US layout unless you set these (for example `keyboard_layout: de`). Wrong layouts are the commonest login-prompt problem on an appliance, so check the physical keyboard. See [accessibility and localization](../accessibility-and-localization.md) |
 
 ## Settings for a shared lab machine
 

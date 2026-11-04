@@ -1,0 +1,41 @@
+---
+# =============================================================================
+# System locale (variables: locale_lang, locale_extra; gate: locale_manage)
+# =============================================================================
+# Off by default, so no machine's language is changed unless the operator asks.
+# Generates the requested UTF-8 locales and sets LANG in /etc/default/locale.
+# Existing users keep any LANG they set themselves in their own shell files.
+# =============================================================================
+
+- name: Validate keyboard and locale variables
+  ansible.builtin.import_tasks: keyboard-locale-validate.yml
+
+- name: Require a locale to be named when locale management is on
+  ansible.builtin.assert:
+    that:
+      - locale_lang | length > 0
+    fail_msg: locale_manage is true but locale_lang is empty; set it to a locale such as en_GB.UTF-8.
+    quiet: true
+
+- name: Install the locales package
+  ansible.builtin.apt:
+    name: locales
+    state: present
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Generate the requested locales
+  community.general.locale_gen:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ ([locale_lang] + locale_extra) | unique }}"
+  when: item != 'C.UTF-8'
+
+- name: Set the system default locale
+  ansible.builtin.lineinfile:
+    path: /etc/default/locale
+    regexp: '^LANG='
+    line: "LANG={{ locale_lang }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
