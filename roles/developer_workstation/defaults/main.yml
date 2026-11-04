@@ -654,6 +654,20 @@ custom_ca_bundle_path: /etc/ssl/certs/ca-certificates.crt
 # in host/group vars instead of baking an organization into the role.
 workspace_gitlab_host: gitlab.com
 workspace_gitlab_external_auth_provider: gitlab
+# Set false (or set workspace_gitlab_host to "") to install no credential
+# helper, no /etc/gitconfig entry and no profile.d file: a plain SSH workspace
+# then uses ordinary git credentials. See docs/workspace-providers.md.
+workspace_credential_helper_enabled: true
+# Command that prints a short-lived token for the provider named above. It runs
+# as `<binary> external-auth access-token <provider>`; when the binary is
+# missing or the call fails, the helper prints nothing and git falls back to
+# its normal prompt. The username is only a label for HTTPS Basic auth.
+workspace_external_auth_binary: coder
+workspace_credential_helper_username: oauth2
+
+# Read-only GPU readiness command (tasks/gpu-status.yml). It reports driver and
+# user-space state; it never installs drivers. See docs/gpu-accelerators.md.
+gpu_status_cli_enabled: true
 
 # Display configuration (GDM auto-login, x11vnc, dconf no-lock)
 # Enable on iGPU passthrough VMs that need physical display + VNC

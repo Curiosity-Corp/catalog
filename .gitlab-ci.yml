@@ -83,6 +83,18 @@ syntax:
   script:
     - ANSIBLE_ROLES_PATH=roles ansible-playbook --syntax-check -i localhost, playbooks/site.yml
 
+# Public configuration validation, workspace credential helper, GPU status and
+# the variable-naming plan tooling (docs/configuration.md, docs/workspace-providers.md,
+# docs/gpu-accelerators.md, docs/variable-naming-plan.md).
+config_api:
+  extends: .python_setup
+  stage: validate
+  script:
+    - >-
+      python -m pytest -q tests/test_config_validation.py tests/test_workspace_credential_helper.py
+      tests/test_gpu_status.py tests/test_variable_mapping.py
+    - python scripts/variable_mapping.py --check
+
 lint:
   extends: .python_setup
   stage: validate

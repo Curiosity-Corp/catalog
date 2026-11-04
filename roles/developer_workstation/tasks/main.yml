@@ -70,6 +70,13 @@
     fail_msg: >-
       workstation_profile must be 'desktop', 'workspace', 'thin-client', or 'byod-kiosk'
 
+- name: Validate public configuration before any change (types, enums, URLs, policies)
+  ansible.builtin.include_tasks:
+    file: validate-config.yml
+    apply:
+      tags: [always, validate]
+  tags: [always, validate]
+
 - name: Inspect FocusPass ownership state before optional package cleanup
   ansible.builtin.stat:
     path: /var/lib/curiosity/focuspass-screenlock.managed
@@ -364,6 +371,13 @@
       tags: [coder, workspace, git]
   tags: [coder, workspace, git]
   when: workstation_profile == 'workspace'
+
+- name: Include the read-only GPU status command
+  ansible.builtin.include_tasks:
+    file: gpu-status.yml
+    apply:
+      tags: [gpu]
+  tags: [gpu]
 
 - name: Include hyper-workspace helpers
   ansible.builtin.include_tasks:

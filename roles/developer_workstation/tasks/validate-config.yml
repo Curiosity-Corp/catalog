@@ -1,0 +1,153 @@
+---
+# =============================================================================
+# Public configuration validation
+# =============================================================================
+# Runs in pre-flight, before any package, service or file change. It checks the
+# documented public variables (types, enums, paths, URLs, numeric policies and
+# option combinations that cannot work) and reports EVERY problem at once
+# instead of failing one assert at a time halfway through a run.
+#
+# Secret safety: a message names the variable and the rule that failed. It never
+# prints the offending value, because URLs and similar values can carry tokens.
+# Enum names (profile, ring, integrity mode) are the only values ever shown, and
+# only as the allowed list, not as what the operator typed.
+#
+# How to extend: add one item to _config_checks below with a short `name`, an
+# `ok` expression that is true when the setting is fine, and an actionable `msg`.
+# Every expression must tolerate an unset optional variable (use `default`).
+# See docs/configuration.md ("Validation") and tests/test_config_validation.py.
+# =============================================================================
+
+- name: Evaluate public configuration checks once
+  ansible.builtin.set_fact:
+    _config_results: "{{ _config_checks }}"
+  vars:
+    _https_url_re: '^https://[^/@\s]+(/\S*)?$'
+    _bool_words: ['true', 'false', 'yes', 'no', '1', '0']
+    _config_checks:
+      - name: workstation_profile
+        ok: "{{ workstation_profile | default('') in ['desktop', 'workspace', 'thin-client', 'byod-kiosk'] }}"
+        msg: "workstation_profile must be one of desktop, workspace, thin-client, byod-kiosk."
+      - name: hardware_profile
+        ok: "{{ (hardware_profile | default('')) in (hardware_profiles | default({})) }}"
+        msg: >-
+          hardware_profile must name an entry of hardware_profiles (use
+          'generic' when no hardware-specific profile applies).
+      - name: workstation_update_ring
+        ok: "{{ workstation_update_ring | default('') in ['canary', 'early', 'general'] }}"
+        msg: "workstation_update_ring must be one of canary, early, general."
+      - name: workstation_update_ring policies
+        ok: >-
+          {{ (workstation_update_ring_min_age_seconds | default({})).values() | map('string') | select('match', '^[0-9]+$') | list | length
+             == (workstation_update_ring_min_age_seconds | default({})) | length
+             and (workstation_update_ring_randomized_delay_seconds | default({})).values() | map('string') | select('match', '^[0-9]+$') | list | length
+             == (workstation_update_ring_randomized_delay_seconds | default({})) | length }}
+        msg: >-
+          workstation_update_ring_min_age_seconds and
+          workstation_update_ring_randomized_delay_seconds must map each ring to
+          a whole number of seconds (0 or more).
+      - name: workstation_update_quarantine_seconds
+        ok: "{{ workstation_update_quarantine_seconds | default(0) | string is match('^[0-9]+$') }}"
+        msg: "workstation_update_quarantine_seconds must be a whole number of seconds (0 or more)."
+      - name: workstation_update_snapshot_keep
+        ok: "{{ workstation_update_snapshot_keep | default(1) | string is match('^[0-9]+$') and (workstation_update_snapshot_keep | default(1) | int) >= 1 }}"
+        msg: "workstation_update_snapshot_keep must be a whole number of at least 1."
+      - name: catalog_integrity_mode
+        ok: "{{ catalog_integrity_mode | default('') in ['off', 'warn', 'enforce'] }}"
+        msg: "catalog_integrity_mode must be one of off, warn, enforce."
+      - name: catalog_signing_key_fingerprint format
+        ok: "{{ (catalog_signing_key_fingerprint | default('') | trim | length == 0) or (catalog_signing_key_fingerprint | trim) is match('^[0-9A-Fa-f]{40}$') }}"
+        msg: "catalog_signing_key_fingerprint must be empty or exactly 40 hexadecimal characters."
+      - name: catalog_integrity_mode enforce needs a key
+        ok: "{{ catalog_integrity_mode | default('warn') != 'enforce' or (catalog_signing_key_fingerprint | default('') | trim | length == 40) }}"
+        msg: >-
+          catalog_integrity_mode: enforce also needs catalog_signing_key_fingerprint
+          (the 40-character fingerprint of the trusted signing key). Use warn
+          until the key is provisioned.
+      - name: dev_user_home
+        ok: "{{ dev_user_home | default('') is match('^/[^ ]+$') }}"
+        msg: "dev_user_home must be an absolute path without spaces."
+      - name: minimal_desktop_idle_lock_minutes
+        ok: "{{ minimal_desktop_idle_lock_minutes | default(10) | string is match('^[0-9]+$') and (minimal_desktop_idle_lock_minutes | default(10) | int) >= 1 }}"
+        msg: >-
+          The idle lock timeout (idle_lock_minutes in the hardware profile) must
+          be a whole number of minutes, 1 or more.
+      - name: custom_ca_certificates shape
+        ok: >-
+          {{ custom_ca_certificates | default([]) is sequence
+             and custom_ca_certificates | default([]) is not string
+             and (custom_ca_certificates | default([]) | selectattr('name', 'defined') | selectattr('src', 'defined') | list | length
+                  == custom_ca_certificates | default([]) | length) }}
+        msg: "custom_ca_certificates must be a list of items that each have a name and a src."
+      - name: custom_ca_certificates src paths
+        ok: >-
+          {{ custom_ca_certificates | default([]) | selectattr('src', 'defined') | map(attribute='src') | map('string') | select('match', '^/[^ ]+$') | list | length
+             == custom_ca_certificates | default([]) | selectattr('src', 'defined') | list | length }}
+        msg: "Every custom_ca_certificates src must be an absolute path on the Ansible controller."
+      - name: coder_deployment_url
+        ok: "{{ (coder_deployment_url | default('') | string | length == 0) or (coder_deployment_url | string) is match(_https_url_re) }}"
+        msg: >-
+          coder_deployment_url must be empty or an https:// URL without embedded
+          credentials (no user:password@ part).
+      - name: coder_cli_enabled needs a deployment
+        ok: "{{ not (coder_cli_enabled | default(false) | bool) or (coder_deployment_url | default('') | string | length > 0) }}"
+        msg: "coder_cli_enabled: true requires coder_deployment_url (the lab's own Coder deployment)."
+      - name: workspace_gitlab_host
+        ok: "{{ (workspace_gitlab_host | default('') | string | length == 0) or (workspace_gitlab_host | string) is match('^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$') }}"
+        msg: >-
+          workspace_gitlab_host must be empty (plain SSH workspace) or a host
+          name such as git.example.org, without a scheme or path.
+      - name: workspace_external_auth_binary
+        ok: "{{ workspace_external_auth_binary | default('coder') | string is match('^[A-Za-z0-9_./-]+$') }}"
+        msg: "workspace_external_auth_binary must be a command name or path without spaces or shell characters."
+      - name: kiosk_target_url
+        ok: "{{ (kiosk_target_url | default('') | string | length == 0) or (kiosk_target_url | string) is match(_https_url_re) }}"
+        msg: "kiosk_target_url must be an https:// URL without embedded credentials."
+      - name: kiosk_target_url required for byod-kiosk
+        ok: "{{ workstation_profile | default('') != 'byod-kiosk' or (kiosk_target_url | default('') | string | length > 0) }}"
+        msg: "workstation_profile: byod-kiosk requires kiosk_target_url."
+      - name: failed_sweep_webhook_url
+        ok: "{{ (failed_sweep_webhook_url | default('') | string | length == 0) or (failed_sweep_webhook_url | string) is match(_https_url_re) }}"
+        msg: >-
+          failed_sweep_webhook_url must be empty or an https:// URL without
+          embedded credentials. Webhook URLs are secrets: supply this from
+          Ansible Vault or the environment, never a committed file.
+      - name: missionctl_install_url
+        ok: "{{ (missionctl_install_url | default('') | string | length == 0) or (missionctl_install_url | string) is match(_https_url_re) }}"
+        msg: "missionctl_install_url must be empty or an https:// URL without embedded credentials."
+      - name: focuspass_screenlock_install_url
+        ok: "{{ (focuspass_screenlock_install_url | default('') | string | length == 0) or (focuspass_screenlock_install_url | string) is match(_https_url_re) }}"
+        msg: "focuspass_screenlock_install_url must be empty or an https:// URL without embedded credentials."
+      - name: boolean switches
+        ok: >-
+          {{ [coder_cli_enabled | default(false), cloud_clis_enabled | default(true),
+              workspace_credential_helper_enabled | default(true), diagnostics_cli_enabled | default(true),
+              ziti_enabled | default(false), keycloak_sso_enabled | default(false),
+              sunshine_enabled | default(false), display_config_enabled | default(false),
+              gpu_status_cli_enabled | default(true)]
+             | map('string') | map('lower') | reject('in', _bool_words) | list | length == 0 }}
+        msg: >-
+          The enable switches (coder_cli_enabled, cloud_clis_enabled,
+          workspace_credential_helper_enabled, diagnostics_cli_enabled,
+          ziti_enabled, keycloak_sso_enabled, sunshine_enabled,
+          display_config_enabled, gpu_status_cli_enabled) must be true or false.
+
+- name: Start with no recorded problems
+  ansible.builtin.set_fact:
+    _config_problems: []
+
+- name: Collect the failed checks
+  ansible.builtin.set_fact:
+    _config_problems: "{{ _config_problems + ['- ' ~ item.msg] }}"
+  when: not (item.ok | bool)
+  loop: "{{ _config_results }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Stop before any change when the configuration is invalid
+  ansible.builtin.fail:
+    msg: |-
+      The public configuration is invalid; nothing on this host was changed.
+      {{ _config_problems | join('\n') }}
+      Values are not printed on purpose. See docs/configuration.md (Validation).
+  when: _config_problems | length > 0

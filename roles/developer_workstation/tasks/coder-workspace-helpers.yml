@@ -24,7 +24,9 @@
 #     source ~/.bashrc — without this, login-shell-only contexts miss every
 #     user-level alias / function / chezmoi-managed env.
 #
-# Skipped on the desktop profile.
+# Items 1-3 are skipped when workspace_credential_helper_enabled is false or
+# workspace_gitlab_host is empty (a plain SSH workspace); item 4 always runs.
+# Skipped on the desktop profile. See docs/workspace-providers.md.
 # =============================================================================
 
 - name: Install git-credential-coder-gitlab helper
@@ -34,6 +36,7 @@
     owner: root
     group: root
     mode: "0755"
+  when: workspace_credential_helper_enabled | bool and (workspace_gitlab_host | length > 0)
 
 - name: Install /etc/profile.d/coder-gitlab.sh
   ansible.builtin.template:
@@ -42,12 +45,14 @@
     owner: root
     group: root
     mode: "0644"
+  when: workspace_credential_helper_enabled | bool and (workspace_gitlab_host | length > 0)
 
 - name: Wire git credential helper for the configured GitLab host in /etc/gitconfig
   community.general.git_config:
     scope: system
     name: "credential.https://{{ workspace_gitlab_host }}.helper"
     value: "!/usr/local/bin/git-credential-coder-gitlab"
+  when: workspace_credential_helper_enabled | bool and (workspace_gitlab_host | length > 0)
 
 - name: Ensure /etc/skel/.bash_profile sources ~/.bashrc for new users
   ansible.builtin.copy:

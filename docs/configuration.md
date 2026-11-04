@@ -26,6 +26,26 @@ For a VM or an existing user, pass the actual account and home directory. The
 role asserts that the account exists and that its home is a directory before it
 changes anything else.
 
+## Validation
+
+Before any package, service or file change, the role checks the public
+configuration in `tasks/validate-config.yml` and, if anything is wrong, stops with
+one message that lists every problem. It checks the profile and hardware profile
+names, the update ring and its policies, `catalog_integrity_mode` (and that
+`enforce` has a 40-character signing-key fingerprint), numeric policies (quarantine
+seconds, snapshot count, idle-lock minutes), absolute paths (`dev_user_home`, the
+`src` of each `custom_ca_certificates` item), `https://` URLs without embedded
+credentials, options that cannot work together (`coder_cli_enabled` without
+`coder_deployment_url`, `byod-kiosk` without `kiosk_target_url`) and the enable
+switches being real booleans.
+
+Messages name the variable and the rule, never the value, so a webhook URL or a
+fingerprint typed into the wrong field is not copied into logs. Run only the
+check with `--tags validate`. To add a rule, add one item to `_config_checks`
+(name, `ok` expression that tolerates unset variables, `msg`) and a case in
+`tests/test_config_validation.py`. Related guides: `docs/workspace-providers.md`,
+`docs/gpu-accelerators.md`, `docs/variable-naming-plan.md`.
+
 ## Time zone
 
 `workstation_timezone` sets the system clock's IANA zone (empty, the default,

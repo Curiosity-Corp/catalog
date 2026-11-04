@@ -1,0 +1,24 @@
+---
+# =============================================================================
+# curiosity-gpu-status: read-only GPU readiness report (docs/gpu-accelerators.md)
+# =============================================================================
+# Installs one stdlib-only script. It only READS /sys, /dev and PATH when run.
+# This role never installs a GPU driver, CUDA, ROCm or oneAPI, and it never
+# fetches any vendor credential. Set gpu_status_cli_enabled to false to remove
+# the command again.
+# =============================================================================
+
+- name: Install the curiosity-gpu-status command
+  ansible.builtin.copy:
+    src: curiosity_gpu_status.py
+    dest: /usr/local/bin/curiosity-gpu-status
+    owner: root
+    group: root
+    mode: "0755"
+  when: gpu_status_cli_enabled | bool
+
+- name: Remove the curiosity-gpu-status command when it is disabled
+  ansible.builtin.file:
+    path: /usr/local/bin/curiosity-gpu-status
+    state: absent
+  when: not (gpu_status_cli_enabled | bool)
