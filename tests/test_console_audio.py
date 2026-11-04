@@ -1062,12 +1062,22 @@ class Verify:
         return self.results.pop(0) if len(self.results) > 1 else self.results[0]
 
 
+AUTO_ON = {"STREAMSTACK_MIC_AUTO_REVIVE": "1"}
+
+
+@pytest.fixture(autouse=True)
+def _manual_revive_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tests below script the revive button step by step; the automatic revive (#186) is switched on per test."""
+    real = config.load_settings
+    monkeypatch.setattr(config, "load_settings", lambda path=None: {**real(path), "STREAMSTACK_MIC_AUTO_REVIVE": "0"})
+
+
 def watcher(
-    rig: Rig, probe: Probe, verify: Verify | None = None, **kw: Any
+    rig: Rig, probe: Probe, verify: Verify | None = None, env: dict[str, str] | None = None, **kw: Any
 ) -> tuple[AudioController, list[tuple[str, str]]]:
     toasts: list[tuple[str, str]] = []
     controller = AudioController(
-        config.load_settings(),
+        {**config.load_settings(), **(env or {})},
         lambda level, text: toasts.append((level, text)),
         clock=rig.clock,
         stall_probe=probe,
@@ -1117,7 +1127,7 @@ def test_a_silent_reader_is_restarted_but_keeps_counting_the_silence(rig: Rig) -
     assert second.idle_for() >= audio.READER_IDLE_RESTART  # not reset to zero by the restart
 
 
-def test_a_stalled_pcm_is_flagged_with_one_warn_toast_and_nothing_acts_alone(rig: Rig) -> None:
+def test_a_stalled_pcm_is_flagged_with_one_warn_toast_and_nothing_acts_alone_when_auto_revive_is_off(rig: Rig) -> None:
     probe = Probe(STALLED)
     ctl, toasts = watcher(rig, probe)
     for _ in range(5):
@@ -1130,6 +1140,72 @@ def test_a_stalled_pcm_is_flagged_with_one_warn_toast_and_nothing_acts_alone(rig
     warns = [t for t in toasts if t[0] == "warn"]
     assert len(warns) == 1 and "nobody can hear you" in warns[0][1]
     assert pactl_mutations(rig) == []  # never revives by itself
+
+
+def wait_idle_thread(ctl: AudioController) -> None:
+    thread = ctl._revive_thread
+    if thread is not None:
+        thread.join(timeout=5)
+
+
+def test_a_stalled_mic_is_revived_automatically_with_no_call_and_logged(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#186: after a USB re-enumeration the source is RUNNING but hw_ptr stands still; nobody presses Revive."""
+    probe = Probe(STALLED)
+
+    class Revives(Verify):
+        def __call__(self, mic: str) -> bool | None:
+            probe.probe = HEALTHY  # the suspend/resume brought the pointers back: the PCM moves from now on
+            return super().__call__(mic)
+
+    caplog.set_level("INFO", logger=audio.log.name)
+    ctl, toasts = watcher(rig, probe, Revives([False]), env=AUTO_ON)
+    wait_idle_thread(ctl)
+    tick(rig, ctl, 3)
+    assert pactl_mutations(rig) == [["suspend-source", MIC, "1"], ["suspend-source", MIC, "0"]]
+    assert ctl.state()["mic"]["revive"]["state"] == "ok"
+    assert ctl.state()["mic"]["stalled"] is False
+    assert any("Reviving it automatically" in text for _, text in toasts)
+    assert any("reviving it automatically" in r.getMessage() and r.levelname == "WARNING" for r in caplog.records)
+    assert any("mic revive ok" in r.getMessage() for r in caplog.records)
+
+
+def test_the_automatic_revive_waits_out_the_detection_window(rig: Rig) -> None:
+    """A mic that has not shown the fault for a whole window (the probe says None) is left alone."""
+    ctl, _ = watcher(rig, Probe(micwatch.StallProbe(None, "watching", "watching the microphone")), env=AUTO_ON)
+    tick(rig, ctl, 10)
+    assert pactl_mutations(rig) == []
+
+
+def test_the_automatic_revive_is_bounded_and_then_leaves_the_manual_advice(rig: Rig) -> None:
+    probe = Probe(STALLED)
+    ctl, _ = watcher(rig, probe, Verify([True]), env=AUTO_ON)  # nothing ever helps
+    for _ in range(12):
+        tick(rig, ctl, int(micwatch.AUTO_REVIVE_RETRY_S) + 1)
+        wait_idle_thread(ctl)
+    suspends = [m for m in pactl_mutations(rig) if m[0] == "suspend-source" and m[2] == "1"]
+    assert len(suspends) == micwatch.AUTO_REVIVE_MAX
+    revive = ctl.state()["mic"]["revive"]
+    assert revive["state"] == "failed" and "replug" in revive["message"].lower()
+    assert ctl.state()["mic"]["stalled"] is True
+
+
+def test_the_automatic_revive_never_touches_digital_silence_or_a_muted_mic(rig: Rig) -> None:
+    ctl, _ = watcher(rig, Probe(HEALTHY), env=AUTO_ON)
+    feed_zeros_for(rig, ctl, 8)
+    assert ctl.state()["mic"]["stall_kind"] == "silence"
+    assert pactl_mutations(rig) == []
+    rig.pactl_out = pactl_json(mute=True)
+    muted, _ = watcher(rig, Probe(STALLED), env=AUTO_ON)
+    tick(rig, muted, 10)
+    assert pactl_mutations(rig) == []
+
+
+def test_the_automatic_revive_can_be_switched_off(rig: Rig) -> None:
+    ctl, _ = watcher(rig, Probe(STALLED), env={"STREAMSTACK_MIC_AUTO_REVIVE": "off"})
+    tick(rig, ctl, 10)
+    assert pactl_mutations(rig) == [] and ctl.state()["mic"]["revive"]["state"] == "idle"
 
 
 def test_the_pcm_is_sampled_on_every_probe(rig: Rig) -> None:

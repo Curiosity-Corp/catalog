@@ -104,6 +104,8 @@ On the studio PC, with `streamstack doctor` green and the probe passing:
 
 ## 4. What still needs a human two-party call
 
+The app-by-app result, the Meet and engine-restart gaps and the call-desk rules are in [call-apps.md](call-apps.md).
+
 - A real Teams call in Edge, signed in, with a second participant who sees the picture.
 - Zoom desktop and Meet in Chrome, same.
 - Glass-to-glass numbers with the real Canon and Cam Link on the real desk, and what the other party perceives.

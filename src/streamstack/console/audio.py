@@ -616,6 +616,7 @@ class AudioController:
         self._kind = micwatch.KIND_STALL  # what the current fault is: a stall, or digital silence
         self._revive = {"state": "idle", "message": None, "at": -math.inf}
         self._revive_thread: threading.Thread | None = None
+        self._auto_tries: list[float] = []  # when the watchdog last revived a stall by itself (the budget)
 
         self._outputs = Outputs(
             lambda level, text: _emit(self.notify, level, text),
@@ -769,7 +770,8 @@ class AudioController:
     # -- the watchdog ---------------------------------------------------------
 
     def _watch(self, mic: str, muted: bool | None, listing: str) -> None:
-        """Judge the microphone's ALSA PCM (a procfs read, once per probe). Never acts on its own."""
+        """Judge the microphone's ALSA PCM (a procfs read, once per probe); a confirmed stall is revived by
+        `_auto_revive`, digital silence is only reported."""
         with self._lock:
             if self._revive["state"] == "reviving":
                 return  # the revive decides, and a half-resumed node must not count
@@ -798,6 +800,33 @@ class AudioController:
             _emit(self.notify, "warn", f"{title}. Press Revive mic.")
         elif cleared_quietly:
             _emit(self.notify, "ok", "Microphone is delivering audio again")
+        self._auto_revive(mic)
+
+    def _auto_revive(self, mic: str) -> None:
+        """A confirmed stall is revived at once, call or no call: nobody is watching a toast while the desk is idle
+        (2026-11-04, #186: the mic stayed silent after a USB re-enumeration until someone ran doctor). Reuses the
+        revive worker of the Revive mic button. Bounded: at most AUTO_REVIVE_MAX tries per AUTO_REVIVE_WINDOW_S,
+        AUTO_REVIVE_RETRY_S apart. Digital silence is never fixed by itself (it re-writes mixer controls)."""
+        if str(self._cfg.get("STREAMSTACK_MIC_AUTO_REVIVE", "1")).strip().lower() in {"0", "false", "no", "off"}:
+            return
+        if not mic or not system.have("pactl"):
+            return
+        with self._lock:
+            if not self._detector.stalled or self._kind != micwatch.KIND_STALL:
+                return
+            if self._revive["state"] == "reviving" or self._stop.is_set():
+                return
+            now = self._clock()
+            self._auto_tries = [t for t in self._auto_tries if now - t < micwatch.AUTO_REVIVE_WINDOW_S]
+            if len(self._auto_tries) >= micwatch.AUTO_REVIVE_MAX:
+                return  # tried enough: the failed state and its advice stand until a person acts or the mic recovers
+            if self._auto_tries and now - self._auto_tries[-1] < micwatch.AUTO_REVIVE_RETRY_S:
+                return
+            self._auto_tries.append(now)
+            tries = len(self._auto_tries)
+            self._begin_revive(mic, micwatch.KIND_STALL)
+        log.warning("microphone stalled: reviving it automatically (try %d of %d)", tries, micwatch.AUTO_REVIVE_MAX)
+        _emit(self.notify, "warn", "Microphone stalled. Reviving it automatically...")
 
     def _recheck(self, mic: str) -> bool | None:
         """After a revive step: fresh readers, then the same ALSA signal. True stalled, False healthy, None unknown."""
@@ -1040,16 +1069,20 @@ class AudioController:
             if not (self._detector.stalled or self._revive["state"] == "failed" or params.get("force") is True):
                 raise ActionError("The microphone is delivering audio; there is nothing to revive.", 409)
             kind = self._kind if self._detector.stalled else micwatch.KIND_STALL
-            first = (
-                "Re-writing the device's capture controls..."
-                if kind == micwatch.KIND_SILENCE
-                else "Suspending and resuming the microphone..."
-            )
-            self._set_revive("reviving", first)
+            self._begin_revive(mic, kind)
+        return "Reviving the microphone..."
+
+    def _begin_revive(self, mic: str, kind: str) -> None:
+        """Mark the revive running and start its worker. The caller holds the lock and has checked the state."""
+        first = (
+            "Re-writing the device's capture controls..."
+            if kind == micwatch.KIND_SILENCE
+            else "Suspending and resuming the microphone..."
+        )
+        self._set_revive("reviving", first)
         thread = threading.Thread(target=self._run_revive, args=(mic, kind), name="mic-revive", daemon=True)
         self._revive_thread = thread
         thread.start()
-        return "Reviving the microphone..."
 
     def _resync_for(self, mic: str) -> Callable[[], str] | None:
         """The capture-control resync of the mic's ALSA card: the hardware Plan's interface, else the card the
@@ -1095,6 +1128,7 @@ class AudioController:
                 self._detector.reset()
                 self._graph = None
             self._set_revive("ok" if result.ok else "failed", result.message)
+        log.warning("mic revive %s: %s", "ok" if result.ok else "failed", result.message)
         _emit(self.notify, "ok" if result.ok else "error", result.message)
 
     # -- mic check ----------------------------------------------------------
