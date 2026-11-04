@@ -144,6 +144,13 @@ sudo /usr/local/sbin/curiosity-console-tuning --dry-run
 
 Service logs: `journalctl -u curiosity-console-tuning`.
 
+Exit status: every deliberate skip exits 0, including deferring to a graphical
+session that owns the VT ("a graphical session owns the active VT; deferring")
+and a start that follows another apply within 10 seconds (udev hotplug and
+vtconsole events arrive in bursts). The unit has no systemd start limit
+(`StartLimitIntervalSec=0`): the earlier limit of 3 starts a minute turned such
+a burst into `start-limit-hit` and a failed unit on deskmeet1 (2026-11-03).
+
 ### Limitations
 
 - The runtime fix is lost if the DRM driver reloads, and a graphical session

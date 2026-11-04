@@ -1,0 +1,81 @@
+---
+# =============================================================================
+# CPU thermal guard: cap intel_pstate max_perf_pct at boot (opt-in)
+# =============================================================================
+# deskmeet1 (ASRock B760-ITX DeskMeet, i7-14700) ran 83-92 C at modest load and
+# had growing memory corruption and freezes. Its BIOS locks RAPL (MSR 0x610 bit
+# 63 set; powercap constraint_*_power_limit_uw returns ENODATA), so the OS cap
+# is intel_pstate's max_perf_pct.
+#
+# developer_workstation_cpu_max_perf_pct (empty = off, the default; a hardware
+# profile's `cpu_max_perf_pct` or a host-local override sets it) installs a
+# oneshot unit that applies the cap at boot. The unit is skipped by systemd when
+# the intel_pstate knob is absent (ConditionPathExists) and the helper skips
+# cleanly on its own, so the same setting is harmless on other cpufreq drivers.
+# Emptying the setting stops the unit, which lifts the cap (ExecStop restores
+# 100) and removes the files.
+#
+# The loader for the nct6775 hwmon driver (fan and temperature sensors) is the
+# hardware profile's kernel_modules list, handled in hardware-drivers.yml.
+# =============================================================================
+
+- name: Validate the CPU max performance cap
+  ansible.builtin.assert:
+    that:
+      - developer_workstation_cpu_max_perf_pct | string | trim is match('^([1-9][0-9]?|100)?$')
+    fail_msg: >-
+      developer_workstation_cpu_max_perf_pct must be empty (no cap) or a whole
+      number from 1 to 100, got '{{ developer_workstation_cpu_max_perf_pct }}'.
+
+- name: Install the CPU max performance cap
+  when: (developer_workstation_cpu_max_perf_pct | string | trim) | length > 0
+  block:
+    - name: Install the CPU max performance helper
+      ansible.builtin.copy:
+        src: curiosity-cpu-max-perf
+        dest: /usr/local/sbin/curiosity-cpu-max-perf
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the CPU max performance unit
+      ansible.builtin.template:
+        src: curiosity-cpu-max-perf.service.j2
+        dest: /etc/systemd/system/curiosity-cpu-max-perf.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Apply the CPU max performance cap
+
+    - name: Enable the CPU max performance unit at boot
+      ansible.builtin.systemd:
+        name: curiosity-cpu-max-perf.service
+        enabled: true
+        daemon_reload: true
+
+- name: Remove the CPU max performance cap when it is not configured
+  when: (developer_workstation_cpu_max_perf_pct | string | trim) | length == 0
+  block:
+    - name: Look for a previously installed CPU max performance unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/curiosity-cpu-max-perf.service
+      register: _cpu_max_perf_unit
+
+    # ExecStop lifts the cap (100) before the unit disappears.
+    - name: Stop and disable the CPU max performance unit
+      ansible.builtin.systemd:
+        name: curiosity-cpu-max-perf.service
+        state: stopped
+        enabled: false
+      when: _cpu_max_perf_unit.stat.exists
+
+    - name: Remove the CPU max performance unit and helper
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/curiosity-cpu-max-perf.service
+        - /usr/local/sbin/curiosity-cpu-max-perf
+      notify: Reload systemd

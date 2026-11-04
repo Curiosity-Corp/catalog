@@ -13,7 +13,9 @@ loads a PSF bitmap font and a VT colour palette on each virtual terminal.
 
 Everything here is fail-safe: when there is nothing to do (no framebuffer,
 container, graphical session on the active VT, console already full size) it
-logs one clear line and exits 0.  It never edits the bootloader or kernel
+logs one clear line and exits 0.  Deferring to a graphical session that owns
+the VT is such a case: it is intended behavior, never a unit failure.  A start
+that follows another apply within 10 seconds is debounced the same way.  It never edits the bootloader or kernel
 command line and never restarts the machine.
 
 Modes:
@@ -43,6 +45,11 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 DEFAULT_CONFIG = "/etc/curiosity/console-tuning.conf"
 DEFAULT_FB = "/dev/fb0"
+# A successful apply touches this file; a start request that arrives within
+# DEFAULT_DEBOUNCE_SECONDS of it is answered with "nothing to do" (exit 0).
+# /run is tmpfs, so the first start after power-up always applies.
+DEFAULT_STAMP = "/run/curiosity-console-tuning.stamp"
+DEFAULT_DEBOUNCE_SECONDS = 10
 SYSFS_FB = "/sys/class/graphics"
 SYSFS_DRM = "/sys/class/drm"
 
@@ -489,6 +496,30 @@ def apply_palette(cfg: Config, dry_run: bool) -> None:
             os.close(fd)
 
 
+def recently_applied(
+    stamp: str, window: int, now: Callable[[], float] = time.time
+) -> Optional[float]:
+    """Seconds since the last apply when it is inside the window, else None.
+
+    A stamp from the future (clock step) is ignored rather than trusted.
+    """
+    if window <= 0:
+        return None
+    try:
+        age = now() - os.stat(stamp).st_mtime
+    except OSError:
+        return None
+    return age if 0 <= age < window else None
+
+
+def touch_stamp(stamp: str) -> None:
+    try:
+        with open(stamp, "a", encoding="utf-8"):
+            os.utime(stamp, None)
+    except OSError as exc:
+        log(f"cannot update {stamp} ({exc}); debouncing is off for the next start")
+
+
 def run_apply(args: argparse.Namespace) -> int:
     if not sys.platform.startswith("linux"):
         log("not Linux; nothing to do")
@@ -503,6 +534,14 @@ def run_apply(args: argparse.Namespace) -> int:
     if not os.path.exists(fb_path):
         log(f"{fb_path} not present (no framebuffer console); nothing to do")
         return 0
+    if not args.dry_run:
+        age = recently_applied(args.stamp, args.debounce_seconds)
+        if age is not None:
+            # Hotplug and vtconsole udev events arrive in bursts; the apply is
+            # idempotent, so a start that follows closely is a clean no-op
+            # instead of a start-limit failure of the unit.
+            log(f"applied {age:.0f}s ago; debouncing this start (nothing to do)")
+            return 0
     if not args.dry_run and not args.no_wait:
         wait_for_framebuffer(
             lambda: os.path.exists(fb_path),
@@ -520,6 +559,8 @@ def run_apply(args: argparse.Namespace) -> int:
         log("framebuffer: disabled by configuration")
     apply_font(cfg, args.dry_run)
     apply_palette(cfg, args.dry_run)
+    if not args.dry_run:
+        touch_stamp(args.stamp)
     return 0
 
 
@@ -591,6 +632,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", default=DEFAULT_CONFIG, help="config file path")
     parser.add_argument("--fb", default=DEFAULT_FB, help="framebuffer device")
+    parser.add_argument("--stamp", default=DEFAULT_STAMP, help="last-apply stamp file")
+    parser.add_argument(
+        "--debounce-seconds",
+        type=int,
+        default=DEFAULT_DEBOUNCE_SECONDS,
+        help="skip an apply that follows another within this many seconds (0 = off)",
+    )
     parser.add_argument(
         "--no-wait", action="store_true", help="skip the bounded wait for the KMS fb"
     )
