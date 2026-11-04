@@ -56,7 +56,7 @@ def test_defaults() -> None:
 
 
 def test_ziti_tasks_install_the_check_and_retire_it_when_disabled() -> None:
-    tasks = yaml.load((ROLE / "tasks/ziti.yml").read_text(), Loader=_Loader)
+    tasks = yaml.load((ROLE / "tasks/ziti-health.yml").read_text(), Loader=_Loader)
     by_name = {t["name"]: t for t in tasks}
     for name in (
         "Install Ziti health check script",
@@ -71,6 +71,79 @@ def test_ziti_tasks_install_the_check_and_retire_it_when_disabled() -> None:
     assert len(retire["loop"]) == 3
     handlers = {h["name"] for h in yaml.safe_load((ROLE / "handlers/main.yml").read_text())}
     assert by_name["Install Ziti health check systemd timer"]["notify"] in handlers
+
+
+# ---------------------------------------------------------------------------
+# Who gets the guard: managed tunnel, hand-managed tunnel, or no Ziti at all
+# ---------------------------------------------------------------------------
+
+
+def _main_tasks() -> dict[str, dict]:
+    tasks = yaml.load((ROLE / "tasks/main.yml").read_text(), Loader=_Loader)
+    return {t["name"]: t for t in tasks}
+
+
+def _include_runs(*, ziti_enabled: bool, unit_files: str | None, health: bool = True) -> bool:
+    """Evaluate the `when` list of the health include the way Ansible would."""
+    include = _main_tasks()["Include Ziti tunnel health check"]
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    env.filters["bool"] = lambda v: v is True or str(v).lower() in ("1", "true", "yes", "on")
+    context: dict[str, object] = {
+        "workstation_profile": "desktop",
+        "ziti_enabled": ziti_enabled,
+        "ziti_health_check_enabled": health,
+    }
+    if unit_files is not None:  # None: the lookup was skipped and registered no stdout
+        context["_ziti_unit_files"] = {"stdout": unit_files}
+    else:
+        context["_ziti_unit_files"] = {"skipped": True}
+    return all(
+        env.compile_expression(cond)(**context) is True for cond in include["when"]
+    )
+
+
+def test_health_tasks_are_not_in_ziti_yml() -> None:
+    names = {t["name"] for t in yaml.load((ROLE / "tasks/ziti.yml").read_text(), Loader=_Loader)}
+    assert not {n for n in names if "health check" in n}
+    assert "ziti_health_check" not in (ROLE / "tasks/ziti.yml").read_text()
+
+
+def test_catalog_managed_tunnel_gets_the_guard() -> None:
+    assert _include_runs(ziti_enabled=True, unit_files=None)
+
+
+def test_hand_managed_tunnel_with_the_unit_present_gets_the_guard() -> None:
+    assert _include_runs(ziti_enabled=False, unit_files="ziti-edge-tunnel.service enabled enabled\n")
+
+
+def test_host_without_a_tunnel_unit_is_left_alone() -> None:
+    assert not _include_runs(ziti_enabled=False, unit_files="")
+    assert not _include_runs(ziti_enabled=False, unit_files="\n")
+
+
+def test_disabled_guard_is_not_installed_on_an_unmanaged_tunnel() -> None:
+    assert not _include_runs(ziti_enabled=False, unit_files="ziti-edge-tunnel.service enabled enabled", health=False)
+
+
+def test_managed_tunnel_still_retires_a_disabled_guard() -> None:
+    # The retire tasks live in ziti-health.yml, so a managed host must still reach it.
+    assert _include_runs(ziti_enabled=True, unit_files=None, health=False)
+
+
+def test_unit_lookup_is_read_only_and_runs_in_check_mode() -> None:
+    lookup = _main_tasks()["Look for the configured Ziti tunnel unit"]
+    assert lookup["register"] == "_ziti_unit_files"
+    assert lookup["changed_when"] is False and lookup["failed_when"] is False
+    assert lookup["check_mode"] is False
+    assert "{{ ziti_service_name }}" in lookup["ansible.builtin.command"]["cmd"]
+    # a managed tunnel needs no lookup
+    assert any("ziti_enabled" in c for c in lookup["when"])
+
+
+def test_guard_restarts_only_the_default_tunnel_unit() -> None:
+    assert DEFAULTS["ziti_service_name"] == "ziti-edge-tunnel.service"
+    text = _render("curiosity-ziti-health.service.j2")
+    assert "Environment=ZITI_HEALTH_UNIT=ziti-edge-tunnel.service" in text
 
 
 def test_service_runs_as_root_oneshot_against_the_configured_unit() -> None:

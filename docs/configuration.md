@@ -401,7 +401,9 @@ names explicitly supplied by the operator.
 
 ### Tunnel health check
 
-With `ziti_enabled`, `curiosity-ziti-health.timer` (every
+With `ziti_enabled`, or on a host whose tunnel is managed by hand
+(`ziti_enabled: false` but the `ziti_service_name` unit exists, so the guard needs no
+catalog-managed tunnel and a host without Ziti is left alone), `curiosity-ziti-health.timer` (every
 `ziti_health_check_interval`, default 2 minutes) runs a root check that restarts
 `ziti_service_name` when `ziti-edge-tunnel tunnel_status` shows a watched identity
 Active but not Loaded for at least `ziti_health_check_grace` seconds (60), or when an
