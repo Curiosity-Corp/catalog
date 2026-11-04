@@ -54,6 +54,8 @@ def build_play(cases: dict, outdir: Path) -> list:
                 "hosts": "localhost",
                 "connection": "local",
                 "gather_facts": False,
+                # CI images have no /usr/bin/python3 for ansible's discovery.
+                "vars": {"ansible_python_interpreter": sys.executable},
                 "vars_files": [DEFAULTS, str(override_file)],
                 "tasks": [
                     {
@@ -150,7 +152,7 @@ def results(tmp_path_factory):
     play = tmp / "play.yml"
     play.write_text(yaml.safe_dump(build_play(cases, outdir)))
     env = {
-        "PATH": "/usr/bin:/bin",
+        "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin",
         "HOME": str(tmp),
         "ANSIBLE_LOCAL_TEMP": str(tmp / "tmp"),
         "ANSIBLE_HOME": str(tmp / "home"),
