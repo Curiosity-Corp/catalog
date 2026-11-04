@@ -119,7 +119,11 @@ class Ingest:
         )
         self.log = (tmp / "mediamtx.log").open("wb")
         self.proc = subprocess.Popen(
-            [str(binary), str(config)], stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True
+            [str(binary), str(config)],
+            stdout=self.log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=tmp,  # MediaMTX writes auto.key / auto.crt into its working directory, never into the repository
         )
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:

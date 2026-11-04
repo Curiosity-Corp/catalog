@@ -540,3 +540,100 @@ def test_with_the_denoiser_on_a_window_never_reaches_the_frames_edge(tmp_path: P
         assert eng.state()["crop"] == {"x": 2, "y": 2, "w": 638, "h": 358}
     finally:
         eng.stop()
+
+
+def test_a_child_starts_with_the_preview_branch_and_a_fresh_preview_directory(tmp_path: Path) -> None:
+    """#181: the engine writes the Console's preview picture; a stale picture from a previous child is removed."""
+    from dataclasses import replace
+
+    preview = tmp_path / "state" / "preview" / "program.jpg"
+    preview.parent.mkdir(parents=True)
+    preview.write_bytes(b"\xff\xd8old\xff\xd9")
+    started: list[list[str]] = []
+    eng = process.VideoEngine(
+        replace(SPEC, preview_path=str(preview)),
+        dict(NEUTRAL),
+        popen=fake_popen(tmp_path / "stdin.log", started=started),
+    )
+    try:
+        eng.start()
+        assert wait_for(lambda: bool(started))
+        assert str(preview) in started[0] and "[prev]" in started[0]
+        assert not preview.exists()
+    finally:
+        eng.stop()
+
+
+def test_an_unwritable_preview_directory_turns_the_preview_off_not_the_camera(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    blocker = tmp_path / "file"
+    blocker.write_text("not a directory")
+    started: list[list[str]] = []
+    eng = process.VideoEngine(
+        replace(SPEC, preview_path=str(blocker / "preview" / "program.jpg")),
+        dict(NEUTRAL),
+        popen=fake_popen(tmp_path / "stdin.log", started=started),
+    )
+    try:
+        eng.start()
+        assert wait_for(lambda: bool(started))
+        assert "[prev]" not in started[0]
+    finally:
+        eng.stop()
+
+
+class RecordingHub:
+    """Stands in for engine.framehub.FrameHub: reads the child's frame pipe to the end, like `pump`."""
+
+    def __init__(self) -> None:
+        self.data = b""
+        self.done = threading.Event()
+
+    def pump(self, fd: int) -> None:
+        try:
+            while chunk := os.read(fd, 4096):
+                self.data += chunk
+        finally:
+            os.close(fd)
+            self.done.set()
+
+
+def test_a_raw_feed_spec_hands_the_childs_frame_pipe_to_the_hub(tmp_path: Path) -> None:
+    """#184: the recording and the stream read the engine's frames, through a pipe the engine owns."""
+    from dataclasses import replace
+
+    started: list[list[str]] = []
+    base = fake_popen(tmp_path / "stdin.log", started=started)
+
+    def popen(argv: list[str], **kwargs) -> subprocess.Popen:
+        proc = base(argv, **kwargs)
+        feed_fd = int(argv[argv.index("[raw]") :][-1].split(":")[1])
+        assert feed_fd in kwargs["pass_fds"]
+        os.write(feed_fd, b"frame-one frame-two")  # what the child's rawvideo output would carry
+        return proc
+
+    hub = RecordingHub()
+    eng = process.VideoEngine(replace(SPEC, raw_feed=True), dict(NEUTRAL), popen=popen)
+    eng.attach_feed(hub)  # type: ignore[arg-type]
+    try:
+        eng.start()
+        assert wait_for(lambda: bool(started))
+        assert wait_for(lambda: hub.data == b"frame-one frame-two")
+    finally:
+        eng.stop()
+
+
+def test_a_raw_feed_spec_without_a_hub_drops_the_branch(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    started: list[list[str]] = []
+    eng = process.VideoEngine(
+        replace(SPEC, raw_feed=True), dict(NEUTRAL), popen=fake_popen(tmp_path / "stdin.log", started=started)
+    )
+    try:
+        eng.start()
+        assert wait_for(lambda: bool(started))
+        assert "[raw]" not in started[0]
+    finally:
+        eng.stop()

@@ -231,6 +231,26 @@ def rig_baseline(rig: Rig) -> dict:
     }
 
 
+@pytest.fixture(scope="session")
+def beams_off_at_end(rig: Rig) -> Iterator[None]:
+    """Every beam of the demo rig is Off when the session ends (#182).
+
+    The demo's simulated Litras start On, and tests turn them on and off; a light left on is what kept a real Beam
+    lit overnight on dm313red. At the end of the session this switches every light off through the normal action
+    and asserts that each one is Off, and stays Off for a moment (an automation that re-latched it would show here).
+    CI runs the demo rig, which uses the fake device; a run against real beams ends the same way."""
+    yield
+    rig.act("lighting.auto.follow", enabled=False)  # no pretend camera session may switch a light back on
+    rig.act("lighting.power", id="all", on=False)
+    lights = rig.state()["lighting"]["lights"]
+    assert lights, "the demo rig has no lights to check"
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        lights = rig.state()["lighting"]["lights"]
+        assert not any(entry["power"] for entry in lights), [e["id"] for e in lights if e["power"]]
+        time.sleep(0.25)
+
+
 @pytest.fixture(autouse=True)
 def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
     """Put the shared demo rig back as it started, before and after each browser test."""
@@ -239,6 +259,7 @@ def reset_rig(request: pytest.FixtureRequest) -> Iterator[None]:
         return
     rig: Rig = request.getfixturevalue("rig")
     base: dict = request.getfixturevalue("rig_baseline")
+    request.getfixturevalue("beams_off_at_end")  # a session-level teardown: the last test has run
 
     def reset() -> None:
         # Auto and studio actions finish a moment later in the demo: never start from (or leave) a busy rig.

@@ -1,0 +1,56 @@
+2026/11/03 17:42:26 INF MediaMTX v1.21.2, linux, amd64
+2026/11/03 17:42:26 INF configuration loaded from /home/mrh/.config/hyperharness/users/matthew/state/scratch/launches/p3245557-i5j1ta9v/claude-1000/-home-mrh-repos-viperdynamics-streamstack/9ef0d36b-709a-44ed-b08e-dfddca677981/scratchpad/host/work/mediamtx.yml
+2026/11/03 17:42:26 INF [RTSP] started with listeners on 127.0.0.1:43147 (TCP/RTSP)
+2026/11/03 17:42:26 INF [RTMP] started with listener on 127.0.0.1:49947 (TCP/RTMP)
+2026/11/03 17:42:26 INF [RTMPS] started with listener on 127.0.0.1:34539 (TCP/RTMPS)
+2026/11/03 17:42:26 INF [MoQ] started with listeners on :8892 (TCP/HTTP2), :8892 (UDP/HTTP3), :8893 (UDP/QUIC)
+2026/11/03 17:42:26 INF [API] started with listener on 127.0.0.1:59693 (TCP/HTTP)
+2026/11/03 17:42:28 ERR [API] path not found
+2026/11/03 17:42:29 INF [RTMPS] [conn 127.0.0.1:41956] opened
+2026/11/03 17:42:29 ERR [API] path not found
+2026/11/03 17:42:29 ERR [API] path not found
+2026/11/03 17:42:30 ERR [API] path not found
+2026/11/03 17:42:30 ERR [API] path not found
+2026/11/03 17:42:31 INF [path live/hostrun-REDACTED] stream is available and online, 2 tracks (AV1, MPEG-4 Audio)
+2026/11/03 17:42:31 INF [RTMPS] [conn 127.0.0.1:41956] is publishing to path 'live/hostrun-REDACTED'
+2026/11/03 17:42:31 INF [RTSP] [conn 127.0.0.1:42384] opened
+2026/11/03 17:42:31 INF [RTSP] [session 51996170] created by 127.0.0.1:42384
+2026/11/03 17:42:31 INF [RTSP] [session 51996170] is reading from path 'live/hostrun-REDACTED', with TCP, 2 tracks (AV1, MPEG-4 Audio)
+2026/11/03 17:43:46 INF [RTSP] [session 51996170] destroyed: torn down by 127.0.0.1:42384
+2026/11/03 17:43:46 INF [RTSP] [conn 127.0.0.1:42384] closed: EOF
+2026/11/03 17:43:51 INF [RTMPS] [conn 127.0.0.1:41956] closed: EOF
+2026/11/03 17:44:01 ERR [API] path not found
+2026/11/03 17:44:01 INF [RTMP] [conn 127.0.0.1:50478] opened
+2026/11/03 17:44:01 ERR [API] path not found
+2026/11/03 17:44:02 ERR [API] path not found
+2026/11/03 17:44:02 ERR [API] path not found
+2026/11/03 17:44:03 ERR [API] path not found
+2026/11/03 17:44:03 INF [path live/hostrun-REDACTED] stream is available and online, 2 tracks (H265, MPEG-4 Audio)
+2026/11/03 17:44:03 INF [RTMP] [conn 127.0.0.1:50478] is publishing to path 'live/hostrun-REDACTED'
+2026/11/03 17:44:03 INF [RTSP] [conn 127.0.0.1:36752] opened
+2026/11/03 17:44:03 INF [RTSP] [session 9a7fbc04] created by 127.0.0.1:36752
+2026/11/03 17:44:03 INF [RTSP] [session 9a7fbc04] is reading from path 'live/hostrun-REDACTED', with TCP, 2 tracks (H265, MPEG-4 Audio)
+2026/11/03 17:45:19 INF [RTSP] [session 9a7fbc04] destroyed: torn down by 127.0.0.1:36752
+2026/11/03 17:45:19 INF [RTSP] [conn 127.0.0.1:36752] closed: EOF
+2026/11/03 17:45:23 INF [RTMP] [conn 127.0.0.1:50478] closed: EOF
+2026/11/03 17:45:34 ERR [API] path not found
+2026/11/03 17:45:34 INF [RTMP] [conn 127.0.0.1:54734] opened
+2026/11/03 17:45:35 ERR [API] path not found
+2026/11/03 17:45:35 ERR [API] path not found
+2026/11/03 17:45:36 ERR [API] path not found
+2026/11/03 17:45:36 ERR [API] path not found
+2026/11/03 17:45:36 INF [path live/hostrun-REDACTED] stream is available and online, 2 tracks (H264, MPEG-4 Audio)
+2026/11/03 17:45:36 INF [RTMP] [conn 127.0.0.1:54734] is publishing to path 'live/hostrun-REDACTED'
+2026/11/03 17:45:37 INF [RTSP] [conn 127.0.0.1:56944] opened
+2026/11/03 17:45:37 INF [RTSP] [session 872132d8] created by 127.0.0.1:56944
+2026/11/03 17:45:37 INF [RTSP] [session 872132d8] is reading from path 'live/hostrun-REDACTED', with TCP, 2 tracks (H264, MPEG-4 Audio)
+2026/11/03 17:46:52 INF [RTSP] [session 872132d8] destroyed: torn down by 127.0.0.1:56944
+2026/11/03 17:46:52 INF [RTSP] [conn 127.0.0.1:56944] closed: EOF
+2026/11/03 17:46:57 INF [RTMP] [conn 127.0.0.1:54734] closed: EOF
+2026/11/03 17:47:06 INF shutting down gracefully
+2026/11/03 17:47:06 INF [API] closing
+2026/11/03 17:47:06 INF [MoQ] closing
+2026/11/03 17:47:06 INF [RTMPS] closing
+2026/11/03 17:47:06 INF [RTMP] closing
+2026/11/03 17:47:06 INF [RTSP] closing
+2026/11/03 17:47:06 INF waiting for running hooks

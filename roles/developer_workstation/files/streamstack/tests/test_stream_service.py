@@ -111,6 +111,7 @@ class Env:
             notify=lambda level, text: self.events.append((level, text)),
             spawn=self.spawn,
             wall=self.wall,
+            disk_free=lambda _path: 500 * 2**30,  # the CI runner's own free space must not decide these tests
             state_path=tmp_path / "stream.json",
             source_override=source or Source("lavfi", width=1280, height=720, fps=30),
             audio_override=AudioSource("lavfi"),
@@ -789,3 +790,20 @@ def test_the_program_audio_is_the_streamstack_mic_unless_configured(tmp_path: Pa
     assert bare.audio_source().name == "streamstack_mic"
     chosen = StreamService({"STREAMSTACK_STREAM_AUDIO": "other_source"}, state_path=tmp_path / "stream.json")
     assert chosen.audio_source().name == "other_source"
+
+
+def test_the_stream_reads_the_engines_frame_hub_when_there_is_one(tmp_path: Path, monkeypatch) -> None:
+    """#184: with the hub up, recording and streaming never name /dev/video43."""
+    from streamstack import config
+
+    sock = tmp_path / "feed.sock"
+    monkeypatch.setattr(config, "feed_socket", lambda: sock)
+    svc = StreamService({}, state_path=tmp_path / "stream.json")
+    assert svc.source().kind == "v4l2"  # no hub yet: the loopback, as before
+    sock.write_text("")
+    (tmp_path / "feed.sock.json").write_text('{"width": 1280, "height": 720, "fps": 25, "pix_fmt": "nv12"}')
+    source = svc.source()
+    assert (source.kind, source.device, source.width, source.height, source.fps) == ("feed", str(sock), 1280, 720, 25.0)
+    assert svc._multi_reader(source)  # several encoder generations may read it at once (the make-before-break swap)
+    off = StreamService({"STREAMSTACK_ENGINE_FEED": "off"}, state_path=tmp_path / "stream.json")
+    assert off.source().kind == "v4l2"

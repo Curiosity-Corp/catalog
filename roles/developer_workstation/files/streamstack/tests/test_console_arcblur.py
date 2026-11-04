@@ -237,6 +237,9 @@ class FakeEngine:
     def attach_blur(self, feed: BlurFeed) -> None:
         self.feed = feed
 
+    def attach_feed(self, hub) -> None:
+        self.frame_hub = hub
+
     def set_blur(self, on=None, strength=None, rate=None) -> None:
         self.blur_calls.append((on, strength, rate))
         if self.feed is not None and on is not None:

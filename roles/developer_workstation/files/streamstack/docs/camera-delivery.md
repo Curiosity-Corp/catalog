@@ -58,6 +58,53 @@ the command), a toast when it starts and when the camera is back, and `state.vid
 says the sentence a person needs: "StreamStack Camera is not listed by Teams, Zoom or Chrome: nothing feeds
 /dev/video43", naming the broken link (the source has no producer, or the engine is not running).
 
+## The Console preview never reads the camera node (#181)
+
+v4l2loopback answers a second opener's `VIDIOC_S_FMT` with `EBUSY` while another opener is streaming from the node.
+The Console's live preview used to run `ffmpeg -f v4l2 -i /dev/video43` (and the same on `/dev/video42` for the Canon
+tile) for as long as a page was open, so Chromium and Edge `getUserMedia` on StreamStack Camera failed with
+`NotReadableError: Could not start video source` (strace: `S_FMT` returning `EBUSY`). A person with the Console open
+could not start a call camera.
+
+Now the engine's own graph feeds the preview. The program picture is split once, before the YUYV pack (the same seam
+the encode taps use), shrunk to 1280 wide at 5 fps, JPEG-encoded and replaced atomically in
+`$XDG_STATE_HOME/streamstack/preview/program.jpg` (`Spec.preview_path`). `console/video.py` `PreviewFile` reads that
+file; a picture older than 2 s counts as no picture and the preview falls back to the engine's low-rate detection
+frame. While no engine child runs, the slate (see Resilience) writes the same file at 2 fps next to the node, so the
+preview shows the "Camera reconnecting" or idle card instead of a stale frame. The Canon tile uses the detection frame. The Console opens no `/dev/video*` node for the preview, and the
+engine remains the only process that holds `/dev/video42` (reader) and `/dev/video43` (writer). No module parameter
+changes and no reload are needed: the fix ships with the Console. The writer already sets one fixed format
+(yuyv422 at the source size, see the format contract in [loopback-contract.md](loopback-contract.md)).
+
+## Recording and streaming read the engine, not the node (#184)
+
+Recording and streaming were the same bug: every encoder generation ran `ffmpeg -f v4l2 -i /dev/video43`, so a running
+recording or stream made a call app's `VIDIOC_S_FMT` fail with `EBUSY` just as the preview did. They now read the
+engine's own frames:
+
+    engine ffmpeg --[rw] raw NV12 pipe--> FrameHub (engine/framehub.py) --unix socket--> every encoder (ffmpeg -i unix:...)
+
+- The program graph is split before the YUYV pack (the seam the encode taps and the preview use) into a raw NV12 branch
+  on a pipe. The Console's frame hub reads that pipe and serves it on `~/.local/state/streamstack/feed.sock`, next to
+  `feed.sock.json`, which says what the socket carries (size, rate, pixel format).
+- `stream/service.py` `source()` returns `Source("feed", ...)` whenever the hub describes itself, and the encoder
+  command is `-f rawvideo -pix_fmt nv12 -use_wallclock_as_timestamps 1 -i unix:<socket>`: the same wall clock the
+  loopback source was stamped with, so the relay's cut-over between encoder generations is unchanged. Several
+  generations may read at once (the make-before-break swap).
+- A reader joins on a frame boundary and gets the last frame at once. A reader that stops reading loses its own oldest
+  frames (two-frame queue) and is dropped after 5 s; the engine never waits for it. A change of output size closes
+  every reader (they would misparse) and the encoder generation restarts.
+- While the engine sends nothing (camera lost, slate on the node) the hub repeats the last frame, so a running stream
+  or recording holds a still picture instead of stalling.
+- `STREAMSTACK_ENGINE_FEED=off` (default `on`) removes the branch and the encoders read the loopback again, as does any
+  host where the hub is not up (the engine has not started yet).
+
+Cost: one more NV12 conversion and about 93 MB/s through a pipe at 1080p30 while the engine runs, plus one memory copy
+per frame in the hub; encoders only add a socket write each.
+
+`streamstack doctor` still lists any other process holding the node. A leftover OBS virtual camera or a stray ffmpeg
+reading `/dev/video43` has the same effect on a call app, so close those before a call.
+
 ## One format, whatever feeds the node
 
 Call apps read the one format the program node offers, so the node must not follow a weak source down. When the Canon

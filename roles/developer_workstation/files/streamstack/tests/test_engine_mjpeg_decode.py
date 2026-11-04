@@ -251,6 +251,9 @@ class StubEngine:
     def __init__(self, spec: Spec, look: dict | None = None, **kwargs) -> None:
         self.spec, self.running = spec, False
 
+    def attach_feed(self, hub) -> None:
+        self.frame_hub = hub
+
     def start(self) -> None:
         self.running = True
 

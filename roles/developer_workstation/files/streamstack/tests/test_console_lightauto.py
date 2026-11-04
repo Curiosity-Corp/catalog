@@ -140,7 +140,8 @@ def test_a_demo_call_switches_the_demo_lights_on_and_off(demo: DemoLighting) -> 
     assert "Teams opened the camera" in status["summary"] and status["session"]["reason"] == "Teams opened the camera"
     demo.act("lighting.demo.camera", {"on": False})
     assert until(lambda: not any(x["power"] for x in demo.state()["lights"]))
-    assert any(e["kind"] == "camera-off" for e in automation(demo)["status"]["events"])
+    # the lights go off mid-tick; the event reaches the published status when the tick ends
+    assert until(lambda: any(e["kind"] == "camera-off" for e in automation(demo)["status"]["events"]))
 
 
 def test_a_demo_director_takes_brightness_from_the_schedule(demo: DemoLighting) -> None:

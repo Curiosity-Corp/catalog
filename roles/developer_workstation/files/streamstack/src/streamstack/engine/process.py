@@ -31,9 +31,11 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 
 from streamstack.engine import graph, shaders
 from streamstack.engine.blurfeed import BlurFeed
+from streamstack.engine.framehub import FrameHub
 from streamstack.engine.graph import Command, Rect, Spec
 from streamstack.engine.jpeg import JpegSplitter
 
@@ -95,6 +97,7 @@ class VideoEngine:
         self._rect: Rect | None = None
         self._blackout = False
         self._blur: BlurFeed | None = None
+        self._feed: FrameHub | None = None
         self._blur_on = False
         self._blur_strength = 8
         self._popen = popen
@@ -203,6 +206,11 @@ class VideoEngine:
         feed.set_window(self.blur_box)
         with self.lock:
             self._blur = feed
+
+    def attach_feed(self, hub: FrameHub) -> None:
+        """Where the raw program frames of a spec with `raw_feed` go (the recording and streaming encoders read it)."""
+        with self.lock:
+            self._feed = hub
 
     def set_blur(self, on: bool | None = None, strength: int | None = None, rate: int | None = None) -> None:
         """Blur on or off, its strength (1..20) and how often the mask is recomputed, all without a restart."""
@@ -454,18 +462,34 @@ class VideoEngine:
         key = self._prepare_key(spec, look)
         with self.lock:
             self._built_key = key
+        spec = self._with_preview(spec)
+        if spec.raw_feed and self._feed is None:
+            spec = replace(spec, raw_feed=False)  # nobody to hand the frames to: the branch would only cost CPU
         progress_r, progress_w = os.pipe()
+        try:
+            feed_pipe = os.pipe() if spec.raw_feed else None  # (hub reads, the child writes)
+        except OSError:
+            _close_all(progress_r, progress_w)
+            raise
         blur_pipes = self._open_blur_pipes(spec)
         blur_fds = (blur_pipes[1], blur_pipes[2]) if blur_pipes else None  # (seg write, mask read): the child's ends
         blur_args = (self._blur_on, self._blur_strength) if blur_pipes else None
         try:
             argv = graph.build_argv(
-                spec, look, rect, blackout, progress_fd=progress_w, blur=blur_args, blur_fds=blur_fds, key=key
+                spec,
+                look,
+                rect,
+                blackout,
+                progress_fd=progress_w,
+                blur=blur_args,
+                blur_fds=blur_fds,
+                key=key,
+                feed_fd=feed_pipe[1] if feed_pipe else None,
             )
         except graph.GraphError:
-            _close_all(progress_r, progress_w, *(blur_pipes or ()))
+            _close_all(progress_r, progress_w, *(blur_pipes or ()), *(feed_pipe or ()))
             raise
-        child_fds = tuple(blur_fds or ())
+        child_fds = (*(blur_fds or ()), *((feed_pipe[1],) if feed_pipe else ()))
         try:
             proc = self._popen(
                 argv,
@@ -477,9 +501,13 @@ class VideoEngine:
             )
         except OSError:
             _close_all(progress_r, *((blur_pipes[0], blur_pipes[3]) if blur_pipes else ()))  # finally closes the rest
+            if feed_pipe:
+                os.close(feed_pipe[0])
             raise
         finally:
             os.close(progress_w)
+            if feed_pipe:
+                os.close(feed_pipe[1])  # the child has its end; the hub reads ours
             if blur_pipes:
                 _close_all(blur_pipes[1], blur_pipes[2])  # the child has its ends; ours stay with the pump
         if proc.stdin is not None:
@@ -502,6 +530,12 @@ class VideoEngine:
                     args=(blur_pipes[0], blur_pipes[3]),
                     daemon=True,
                     name="streamstack-engine-blur",
+                )
+            )
+        if feed_pipe and self._feed is not None:
+            readers.append(
+                threading.Thread(
+                    target=self._feed.pump, args=(feed_pipe[0],), daemon=True, name="streamstack-engine-feed"
                 )
             )
         for thread in readers:
@@ -554,6 +588,20 @@ class VideoEngine:
             self._warn(self._stalled)
             self._terminate(proc)
             return
+
+    def _with_preview(self, spec: Spec) -> Spec:
+        """Make the preview file's directory and drop a stale picture. A directory that cannot be made turns the
+        preview branch off (and says so once) instead of stopping the program camera."""
+        if not spec.preview_path:
+            return spec
+        path = Path(spec.preview_path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            self._warn(f"the preview picture cannot be written under {path.parent} ({exc}); the preview is off")
+            return replace(spec, preview_path="")
+        return spec
 
     def _prepare_key(self, spec: Spec, look: dict) -> graph.GraphKey | None:
         """The baked step for a new child, with its shader on disk. A shader that cannot be written turns sharpening

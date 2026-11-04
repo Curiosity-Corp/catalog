@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import math
-import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -30,7 +29,6 @@ log = logging.getLogger(__name__)
 Notify = Callable[[str, str], None]
 
 FRAME_TTL = 1 / 15
-CAMERA_IDLE_SECONDS = 10.0
 RESET_SECONDS = 0.8
 APPLY_SECONDS = 1.5
 MAX_NAME = 40
@@ -233,107 +231,33 @@ class JpegSplitter:
         return frames
 
 
-def ffmpeg_camera_argv(device: str, width: int, fps: float | None = None) -> list[str]:
-    """One JPEG to stdout, or (with fps) an MJPEG stream at that rate."""
-    argv = ["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "v4l2", "-i", device]
-    if fps is None:
-        return [*argv, "-frames:v", "1", "-vf", f"scale={width}:-2", "-f", "mjpeg", "-"]
-    return [*argv, "-vf", f"fps={fps:g},scale={width}:-2", "-q:v", "6", "-f", "mjpeg", "-"]
+class PreviewFile:
+    """The newest JPEG the engine wrote for the Console's preview (#181).
 
-
-class CameraStream:
-    """One persistent ffmpeg per camera device, so several viewers share a single grab.
-
-    Starts on the first `latest()` call, keeps the newest frame, and stops
-    itself after CAMERA_IDLE_SECONDS without a consumer.
+    The Console used to run its own `ffmpeg -f v4l2 -i /dev/video43` for the program preview. v4l2loopback answers a
+    second opener's VIDIOC_S_FMT with EBUSY while a reader is streaming, so Chromium and Edge `getUserMedia` failed
+    with NotReadableError whenever the Console was open. The engine now writes the program picture to a file (see
+    `Spec.preview_path`) and this class only reads that file: no device is opened.
     """
 
-    FPS = 5.0
+    MAX_AGE = 2.0
 
-    def __init__(self, device: str, popen: Callable[..., subprocess.Popen] = subprocess.Popen) -> None:
-        self.device = device
-        self.popen = popen
-        self.width = 0
-        self.proc: subprocess.Popen | None = None
-        self.frame: bytes | None = None
-        self.frame_time = 0.0
-        self.last_use = 0.0
-        self.cond = threading.Condition()
+    def __init__(self, path: str | Path, clock: Callable[[], float] = time.time) -> None:
+        self.path = Path(path)
+        self.clock = clock
 
-    def running(self) -> bool:
-        return self.proc is not None and self.proc.poll() is None
-
-    def latest(self, width: int, wait: float = 2.0) -> bytes | None:
-        with self.cond:
-            self.last_use = time.monotonic()
-            # A bigger request restarts at the bigger size; smaller ones reuse it (the browser scales down).
-            if (not self.running() or width > self.width) and not self._start(width):
+    def latest(self) -> bytes | None:
+        """The picture, or None when the engine has not written one in the last MAX_AGE seconds."""
+        try:
+            if self.clock() - self.path.stat().st_mtime > self.MAX_AGE:
                 return None
-            deadline = time.monotonic() + wait
-            while self.frame is None or time.monotonic() - self.frame_time > 2.0:
-                left = deadline - time.monotonic()
-                if left <= 0 or not self.running():
-                    break
-                self.cond.wait(left)
-            fresh = self.frame is not None and time.monotonic() - self.frame_time <= 2.0
-            return self.frame if fresh else None
-
-    def _start(self, width: int) -> bool:
-        self._kill()
-        try:
-            self.proc = self.popen(
-                ffmpeg_camera_argv(self.device, width, self.FPS),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
-        except OSError:
-            self.proc = None
-            return False
-        self.width = width
-        self.frame = None
-        threading.Thread(target=self._read, args=(self.proc,), daemon=True, name="streamstack-camera").start()
-        return True
-
-    def _read(self, proc: subprocess.Popen) -> None:
-        splitter = JpegSplitter()
-        stdout = proc.stdout
-        try:
-            while stdout is not None:
-                chunk = stdout.read1(65536) if hasattr(stdout, "read1") else stdout.read(65536)
-                if not chunk:
-                    break
-                for image in splitter.feed(chunk):
-                    with self.cond:
-                        if self.proc is not proc:
-                            return
-                        self.frame, self.frame_time = image, time.monotonic()
-                        self.cond.notify_all()
-                with self.cond:
-                    if time.monotonic() - self.last_use > CAMERA_IDLE_SECONDS:
-                        break
-        except (OSError, ValueError):
-            pass  # the pipe closed under us: the process was stopped
-        finally:
-            with self.cond:
-                if self.proc is proc:
-                    self._kill()
-                self.cond.notify_all()
-
-    def _kill(self) -> None:
-        proc, self.proc = self.proc, None
-        if proc is None:
-            return
-        try:
-            proc.kill()
-            proc.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            pass  # already gone
-
-    def stop(self) -> None:
-        with self.cond:
-            self._kill()
-            self.cond.notify_all()
+            data = self.path.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            log.debug("preview file %s unreadable: %s", self.path, exc)
+            return None
+        return data if data.startswith(b"\xff\xd8") else None
 
 
 def empty_state() -> dict:

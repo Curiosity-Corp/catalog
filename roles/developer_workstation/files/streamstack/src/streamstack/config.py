@@ -57,6 +57,7 @@ DEFAULTS = {
     # Sharpening on the Vulkan backend: auto | gpu (a shader on the Arc, strength in steps of 0.05, the engine rebuilds
     # its child when a look moves to another step) or cpu (the live cas filter, about 260 % of a core at 1080p).
     "STREAMSTACK_ENGINE_SHARPEN": "auto",
+    "STREAMSTACK_ENGINE_FEED": "on",
     "STREAMSTACK_ENGINE_SCALER": "",
     # GPU video denoise for a noisy camera (the Canon in low light): off | nlmeans (nlmeans_vulkan, about 9 ms of GPU
     # per 720p frame). Vulkan backend only.
@@ -125,6 +126,11 @@ DEFAULTS = {
     "STREAMSTACK_FRAMING_MODE": "off",
     "STREAMSTACK_FRAMING_FPS": "8",
     "STREAMSTACK_FRAMING_DEVICE": "auto",
+    "STREAMSTACK_VOICE_DIRECTION_SOURCE": "",
+    "STREAMSTACK_VOICE_DIRECTION_HFOV": "70",
+    "STREAMSTACK_VOICE_DIRECTION_SPACING_MM": "0",
+    "STREAMSTACK_VOICE_DIRECTION_OFFSET": "0",
+    "STREAMSTACK_VOICE_DIRECTION_SWAP": "",
     # The director: stills per Claude pass (contact sheet), seconds between them, seconds of microphone analysed
     # locally, and whether the persona's look is eased in between Claude passes.
     "STREAMSTACK_AUTO_BURST": "4",
@@ -172,6 +178,22 @@ def secrets_file() -> Path:
 
 def state_dir() -> Path:
     return _xdg("XDG_STATE_HOME", ".local/state") / "streamstack"
+
+
+def preview_file() -> Path:
+    """The picture the Console's program preview reads (#181): written by the engine child, or by the slate while
+    no engine runs. Reading a file keeps the Console off the /dev/video43 loopback node."""
+    return state_dir() / "preview" / "program.jpg"
+
+
+def feed_socket() -> Path:
+    """The engine's frame hub (raw program frames for the recording and the stream, #184)."""
+    return state_dir() / "feed.sock"
+
+
+def feed_enabled(cfg: dict[str, str]) -> bool:
+    """STREAMSTACK_ENGINE_FEED: `off` makes recording and streaming read the program loopback again."""
+    return (cfg.get("STREAMSTACK_ENGINE_FEED") or "on").strip().lower() not in ("off", "0", "false", "no")
 
 
 def cache_dir() -> Path:
