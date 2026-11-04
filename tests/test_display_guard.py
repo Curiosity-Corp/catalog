@@ -686,5 +686,12 @@ def test_guard_files_units_and_triggers_are_installed() -> None:
 
 
 def test_console_tuning_udev_cannot_amplify_a_probe_loop() -> None:
+    # A systemd start limit used to bound a probe loop, but it did so by failing
+    # the unit (start-limit-hit, deskmeet1 2026-11-03). The helper now bounds
+    # it: a start within DEFAULT_DEBOUNCE_SECONDS of an apply is a cheap exit 0
+    # that touches neither the font nor the framebuffer.
     text = (ROLE / "tasks/console-tuning.yml").read_text()
-    assert "StartLimitBurst=3" in text and "StartLimitIntervalSec=60" in text
+    assert "StartLimitIntervalSec=0" in text and "StartLimitBurst" not in text
+    helper = (ROLE / "files/curiosity-console-tuning").read_text()
+    assert "DEFAULT_DEBOUNCE_SECONDS = 10" in helper
+    assert helper.index("recently_applied(args.stamp") < helper.index("apply_font(cfg, args.dry_run)")
