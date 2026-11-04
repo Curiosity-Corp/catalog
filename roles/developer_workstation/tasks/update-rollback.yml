@@ -11,6 +11,37 @@
       message: "{{ ansible_failed_result.msg | default('update transaction failed') }}"
       recorded_at: "{{ ansible_date_time.iso8601 }}"
 
+# Record what the failed update left on disk before it is restored, so the
+# manifest's `after` inventory names the digest of every artifact that failed
+# the health gate. Without this a rolled-back run has an empty `after` list and
+# the failed artifact cannot be identified later. An inventory the health gate
+# already built is kept.
+- name: Capture the failed managed artifacts' digests before restoring
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+    checksum_algorithm: sha256
+  loop: "{{ workstation_update_managed_paths | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  register: _workstation_failed_paths
+  when: workstation_update_after_inventory | default([]) | length == 0
+
+- name: Record the failed artifact inventory for the manifest
+  ansible.builtin.set_fact:
+    workstation_update_after_inventory: >-
+      {{ workstation_update_after_inventory | default([]) + [
+        {
+          'path': item.item,
+          'exists': item.stat.exists | default(false),
+          'checksum': item.stat.checksum | default('')
+        }
+      ] }}
+  loop: "{{ _workstation_failed_paths.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('') }}"
+  when: item.stat is defined
+
 - name: Check for the pre-update Go tree snapshot
   ansible.builtin.stat:
     path: "{{ workstation_update_snapshot_dir }}/go-tree.tar.gz"

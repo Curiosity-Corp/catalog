@@ -40,7 +40,7 @@
 
 - name: Add GitHub CLI repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
     filename: github-cli
     state: present
   notify: Update apt cache
@@ -63,7 +63,7 @@
 
 - name: Add VS Code repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main"
     filename: vscode
     state: present
   notify: Update apt cache
@@ -72,7 +72,7 @@
 # Uses same GPG key as VS Code (packages.microsoft.com)
 - name: Add Microsoft .NET SDK repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/ubuntu/24.04/prod {{ apt_fallback_release }} main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/ubuntu/24.04/prod {{ apt_fallback_release }} main"
     filename: microsoft-dotnet
     state: present
   notify: Update apt cache
@@ -80,7 +80,7 @@
 # --- Azure CLI ---
 - name: Add Microsoft Azure CLI repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/azure-cli/ {{ apt_fallback_release }} main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/azure-cli/ {{ apt_fallback_release }} main"
     filename: azure-cli
     state: present
   notify: Update apt cache
@@ -109,7 +109,7 @@
 
 - name: Add Microsoft Edge repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/edge stable main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/edge stable main"
     filename: microsoft-edge
     state: present
   notify: Update apt cache
@@ -124,7 +124,7 @@
 
 - name: Add Google Cloud CLI repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/cloud-google-archive-keyring.gpg] https://packages.cloud.google.com/apt cloud-sdk main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/cloud-google-archive-keyring.gpg] https://packages.cloud.google.com/apt cloud-sdk main"
     filename: google-cloud-sdk
     state: present
   notify: Update apt cache
@@ -194,7 +194,7 @@
 
 - name: Add MongoDB repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg] https://repo.mongodb.org/apt/ubuntu {{ apt_fallback_release }}/mongodb-org/{{ latest_mongodb_channel }} multiverse"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg] https://repo.mongodb.org/apt/ubuntu {{ apt_fallback_release }}/mongodb-org/{{ latest_mongodb_channel }} multiverse"
     filename: mongodb-org
     state: present
   notify: Update apt cache
@@ -218,7 +218,7 @@
 
 - name: Add Google Chrome repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/google-chrome-archive-keyring.gpg] https://dl.google.com/linux/chrome/deb/ stable main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/google-chrome-archive-keyring.gpg] https://dl.google.com/linux/chrome/deb/ stable main"
     filename: google-chrome
     state: present
   notify: Update apt cache
@@ -233,7 +233,7 @@
 
 - name: Add 1Password CLI repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/{{ ansible_architecture | replace('x86_64', 'amd64') }} stable main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/{{ workstation_deb_arch }} stable main"
     filename: 1password-cli
     state: present
   notify: Update apt cache
@@ -254,7 +254,7 @@
 
 - name: Add Brave Browser repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main"
     filename: brave-browser
     state: present
   notify: Update apt cache
@@ -270,7 +270,7 @@
 
 - name: Add NodeSource Node.js 24 repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main"
     filename: nodesource
     state: present
   notify: Update apt cache
@@ -324,7 +324,7 @@
 
 - name: Add OpenZiti repository
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/openziti-archive-keyring.gpg] https://packages.openziti.org/zitipax-openziti-deb-stable debian main"
+    repo: "deb [arch={{ workstation_deb_arch }} signed-by=/usr/share/keyrings/openziti-archive-keyring.gpg] https://packages.openziti.org/zitipax-openziti-deb-stable debian main"
     filename: openziti
     state: present
   notify: Update apt cache

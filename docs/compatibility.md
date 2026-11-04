@@ -22,3 +22,15 @@ architecture.
 The matrix is intentionally conservative. “Syntax-check passed” means the
 playbook parsed; it does not mean a real package, firmware device, display
 server, identity provider, or tunnel was exercised.
+
+## Dated evidence
+
+* 2026-11-04, package availability only (no converge): see
+  [platform-differences.md](platform-differences.md). `tokei` is absent from the Ubuntu 22.04,
+  Ubuntu 24.04 and Debian 12 archives and `eza` from 22.04 and Debian 12, so the role's single
+  package task is unverified on those releases; Debian 13 differs in `software-properties-common`.
+  No platform was promoted or demoted by this result.
+* 2026-11-04, update rollback drill on the task files (no disposable machine): see
+  [rollback-drill.md](rollback-drill.md).
+* 2026-11-04, ARM64 without hardware: apt architecture names fixed and tested, see [arm64.md](arm64.md). No ARM64 machine was run.
+

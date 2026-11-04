@@ -65,7 +65,7 @@
 - name: Configure authd archive  # noqa: args
   ansible.builtin.apt_repository:
     repo: >-
-      deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }}
+      deb [arch={{ workstation_deb_arch }}
       signed-by={{ authd_archive_keyring_path }}]
       {{ authd_archive_repo_url }}
       {{ authd_archive_distribution }}
