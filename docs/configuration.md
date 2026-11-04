@@ -292,6 +292,39 @@ Check with `cat /sys/devices/system/cpu/intel_pstate/max_perf_pct`.
 Nuvoton hwmon driver (fan and temperature sensors) is loaded now and at boot
 through `/etc/modules-load.d/curiosity-hardware.conf`.
 
+### Crash diagnostics (lockup panics, pstore, hardware watchdog)
+
+`developer_workstation_crash_diagnostics` (derived from the hardware profile's
+optional `crash_diagnostics` mapping; empty, meaning off, everywhere except
+`deskmeet-b760`) turns a silent hard freeze into a logged panic and an automatic
+reboot (catalog#139). deskmeet1 froze hard seven times between 2026-10-10 and
+2026-10-31; each time the journal just stopped and the power button was the only
+way out. kdump is not used: the root file system is LUKS, so the crash kernel
+would wait at a passphrase prompt.
+
+When set, the role installs:
+
+- `/etc/sysctl.d/60-curiosity-crash-diagnostics.conf`: `hardlockup_panic`,
+  `softlockup_panic` and the all-CPU backtraces on, `kernel.panic` =
+  `panic_reboot_seconds` (default 30). A kernel Oops stays non-fatal.
+- systemd-pstore stays enabled: the panic log the kernel writes to EFI pstore
+  (`efi_pstore`) lands in `/var/lib/systemd/pstore/` at the next boot.
+- `/etc/systemd/journald.conf.d/60-curiosity-crash-diagnostics.conf`:
+  `SyncIntervalSec` = `journal_sync_seconds` (default 15) instead of 5 minutes.
+- With `watchdog_module` (deskmeet-b760: `iTCO_wdt`, the Intel PCH TCO timer):
+  `/etc/modules-load.d/curiosity-watchdog.conf` loads it by name (Ubuntu's
+  blacklist only stops alias autoloading), and once `/dev/watchdog0` exists
+  `/etc/systemd/system.conf.d/60-curiosity-watchdog.conf` sets
+  `RuntimeWatchdogSec` = `watchdog_seconds` (default 120). The running manager
+  is armed at once over D-Bus (`RuntimeWatchdogUSec`), without re-executing PID 1.
+  If PID 1 cannot run for that long, the board resets.
+
+After an unexpected reboot, read `ls /var/lib/systemd/pstore/` (the panic and
+its backtraces) and `journalctl -b -1 -e` (the last synced journal). Check the
+setup with `sysctl kernel.hardlockup_panic kernel.panic` and
+`systemctl show -p RuntimeWatchdogUSec`. Dropping the profile key removes the
+files, restores the kernel defaults and disarms the watchdog.
+
 ### StreamStack call and stream studio
 
 `streamstack_enabled` (from the hardware profile's `streamstack` flag; only
