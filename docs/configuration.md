@@ -6,6 +6,10 @@ conservative for optional integrations. Put site-specific values in inventory,
 `playbooks/host_vars/localhost.yml` is a documentation-safe example, not a
 machine inventory.
 
+The generated [variable and tag reference](reference.md) lists every role
+variable with its type, default, valid values, stability and safety impact, the
+supported tags and the profile selectors.
+
 ## Minimal local variables
 
 ```yaml

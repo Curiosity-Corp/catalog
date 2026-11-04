@@ -1,0 +1,151 @@
+---
+# Curated metadata for the generated reference (docs/reference.md). Everything
+# not listed here is a supported variable with no special safety concern, apart
+# from the credential and checksum name rules in scripts/generate_reference.py.
+# After editing, run `make reference` and commit docs/reference.md too.
+#
+# stability: supported | experimental | internal | private-hook
+# safety:    secret | destructive | security | network | boot | supply-chain | account
+# values:    a list, or a short text such as "integer from 1 to 4", shown as the
+#            valid values when the role does not assert them itself.
+# note:      extra sentence appended to the description.
+#
+# `patterns` apply to every variable name that matches; an entry under
+# `variables` then overrides the result. The generator fails when a name or tag
+# listed here no longer exists, so renames cannot leave stale entries behind.
+
+patterns:
+  # Paths of files the role generates for itself. Hosts do not need to move them.
+  - match: '(_script_path|_dropin_path|_config_path|_status_path|_tmpfiles_path|_marker|_dropin_content|_keyring_path|_asc_path|_staging_dir|_state_dir|_artifact_cache_dir|_manifest_path|_sbom_path|_cmdline_path|_deepfilter_dest)$'
+    stability: internal
+  # Tables the role reads to decide what to install; not a configuration input.
+  - match: '(_contracts|_command_links|_effective|_transaction_tags|_non_removable_paths|_rollback_excluded_paths|_retired_user_launchers|_retired_system_launchers)$'
+    stability: internal
+  - match: '^t460_fbcon_'
+    stability: experimental
+    safety: boot
+  - match: '^streamstack_(framing|openvino|deepfilter|compute_runtime)'
+    stability: experimental
+  - match: '^minimal_desktop_xorg_'
+    stability: experimental
+    safety: boot
+  - match: '^minimal_desktop_lightdm_'
+    safety: boot
+  - match: '^minimal_desktop_display_'
+    safety: boot
+  - match: '^pia_(killswitch|split_tunnel|persist|autoconnect)'
+    safety: network
+  - match: '^wifi_'
+    stability: private-hook
+    safety: network
+  - match: '^ziti_(enabled|manage_service|etc_hosts_pins|intercept_domains|oidc_provider)$'
+    safety: network
+  - match: '^dns_over_tls_'
+    safety: network
+  - match: '^qwen_provider_'
+    stability: private-hook
+  - match: '^keycloak_(host|realm|desktop_client_id|allowed_users)$'
+    stability: private-hook
+    safety: security
+  - match: '^firewall_'
+    safety: [security, network]
+
+variables:
+  # Documented in docs/*.md, so they stay part of the supported surface.
+  tmp_hygiene_tmpfiles_path: {stability: supported}
+  tmp_hygiene_pressure_script_path: {stability: supported}
+  tmp_hygiene_pressure_config_path: {stability: supported}
+  tmp_hygiene_nr_inodes_dropin_path: {stability: supported}
+  streamstack_seat_marker_dir: {stability: supported}
+  streamstack_retired_packages: {stability: supported}
+  workstation_update_managed_paths: {stability: supported}
+
+  # Private integration hooks: shipped empty, set from protected host variables.
+  failed_sweep_webhook_url: {stability: private-hook}
+  coder_deployment_url: {stability: private-hook}
+  custom_ca_certificates: {stability: private-hook, safety: security}
+  workspace_gitlab_host: {stability: private-hook}
+  workspace_gitlab_external_auth_provider: {stability: private-hook}
+  ziti_etc_hosts_pins: {stability: private-hook}
+  ziti_intercept_domains: {stability: private-hook}
+  ziti_health_check_identities: {stability: private-hook}
+  ziti_health_check_probe_hosts: {stability: private-hook}
+  ziti_oidc_provider: {stability: private-hook}
+  samsung_tv_key_vault: {stability: private-hook}
+  samsung_tv_key_vault_secret: {stability: private-hook, safety: secret}
+  pia_login_file: {stability: private-hook, safety: secret}
+  hhtest_authorized_keys: {stability: private-hook, safety: account}
+  missionctl_install_url: {stability: private-hook, safety: supply-chain}
+  focuspass_screenlock_install_url: {stability: private-hook, safety: supply-chain}
+  weechat_teams_client_id: {stability: private-hook}
+  user_dotfiles_repo: {stability: private-hook}
+  kiosk_target_url: {stability: private-hook}
+
+  # Experimental.
+  console_video: {stability: experimental, safety: boot}
+  minimal_desktop_display_guard: {stability: experimental, safety: boot}
+  minimal_desktop_display_guard_enabled: {stability: experimental, safety: boot}
+  streamstack_kernel_args: {stability: experimental, safety: boot}
+  pro_mimic_cis_remediate: {stability: experimental, safety: security}
+
+  # Safety impact.
+  workstation_storage_provision: {safety: destructive}
+  workstation_storage_device: {safety: destructive}
+  workstation_storage_luks_key_file: {safety: [destructive, secret]}
+  workstation_storage_extra_mounts: {safety: boot}
+  workstation_storage_users: {safety: [boot, account]}
+  workstation_storage_luks_uuid: {safety: boot}
+  workstation_storage_fs_uuid: {safety: boot}
+  profile_cleanup_enabled: {safety: destructive}
+  fwupd_auto_apply: {safety: boot, note: "Unattended firmware updates can brick hardware."}
+  pro_mimic_ssh_password_auth: {safety: security}
+  pro_mimic_needrestart_auto: {safety: security}
+  catalog_integrity_mode: {safety: security}
+  catalog_signing_key_fingerprint: {safety: security}
+  keycloak_sso_enabled: {safety: [security, account]}
+  sunshine_enabled: {safety: [security, network]}
+  sunshine_default_user: {safety: account}
+  minimal_desktop_autologin: {safety: [security, account]}
+  minimal_desktop_enabled: {safety: boot}
+  display_manager_mode: {safety: boot}
+  display_config_enabled: {safety: [boot, network]}
+  grub_autoboot_enabled: {safety: boot}
+  console_tuning_enabled: {safety: boot}
+  i915_pcon_frl_444_enabled: {safety: boot}
+  hhtest_enabled: {safety: account}
+  dev_user: {safety: account}
+  dev_users: {safety: account}
+  ansible_pull_repo: {safety: supply-chain, note: "The host runs whatever this repository's playbook says, as root."}
+  ansible_pull_branch: {safety: supply-chain}
+  ansible_pull_playbook: {safety: supply-chain}
+  ansible_pull_verify_commit: {safety: supply-chain}
+  ansible_pull_force_on_update_failure: {safety: supply-chain}
+  apt_upgrade_enabled: {safety: boot}
+  swap_size_gb: {safety: boot}
+  hardware_profile: {note: "Selects an entry of hardware_profiles."}
+  wifi_psk: {note: "The pre-shared key of wifi_ssid."}
+  earlyoom_mem_percent: {values: "integer percent, 1 to 100, written as a string"}
+  earlyoom_swap_percent: {values: "integer percent, 1 to 100, written as a string"}
+  minimal_desktop_display_scale: {values: "number from 1 to 4 in steps of 0.25"}
+
+# Shown for workstation_profile values the defaults comment does not describe.
+profile_notes:
+  byod-kiosk: "Locked-down full-screen browser session (see kiosk_target_url and the kiosk and lockdown tags)."
+
+tags:
+  always:
+    description: "Runs on every invocation, even with --tags. Skip it only with --skip-tags always."
+  updates: {description: "The managed update transaction: foundation, rings, rollback, health and manifest."}
+  security: {description: "Security hardening, including the pro-mimic plane."}
+  hardware: {description: "Hardware profile packages, services, udev rules and device helpers."}
+  packages: {description: "Package installation across the role."}
+  minimal-desktop: {description: "The minimal Openbox desktop and its display, lock and greeter pieces."}
+  pro-mimic: {description: "Free equivalents of Ubuntu Pro hardening."}
+  streamstack: {description: "StreamStack camera and audio chain."}
+  ziti: {description: "OpenZiti tunnel and its health check."}
+  kiosk: {description: "Kiosk session (byod-kiosk profile)."}
+  lockdown: {description: "Kiosk lockdown (byod-kiosk profile)."}
+  timezone: {description: "System time zone (workstation_timezone)."}
+  firewall: {description: "UFW firewall."}
+  logitech-g604: {description: "Logitech G604 button profile."}
+  t460: {description: "ThinkPad T460 console workarounds.", stability: experimental}

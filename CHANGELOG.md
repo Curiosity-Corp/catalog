@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `docs/reference.md`, a generated reference of every role variable (type, default, valid values, stability, safety impact), the supported tags and the profile selectors, with experimental, internal and private-hook variables marked (catalog#27). `scripts/generate_reference.py` builds it from the role defaults and tasks plus the curated `docs/reference-annotations.yml`; `make reference` rewrites it, and the `reference` CI job and `make validate` fail when the committed copy is out of date.
+
 ### Changed
 
 - StreamStack seat policy (StreamStack #127, owner decision 2026-11-01): every `dev_users` account that is not in `streamstack_audio_owner_users` now gets `~/.config/wireplumber/wireplumber.conf.d/90-streamstack-seat-guest.conf`, which disables the `hardware.audio`, `hardware.video-capture`, `monitor.alsa`, `monitor.alsa-midi`, `monitor.v4l2` and `monitor.libcamera` features, so that user's lingering PipeWire/WirePlumber keeps running but never opens or reserves a sound card or camera. It replaces the per-card `50-curiosity-streamstack-exclusive-audio.conf` rule (removed on every run; `streamstack_audio_card_patterns` is gone). A root-owned marker per user in `/etc/streamstack/seat-guarded.d` (`streamstack_seat_marker_dir`) lets `streamstack doctor` see the policy without reading that home. Verified on WirePlumber 0.5.13 with a sandboxed PipeWire: the control config loaded the ALSA, ALSA-MIDI, V4L2 and libcamera monitors, the drop-in loaded none. Takes effect at that user's next WirePlumber start; nothing is restarted. `tests/test_streamstack_low_latency.py` renders the drop-in and marker.

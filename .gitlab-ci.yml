@@ -89,6 +89,18 @@ lint:
   script:
     - ANSIBLE_ROLES_PATH=roles ansible-lint playbooks/site.yml roles
 
+# docs/reference.md is generated from the role defaults and tasks. This fails
+# when it is stale; fix it with `make reference` and commit the result.
+reference:
+  stage: validate
+  before_script:
+    - python -m venv .ci-venv
+    - export PATH="$CI_PROJECT_DIR/.ci-venv/bin:$PATH"
+    - python -m pip install --upgrade pip
+    - python -m pip install pyyaml
+  script:
+    - python scripts/generate_reference.py --check
+
 policy:
   extends: .python_setup
   stage: test
@@ -107,6 +119,7 @@ policy:
       tests/test_pro_mimic.py tests/test_firewall_posture.py tests/test_power_policy.py
       tests/test_streamstack.py tests/test_streamstack_low_latency.py tests/test_streamstack_ai_deps.py tests/test_hhtest.py tests/test_workstation_storage.py
       tests/test_ziti_health.py tests/test_no_conflict_markers.py tests/test_update_snapshot_retention.py
+      tests/test_generate_reference.py
 
 collection:
   extends: .python_setup
