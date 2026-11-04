@@ -1,0 +1,16 @@
+---
+# Host-local update ring override (docs/update-rings.md). Put this content in
+# /etc/ansible/local-vars.yml on the machine (the role loads it at the start of
+# every run) or pass it with -e @update-ring-early.yml. It names no host,
+# registry, or service.
+workstation_update_ring: early
+
+# Optional: lengthen the observation window for the whole fleet, or change the
+# random start delay of the nightly pull. Values are seconds, one per ring.
+# workstation_update_ring_min_age_seconds:
+#   canary: 0
+#   early: 43200
+#   general: 172800
+
+# How long a failed update blocks the next one on this host (seconds).
+workstation_update_quarantine_seconds: 3600

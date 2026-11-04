@@ -1,0 +1,25 @@
+---
+# Researcher laptop (docs/quickstarts/laptop.md). Public variables only.
+# Replace dev_user with the account that owns the laptop's user-scoped tools.
+dev_user: researcher
+dev_user_home: /home/researcher
+workstation_profile: desktop
+hardware_profile: generic
+
+# Hold new upstream releases for 24 hours before installing them, so a bad
+# upstream release is noticed by canary machines first.
+workstation_update_ring: general
+
+# Optional: an IANA zone such as Europe/Berlin. Empty leaves the zone alone.
+workstation_timezone: ""
+
+# Keep the baseline free of services and accounts the laptop does not use.
+cloud_clis_enabled: false
+bitwarden_browser_extensions_enabled: false
+bitwarden_desktop_enabled: false
+coder_cli_enabled: false
+keycloak_sso_enabled: false
+ziti_enabled: false
+sunshine_enabled: false
+profile_cleanup_enabled: false
+tmp_hygiene_enabled: false

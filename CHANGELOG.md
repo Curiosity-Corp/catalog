@@ -9,6 +9,7 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - CPU thermal guard: `developer_workstation_cpu_max_perf_pct` (hardware-profile key `cpu_max_perf_pct`, off by default, `70` on `deskmeet-b760`) installs `curiosity-cpu-max-perf.service`, a boot oneshot that caps `intel_pstate/max_perf_pct` where the BIOS locks RAPL, and skips cleanly without intel_pstate. `deskmeet-b760` also loads the `nct6775` hwmon module at boot for fan and temperature sensors.
+- Researcher quickstarts (catalog#8, #11, #12, #17, #28, #30, #35): `docs/quickstarts/` (laptop, research VM, cloud-init and libvirt, thin client and shared lab, restricted networks, notebooks) and `docs/update-rings.md`, with matching public-variables-only files in `examples/` (`laptop.yml`, `research-vm.yml`, `thin-client.yml`, `shared-lab.yml`, `update-ring-early.yml`, `restricted-network-site.yml`, `cloud-init/`, `notebooks/`). `tests/test_quickstarts.py` checks every example variable against the role defaults, previews each documented tag set with `ansible-playbook --list-tasks`, resolves links and anchors, and pins the cloud-init and notebook security posture; `tests/test_restricted_network.py` fails release discovery through a refusing stand-in proxy and checks that the run stops with no stale fallback. New `quickstarts` CI job and `make quickstarts`.
 
 ### Changed
 
