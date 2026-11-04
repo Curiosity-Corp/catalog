@@ -161,7 +161,11 @@ class Redactor:
 
 
 def known_users(extra: list[str]) -> set[str]:
-    users = {getpass.getuser(), *extra}
+    users = set(extra)
+    try:
+        users.add(getpass.getuser())
+    except (OSError, KeyError):
+        pass  # a uid with no passwd entry (some containers); /home below still helps
     try:
         users.update(entry for entry in os.listdir("/home") if not entry.startswith("."))
     except OSError:

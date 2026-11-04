@@ -180,6 +180,15 @@ def bundle_for(path: Path, **kwargs):
     return diag.build_bundle(path, kwargs.get("profile", ""), kwargs.get("tags", []), kwargs.get("services", []), kwargs.get("users", []))[0]
 
 
+def test_a_uid_with_no_username_does_not_crash(monkeypatch):
+    def nobody():
+        raise OSError("No username set in the environment")
+
+    monkeypatch.setattr(diag.getpass, "getuser", nobody)
+    assert isinstance(diag.known_users(["alice"]), set)
+    assert "alice" in diag.known_users(["alice"])
+
+
 def test_bundle_has_the_requested_fields(tmp_path, tool, fake_systemctl):
     bundle = bundle_for(manifest(tmp_path, tool), tags=["packages", "update"])
     assert bundle["schema"] == diag.SCHEMA
