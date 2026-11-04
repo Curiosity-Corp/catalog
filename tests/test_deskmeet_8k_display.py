@@ -143,6 +143,20 @@ def test_the_frl_rate_cap_clamps_pcon_frl_training() -> None:
     assert "static int pcon_max_frl_gbps;" in patch  # default 0 = no cap
 
 
+def test_the_patch_leaves_the_sink_dsc_frl_limit_to_upstream() -> None:
+    """linux 7.0.0-42 applies the sink's DSC FRL limit only behind a PCON with a
+    DSC 1.2 encoder, which is what the patch's old hunk did; carrying it made
+    the patch fail to apply (catalog#140)."""
+    patch = (I915 / "i915-pcon-frl-444.patch").read_text()
+    changed = [
+        line for hunk in patch.split("\n@@ ")[1:]
+        if "intel_dp_hdmi_sink_max_frl" in hunk.split("\n", 1)[0]
+        for line in hunk.splitlines()[1:] if line.startswith(("+", "-"))
+    ]
+    assert changed == []
+    assert "drm_dp_pcon_enc_is_dsc_1_2" not in patch
+
+
 def test_derived_variables_follow_the_profile_and_default_off() -> None:
     assert _derived("i915_pcon_frl_444_enabled", PROFILES, "deskmeet-b760") == "True"
     assert _derived("minimal_desktop_display_scale", PROFILES, "deskmeet-b760") == "2.25"
