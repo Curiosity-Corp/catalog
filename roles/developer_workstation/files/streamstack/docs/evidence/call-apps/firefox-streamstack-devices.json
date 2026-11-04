@@ -1,0 +1,51 @@
+{
+ "ua": "Mozilla/5.0 (X11; Linux x86_64; rv:159.0) Gecko/20100101 Firefox/159.0",
+ "devices": [
+  "audioinput: StreamStack Mic",
+  "audioinput: Cam Link 4K Analog Stereo",
+  "audioinput: Monitor of DG2 Audio Controller Digital Stereo (HDMI)",
+  "audioinput: Monitor of Elgato Wave XLR Analog Stereo",
+  "audioinput: Elgato Wave XLR Mono",
+  "videoinput: Cam Link 4K: Cam Link 4K",
+  "videoinput: Canon EOS 50D",
+  "videoinput: StreamStack Camera",
+  "audiooutput: Elgato Wave XLR Analog Stereo",
+  "audiooutput: DG2 Audio Controller Digital Stereo (HDMI)"
+ ],
+ "hasCam": true,
+ "hasMic": true,
+ "tracks": [
+  "audio:StreamStack Mic",
+  "video:StreamStack Camera"
+ ],
+ "videoSettings": {
+  "deviceId": "HaeoyhkWX8K8kK6PfFQavB1wJIiU+u3HG5kWiD1nj4E=",
+  "frameRate": 30,
+  "groupId": "g/nCsNTfkx2U6YP0b9zoiCrXTdtilVKc5Q57d1lGkC4=",
+  "height": 720,
+  "resizeMode": "crop-and-scale",
+  "width": 1280
+ },
+ "audioSettings": {
+  "autoGainControl": false,
+  "channelCount": 1,
+  "deviceId": "MWp+4JECCiUj8SGzcFtk7d1WRirXu7L4SQeIv9ReQSE=",
+  "echoCancellation": false,
+  "groupId": "CQWrXAvJ6X/sxynEdyxCQwR6LuiP/6WwrUN8zDbFpOI=",
+  "noiseSuppression": false
+ },
+ "frame": {
+  "w": 1280,
+  "h": 720,
+  "meanLuma": 35.4,
+  "lumaStd": 52.3
+ },
+ "audio": {
+  "sampleRate": 48000,
+  "meanRms": 0.004304,
+  "peak": 0.02301,
+  "digitalZero": false
+ },
+ "ok": true,
+ "hiddenFromFirefox": []
+}

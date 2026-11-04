@@ -515,3 +515,86 @@ def test_find_card_matches_by_device_name_or_alsa_card() -> None:
     assert micwatch.find_card(SOURCES, CARDS, "other") is None
     assert micwatch.find_card("junk", CARDS, MIC) is None
     assert micwatch.find_card(SOURCES, "junk", MIC) is None
+
+
+# ---------------------------------------------------------------------------
+# watch_microphone: the shared check of doctor, mic-revive and the replug trial (#186)
+# ---------------------------------------------------------------------------
+
+
+class FrozenAfterReenumeration:
+    """The 2026-11-04 fault from the recorded status file: RUNNING, but hw_ptr and appl_ptr stand still."""
+
+    def __init__(self, clock: Clock, moving: bool = False) -> None:
+        self.clock, self.moving = clock, moving
+        self.text = fixture("pcm_status_running.txt")
+
+    def __call__(self, pcm: micwatch.AlsaPcm) -> micwatch.PcmSample | None:
+        sample = micwatch.parse_pcm_status(self.text, self.clock.now)
+        assert sample is not None and sample.hw_ptr is not None and sample.appl_ptr is not None
+        if self.moving:
+            ahead = int((self.clock.now - 100.0) * 48_000)
+            return micwatch.PcmSample("RUNNING", sample.hw_ptr + ahead, sample.appl_ptr + ahead, self.clock.now)
+        return sample
+
+
+class FakeCapture:
+    """A SignalCapture that heard `received` bytes of which `nonzero` were not zero."""
+
+    received = 0
+    nonzero = 0
+
+    def __init__(self, source: str, spawn: Any = None) -> None:
+        self.source = source
+
+    def start(self) -> bool:
+        return True
+
+    def stop(self) -> micwatch.SignalSample:
+        return micwatch.SignalSample(self.received, self.nonzero)
+
+
+def watch(
+    monkeypatch: pytest.MonkeyPatch, pcm: FrozenAfterReenumeration, clock: Clock, **kw: Any
+) -> micwatch.StallProbe:
+    def run(argv: list[str], timeout: float = 10) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 0, source_json(), "")
+
+    def sleep(seconds: float) -> None:
+        clock.advance(seconds)
+
+    return micwatch.watch_microphone(
+        MIC, run=run, sleep=sleep, clock=clock, monitor=micwatch.StallMonitor(clock, pcm), parec=True, **kw
+    )
+
+
+def test_watch_finds_a_running_source_whose_hw_ptr_stands_still(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(micwatch, "SignalCapture", type("C", (FakeCapture,), {"received": 0}))
+    clock = Clock()
+    probe = watch(monkeypatch, FrozenAfterReenumeration(clock), clock)
+    assert probe.stalled is True and probe.kind == micwatch.KIND_STALL and "hw_ptr" in probe.detail
+
+
+def test_watch_passes_a_source_whose_pointers_and_samples_move(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(micwatch, "SignalCapture", type("C", (FakeCapture,), {"received": 480_000, "nonzero": 400_000}))
+    clock = Clock()
+    probe = watch(monkeypatch, FrozenAfterReenumeration(clock, moving=True), clock, require_samples=True)
+    assert probe.stalled is False
+
+
+def test_watch_requires_samples_only_when_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pointers move but a capture got no bytes at all: a stall for the replug trial, ignored by the doctor."""
+    monkeypatch.setattr(micwatch, "SignalCapture", type("C", (FakeCapture,), {"received": 0}))
+    clock = Clock()
+    lenient = watch(monkeypatch, FrozenAfterReenumeration(clock, moving=True), clock)
+    assert lenient.stalled is False
+    clock = Clock()
+    strict = watch(monkeypatch, FrozenAfterReenumeration(clock, moving=True), clock, require_samples=True)
+    assert strict.stalled is True and "no samples" in strict.detail
+
+
+def test_watch_reports_digital_silence_as_its_own_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(micwatch, "SignalCapture", type("C", (FakeCapture,), {"received": 960_000, "nonzero": 0}))
+    clock = Clock()
+    probe = watch(monkeypatch, FrozenAfterReenumeration(clock, moving=True), clock)
+    assert probe.stalled is True and probe.kind == micwatch.KIND_SILENCE

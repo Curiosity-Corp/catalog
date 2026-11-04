@@ -5,6 +5,11 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.29] - 2026-11-04
+
+### Fixed
+- A stalled microphone is now revived automatically (#186). After a USB re-enumeration the Wave XLR source came back RUNNING with a duplex profile but its hw_ptr stood still, and the Console only raised a toast, so the call microphone stayed silent until someone ran `streamstack doctor`. The Console now runs the same revive as `streamstack mic-revive` a few seconds after a stall is confirmed, call or no call, and logs it (at most 3 tries per 5 minutes; `STREAMSTACK_MIC_AUTO_REVIVE=0` turns it off; digital silence is still only reported). The replug trial `tools/seat_replug_trial.py` now scores a cycle `stalled`, a failure with exit status 1, when the source exists but hw_ptr does not advance or no samples arrive, using the same check as doctor and mic-revive.
+
 ## [0.0.28] - 2026-11-04
 
 ### Changed
