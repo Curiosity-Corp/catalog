@@ -8,6 +8,10 @@
 - [ ] No credentials, private hostnames, private CA material, or personal data
       were added.
 - [ ] Migration or breaking-change notes are documented.
+- [ ] A change to a default or a public variable, tag, profile or schema has a
+      decision record in `docs/decisions/`.
+- [ ] A new integration, download source or privilege change was checked against
+      `docs/threat-model.md`, and that page is updated if it changed.
 
 ## Validation
 

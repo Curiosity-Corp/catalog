@@ -15,4 +15,9 @@ Use this checklist for every public collection release.
 - [ ] Publish the GitHub/GitLab release notes and registry artifact.
 - [ ] Record the release URL, artifact checksum, CI pipeline, documentation
       URL, and compatibility evidence in the dated evidence log.
+- [ ] Compare the repository description and the release page with
+      `docs/project-identity.md`; `galaxy.yml`, README, `SECURITY.md` and that
+      page must agree (CI checks the files, not the hosting settings).
+- [ ] For a security fix, add the `### Security` changelog line with fixed and
+      affected versions and link the published advisory.
 - [ ] Announce breaking changes and security fixes clearly to downstream users.
