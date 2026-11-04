@@ -15,6 +15,13 @@
 # Emptying the setting stops the unit, which lifts the cap (ExecStop restores
 # 100) and removes the files.
 #
+# developer_workstation_cpu_thermal_log (bool, default false; a hardware
+# profile's `cpu_thermal_log`) runs curiosity-thermal-log.service: coretemp
+# sampled every 2 s, one journal line a minute (package peak/mean, hottest core,
+# throttle-count deltas, fans, top frequency, the cap) and an immediate warning
+# when a core or the package throttles. Read it with
+# `journalctl -t curiosity-thermal-log`. Turning it off stops and removes it.
+#
 # The loader for the nct6775 hwmon driver (fan and temperature sensors) is the
 # hardware profile's kernel_modules list, handled in hardware-drivers.yml.
 # =============================================================================
@@ -78,4 +85,58 @@
       loop:
         - /etc/systemd/system/curiosity-cpu-max-perf.service
         - /usr/local/sbin/curiosity-cpu-max-perf
+      notify: Reload systemd
+
+- name: Install the CPU thermal logger
+  when: developer_workstation_cpu_thermal_log | bool
+  block:
+    - name: Install the CPU thermal logger script
+      ansible.builtin.copy:
+        src: curiosity-thermal-log
+        dest: /usr/local/sbin/curiosity-thermal-log
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart the CPU thermal logger
+
+    - name: Install the CPU thermal logger unit
+      ansible.builtin.template:
+        src: curiosity-thermal-log.service.j2
+        dest: /etc/systemd/system/curiosity-thermal-log.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart the CPU thermal logger
+
+    - name: Enable and start the CPU thermal logger
+      ansible.builtin.systemd:
+        name: curiosity-thermal-log.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Remove the CPU thermal logger when it is not configured
+  when: not (developer_workstation_cpu_thermal_log | bool)
+  block:
+    - name: Look for a previously installed CPU thermal logger unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/curiosity-thermal-log.service
+      register: _cpu_thermal_log_unit
+
+    - name: Stop and disable the CPU thermal logger
+      ansible.builtin.systemd:
+        name: curiosity-thermal-log.service
+        state: stopped
+        enabled: false
+      when: _cpu_thermal_log_unit.stat.exists
+
+    - name: Remove the CPU thermal logger unit and script
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/curiosity-thermal-log.service
+        - /usr/local/sbin/curiosity-thermal-log
       notify: Reload systemd

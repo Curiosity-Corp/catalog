@@ -1041,6 +1041,8 @@ pro_mimic_motd_news_enabled: false
 # RGB 4:4:4 behind a DP -> HDMI 2.1 PCON; see i915_pcon_frl_444_enabled),
 # cpu_max_perf_pct (whole number 1-100, default unset: cap intel_pstate
 # max_perf_pct at boot; see developer_workstation_cpu_max_perf_pct),
+# cpu_thermal_log (bool, default false: log CPU temperatures and thermal
+# throttling to the journal; see developer_workstation_cpu_thermal_log),
 # crash_diagnostics (mapping, default unset: lockup panics, pstore, journald
 # sync and an optional hardware watchdog; see
 # developer_workstation_crash_diagnostics and tasks/crash-diagnostics.yml),
@@ -1186,6 +1188,12 @@ i915_pcon_frl_444_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get
 # 0x610 bit 63), so the OS cap is the only lever. The unit is skipped when
 # intel_pstate is absent.
 developer_workstation_cpu_max_perf_pct: "{{ (hardware_profiles.get(hardware_profile, {})).get('cpu_max_perf_pct', '') }}"
+
+# CPU thermal logger (tasks/cpu-thermal-guard.yml): log coretemp temperatures,
+# throttle-count changes, fans and frequency to the journal
+# (`journalctl -t curiosity-thermal-log`). Off by default; derived from the
+# hardware profile's optional `cpu_thermal_log` flag.
+developer_workstation_cpu_thermal_log: "{{ (hardware_profiles.get(hardware_profile, {})).get('cpu_thermal_log', false) | bool }}"
 
 # Crash diagnostics (tasks/crash-diagnostics.yml): turn a silent hard freeze
 # into a logged panic and an automatic reboot. Empty (the default) installs
@@ -1827,6 +1835,9 @@ hardware_profiles:
     # ENODATA) and the i7-14700 ran 83-92 C at modest load with growing memory
     # corruption and freezes (2026-11-03), so cap the performance state at 70%.
     cpu_max_perf_pct: 70
+    # Record temperatures and throttling so faults can be checked against heat
+    # while the cap is evaluated (catalog#141).
+    cpu_thermal_log: true
     # Seven hard freezes 2026-10-10..31 left no trace and needed the power
     # button (catalog#139). Panic and reboot on a lockup, keep the panic log in
     # EFI pstore, and arm the PCH TCO watchdog (probed 2026-11-04: Version=6,

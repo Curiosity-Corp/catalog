@@ -292,6 +292,18 @@ Check with `cat /sys/devices/system/cpu/intel_pstate/max_perf_pct`.
 Nuvoton hwmon driver (fan and temperature sensors) is loaded now and at boot
 through `/etc/modules-load.d/curiosity-hardware.conf`.
 
+`developer_workstation_cpu_thermal_log` (hardware-profile flag `cpu_thermal_log`,
+off by default, on for `deskmeet-b760`) runs `curiosity-thermal-log.service`
+(`/usr/local/sbin/curiosity-thermal-log`, a sandboxed `DynamicUser` service). It
+samples the coretemp sensors every 2 s and writes one journal line a minute:
+package peak and mean, the hottest core, the cores that reached 90 C, how often
+each core and the package throttled in that minute, fan speeds (nct6775), the
+highest current frequency and `max_perf_pct`. A throttle-counter increase is
+logged at once at warning priority. Read it with
+`journalctl -t curiosity-thermal-log`; after a freeze-reboot use
+`journalctl -b -1 -t curiosity-thermal-log`, which crash diagnostics keep within
+15 s of the freeze. Turning the flag off stops and removes the service.
+
 ### Crash diagnostics (lockup panics, pstore, hardware watchdog)
 
 `developer_workstation_crash_diagnostics` (derived from the hardware profile's
