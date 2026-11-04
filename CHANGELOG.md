@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `docs/dry-run-and-preview.md` (catalog#10): a VM-first recommendation, the limits of `--check --diff` for package, shell/command and service tasks (checked against the role's tasks and a throwaway container), tag-scoped preview commands, and a documented limitation for a before/after summary with a recipe to record one around a real run. New `scripts/preview_vars.py` prints the role defaults, vars files and `-e` overrides with secrets redacted; `tests/test_preview_vars.py` covers the redaction.
+
 ### Changed
 
 - StreamStack seat policy (StreamStack #127, owner decision 2026-11-01): every `dev_users` account that is not in `streamstack_audio_owner_users` now gets `~/.config/wireplumber/wireplumber.conf.d/90-streamstack-seat-guest.conf`, which disables the `hardware.audio`, `hardware.video-capture`, `monitor.alsa`, `monitor.alsa-midi`, `monitor.v4l2` and `monitor.libcamera` features, so that user's lingering PipeWire/WirePlumber keeps running but never opens or reserves a sound card or camera. It replaces the per-card `50-curiosity-streamstack-exclusive-audio.conf` rule (removed on every run; `streamstack_audio_card_patterns` is gone). A root-owned marker per user in `/etc/streamstack/seat-guarded.d` (`streamstack_seat_marker_dir`) lets `streamstack doctor` see the policy without reading that home. Verified on WirePlumber 0.5.13 with a sandboxed PipeWire: the control config loaded the ALSA, ALSA-MIDI, V4L2 and libcamera monitors, the drop-in loaded none. Takes effect at that user's next WirePlumber start; nothing is restarted. `tests/test_streamstack_low_latency.py` renders the drop-in and marker.

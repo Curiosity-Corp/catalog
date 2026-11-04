@@ -52,4 +52,5 @@ should be configured in host/group vars.
   documented a signing key.
 
 The role has root-level effects. Run it against a disposable VM first and
-review the effective variables with `ansible-inventory` or a dry run.
+review the effective variables and a dry run as described in
+[Previewing changes](dry-run-and-preview.md).

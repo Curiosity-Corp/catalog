@@ -70,7 +70,10 @@ ansible-playbook \
 ```
 
 For a first pass, use a disposable VM and select only a tagged task group,
-such as `--tags updates` or `--tags packages`. The role's default desktop
+such as `--tags updates` or `--tags packages`. Read
+[`docs/dry-run-and-preview.md`](docs/dry-run-and-preview.md) first: it shows
+how to preview with `--check --diff` and where check mode cannot predict what
+the role will do. The role's default desktop
 profile still installs a substantial workstation baseline; set the profile and
 feature variables explicitly for a smaller machine.
 
@@ -153,6 +156,7 @@ public-surface checks, and collection building. See
 - [Support policy](SUPPORT.md)
 - [Change log](CHANGELOG.md)
 - [Architecture](docs/architecture.md)
+- [Previewing changes (dry run, tags, redacted variable dump)](docs/dry-run-and-preview.md)
 - [Console tuning](docs/console-tuning.md)
 - [PIA VPN split tunnel and managed WiFi](docs/pia-vpn-and-wifi.md)
 - [Roadmap](docs/roadmap.md)
