@@ -94,6 +94,7 @@
 @scope ([data-page="live"]) {
   .op { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--s-2); margin-top: var(--s-3); }
   .op[hidden] { display: none; }
+  .op-cap { grid-column: 1 / -1; font-size: var(--fs-xs); color: var(--text-3); letter-spacing: 0.02em; }
   .op-ic { color: var(--text-3); display: grid; }
   .op-ic .icon { width: 1.1rem; height: 1.1rem; }
   .op-sel {

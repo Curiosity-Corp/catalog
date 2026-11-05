@@ -762,7 +762,18 @@ and `pages/*.js`. Hash routing: `#/live` (default), `#/camera`, `#/audio`,
   remembered. Test all runs every output in turn; virtual sinks are
   shown as routes; the list follows hot-plug and warns when the default output
   goes away. The Live page's microphone card carries a compact output picker
-  with a Test button.
+  (labelled "Sound plays on") with a Test button.
+- **Switching where the sound plays** (an *output* here is a PipeWire sink, the machine's default one: TV speakers
+  on HDMI, headphones on a USB interface, a Bluetooth headset, the built-in speakers). The top bar, on every page,
+  has an output button that names the current default (for example "Scarlett 2i2 4th Gen"); it opens a menu of every
+  output with the current one checked, and choosing one makes it the default. Arrow keys, Home, End, Enter and Escape
+  work; the menu follows a device being plugged or unplugged while it is open and says when the default went away.
+  "Volume, mute and sound test" in the menu opens Audio > Output. The same switch is in the command palette
+  (`Ctrl+K`, "Play sound on …") on every page. Switching sets PipeWire's default sink with `wpctl set-default`;
+  WirePlumber then moves every stream that follows the default (calls, browsers, music) to the new output, while a
+  stream an application pinned to one device stays there. StreamStack plays no sound of its own except the sound
+  test, which names its output and so never moves anything. An HDMI output shows the screen's own name (PipeWire's
+  `node.nick`, from the display) in its detail line, so a TV is told apart from the graphics card it hangs off.
 - **Lighting**: Litra lights as big power pads and brightness / warm-to-cool
   temperature faders, an All lights master, preset pads and saved presets. A
   small lights control also sits in the Live status rail and the Mini window.

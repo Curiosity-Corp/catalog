@@ -25,6 +25,7 @@ import { startRouter, onRoute, navigate, currentRoute } from './core/router.js';
 import { registerKeys, registerCommands, installKeyboard } from './core/keys.js';
 import { registerReviveControls } from './core/revive.js';
 import { registerSafeJoinControls } from './core/safejoin.js';
+import { mountOutputMenu } from './core/output-menu.js';
 import { initTheme, toggleTheme, getTheme } from './core/theme.js';
 import { ui, setUi, onUi } from './core/ui.js';
 import * as ops from './core/ops.js';
@@ -102,6 +103,7 @@ function buildShell() {
   const help = h('button', { class: 'icon-btn', type: 'button', title: 'Keyboard shortcuts (?)', 'aria-label': 'Keyboard shortcuts', onclick: () => $('ss-shortcuts').open() }, icon('keyboard'));
   const theme = h('button', { class: 'icon-btn', type: 'button', id: 'theme-btn', onclick: () => toggleTheme() });
   right.append(demo, conn, pal, help, theme);
+  mountOutputMenu(right, { store });   // first in the bar: where the sound plays, and the switch
   const syncTheme = () => {
     const light = getTheme() === 'light';
     theme.replaceChildren(icon(light ? 'moon' : 'sun'));

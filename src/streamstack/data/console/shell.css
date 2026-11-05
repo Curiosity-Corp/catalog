@@ -56,6 +56,48 @@ kbd {
   background: var(--surface-3); border: 1px solid var(--line-strong); border-bottom-width: 2px; color: var(--text-2);
 }
 
+/* ---- output menu: where the sound plays, and the switch (core/output-menu.js) ---- */
+#topbar { position: relative; z-index: 50; }
+.out-menu { position: relative; display: inline-flex; }
+.out-menu[hidden], .out-pop[hidden], .out-warn[hidden], .out-empty[hidden] { display: none; }
+.out-btn {
+  display: inline-flex; align-items: center; gap: var(--s-2); height: 2.3rem; padding: 0 var(--s-2) 0 var(--s-3); max-width: 15rem;
+  border-radius: var(--r-2); background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+  font-size: var(--fs-sm); cursor: pointer;
+}
+.out-btn:hover, .out-btn[aria-expanded="true"] { border-color: var(--line-strong); color: var(--text); }
+.out-btn:focus-visible, .out-item:focus-visible, .out-more:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.out-btn .icon { width: 1.05rem; height: 1.05rem; flex: none; }
+.out-btn > .icon { width: 0.8rem; height: 0.8rem; transform: rotate(90deg); color: var(--text-3); }
+.out-ic { display: grid; color: var(--text-3); }
+.out-menu[data-tone="warn"] .out-btn { border-color: color-mix(in srgb, var(--amber) 55%, transparent); color: var(--amber); }
+.out-menu[data-tone="warn"] .out-ic { color: var(--amber); }
+.out-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.out-pop {
+  position: absolute; top: calc(100% + var(--s-2)); right: 0; width: 22rem; max-width: calc(100vw - 2 * var(--s-3));
+  padding: var(--s-2); border-radius: var(--r-3); background: var(--surface-2); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop);
+  display: grid; gap: var(--s-1);
+}
+.out-head { margin: 0; padding: var(--s-1) var(--s-2); font-size: var(--fs-xs); color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; }
+.out-warn { margin: 0; padding: var(--s-2); border-radius: var(--r-2); background: var(--amber-soft); color: var(--amber); font-size: var(--fs-xs); }
+.out-empty { margin: 0; padding: var(--s-2); font-size: var(--fs-sm); color: var(--text-2); }
+.out-list { display: grid; gap: 2px; max-height: min(24rem, 60dvh); overflow-y: auto; }
+.out-item, .out-more {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--s-3); width: 100%; text-align: left;
+  padding: var(--s-2) var(--s-3); border-radius: var(--r-2); border: 1px solid transparent; background: transparent; color: var(--text); cursor: pointer;
+}
+.out-item:hover, .out-more:hover { background: var(--surface-3); }
+.out-item[aria-checked="true"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.out-kind { display: grid; color: var(--text-2); }
+.out-kind .icon, .out-more .icon { width: 1.2rem; height: 1.2rem; }
+.out-id { display: grid; min-width: 0; }
+.out-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 600; }
+.out-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--text-3); }
+.out-check { display: grid; color: var(--accent-strong); visibility: hidden; }
+.out-check .icon { width: 1.1rem; height: 1.1rem; }
+.out-item[aria-checked="true"] .out-check { visibility: visible; }
+.out-more { grid-template-columns: auto minmax(0, 1fr); margin-top: var(--s-1); border-top: 1px solid var(--line); border-radius: 0 0 var(--r-2) var(--r-2); color: var(--text-2); font-size: var(--fs-sm); }
+
 /* ---- rail ---- */
 #rail {
   grid-area: rail;
@@ -132,6 +174,10 @@ body[data-chrome="none"] #topbar, body[data-chrome="none"] #rail { display: none
   .rail-dot { right: 28%; }
   .top-center { display: none; }
   .top-right { margin-left: auto; }
+  .out-menu { position: static; }
+  .out-name, .out-btn > .icon { display: none; }
+  .out-btn { padding: 0 var(--s-2); width: 2.3rem; justify-content: center; }
+  .out-pop { left: var(--s-3); right: var(--s-3); width: auto; max-width: none; }
   body[data-chrome="none"] #app { grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "banner" "main"; }
 }
 

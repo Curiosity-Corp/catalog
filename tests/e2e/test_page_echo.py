@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import Page, expect
 
 from support import LOADED, App, Rig, poll
@@ -12,7 +14,7 @@ HEADSET = "bluez_output.demo-headset.1"
 
 def output_section(app: App, page: Page) -> None:
     app.goto("audio")
-    page.get_by_role("button", name="Output").click()
+    page.get_by_role("button", name=re.compile("^Output")).click()
 
 
 def test_a_speaker_that_bleeds_is_named_and_remembered(app: App, page: Page, rig: Rig) -> None:

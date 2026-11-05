@@ -5,6 +5,11 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.32] - 2026-11-04
+
+### Added
+- The Console now has an output button in the top bar of every page that names where the sound plays and lists every output (TV speakers on HDMI, headphones on a USB interface, a Bluetooth headset, built-in speakers) to switch the default between them, with the keyboard, from the command palette ("Play sound on ..."), and live as devices are plugged and unplugged. Before, the switch was a second tab on the Audio page and an unlabelled picker under the microphone, so it was hard to find. The Live picker is labelled "Sound plays on", and an HDMI output shows the screen's own name (a TV's "SAMSUNG") next to the graphics card it hangs off (#194).
+
 ## [0.0.31] - 2026-11-04
 
 ### Added
