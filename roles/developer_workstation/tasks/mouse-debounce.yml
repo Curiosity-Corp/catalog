@@ -1,0 +1,138 @@
+---
+# =============================================================================
+# Mouse button debounce for a chattering switch (opt-in, catalog#143)
+# =============================================================================
+# The deskmeet1 G604's left switch is worn: a 2 h recording showed 67 of 372
+# presses arriving 3-150 ms after a release (median 22 ms), i.e. phantom double
+# clicks and drags that let go.
+#
+# developer_workstation_mouse_debounce_ms (0 = off, the default; a hardware
+# profile's `mouse_debounce_ms` sets it) installs:
+#   * /usr/local/sbin/curiosity-mouse-debounce: a python3-evdev filter that grabs
+#     the mouse's event node and re-emits it through a uinput clone, holding each
+#     release of the configured buttons for that many milliseconds and dropping a
+#     release together with a press of the same button inside the window;
+#   * curiosity-mouse-debounce@.service: a hardened template unit, one instance
+#     per event node, bound to the node's .device unit so it stops on unplug;
+#   * 90-curiosity-mouse-debounce.rules: starts an instance (SYSTEMD_WANTS) for
+#     each entry of developer_workstation_mouse_debounce_devices when it appears,
+#     so hot-plug and replug need no help from the role;
+#   * modules-load.d/curiosity-mouse-debounce.conf: /dev/uinput exists at boot.
+# The mouse keeps working on its own if the service is stopped: the kernel
+# releases the grab with the service's file descriptor. curiosity-g604 follows
+# the clone (named "<name> (debounced)") when it exists.
+#
+# Setting it back to 0 stops every instance (the real mouse takes over again)
+# and removes the rule, unit, script and module list.
+# Read the effect with `journalctl -t curiosity-mouse-debounce`.
+# =============================================================================
+
+- name: Validate the mouse debounce window
+  ansible.builtin.assert:
+    that:
+      - developer_workstation_mouse_debounce_ms | string is match('^[0-9]+$')
+      - developer_workstation_mouse_debounce_ms | int >= 0
+      - developer_workstation_mouse_debounce_ms | int <= 1000
+    fail_msg: >-
+      developer_workstation_mouse_debounce_ms must be a whole number of
+      milliseconds from 0 (off) to 1000, got '{{ developer_workstation_mouse_debounce_ms }}'.
+
+- name: Install the mouse debounce
+  when: developer_workstation_mouse_debounce_ms | int > 0
+  block:
+    - name: Validate the mouse debounce buttons and devices
+      ansible.builtin.assert:
+        that:
+          - developer_workstation_mouse_debounce_buttons is sequence
+          - developer_workstation_mouse_debounce_buttons is not string
+          - developer_workstation_mouse_debounce_buttons | length > 0
+          - developer_workstation_mouse_debounce_buttons | map('string') | select('match', '^(BTN_[A-Z0-9_]+|KEY_[A-Z0-9_]+|[0-9]+)$') | list | length == developer_workstation_mouse_debounce_buttons | length
+          - developer_workstation_mouse_debounce_devices is sequence
+          - developer_workstation_mouse_debounce_devices is not string
+          - developer_workstation_mouse_debounce_devices | length > 0
+          - developer_workstation_mouse_debounce_devices | map(attribute='name') | map('string') | select('match', '^[A-Za-z0-9][A-Za-z0-9 ._+()/:-]*$') | list | length == developer_workstation_mouse_debounce_devices | length
+          - developer_workstation_mouse_debounce_devices | map(attribute='vendor', default='') | map('string') | select('match', '^([0-9a-fA-F]{4})?$') | list | length == developer_workstation_mouse_debounce_devices | length
+        fail_msg: >-
+          mouse debounce buttons must be evdev names (BTN_LEFT) or numbers, and
+          each device needs a plain `name` (letters, digits, spaces and . _ + ( ) / : -;
+          it is written into a udev rule) with an optional four digit hex `vendor`.
+
+    - name: Install python3-evdev for the mouse debounce
+      ansible.builtin.apt:
+        name: python3-evdev
+        state: present
+
+    - name: Load uinput at boot for the mouse debounce
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/curiosity-mouse-debounce.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by curiosity.workstation (tasks/mouse-debounce.yml).
+          uinput
+
+    - name: Load uinput now for the mouse debounce
+      ansible.builtin.command:
+        cmd: modprobe uinput
+        creates: /dev/uinput
+
+    - name: Install the mouse debounce script
+      ansible.builtin.copy:
+        src: curiosity-mouse-debounce
+        dest: /usr/local/sbin/curiosity-mouse-debounce
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart the mouse debounce instances
+
+    - name: Install the mouse debounce unit
+      ansible.builtin.template:
+        src: curiosity-mouse-debounce@.service.j2
+        dest: /etc/systemd/system/curiosity-mouse-debounce@.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart the mouse debounce instances
+
+    - name: Install the mouse debounce udev rule
+      ansible.builtin.template:
+        src: 90-curiosity-mouse-debounce.rules.j2
+        dest: /etc/udev/rules.d/90-curiosity-mouse-debounce.rules
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload udev rules
+        - Start the mouse debounce for the attached mice
+
+- name: Remove the mouse debounce when it is not configured
+  when: developer_workstation_mouse_debounce_ms | int == 0
+  block:
+    - name: Look for a previously installed mouse debounce unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/curiosity-mouse-debounce@.service
+      register: _mouse_debounce_unit
+
+    # Stopping the instances closes the clones and releases the grabs, so the
+    # real mouse is live again before the files go.
+    - name: Stop the mouse debounce instances
+      # The systemd module cannot address a glob of template instances.
+      ansible.builtin.command: systemctl stop 'curiosity-mouse-debounce@*.service'  # noqa: command-instead-of-module
+      when: _mouse_debounce_unit.stat.exists
+      changed_when: true
+
+    - name: Remove the mouse debounce files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/udev/rules.d/90-curiosity-mouse-debounce.rules
+        - /etc/systemd/system/curiosity-mouse-debounce@.service
+        - /usr/local/sbin/curiosity-mouse-debounce
+        - /etc/modules-load.d/curiosity-mouse-debounce.conf
+      notify:
+        - Reload systemd
+        - Reload udev rules

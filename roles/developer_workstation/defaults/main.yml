@@ -1071,7 +1071,10 @@ pro_mimic_motd_news_enabled: false
 # compositor_enabled (boolean, default true: false keeps picom from starting in
 # the Openbox session; see minimal_desktop_compositor_enabled) and
 # pointer_accel_speed (number from -1 to 1, default unset: libinput `Accel Speed`
-# applied to the Logitech G604; see logitech_g604_accel_speed).
+# applied to the Logitech G604; see logitech_g604_accel_speed) and
+# mouse_debounce_ms (integer 0-1000, default 0 = off: debounce a chattering
+# mouse button; see developer_workstation_mouse_debounce_ms, with the optional
+# mouse_debounce_buttons and mouse_debounce_devices).
 # =============================================================================
 hardware_profile: generic
 
@@ -1220,6 +1223,27 @@ developer_workstation_intel_media_non_free: "{{ (hardware_profiles.get(hardware_
 developer_workstation_browser_hw_video_decode: "{{ (hardware_profiles.get(hardware_profile, {})).get('browser_hw_video_decode', false) | bool }}"
 developer_workstation_browser_hw_decode_features:
   - AcceleratedVideoDecodeLinuxGL
+
+# Mouse button debounce (tasks/mouse-debounce.yml, catalog#143). A worn switch
+# bounces and one click arrives as two. curiosity-mouse-debounce@<eventN>.service
+# grabs the mouse's evdev node and re-emits its events through a uinput clone
+# named "<name> (debounced)", holding each release of the configured buttons for
+# this many milliseconds and dropping a release together with a press of the same
+# button that arrives inside that window. 0 (the default) installs nothing and
+# removes what an earlier run installed. Derived from the hardware profile's
+# optional `mouse_debounce_ms`. Pick a window above the chatter's longest
+# release-to-press gap and below your fastest deliberate double click: 60-100 ms
+# fits a typical worn switch; `journalctl -t curiosity-mouse-debounce` shows each
+# suppressed bounce (debug) and a per-minute summary (info) to tune against.
+developer_workstation_mouse_debounce_ms: "{{ (hardware_profiles.get(hardware_profile, {})).get('mouse_debounce_ms', 0) | int }}"
+# Buttons to debounce: evdev names (BTN_LEFT, BTN_RIGHT, ...) or key numbers.
+# Profile key `mouse_debounce_buttons`.
+developer_workstation_mouse_debounce_buttons: "{{ (hardware_profiles.get(hardware_profile, {})).get('mouse_debounce_buttons', ['BTN_LEFT']) }}"
+# Mice to filter: udev matches each entry's exact input device `name` (the name
+# in /proc/bus/input/devices) and, when given, its hex USB `vendor` id. The G604
+# on its Logitech receiver registers as "Logitech G604". Profile key
+# `mouse_debounce_devices`.
+developer_workstation_mouse_debounce_devices: "{{ (hardware_profiles.get(hardware_profile, {})).get('mouse_debounce_devices', [{'name': 'Logitech G604', 'vendor': '046d'}]) }}"
 
 # Crash diagnostics (tasks/crash-diagnostics.yml): turn a silent hard freeze
 # into a logged panic and an automatic reboot. Empty (the default) installs
@@ -1747,6 +1771,11 @@ hardware_profiles:
     # The G604's left switch chatters (spurious double-clicks): require a
     # quick, deliberate double-click instead of the 500 ms default.
     double_click_ms: 200
+    # ... and debounce it properly at the input level: a 2 h recording showed 67
+    # of 372 left presses arriving 3-150 ms after a release (catalog#143). Each
+    # release is held 80 ms; a press inside that window is the switch bouncing.
+    # Verify with `journalctl -t curiosity-mouse-debounce`.
+    mouse_debounce_ms: 80
     # Lock after 60 idle minutes instead of the 10 minute default.
     idle_lock_minutes: 60
     # Samsung 8K TV, two DP -> HDMI 2.1 cables from the Arc A380 (2026-10-27):

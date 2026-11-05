@@ -261,6 +261,88 @@ def test_launcher_leaves_no_stale_watcher_when_the_mouse_comes_back(tmp_path: Pa
         launcher.wait(timeout=5)
 
 
+@pytest.mark.skipif(shutil.which("flock") is None, reason="flock is required")
+def test_launcher_follows_the_debounce_clone_when_it_appears(tmp_path: Path) -> None:
+    """With curiosity-mouse-debounce (catalog#143) the real G604 is grabbed and silent.
+
+    The launcher must float the clone's keyboard node (never the real one that shares a
+    name prefix), set the pointer speed on the clone, and start over when the clone
+    appears after it already bound the real device.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    clone = tmp_path / "clone"
+    floated = tmp_path / "floated"
+    props = tmp_path / "props"
+    (bin_dir / "xinput").write_text(
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            case "$1" in
+              float) echo "$2" >> {floated}; exit 0;;
+              set-prop) echo "$2" >> {props}; exit 0;;
+              test) exec sleep 30;;
+              list)
+                if [ "$2" = "--name-only" ]; then
+                  echo "Logitech G604"
+                  echo "Logitech G604"
+                  [ -e {clone} ] && echo "Logitech G604 (debounced)"
+                else
+                  printf '⎜   ↳ Logitech G604                           \tid=8\t[slave  pointer  (2)]\n'
+                  printf '    ↳ Logitech G604                           \tid=17\t[slave  keyboard (3)]\n'
+                  [ -e {clone} ] && printf '⎜   ↳ Logitech G604 (debounced)               \tid=21\t[slave  pointer  (2)]\n'
+                  [ -e {clone} ] && printf '    ↳ Logitech G604 (debounced)               \tid=22\t[slave  keyboard (3)]\n'
+                fi
+                exit 0;;
+            esac
+            exit 0
+            """
+        )
+    )
+    (bin_dir / "xbindkeys").write_text("#!/bin/sh\ntrap 'exit 0' TERM\nwhile :; do sleep 0.1; done\n")
+    for tool in ("xinput", "xbindkeys"):
+        (bin_dir / tool).chmod(0o755)
+    conf = tmp_path / "g604.rc"
+    conf.write_text("# test\n")
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CURIOSITY_G604_CONF": str(conf),
+        "CURIOSITY_G604_INTERVAL": "0.2",
+        "CURIOSITY_G604_LOCK": str(tmp_path / "lock"),
+        "CURIOSITY_G604_ENV": "/dev/null",
+        "CURIOSITY_G604_ACCEL_SPEED": "0.6",
+        "DISPLAY": ":99",
+        "XDG_SESSION_TYPE": "x11",
+    }
+    launcher = subprocess.Popen(["sh", str(SCRIPT)], env=env)
+    try:
+        # No clone yet: the real device is bound.
+        _wait_for(floated)
+        assert floated.read_text().split() == ["17"]
+        assert props.read_text().splitlines() == ["pointer:Logitech G604"]
+
+        clone.touch()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(props.read_text().splitlines()) < 2:
+            time.sleep(0.05)
+        assert props.read_text().splitlines() == ["pointer:Logitech G604", "pointer:Logitech G604 (debounced)"]
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(floated.read_text().split()) < 2:
+            time.sleep(0.05)
+        assert floated.read_text().split() == ["17", "22"], "the clone's keyboard, not a name-prefix match"
+
+        # Once the clone is gone the real device is bound again.
+        clone.unlink()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(floated.read_text().split()) < 3:
+            time.sleep(0.05)
+        assert floated.read_text().split() == ["17", "22", "17"]
+    finally:
+        launcher.terminate()
+        launcher.wait(timeout=5)
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)

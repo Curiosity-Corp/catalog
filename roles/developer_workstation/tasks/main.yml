@@ -699,6 +699,16 @@
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - logitech_g604_enabled | bool
 
+- name: Include the mouse button debounce
+  ansible.builtin.include_tasks:
+    file: mouse-debounce.yml
+    apply:
+      tags: [hardware, mouse-debounce]
+  tags: [hardware, mouse-debounce]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Install the Samsung TV remote-control CLI
   ansible.builtin.include_tasks:
     file: samsung-tv-cli.yml

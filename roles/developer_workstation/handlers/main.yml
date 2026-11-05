@@ -219,3 +219,17 @@
     name: curiosity-display-guard.service
     state: restarted
     daemon_reload: true
+
+# Mouse debounce (tasks/mouse-debounce.yml). These run after "Reload systemd" and
+# "Reload udev rules" (handlers run in file order): running instances pick up a
+# changed window, script or unit, then the trigger starts an instance for every
+# configured mouse that is already plugged in (a change event carries
+# SYSTEMD_WANTS like an add, but does not make X re-add the device).
+- name: Restart the mouse debounce instances
+  # The systemd module cannot address a glob of template instances.
+  ansible.builtin.command: systemctl try-restart 'curiosity-mouse-debounce@*.service'  # noqa: command-instead-of-module
+  changed_when: true
+
+- name: Start the mouse debounce for the attached mice
+  ansible.builtin.command: udevadm trigger --action=change --subsystem-match=input --property-match=ID_INPUT_MOUSE=1
+  changed_when: true

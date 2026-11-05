@@ -1,0 +1,50 @@
+# Managed by curiosity.workstation (tasks/mouse-debounce.yml). Do not edit.
+# One instance per matching mouse event node, started by udev
+# (90-curiosity-mouse-debounce.rules) and stopped with the device.
+[Unit]
+Description=Curiosity mouse button debounce for /dev/input/%I
+Documentation=file:///usr/local/sbin/curiosity-mouse-debounce
+ConditionVirtualization=!container
+BindsTo=dev-input-%i.device
+After=dev-input-%i.device systemd-modules-load.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/curiosity-mouse-debounce --window-ms {{ developer_workstation_mouse_debounce_ms | int }} --buttons {{ developer_workstation_mouse_debounce_buttons | join(',') }} /dev/input/%i
+Restart=on-failure
+RestartSec=5
+# Exit status 2 is a bad option, which a restart cannot fix.
+RestartPreventExitStatus=2
+SyslogIdentifier=curiosity-mouse-debounce
+# The pointer path must stay responsive under build load.
+Nice=-10
+MemoryMax=64M
+# Sandbox: the service reads one input node and writes /dev/uinput, nothing else.
+DevicePolicy=closed
+DeviceAllow=/dev/uinput rw
+DeviceAllow=char-input rw
+CapabilityBoundingSet=CAP_SYS_NICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=none
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
