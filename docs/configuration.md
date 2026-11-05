@@ -423,10 +423,14 @@ hand-started tunneler with its own IPC prefix is never touched. Set
 `hypersystem_desktop_enabled: true` reads a suite app catalog
 (`hypersystem_desktop_catalog_src`, or `hypersystem_desktop_apps`), keeps the apps
 `hypersystem_desktop_roles` allow, and force-installs each as a web app in one
-Chromium-family browser with a launcher and a dedicated suite profile. It relies
-on the tunnel above and fails with the setting to change when `ziti_enabled` is
-off (and no hand-managed tunnel exists) or an app host is outside
-`ziti_intercept_domains`. See [hypersystem-desktop](hypersystem-desktop.md).
+Chromium-family browser with a launcher and a dedicated suite profile, plus
+`ssh <app>` entries for apps with a terminal UI. It relies on the tunnel above
+and fails with the setting to change when `ziti_enabled` is off (and no
+hand-managed tunnel exists) or an app host is outside `ziti_intercept_domains`.
+Given `hypersystem_desktop_ziti_identity_name` and, once, a one-time
+`hypersystem_desktop_ziti_enrollment_jwt` from Vault, it enrols the laptop's
+device identity; given `hypersystem_desktop_ziti_services`, it checks the tunnel
+offers them. See [hypersystem-desktop](hypersystem-desktop.md).
 
 ## User-scoped systemd masks
 
