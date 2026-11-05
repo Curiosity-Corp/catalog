@@ -36,6 +36,9 @@
       - streamstack_camera_label | length > 0
       - streamstack_program_label | length > 0
       - streamstack_camera_label is not search('[,"\n]')
+      - streamstack_camera_card_label | length > 0
+      - streamstack_camera_card_label | length <= 31
+      - streamstack_camera_card_label is not search('[,"\n]')
       - streamstack_program_label is not search('[,"\n]')
       - streamstack_width | string is match('^[0-9]+$')
       - streamstack_height | string is match('^[0-9]+$')
@@ -134,7 +137,8 @@
     content: |
       # Managed by the curiosity workstation role (streamstack task group).
       # video{{ streamstack_camera_video_nr }}: camera bridge, video{{ streamstack_program_video_nr }}: program camera (the native engine).
-      options v4l2loopback devices=2 video_nr={{ streamstack_camera_video_nr }},{{ streamstack_program_video_nr }} card_label="{{ streamstack_camera_label }},{{ streamstack_program_label }}" exclusive_caps=1,1 max_buffers=2
+      # Names apply when the module loads. Changing one here never reloads the module: it takes effect at the next planned reload.
+      options v4l2loopback devices=2 video_nr={{ streamstack_camera_video_nr }},{{ streamstack_program_video_nr }} card_label="{{ streamstack_camera_card_label }},{{ streamstack_program_label }}" exclusive_caps=1,1 max_buffers=2
   when: not (streamstack_camera_external | bool)
 
 - name: Leave the loopback options to the tool that owns the camera
@@ -282,22 +286,26 @@
     enabled: true
     daemon_reload: "{{ _streamstack_loopback_unit is changed }}"
 
-# Reload only an idle module that StreamStack configures: an open camera (a
-# call, the Console, the bridge) holds a reference. Otherwise add the missing nodes
-# next to the open ones, and leave a misnamed node for the next boot.
+# A catalog run never reloads v4l2loopback (--no-reload): it loads an absent
+# module and adds missing nodes next to the open ones, and a node whose name
+# differs from the options file is reported as pending. Names change at boot or
+# in a planned window that a person runs (docs/streamstack.md).
 - name: Bring up the StreamStack loopback cameras
-  ansible.builtin.command: /usr/local/sbin/curiosity-streamstack-loopback
+  ansible.builtin.command: /usr/local/sbin/curiosity-streamstack-loopback --no-reload
   register: _streamstack_loopback
-  changed_when: _streamstack_loopback.stdout in ['reloaded', 'added']
+  changed_when: _streamstack_loopback.stdout in ['loaded', 'added']
 
-- name: Report a loopback camera change that waits for a reboot
+- name: Report a loopback camera rename that waits for the next planned reload
   ansible.builtin.debug:
     msg: >-
-      v4l2loopback is in use and one of its nodes has another name, so the
-      StreamStack cameras appear after the next reboot (or after closing every
-      camera app and running `sudo modprobe -r v4l2loopback && sudo
-      /usr/local/sbin/curiosity-streamstack-loopback`).
-  when: _streamstack_loopback.stdout == 'busy'
+      The v4l2loopback options name a camera differently from the loaded module.
+      This takes effect at the next planned reload; nothing was reloaded.
+      `streamstack doctor` reports it as hw-loopback-pending. A person applies
+      it in a maintenance window with no call active: stop the Console and the
+      Canon bridge, `sudo modprobe -r v4l2loopback && sudo modprobe
+      v4l2loopback`, start them again (docs/streamstack.md, "Renaming the raw
+      camera").
+  when: _streamstack_loopback.stdout in ['pending', 'busy']
 
 # Self-contained install: the package under /usr/local/lib/streamstack and
 # isolated-mode launchers on PATH, so nothing touches the system Python.

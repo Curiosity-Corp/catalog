@@ -70,6 +70,31 @@ by `/usr/local/sbin/curiosity-streamstack-loopback`, at boot through
 browsers (Teams on the web, the Teams PWA) list a loopback camera only with
 that flag and only while something is feeding it.
 
+### Renaming the raw camera (StreamStack #198)
+
+The raw camera node (`video42`, the Canon bridge's output and the engine's input) used to be called "Canon EOS 50D", and
+Firefox and Chromium listed it next to StreamStack Camera. Firefox and Chromium list any fed capture node whatever its
+name, so the role names it for what it is: `streamstack_camera_card_label` (default `StreamStack RAW - not for calls`,
+31 characters at most) goes into `/etc/modprobe.d/curiosity-streamstack-v4l2loopback.conf`. `streamstack_camera_label`
+(`Canon EOS 50D`) stays the camera's name inside StreamStack.
+
+A card name only changes when v4l2loopback reloads, and **the role never reloads it**. A catalog run calls the bring-up
+with `--no-reload`: it writes the options file, loads an absent module, adds missing nodes, and prints `pending` for a
+node whose live name differs from the file ("takes effect at the next planned reload"; `streamstack doctor` shows the same
+as `hw-loopback-pending`). Only boot (no flag, nothing open) loads the new names by itself. To apply it earlier, a person
+runs this in a planned window:
+
+1. No call is active: `streamstack doctor` shows no app on StreamStack Camera or the mic and none on the raw camera, and
+   `fuser -v /dev/video42 /dev/video43` prints nothing.
+2. Stop the Console and the Canon bridge: `systemctl --user stop streamstack-console.service streamstack-canon.service`.
+3. `sudo modprobe -r v4l2loopback && sudo modprobe v4l2loopback` (if the module is in use, go back to step 1; never force it).
+4. `systemctl --user start streamstack-canon.service streamstack-console.service`.
+5. Verify: `cat /sys/class/video4linux/video42/name` prints `StreamStack RAW - not for calls`, `video43/name` prints
+   `StreamStack Camera`, `streamstack doctor` has no `hw-loopback-pending`, and the raw feed reads
+   `StreamStack RAW - not for calls` in a browser's camera menu.
+
+The same steps, with the evidence for what hides a node, are in StreamStack's `docs/camera-delivery.md`.
+
 Role variables map onto the app's settings file: `streamstack_microphone` is
 `STREAMSTACK_MICROPHONE`, `streamstack_auto_backend` is
 `STREAMSTACK_AUTO_BACKEND`, and so on (see the app README's Configuration
