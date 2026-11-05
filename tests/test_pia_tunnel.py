@@ -291,6 +291,9 @@ url = argv[-1]
 if os.environ.get("FAKE_CURL_FAIL") and os.environ["FAKE_CURL_FAIL"] in url:
     sys.stderr.write("curl: (22) The requested URL returned error: 401\n")
     sys.exit(22)
+if any(f"//{cn}:19999/" in url for cn in os.environ.get("FAKE_PF_DEAD", "").split(",") if cn):
+    sys.stderr.write("curl: (7) Failed to connect to the server: Connection refused\n")
+    sys.exit(7)
 if "gtoken/generateToken" in url:
     print(json.dumps({"status": "OK", "token": os.environ["FAKE_TOKEN"]}))
 elif "api/client/v2/token" in url:
@@ -1883,6 +1886,78 @@ def test_a_port_failure_never_takes_the_tunnel_down(pf_rig: Rig) -> None:
     failed = pf_rig.run("bind", FAKE_CURL_FAIL="getSignature")
     assert failed.returncode == 1 and "getSignature" in failed.stderr  # the timer unit shows failed
     assert pf_rig.run("bind").returncode == 0 and (pf_rig.state / "forwarded-port").exists()  # and recovers
+
+
+def _two_amsterdam_servers(rig: Rig) -> None:
+    servers = json.loads(json.dumps(SERVERS))
+    servers["regions"][1]["servers"]["wg"].append({"ip": "203.0.113.21", "cn": "amsterdam442"})
+    (rig.fake / "servers.json").write_text(json.dumps(servers))
+
+
+def _state(rig: Rig) -> dict[str, object]:
+    return json.loads((rig.state / "state.json").read_text())
+
+
+def test_a_server_without_a_reachable_port_api_is_dropped_for_another(pf_rig: Rig) -> None:
+    _two_amsterdam_servers(pf_rig)
+    result = pf_rig.run("up", FAKE_PF_DEAD="amsterdam441")
+    assert result.returncode == 0, result.stderr
+    assert "amsterdam441 has no reachable port forwarding API" in result.stdout
+    assert "registered with Netherlands (amsterdam442)" in result.stdout
+    assert _state(pf_rig)["server_cn"] == "amsterdam442"
+    assert (pf_rig.state / "forwarded-port").read_text() == "47047\n"
+    assert set(json.loads((pf_rig.state / "pf-unreachable.json").read_text())) == {"amsterdam441"}
+    # A later rebuild stays away from the dead server even though it is listed first.
+    again = pf_rig.run("up")
+    assert again.returncode == 0 and _state(pf_rig)["server_cn"] == "amsterdam442"
+    assert "has no reachable" not in again.stdout
+
+
+def test_when_no_server_answers_the_tunnel_stays_up_and_the_attempts_are_bounded(pf_rig: Rig) -> None:
+    result = pf_rig.run("up", FAKE_PF_DEAD="amsterdam441")
+    assert result.returncode == 0, "Brave must keep its VPN even when no port can be had"
+    assert result.stdout.count("registered with") == tunnel.PF_SERVER_ATTEMPTS
+    assert "port forwarding is not bound yet" in result.stdout
+    assert not (pf_rig.state / "forwarded-port").exists() and _state(pf_rig)["server_cn"] == "amsterdam441"
+
+
+def test_bind_moves_the_tunnel_off_a_server_whose_port_api_went_away(pf_rig: Rig) -> None:
+    _two_amsterdam_servers(pf_rig)
+    assert pf_rig.run("up").returncode == 0 and _state(pf_rig)["server_cn"] == "amsterdam441"
+    result = pf_rig.run("bind", FAKE_PF_DEAD="amsterdam441")
+    assert result.returncode == 0, result.stderr
+    assert "moving the tunnel to another server" in result.stdout
+    assert _state(pf_rig)["server_cn"] == "amsterdam442"
+    assert (pf_rig.state / "forwarded-port").read_text() == "47047\n"
+
+
+def test_a_refusal_by_pia_is_not_mistaken_for_a_dead_server(pf_rig: Rig) -> None:
+    pf_rig.run("up")
+    failed = pf_rig.run("bind", FAKE_BIND_FAIL="1", FAKE_CURL_FAIL="getSignature")
+    assert failed.returncode == 1 and not (pf_rig.state / "pf-unreachable.json").exists()
+
+
+def test_dead_servers_are_avoided_for_a_limited_time(pf_rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tunnel, "STATE_DIR", pf_rig.state)
+    pf_rig.state.mkdir(exist_ok=True)
+    tunnel.mark_bad_server("amsterdam441")
+    assert tunnel.bad_servers() == {"amsterdam441"}
+    assert tunnel.bad_servers(time.time() + tunnel.PF_BAD_SERVER_TTL + 5) == set()
+    tunnel.mark_bad_server("amsterdam442")  # prunes nothing live, keeps both
+    assert tunnel.bad_servers() == {"amsterdam441", "amsterdam442"}
+
+
+def test_excluded_servers_are_skipped_unless_nothing_else_is_left() -> None:
+    servers = [
+        tunnel.Server("nl_amsterdam", "Amsterdam", "203.0.113.20", "amsterdam441", port_forward=True),
+        tunnel.Server("nl_amsterdam", "Amsterdam", "203.0.113.21", "amsterdam442", port_forward=True),
+    ]
+    fast = lambda ip, port: 0.01 if ip.endswith(".20") else 0.05  # noqa: E731
+    assert tunnel.choose_server(servers, "nl_amsterdam", fast, port_forward=True).cn == "amsterdam441"
+    assert tunnel.choose_server(servers, "nl_amsterdam", fast, port_forward=True, exclude={"amsterdam441"}).cn == "amsterdam442"
+    assert tunnel.choose_server(servers, "auto", fast, port_forward=True, prefer_cn="amsterdam441", exclude={"amsterdam441"}).cn == "amsterdam442"
+    both = {"amsterdam441", "amsterdam442"}
+    assert tunnel.choose_server(servers, "nl_amsterdam", fast, port_forward=True, exclude=both).cn == "amsterdam441"
 
 
 def test_status_shows_the_forwarded_port(pf_rig: Rig) -> None:
