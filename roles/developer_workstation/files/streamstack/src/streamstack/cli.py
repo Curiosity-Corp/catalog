@@ -288,9 +288,11 @@ def run_checks(
             )
 
     checks.extend(virtualdevices.camera_checks(virtualdevices.camera_report(program, cfg["STREAMSTACK_PROGRAM_LABEL"])))
-    checks.extend(videochain.chain_checks(cfg))
+    console_video = _console_video()
+    checks.extend(videochain.chain_checks(cfg, video=console_video))
+    checks.extend(videochain.delivery_checks(cfg, console_video))
     checks.extend(pipewirecam.checks(cfg))
-    checks.extend(videochain.idle_checks(_console_video()))
+    checks.extend(videochain.idle_checks(console_video))
 
     canon = usb_products(CANON_USB_VENDOR)
     if canon:
@@ -518,7 +520,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print("\nPick these in Teams / Zoom")
     print(
         f"  Camera:     {cfg['STREAMSTACK_PROGRAM_LABEL']}   "
-        f"(graded by StreamStack; or {cfg['STREAMSTACK_CAMERA_LABEL']} raw)"
+        f"(not {cfg['STREAMSTACK_CAMERA_LABEL']}: one app at a time can read it, and StreamStack needs it)"
     )
     print("  Microphone: StreamStack Mic")
     print("  Speaker:    headphones - not the laptop speakers")
@@ -814,6 +816,14 @@ def cmd_preview(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"streamstack: {exc}", file=sys.stderr)
         return 1
+    if device == cfg["STREAMSTACK_CAMERA_DEVICE"]:
+        # One reader at a time on a loopback (#193): this window takes the camera from the engine.
+        print(
+            "streamstack: while this preview is open, StreamStack Camera cannot read "
+            f"{cfg['STREAMSTACK_CAMERA_LABEL']} (one app at a time); "
+            "`streamstack preview program` shows the graded picture without taking it",
+            file=sys.stderr,
+        )
     os.execvp(argv[0], argv)
     return 0
 

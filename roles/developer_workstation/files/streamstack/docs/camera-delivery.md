@@ -58,6 +58,29 @@ the command), a toast when it starts and when the camera is back, and `state.vid
 says the sentence a person needs: "StreamStack Camera is not listed by Teams, Zoom or Chrome: nothing feeds
 /dev/video43", naming the broken link (the source has no producer, or the engine is not running).
 
+## A source another app is reading (#193)
+
+The Canon bridge node (`/dev/video42`) is a v4l2loopback node too, and v4l2loopback streams to **one reader at a time**:
+a second opener's `VIDIOC_REQBUFS`/`VIDIOC_S_FMT` fails with `EBUSY`. On 2026-11-04 a leftover diagnostic probe held the
+Canon node, so every engine start failed with "Device or resource busy", the slate stayed up and the Camera page showed
+no Canon picture, while `streamstack doctor` said "StreamStack Camera is fed and its source is delivering": the node
+*was* fed, by the slate.
+
+Now:
+
+- The picture proof (step 4) tells a busy source from a silent one. `read_one_frame` answers a sentence when ffmpeg
+  reports `EBUSY`, naming the holder from `/proc/<pid>/fd` (`device_holders`; producers such as the bridge's own ffmpeg
+  or `--device` argument, and GStreamer `v4l2sink device=`, are not readers). Another account's processes cannot be
+  inspected; the sentence then says so. The card, the toast and `state.video.engine.delivery.reason` carry that
+  sentence, and `delivery.busy` is true.
+- An engine exit with ffmpeg's own "Device or resource busy" is translated to the same sentence, and the backoff
+  pauses repeat it instead of "no picture".
+- `streamstack doctor` reads the Console's delivery block: the `video-chain` ok row is dropped while the Console shows
+  the reconnecting card, and the `video-delivery` row fails with the reason and the fix ("close obs (pid 7), or switch
+  it to StreamStack Camera").
+- `streamstack preview` on the raw source warns that it takes the camera from the engine while open, and the doctor's
+  "Pick these" tip says why apps must pick StreamStack Camera, not the raw source.
+
 ## The Console preview never reads the camera node (#181)
 
 v4l2loopback answers a second opener's `VIDIOC_S_FMT` with `EBUSY` while another opener is streaming from the node.

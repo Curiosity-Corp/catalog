@@ -1207,6 +1207,32 @@ def test_a_stall_that_outlasts_the_burst_keeps_being_revived_on_the_backoff_sche
     assert ctl.state()["mic"]["stalled"] is True  # still stalled, and still being worked on
 
 
+def test_the_automatic_revive_log_names_the_backoff_step_and_the_next_delay(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#189: after the 3-try burst the log must not keep saying 'try N of 3'."""
+    caplog.set_level("INFO", logger=audio.log.name)
+    ctl, _ = watcher(rig, Probe(STALLED), Verify([True]), env=AUTO_ON)
+    revive_times(rig, ctl, 700)
+    lines = [
+        r.getMessage().split("reviving it automatically ", 1)[1]
+        for r in caplog.records
+        if "reviving it automatically" in r.getMessage()
+    ]
+    assert lines[:3] == [
+        "(burst try 1 of 3, next in 20 s)",
+        "(burst try 2 of 3, next in 20 s)",
+        "(burst try 3 of 3, the last one: backoff starts, next in 20 s)",
+    ]
+    assert lines[3:7] == [
+        "(backoff step 1, next in 40 s)",
+        "(backoff step 2, next in 80 s)",
+        "(backoff step 3, next in 120 s)",
+        "(backoff step 4, next in 120 s)",
+    ]
+    assert not any("of 3" in line for line in lines[3:])
+
+
 def test_the_backoff_starts_over_when_the_mic_recovers(rig: Rig) -> None:
     probe = Probe(STALLED)
     ctl, _ = watcher(rig, probe, Verify([True]), env=AUTO_ON)

@@ -510,7 +510,12 @@ class Handler(BaseHTTPRequestHandler):
         path = self.server.rig.clip_path(clip_id) if CLIP_ID.fullmatch(clip_id) else None
         if path is None or not path.is_file():
             return self._error(404, "That recording is gone.")
-        data = path.read_bytes()
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            # The clip expired, was replaced by a new mic check or was cleared between the is_file() above and this
+            # read: the same "gone" as a clip that was never there, not a crash of the handler.
+            return self._error(404, "That recording is gone.")
         status, start, end = 200, 0, len(data) - 1
         match = re.fullmatch(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
         if match and (match.group(1) or match.group(2)):

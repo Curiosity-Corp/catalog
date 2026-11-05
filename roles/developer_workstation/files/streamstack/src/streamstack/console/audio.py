@@ -831,17 +831,20 @@ class AudioController:
                 self._auto_backoff = 0  # the burst is spent: the next try waits AUTO_REVIVE_BACKOFF_S
             try_no, backoff = len(self._auto_tries), self._auto_backoff
             self._begin_revive(mic, micwatch.KIND_STALL)
-        if backoff is None or backoff == 0:
-            log.warning(
-                "microphone stalled: reviving it automatically (try %d of %d)", try_no, micwatch.AUTO_REVIVE_MAX
-            )
-        else:
-            log.warning(
-                "microphone still stalled: reviving it again (backoff try %d, next wait %.0f s)",
-                backoff,
-                self._backoff_wait(),
-            )
+        log.warning("microphone stalled: reviving it automatically (%s)", self._auto_revive_label(try_no, backoff))
         _emit(self.notify, "warn", "Microphone stalled. Reviving it automatically...")
+
+    def _auto_revive_label(self, try_no: int, backoff: int | None) -> str:
+        """What the log says about an automatic try: which phase it belongs to and when the next one is due (#189:
+        after the burst a try used to read 'try N of 3')."""
+        if backoff is None:
+            return f"burst try {try_no} of {micwatch.AUTO_REVIVE_MAX}, next in {micwatch.AUTO_REVIVE_RETRY_S:.0f} s"
+        if backoff == 0:
+            return (
+                f"burst try {try_no} of {micwatch.AUTO_REVIVE_MAX}, the last one: backoff starts, "
+                f"next in {self._backoff_wait():.0f} s"
+            )
+        return f"backoff step {backoff}, next in {self._backoff_wait():.0f} s"
 
     def _backoff_wait(self) -> float:
         """How long the next try waits after the burst: 20 s, 40 s, 80 s, then 120 s."""

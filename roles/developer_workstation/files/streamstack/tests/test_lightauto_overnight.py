@@ -300,13 +300,42 @@ def test_nothing_overrides_the_hard_rule(tmp_path: Path) -> None:
     assert not lights.is_on()
 
 
-def test_a_light_switched_on_again_with_no_camera_goes_off_again(tmp_path: Path) -> None:
+def test_a_light_switched_on_by_hand_with_no_camera_gets_its_own_window(tmp_path: Path) -> None:
+    """#195: the owner switched the Beam on with a mouse button an hour after the last call; it went off in seconds."""
     bench, lights = lit(tmp_path, 14)
     bench.step(int(lightauto.NO_CAMERA_OFF_SECONDS) + 5)
     assert not lights.is_on()
+    bench.step(3600)  # the camera has been idle for an hour
     lights.hand("a", power=True)
-    bench.step(int(lightauto.OFF_RETRY_SECONDS) + 5)
-    assert not lights.state["a"]["power"]
+    bench.step(int(lightauto.HAND_ON_SECONDS) - 10)
+    assert lights.state["a"]["power"] and not lights.state["b"]["power"]
+    assert any("goes off at" in e for e in bench.events("manual"))
+    bench.step(20)
+    assert not lights.state["a"]["power"]  # still nothing on for good without a camera
+
+
+def test_a_hand_window_at_night_is_the_short_one(tmp_path: Path) -> None:
+    bench, lights = lit(tmp_path, 23)
+    bench.step(int(lightauto.NIGHT_OFF_SECONDS) + 5)
+    assert not lights.is_on()
+    lights.hand("b", power=True)
+    bench.step(int(lightauto.NIGHT_OFF_SECONDS) + 30)
+    assert lights.state["b"]["power"]
+    bench.step(int(lightauto.HAND_ON_NIGHT_SECONDS))
+    assert not lights.is_on()
+    assert lightauto.HAND_ON_NIGHT_SECONDS < lightauto.HAND_ON_SECONDS
+
+
+def test_a_call_after_a_hand_switch_on_ends_with_the_normal_rule(tmp_path: Path) -> None:
+    bench, lights = lit(tmp_path, 14)
+    bench.step(int(lightauto.NO_CAMERA_OFF_SECONDS) + 5)
+    lights.hand("a", power=True)
+    bench.step(5)
+    bench.camera.usage = TEAMS
+    bench.step(600)
+    bench.camera.usage = IDLE
+    bench.step(int(lightauto.NO_CAMERA_OFF_SECONDS) + 5)
+    assert not lights.is_on()  # the call ended: four minutes, not the hand window again
 
 
 def test_a_camera_user_keeps_the_lights_on_by_day_and_by_night(tmp_path: Path) -> None:
