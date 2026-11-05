@@ -7,7 +7,7 @@ Managed by the curiosity.workstation role (tasks/hypersystem-desktop.yml). It re
   hypersystem-desktop list [--json]        the apps this machine installs
   hypersystem-desktop open APP [--local]   open one app in an app window
   hypersystem-desktop browser [URL]        open the suite browser profile
-  hypersystem-desktop doctor [--json]      check browser, policy, Ziti tunnel, DNS and HTTPS
+  hypersystem-desktop doctor [--json]      check browser, policy, Ziti tunnel and services, DNS and HTTP(S)
 
 Exit codes: 0 ok, 1 a doctor check failed, 2 usage or configuration error.
 """
@@ -153,8 +153,12 @@ def check_policy(config: dict[str, Any], report: Report) -> None:
     except json.JSONDecodeError as error:
         report.add("policy", "fail", f"{path} is not valid JSON: {error}")
         return
+    if not isinstance(policy, dict):
+        report.add("policy", "fail", f"{path} is not a JSON object")
+        return
     listed = {item.get("url") for item in policy.get("WebAppInstallForceList", []) if isinstance(item, dict)}
-    wanted = {app["urls"]["web"] for app in config["apps"]}
+    # Only apps on a secure origin install as web apps; the others open from their launcher.
+    wanted = {app["urls"]["web"] for app in config["apps"] if app.get("pwa", True)}
     missing = sorted(wanted - listed)
     extra = sorted(listed - wanted)
     if missing:
@@ -179,6 +183,66 @@ def check_ziti_service(config: dict[str, Any], report: Report, timeout: float) -
         report.add("ziti", "fail" if ziti["required"] else "warn", f"{service} is {state}")
 
 
+def ziti_check(status_text: str, identity_file: str, services: list[str]) -> dict[str, Any]:
+    """Same reading of `tunnel_status` as the role's hypersystem_desktop_ziti_check filter."""
+    result: dict[str, Any] = {"ok": False, "error": "", "loaded": False, "missing": list(services)}
+    try:
+        status = json.loads(status_text)
+    except json.JSONDecodeError as error:
+        result["error"] = f"tunnel_status printed invalid JSON ({error})"
+        return result
+    if not isinstance(status, dict):
+        result["error"] = "tunnel_status JSON is not an object"
+        return result
+    if status.get("Success") is False:
+        result["error"] = f"tunnel_status reported failure: {status.get('Error', 'no detail')}"
+        return result
+    data = status.get("Data")
+    identities = data.get("Identities") if isinstance(data, dict) else None
+    if not isinstance(identities, list):
+        result["error"] = "tunnel_status JSON has no Data.Identities list"
+        return result
+    counted = [
+        item
+        for item in identities
+        if isinstance(item, dict) and item.get("Loaded") is True and (not identity_file or item.get("Identifier") == identity_file)
+    ]
+    offered = {service.get("Name") for item in counted for service in (item.get("Services") or []) if isinstance(service, dict)}
+    result["loaded"] = bool(counted)
+    result["missing"] = [name for name in services if name not in offered]
+    result["ok"] = result["loaded"] and not result["missing"]
+    return result
+
+
+def check_ziti_identity(config: dict[str, Any], report: Report, timeout: float) -> None:
+    """The device identity is loaded and offers every suite service the role was given."""
+    ziti = config["ziti"]
+    identity_file = ziti.get("identity_file") or ""
+    services = [name for name in ziti.get("services") or [] if isinstance(name, str)]
+    if not identity_file and not services:
+        return
+    severity = "fail" if ziti["required"] else "warn"
+    command = ziti.get("tunnel_command") or "ziti-edge-tunnel"
+    result = _run([command, "tunnel_status"], timeout)
+    if result is None:
+        report.add("ziti services", severity, f"{command} not found; cannot ask the tunnel for its services")
+        return
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()[:300] or f"exit {result.returncode}"
+        report.add("ziti services", severity, f"{command} tunnel_status failed: {detail}")
+        return
+    checked = ziti_check(result.stdout, identity_file, services)
+    who = identity_file or "any loaded identity"
+    if checked["error"]:
+        report.add("ziti services", severity, checked["error"])
+    elif not checked["loaded"]:
+        report.add("ziti services", severity, f"{who} is not loaded in the tunnel")
+    elif checked["missing"]:
+        report.add("ziti services", severity, f"{who} does not offer {', '.join(checked['missing'])}; ask the Ziti administrator for a dial policy")
+    else:
+        report.add("ziti services", "ok", f"{who} offers {len(services)} suite service(s)")
+
+
 def resolve(host: str, timeout: float) -> list[str] | None:
     """Addresses for host through NSS (getent ahosts), or None when it does not resolve."""
     result = _run(["getent", "ahosts", host], timeout)
@@ -201,8 +265,11 @@ def check_dns(config: dict[str, Any], report: Report, timeout: float) -> None:
         return
     for app in config["apps"]:
         host = app.get("host") or ""
-        addresses = resolve(host, timeout)
         name = f"dns {app['id']}"
+        if app.get("local"):
+            report.add(name, "ok", f"{host} is this machine's loopback (no Ziti)")
+            continue
+        addresses = resolve(host, timeout)
         if addresses is None:
             report.add(name, "fail", f"{host} does not resolve")
             continue
@@ -226,12 +293,17 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def check_https(config: dict[str, Any], report: Report, timeout: float) -> None:
-    """Any HTTP answer (a sign-in redirect or 401 included) proves the app is reachable through TLS."""
+def check_web(config: dict[str, Any], report: Report, timeout: float) -> None:
+    """Any HTTP answer (a sign-in redirect or 401 included) proves the app is reachable (through TLS for https).
+
+    A per-machine app that does not answer is a warning, not a failure: its
+    service on this laptop may simply not be running.
+    """
     opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ssl.create_default_context()))
     for app in config["apps"]:
         url = app["urls"]["web"]
-        name = f"https {app['id']}"
+        name = f"web {app['id']}"
+        unreachable = "warn" if app.get("local") else "fail"
         request = urllib.request.Request(url, method="GET", headers={"User-Agent": "hypersystem-desktop-doctor"})
         try:
             with opener.open(request, timeout=timeout) as response:
@@ -240,9 +312,9 @@ def check_https(config: dict[str, Any], report: Report, timeout: float) -> None:
             status = "fail" if error.code >= 500 else "ok"
             report.add(name, status, f"{url} answered HTTP {error.code}")
         except urllib.error.URLError as error:
-            report.add(name, "fail", f"{url}: {error.reason}")
+            report.add(name, unreachable, f"{url}: {error.reason}")
         except (TimeoutError, OSError) as error:
-            report.add(name, "fail", f"{url}: {error}")
+            report.add(name, unreachable, f"{url}: {error}")
 
 
 def doctor(config: dict[str, Any], timeout: float, network: bool) -> Report:
@@ -251,11 +323,13 @@ def doctor(config: dict[str, Any], timeout: float, network: bool) -> Report:
     check_policy(config, report)
     if config["ziti"]["required"] or shutil.which("systemctl"):
         check_ziti_service(config, report, timeout)
+    if config["ziti"]["required"]:
+        check_ziti_identity(config, report, timeout)
     if not config["apps"]:
         report.add("apps", "warn", "no app is selected for this machine")
     if network:
         check_dns(config, report, timeout)
-        check_https(config, report, timeout)
+        check_web(config, report, timeout)
     return report
 
 
@@ -277,9 +351,9 @@ def main(argv: list[str]) -> int:
     browsing = sub.add_parser("browser", help="open the suite browser profile")
     browsing.add_argument("url", nargs="?")
     browsing.add_argument("--print", action="store_true", help="print the browser command instead of running it")
-    checking = sub.add_parser("doctor", help="check browser, policy, Ziti tunnel, DNS and HTTPS")
+    checking = sub.add_parser("doctor", help="check browser, policy, Ziti tunnel and services, DNS and HTTP(S)")
     checking.add_argument("--json", action="store_true")
-    checking.add_argument("--offline", action="store_true", help="skip the DNS and HTTPS checks")
+    checking.add_argument("--offline", action="store_true", help="skip the DNS and HTTP(S) checks")
     checking.add_argument("--timeout", type=float, default=5.0)
     args = parser.parse_args(argv)
 

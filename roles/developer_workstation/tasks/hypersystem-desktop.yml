@@ -7,10 +7,12 @@
 # each as a web app in one Chromium-family browser through managed policy, and
 # writes one menu launcher per app plus /usr/local/bin/hypersystem-desktop, which
 # opens an app in the dedicated suite browser profile and checks the install
-# (`hypersystem-desktop doctor`). The apps are reached through the ziti task group's
-# tunnel, which this file only checks. Always included, so turning the feature off
-# (or dropping an app) removes what an earlier run wrote. See
-# docs/hypersystem-desktop.md.
+# (`hypersystem-desktop doctor`), and an ssh_config fragment for the apps with a
+# terminal UI. The apps are reached through the ziti task group's tunnel: this
+# file checks it, and hypersystem-desktop-ziti.yml enrols the laptop's device
+# identity from a supplied token and checks the suite services. Always included,
+# so turning the feature off (or dropping an app) removes what an earlier run
+# wrote. See docs/hypersystem-desktop.md.
 # =============================================================================
 
 - name: Resolve the hypersystem-desktop browser target
@@ -58,12 +60,15 @@
       loop_control:
         label: "{{ item.path | basename }}"
 
-    - name: Remove the hypersystem-desktop helper and its configuration
+    # The Ziti device identity stays: it belongs to the tunnel, and removing it
+    # would need a new enrollment token from the Ziti administrator.
+    - name: Remove the hypersystem-desktop helper, ssh configuration and configuration
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
         - "{{ hypersystem_desktop_helper_path }}"
+        - "{{ hypersystem_desktop_ssh_config_path }}"
         - "{{ hypersystem_desktop_config_dir }}"
 
 - name: Install hypersystem-desktop
@@ -88,6 +93,9 @@
           - hypersystem_desktop_statuses | length > 0
           - hypersystem_desktop_statuses | difference(['beta', 'ga']) | length == 0
           - hypersystem_desktop_icon_map is mapping
+          - hypersystem_desktop_catalog_prefiltered is boolean
+          - hypersystem_desktop_local_apps is sequence and hypersystem_desktop_local_apps is not string
+          - hypersystem_desktop_ssh_config_path | length == 0 or hypersystem_desktop_ssh_config_path is match('^/')
         fail_msg: >-
           hypersystem-desktop needs a Debian-family host on the desktop or thin-client
           profile (this is {{ ansible_distribution }} with workstation_profile
@@ -96,8 +104,10 @@
           {{ hypersystem_desktop_browser }}); exactly one of hypersystem_desktop_catalog_src
           (an https URL or an absolute path) and hypersystem_desktop_apps; an optional
           64-character lowercase hex hypersystem_desktop_catalog_sha256; lists for
-          hypersystem_desktop_apps, _roles and _statuses, where _statuses holds only
-          beta and/or ga (planned and retired apps are not usable).
+          hypersystem_desktop_apps, _roles, _statuses and _local_apps, where _statuses
+          holds only beta and/or ga (planned and retired apps are not usable); a boolean
+          hypersystem_desktop_catalog_prefiltered; and an absolute (or empty)
+          hypersystem_desktop_ssh_config_path.
         quiet: true
 
     - name: Validate the hyperharness install hook
@@ -185,7 +195,29 @@
 
     - name: Select the apps this person may use
       ansible.builtin.set_fact:
-        _hsd_apps: "{{ _hsd_parsed.apps | hypersystem_desktop_select(hypersystem_desktop_roles, hypersystem_desktop_statuses) }}"
+        _hsd_apps: >-
+          {{ _hsd_parsed.apps | hypersystem_desktop_select(hypersystem_desktop_roles, hypersystem_desktop_statuses,
+             hypersystem_desktop_local_apps, hypersystem_desktop_catalog_prefiltered) }}
+        _hsd_skipped_local: >-
+          {{ _hsd_parsed.apps | hypersystem_desktop_skipped_local(hypersystem_desktop_roles, hypersystem_desktop_statuses,
+             hypersystem_desktop_local_apps, hypersystem_desktop_catalog_prefiltered) }}
+
+    - name: Report per-machine apps this laptop does not run
+      ansible.builtin.debug:
+        msg: >-
+          Not installing {{ _hsd_skipped_local | join(', ') }}: their address is on this
+          laptop's loopback and they are not in hypersystem_desktop_local_apps (for
+          hyperharness, set hypersystem_desktop_hyperharness_enabled: true).
+      when: _hsd_skipped_local | length > 0
+
+    - name: Report apps that get a launcher but no web app install
+      ansible.builtin.debug:
+        msg: >-
+          {{ _hsd_apps | rejectattr('pwa') | map(attribute='id') | join(', ') }} use plain http
+          outside the loopback; browsers install web apps only from a secure origin, so
+          these open from their launcher in an app window without a web app install.
+          Serve them over https to install them.
+      when: _hsd_apps | rejectattr('pwa') | list | length > 0
 
     - name: Refuse an install with no app
       ansible.builtin.assert:
@@ -246,12 +278,19 @@
         msg: >-
           ziti_health_check_probe_hosts names no suite app host, so the tunnel health
           guard cannot notice that app names stopped resolving. Add one, for example
-          {{ _hsd_apps[0].host }}.
+          {{ (_hsd_apps | rejectattr('local') | first).host }}.
       when:
         - hypersystem_desktop_require_ziti | bool
-        - _hsd_apps | length > 0
+        - _hsd_apps | rejectattr('local') | list | length > 0
         - ziti_health_check_enabled | default(true) | bool
         - ziti_health_check_probe_hosts | default([]) | intersect(_hsd_apps | map(attribute='host') | list) | length == 0
+
+    - name: Enrol the Ziti identity and check the suite services
+      ansible.builtin.include_tasks:
+        file: hypersystem-desktop-ziti.yml
+        apply:
+          tags: [hypersystem-desktop]
+      when: hypersystem_desktop_require_ziti | bool
 
     # -------------------------------------------------------------------------
     # Browser
@@ -327,6 +366,9 @@
             required: "{{ hypersystem_desktop_require_ziti | bool }}"
             service: "{{ ziti_service_name }}"
             dns_ip_range: "{{ hypersystem_desktop_ziti_dns_ip_range }}"
+            tunnel_command: "{{ hypersystem_desktop_ziti_tunnel_command }}"
+            identity_file: "{{ _hsd_ziti_identity_file | default('') if hypersystem_desktop_require_ziti | bool else '' }}"
+            services: "{{ hypersystem_desktop_ziti_services if hypersystem_desktop_require_ziti | bool else [] }}"
 
     - name: Install the hypersystem-desktop helper
       ansible.builtin.copy:
@@ -404,6 +446,45 @@
       loop_control:
         label: "{{ item.path | basename }}"
       when: (item.path | basename) not in (_hsd_launchers | map(attribute='file') | list)
+
+    # -------------------------------------------------------------------------
+    # ssh_config: `ssh <app>` for the apps with a terminal UI (ADR 0310 section 2)
+    # -------------------------------------------------------------------------
+    - name: Render the suite ssh configuration
+      ansible.builtin.set_fact:
+        _hsd_ssh_config: >-
+          {{ _hsd_apps | hypersystem_desktop_ssh_config('Managed by the curiosity.workstation role (hypersystem-desktop); do not edit.') }}
+      when: hypersystem_desktop_ssh_config_path | length > 0
+
+    - name: Create the ssh client configuration directory
+      ansible.builtin.file:
+        path: "{{ hypersystem_desktop_ssh_config_path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when:
+        - hypersystem_desktop_ssh_config_path | length > 0
+        - _hsd_ssh_config | length > 0
+
+    - name: Write the suite ssh configuration
+      ansible.builtin.copy:
+        content: "{{ _hsd_ssh_config }}"
+        dest: "{{ hypersystem_desktop_ssh_config_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - hypersystem_desktop_ssh_config_path | length > 0
+        - _hsd_ssh_config | length > 0
+
+    - name: Remove the suite ssh configuration when no app has a terminal UI
+      ansible.builtin.file:
+        path: "{{ hypersystem_desktop_ssh_config_path }}"
+        state: absent
+      when:
+        - hypersystem_desktop_ssh_config_path | length > 0
+        - _hsd_ssh_config | length == 0
 
     # -------------------------------------------------------------------------
     # Optional hyperharness

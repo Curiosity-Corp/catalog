@@ -1,9 +1,10 @@
 """hypersystem-desktop installs a suite's web apps on a laptop (catalog#142).
 
 These checks pin the catalog parsing and role selection (the filters), the role
-wiring (off by default, after the ziti task group, never configuring Ziti), the
-launcher template, and the `hypersystem-desktop` helper against stub
-`systemctl` and `getent` commands. A last group runs the task file through
+wiring (off by default, after the ziti task group, never installing the tunnel
+or changing its DNS, enrolling only its own device identity from a supplied
+token), the launcher template and ssh entries, and the `hypersystem-desktop`
+helper against stub `systemctl`, `getent` and `ziti-edge-tunnel` commands. A last group runs the task file through
 `ansible-playbook --check` as an unprivileged user, so the whole flow from a
 catalog file to the policy, configuration and launchers is exercised without a
 browser, a tunnel or root.
@@ -70,7 +71,7 @@ CATALOG = {
     "schema": "hypersystem-catalog/v1",
     "apps": [
         _entry("home", [], "planned"),
-        _entry("ledger", ["suite-finance", "suite-exec"], "beta"),
+        _entry("ledger", ["suite-finance", "suite-exec"], "beta", ssh="ledger.suite.example"),
         _entry("sales", []),
         _entry("comms", ["suite-comms"]),
         _entry("old", [], "retired"),
@@ -116,8 +117,8 @@ def test_malformed_and_duplicate_entries_are_dropped_and_reported() -> None:
     apps = [
         _entry("good", []),
         _entry("Bad_Id", []),
-        _entry("plain", [], urls={"web": "http://plain.suite.example/"}),
         _entry("script", [], urls={"web": "javascript:alert(1)"}),
+        _entry("badport", [], urls={"web": "https://x.suite.example:99999/"}),
         _entry("badrole", [""]),
         _entry("badstatus", [], "live"),
         _entry("badlocal", [], urls={"web": "https://x.suite.example/", "local": "ftp://x"}),
@@ -130,8 +131,8 @@ def test_malformed_and_duplicate_entries_are_dropped_and_reported() -> None:
     problems = "\n".join(parsed["problems"])
     for expected in (
         "Bad_Id: id 'Bad_Id' must be lowercase",
-        "plain: urls.web must be an absolute https URL",
-        "script: urls.web must be an absolute https URL",
+        "script: urls.web must be an absolute http(s) URL",
+        "badport: urls.web must be an absolute http(s) URL",
         "badrole: roles must be a list of non-empty strings",
         "badstatus: status must be one of planned, beta, ga, retired",
         "badlocal: urls.local must be an absolute http(s) URL",
@@ -153,6 +154,112 @@ def test_variables_mode_defaults_roles_and_status() -> None:
     # The compiled document carries every field; there a missing status is a problem.
     strict = F.hypersystem_desktop_parse_catalog([{"id": "x", "name": "X", "roles": [], "urls": {"web": "https://x.example/"}}])
     assert "x: status must be one of" in strict["problems"][0]
+
+
+def test_http_and_loopback_addresses_follow_the_suite_schema() -> None:
+    """The suite schema allows http; only a secure origin installs as a web app, and the loopback skips Ziti."""
+    parsed = F.hypersystem_desktop_parse_catalog(
+        [
+            _entry("secure", []),
+            _entry("plain", [], urls={"web": "http://plain.ziti.example:8770"}),
+            _entry("harness", [], urls={"web": "http://127.0.0.1:8765", "local": "http://127.0.0.1:8765"}),
+            _entry("named", [], urls={"web": "http://localhost:8787/"}),
+            _entry("six", [], urls={"web": "http://[::1]:8787/"}),
+        ]
+    )
+    assert parsed["problems"] == []
+    flags = {app["id"]: (app["host"], app["local"], app["pwa"]) for app in parsed["apps"]}
+    assert flags == {
+        "secure": ("secure.suite.example", False, True),
+        "plain": ("plain.ziti.example", False, False),
+        "harness": ("127.0.0.1", True, True),
+        "named": ("localhost", True, True),
+        "six": ("::1", True, True),
+    }
+    policy_urls = [item["url"] for item in F.hypersystem_desktop_policy(parsed["apps"])["WebAppInstallForceList"]]
+    assert "http://plain.ziti.example:8770" not in policy_urls
+    assert "http://127.0.0.1:8765" in policy_urls
+    # Every app still gets a launcher, the plain-http one included.
+    launchers = F.hypersystem_desktop_launchers(parsed["apps"], "HyperSystem", {}, "web-browser")
+    assert "hypersystem-desktop-plain.desktop" in [item["file"] for item in launchers]
+
+
+def test_per_machine_apps_need_an_explicit_opt_in() -> None:
+    apps = F.hypersystem_desktop_parse_catalog(
+        [_entry("sales", []), _entry("hyperharness", ["suite-engineer"], "beta", urls={"web": "http://127.0.0.1:8765"})]
+    )["apps"]
+    roles, statuses = ["suite-engineer"], ["beta", "ga"]
+    assert [a["id"] for a in F.hypersystem_desktop_select(apps, roles, statuses, [])] == ["sales"]
+    assert [a["id"] for a in F.hypersystem_desktop_select(apps, roles, statuses, ["hyperharness"])] == ["sales", "hyperharness"]
+    assert [a["id"] for a in F.hypersystem_desktop_select(apps, roles, statuses)] == ["sales", "hyperharness"]
+    assert F.hypersystem_desktop_skipped_local(apps, roles, statuses, []) == ["hyperharness"]
+    # Not allowed by role: not reported as skipped either.
+    assert F.hypersystem_desktop_skipped_local(apps, ["suite-comms"], statuses, []) == []
+    # A loopback app never needs a Ziti intercept domain.
+    assert F.hypersystem_desktop_uncovered_hosts(apps, ["suite.example"]) == []
+
+
+def test_a_prefiltered_catalog_skips_the_role_test_but_not_the_status() -> None:
+    apps = F.hypersystem_desktop_parse_catalog(CATALOG)["apps"]
+    assert [a["id"] for a in F.hypersystem_desktop_select(apps, [], ["beta", "ga"], None, True)] == ["ledger", "sales", "comms"]
+
+
+def test_ssh_entries_for_apps_with_a_terminal_ui() -> None:
+    apps = F.hypersystem_desktop_parse_catalog(
+        [_entry("harness", [], ssh="harness.suite.example"), _entry("sales", []), _entry("ledger", [], ssh="ledger-ssh.suite.example")]
+    )["apps"]
+    assert F.hypersystem_desktop_ssh_config(apps, "Managed") == (
+        "# Managed\n\nHost harness\n    HostName harness.suite.example\n\nHost ledger\n    HostName ledger-ssh.suite.example\n"
+    )
+    assert F.hypersystem_desktop_ssh_config(apps[1:2], "Managed") == ""
+    # The ssh host is reached through the tunnel too, so it must be intercepted.
+    assert F.hypersystem_desktop_uncovered_hosts(apps, ["suite.example"]) == []
+    assert F.hypersystem_desktop_uncovered_hosts(apps[:1], ["harness.suite.example"]) == []
+    outside = F.hypersystem_desktop_parse_catalog([_entry("x", [], ssh="x.other.example")])["apps"]
+    assert F.hypersystem_desktop_uncovered_hosts(outside, ["suite.example"]) == ["x.other.example"]
+    # A host with an ssh_config keyword or whitespace never parses.
+    bad = F.hypersystem_desktop_parse_catalog([_entry("evil", [], ssh="x\n  ProxyCommand sh")])
+    assert bad["apps"] == [] and "evil: ssh must be a host name or null" in bad["problems"][0]
+
+
+IDENTITY = "/opt/openziti/etc/identities/laptop.json"
+
+
+def _tunnel_status(services: list[str], *, loaded: bool = True, identifier: str = IDENTITY) -> dict:
+    return {
+        "Success": True,
+        "Data": {
+            "Identities": [
+                {"Name": "other", "Identifier": "/opt/openziti/etc/identities/other.json", "Loaded": True, "Services": [{"Name": "elsewhere"}]},
+                {"Name": "laptop", "Identifier": identifier, "Active": True, "Loaded": loaded, "Services": [{"Name": name} for name in services]},
+            ]
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "identity", "expected"),
+    [
+        (_tunnel_status(["ledger", "sales"]), IDENTITY, {"ok": True, "loaded": True, "missing": [], "error": ""}),
+        (_tunnel_status(["ledger"]), IDENTITY, {"ok": False, "loaded": True, "missing": ["sales"], "error": ""}),
+        (_tunnel_status(["ledger", "sales"], loaded=False), IDENTITY, {"ok": False, "loaded": False, "missing": ["ledger", "sales"], "error": ""}),
+        # Another identity's services do not count for this laptop's identity...
+        (_tunnel_status(["ledger", "sales"]), "/opt/openziti/etc/identities/absent.json", {"ok": False, "loaded": False, "missing": ["ledger", "sales"], "error": ""}),
+        # ...but with no identity named, every loaded identity counts.
+        (_tunnel_status(["ledger"]), "", {"ok": False, "loaded": True, "missing": ["sales"], "error": ""}),
+        ({"Success": False, "Error": "ipc down"}, IDENTITY, {"ok": False, "loaded": False, "missing": ["ledger", "sales"], "error": "tunnel_status reported failure: ipc down"}),
+        ({"Data": {}}, IDENTITY, {"ok": False, "loaded": False, "missing": ["ledger", "sales"], "error": "tunnel_status JSON has no Data.Identities list"}),
+    ],
+)
+def test_ziti_check_reads_the_tunnel_status(status: dict, identity: str, expected: dict) -> None:
+    assert F.hypersystem_desktop_ziti_check(json.dumps(status), identity, ["ledger", "sales"]) == expected
+
+
+def test_ziti_check_survives_garbage() -> None:
+    result = F.hypersystem_desktop_ziti_check("not json", IDENTITY, ["ledger"])
+    assert result["ok"] is False and result["error"].startswith("tunnel_status printed invalid JSON")
+    with pytest.raises(AnsibleFilterError):
+        F.hypersystem_desktop_ziti_check("{}", IDENTITY, "ledger")
 
 
 def test_local_url_is_kept_for_per_machine_apps() -> None:
@@ -258,6 +365,15 @@ def test_defaults_are_off_and_name_nothing_private() -> None:
     assert DEFAULTS["hypersystem_desktop_catalog_strict"] is True
     assert DEFAULTS["hypersystem_desktop_hyperharness_enabled"] is False
     assert DEFAULTS["hypersystem_desktop_hyperharness_install_argv"] == []
+    # No identity, token or service is named by the public role.
+    assert DEFAULTS["hypersystem_desktop_ziti_identity_name"] == ""
+    assert DEFAULTS["hypersystem_desktop_ziti_enrollment_jwt"] == ""
+    assert DEFAULTS["hypersystem_desktop_ziti_services"] == []
+    assert DEFAULTS["hypersystem_desktop_ziti_require_services"] is True
+    assert DEFAULTS["hypersystem_desktop_catalog_prefiltered"] is False
+    assert DEFAULTS["hypersystem_desktop_ssh_config_path"].startswith("/etc/ssh/ssh_config.d/")
+    # hyperharness on the laptop's loopback is listed only when hyperharness is installed.
+    assert "hypersystem_desktop_hyperharness_enabled" in DEFAULTS["hypersystem_desktop_local_apps"]
 
 
 def test_browser_targets_use_each_package_s_policy_directory() -> None:
@@ -299,7 +415,7 @@ def test_include_follows_the_ziti_task_group_and_applies_its_tag() -> None:
 
 def test_task_group_checks_ziti_but_never_configures_it() -> None:
     text = (ROLE / "tasks/hypersystem-desktop.yml").read_text()
-    for forbidden in ("ziti-edge-tunnel tunnel", "resolvectl", "apt_repository", "openziti", "ziti.yml", "systemctl restart", "systemd:"):
+    for forbidden in ("ziti-edge-tunnel tunnel", "resolvectl", "apt_repository", "openziti", "file: ziti.yml", "systemctl restart", "systemd:"):
         assert forbidden not in text
     by_name = {task["name"]: task for task in _walk(_tasks("hypersystem-desktop.yml"))}
     lookup = by_name["Look for the Ziti tunnel unit"]
@@ -307,6 +423,39 @@ def test_task_group_checks_ziti_but_never_configures_it() -> None:
     assert "ziti_enabled" in by_name["Require the Ziti tunnel"]["ansible.builtin.assert"]["that"][0]
     assert "hypersystem_desktop_require_ziti: false" in by_name["Require the Ziti tunnel"]["ansible.builtin.assert"]["fail_msg"]
     assert "ziti_intercept_domains" in by_name["Require every app host inside the Ziti intercept domains"]["ansible.builtin.assert"]["fail_msg"]
+
+
+def test_ziti_identity_file_only_enrols_and_reads() -> None:
+    """The identity file enrols from a token and asks the tunnel; it never installs, reconfigures or restarts Ziti itself."""
+    text = (ROLE / "tasks/hypersystem-desktop-ziti.yml").read_text()
+    for forbidden in ("resolvectl", "apt_repository", "ansible.builtin.apt", "dnsmasq", "systemctl restart", "ansible.builtin.systemd", "ansible.builtin.service"):
+        assert forbidden not in text
+    tasks = list(_walk(_tasks("hypersystem-desktop-ziti.yml")))
+    by_name = {task["name"]: task for task in tasks}
+    # The token is only ever written with no_log to a root-only temp file, and always removed.
+    # Elsewhere the token is only tested for presence in conditions, never rendered.
+    leaves = [task for task in tasks if not any(key in task for key in ("block", "rescue", "always"))]
+    renders = [task["name"] for task in leaves if "{{ hypersystem_desktop_ziti_enrollment_jwt" in json.dumps(task)]
+    assert renders == ["Write the enrollment token"]
+    write = by_name["Write the enrollment token"]
+    assert write["no_log"] is True and write["ansible.builtin.copy"]["mode"] == "0600"
+    enrol_block = by_name["Enrol from the one-time token"]
+    assert [task["name"] for task in enrol_block["always"]][0] == "Remove the enrollment token"
+    assert enrol_block["always"][0]["ansible.builtin.file"]["state"] == "absent"
+    enrol = by_name["Enrol the identity with the Ziti controller"]
+    assert enrol["ansible.builtin.command"]["argv"][1] == "enroll"
+    assert enrol["ansible.builtin.command"]["creates"] == "{{ _hsd_ziti_identity_file }}"
+    # The restart goes through the guarded handler that defers while ssh is live.
+    assert enrol["notify"] == "Restart ziti-edge-tunnel"
+    handlers = yaml.load((ROLE / "handlers/main.yml").read_text(), Loader=_Loader)
+    assert "curiosity-ziti-safe-restart" in json.dumps(next(h for h in handlers if h["name"] == "Restart ziti-edge-tunnel"))
+    # Reading the tunnel is read-only, so it runs in check mode too.
+    for name in ("Read the Ziti tunnel state", "Ask the tunnel which services it offers"):
+        assert by_name[name]["check_mode"] is False and by_name[name]["changed_when"] is False
+    main = _tasks("hypersystem-desktop.yml")
+    include = next(task for task in _walk(main) if task["name"] == "Enrol the Ziti identity and check the suite services")
+    assert include["ansible.builtin.include_tasks"]["file"] == "hypersystem-desktop-ziti.yml"
+    assert include["when"] == "hypersystem_desktop_require_ziti | bool"
 
 
 def test_catalog_fetch_is_read_only_in_check_mode_and_hides_credentials() -> None:
@@ -322,8 +471,10 @@ def test_disabled_feature_retires_only_after_an_install() -> None:
     retire = next(task for task in tasks if task["name"] == "Retire hypersystem-desktop when it is off")
     assert "_hsd_installed.stat.exists" in retire["when"]
     removed = json.dumps(retire["block"])
-    for path in ("hypersystem_desktop_policy_file_name", "hypersystem-desktop*.desktop", "hypersystem_desktop_helper_path", "hypersystem_desktop_config_dir"):
+    for path in ("hypersystem_desktop_policy_file_name", "hypersystem-desktop*.desktop", "hypersystem_desktop_helper_path", "hypersystem_desktop_config_dir", "hypersystem_desktop_ssh_config_path"):
         assert path in removed
+    # The device identity belongs to the tunnel and is kept.
+    assert "identity" not in removed
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +482,14 @@ def test_disabled_feature_retires_only_after_an_install() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_config(tmp_path: Path, *, required: bool = True, apps: list[dict] | None = None, policy_apps: list[dict] | None = None) -> Path:
+def _write_config(
+    tmp_path: Path,
+    *,
+    required: bool = True,
+    apps: list[dict] | None = None,
+    policy_apps: list[dict] | None = None,
+    ziti: dict | None = None,
+) -> Path:
     selected = apps if apps is not None else F.hypersystem_desktop_select(F.hypersystem_desktop_parse_catalog(CATALOG)["apps"], ["suite-finance"], ["beta", "ga"])
     policy = tmp_path / "policy.json"
     policy.write_text(json.dumps(F.hypersystem_desktop_policy(policy_apps if policy_apps is not None else selected)))
@@ -342,7 +500,7 @@ def _write_config(tmp_path: Path, *, required: bool = True, apps: list[dict] | N
         "schema": "hypersystem-desktop/v1",
         "browser": {"name": "chromium", "binary": str(browser), "policy_file": str(policy), "user_data_dir": ".config/hypersystem-desktop/chromium"},
         "apps": selected,
-        "ziti": {"required": required, "service": "ziti-edge-tunnel.service", "dns_ip_range": "100.64.0.0/10"},
+        "ziti": {"required": required, "service": "ziti-edge-tunnel.service", "dns_ip_range": "100.64.0.0/10", **(ziti or {})},
     }
     path = tmp_path / "config.json"
     path.write_text(json.dumps(config))
@@ -419,7 +577,37 @@ def test_doctor_fails_on_a_down_tunnel_and_a_missing_policy_entry(tmp_path: Path
     assert "FAIL  policy:" in result.stdout and "https://sales.suite.example/" in result.stdout
 
 
-def test_doctor_dns_must_land_in_the_ziti_range(tmp_path: Path) -> None:
+def _tunnel_stub(tmp_path: Path, status: dict | None, rc: int = 0) -> Path:
+    stub = tmp_path / "ziti-edge-tunnel"
+    payload = json.dumps(status) if status is not None else ""
+    stub.write_text(f"#!/bin/sh\n[ \"$1\" = tunnel_status ] || exit 9\ncat <<'JSON'\n{payload}\nJSON\nexit {rc}\n")
+    stub.chmod(0o755)
+    return stub
+
+
+def test_doctor_checks_the_identity_offers_the_suite_services(tmp_path: Path) -> None:
+    bin_dir = _stubs(tmp_path)
+    ziti = {"identity_file": IDENTITY, "services": ["ledger", "sales"], "tunnel_command": str(_tunnel_stub(tmp_path, _tunnel_status(["ledger", "sales"])))}
+    good = _helper(tmp_path, _write_config(tmp_path, ziti=ziti), "doctor", "--json", "--offline", bin_dir=bin_dir)
+    assert good.returncode == 0, good.stdout
+    checks = {check["name"]: check for check in json.loads(good.stdout)["checks"]}
+    assert checks["ziti services"]["status"] == "ok"
+
+    ziti["tunnel_command"] = str(_tunnel_stub(tmp_path, _tunnel_status(["ledger"])))
+    missing = _helper(tmp_path, _write_config(tmp_path, ziti=ziti), "doctor", "--offline", bin_dir=bin_dir)
+    assert missing.returncode == 1
+    assert f"FAIL  ziti services: {IDENTITY} does not offer sales" in missing.stdout
+
+    ziti["tunnel_command"] = str(_tunnel_stub(tmp_path, None, rc=1))
+    down = _helper(tmp_path, _write_config(tmp_path, ziti=ziti), "doctor", "--offline", bin_dir=bin_dir)
+    assert down.returncode == 1 and "tunnel_status failed" in down.stdout
+
+    ziti["tunnel_command"] = str(tmp_path / "absent-tunnel")
+    absent = _helper(tmp_path, _write_config(tmp_path, ziti=ziti), "doctor", "--offline", bin_dir=bin_dir)
+    assert absent.returncode == 1 and "not found" in absent.stdout
+
+
+def _load_helper():
     from importlib.machinery import SourceFileLoader
 
     loader = SourceFileLoader("hypersystem_desktop_helper", str(HELPER))
@@ -428,6 +616,44 @@ def test_doctor_dns_must_land_in_the_ziti_range(tmp_path: Path) -> None:
     # dataclasses resolve string annotations through sys.modules.
     sys.modules[loader.name] = helper
     loader.exec_module(helper)
+    return helper
+
+
+def test_helper_and_filter_read_the_tunnel_status_alike() -> None:
+    helper = _load_helper()
+    for status in (_tunnel_status(["ledger"]), _tunnel_status([], loaded=False), {"Success": False}, {"Data": []}):
+        for identity in (IDENTITY, ""):
+            text = json.dumps(status)
+            assert helper.ziti_check(text, identity, ["ledger", "sales"]) == F.hypersystem_desktop_ziti_check(text, identity, ["ledger", "sales"])
+
+
+def test_doctor_treats_per_machine_and_plain_http_apps_on_their_terms(tmp_path: Path) -> None:
+    helper = _load_helper()
+    apps = F.hypersystem_desktop_parse_catalog(
+        [_entry("plain", [], urls={"web": "http://plain.suite.example:8770"}), _entry("harness", [], urls={"web": "http://127.0.0.1:9"})]
+    )["apps"]
+    config = helper.load_config(str(_write_config(tmp_path, apps=apps)))
+    report = helper.Report()
+    helper.check_policy(config, report)
+    # Only the loopback app is a web app install; the plain-http one is launcher-only.
+    assert report.checks[0].status == "ok" and "1 app(s)" in report.checks[0].detail
+    bin_dir = _stubs(tmp_path, hosts={"plain.suite.example": "100.64.0.9"})
+    old_path = os.environ["PATH"]
+    os.environ["PATH"] = f"{bin_dir}:{old_path}"
+    try:
+        dns = helper.Report()
+        helper.check_dns(config, dns, 5.0)
+    finally:
+        os.environ["PATH"] = old_path
+    assert {check.name: check.status for check in dns.checks} == {"dns plain": "ok", "dns harness": "ok"}
+    web = helper.Report()
+    helper.check_web({**config, "apps": apps[1:]}, web, 2.0)
+    # Nothing listens on 127.0.0.1:9: a stopped per-machine service is a warning, not a failure.
+    assert web.checks[0].status == "warn"
+
+
+def test_doctor_dns_must_land_in_the_ziti_range(tmp_path: Path) -> None:
+    helper = _load_helper()
     config = helper.load_config(str(_write_config(tmp_path)))
     bin_dir = _stubs(tmp_path, hosts={"ledger.suite.example": "100.64.0.7", "sales.suite.example": "203.0.113.5"})
     old_path = os.environ["PATH"]
@@ -482,9 +708,9 @@ class CallbackModule(CallbackBase):
 """
 
 
-def _play(tmp_path: Path, overrides: dict) -> subprocess.CompletedProcess[str]:
+def _play(tmp_path: Path, overrides: dict, document: dict | None = None) -> subprocess.CompletedProcess[str]:
     catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps(CATALOG))
+    catalog.write_text(json.dumps(document if document is not None else CATALOG))
     variables = {
         "workstation_profile": "desktop",
         "dev_user": os.environ.get("USER", "nobody"),
@@ -500,6 +726,9 @@ def _play(tmp_path: Path, overrides: dict) -> subprocess.CompletedProcess[str]:
         "hypersystem_desktop_config_dir": str(tmp_path / "etc"),
         "hypersystem_desktop_helper_path": str(tmp_path / "bin/hypersystem-desktop"),
         "hypersystem_desktop_applications_dir": str(tmp_path / "applications"),
+        "hypersystem_desktop_ssh_config_path": str(tmp_path / "ssh/30-hypersystem-desktop.conf"),
+        # A unit that does not exist, so the services check never asks a real tunnel.
+        "ziti_service_name": "hypersystem-desktop-test-no-such.service",
         "ziti_enabled": True,
         "ziti_intercept_domains": ["suite.example"],
         **overrides,
@@ -557,6 +786,10 @@ def test_check_mode_run_selects_apps_and_previews_every_file(tmp_path: Path) -> 
         assert results[name].get("changed") is True, name
     launchers = [item["_hsd_entry"]["file"] for item in results["Write the suite launchers"]["results"]]
     assert launchers == ["hypersystem-desktop.desktop", "hypersystem-desktop-ledger.desktop", "hypersystem-desktop-sales.desktop"]
+    assert results["Write the suite ssh configuration"].get("changed") is True
+    assert "Host ledger\n    HostName ledger.suite.example" in results["Render the suite ssh configuration"]["ansible_facts"]["_hsd_ssh_config"]
+    # No identity named: nothing to enrol, and the (absent) tunnel is not asked for services.
+    assert "skip_reason" in results["Look for the enrolled Ziti identity"]
     # Check mode wrote nothing.
     assert not (tmp_path / "policy").exists() and not (tmp_path / "etc").exists()
 
@@ -592,3 +825,82 @@ def test_disabled_run_on_a_clean_host_touches_nothing(tmp_path: Path) -> None:
     results = _results(tmp_path)
     assert results["Check for an earlier hypersystem-desktop install"]["stat"]["exists"] is False
     assert all(not result.get("changed") for result in results.values())
+
+
+@pytest.mark.skipif(ANSIBLE_PLAYBOOK is None, reason="ansible-playbook is not installed")
+def test_check_mode_run_with_the_real_catalog_shape(tmp_path: Path) -> None:
+    """Plain-http and loopback apps, as the suite catalog has them, install without a schema fight."""
+    document = {
+        "schema": "hypersystem-catalog/v1",
+        "apps": [
+            _entry("ledger", ["suite-finance"], "beta", urls={"web": "http://ledger.suite.example:8770"}),
+            _entry("hyperharness", ["suite-finance"], "beta", urls={"web": "http://127.0.0.1:8765", "local": "http://127.0.0.1:8765"}),
+        ],
+    }
+    run = _play(tmp_path, {}, document)
+    assert run.returncode == 0, run.stdout[-4000:]
+    results = _results(tmp_path)
+    assert [app["id"] for app in results["Select the apps this person may use"]["ansible_facts"]["_hsd_apps"]] == ["ledger"]
+    assert "Not installing hyperharness" in results["Report per-machine apps this laptop does not run"]["msg"]
+    assert "ledger use plain http" in results["Report apps that get a launcher but no web app install"]["msg"]
+    (tmp_path / "harness").mkdir()
+    with_harness = _play(tmp_path / "harness", {"hypersystem_desktop_local_apps": ["hyperharness"]}, document)
+    assert with_harness.returncode == 0, with_harness.stdout[-4000:]
+    selected = _results(tmp_path / "harness")["Select the apps this person may use"]["ansible_facts"]["_hsd_apps"]
+    assert [app["id"] for app in selected] == ["ledger", "hyperharness"]
+
+
+TOKEN = "eyJhbGciOiJSUzI1NiJ9.test-enrollment-token-not-real.c2lnbmF0dXJl"
+
+
+def _version_stub(tmp_path: Path) -> str:
+    stub = tmp_path / "ziti-edge-tunnel-stub"
+    stub.write_text('#!/bin/sh\n[ "$1" = version ] && echo v1.7.0 && exit 0\nexit 9\n')
+    stub.chmod(0o755)
+    return str(stub)
+
+
+@pytest.mark.skipif(ANSIBLE_PLAYBOOK is None, reason="ansible-playbook is not installed")
+def test_check_mode_run_without_an_enrolled_identity_needs_a_token(tmp_path: Path) -> None:
+    run = _play(tmp_path, {"hypersystem_desktop_ziti_identity_name": "laptop", "hypersystem_desktop_ziti_identity_dir": str(tmp_path / "identities")})
+    assert run.returncode != 0
+    assert "is not enrolled yet" in run.stdout and "hypersystem_desktop_ziti_enrollment_jwt" in run.stdout
+
+
+@pytest.mark.skipif(ANSIBLE_PLAYBOOK is None, reason="ansible-playbook is not installed")
+def test_check_mode_run_previews_the_enrollment_and_never_prints_the_token(tmp_path: Path) -> None:
+    run = _play(
+        tmp_path,
+        {
+            "hypersystem_desktop_ziti_identity_name": "laptop",
+            "hypersystem_desktop_ziti_identity_dir": str(tmp_path / "identities"),
+            "hypersystem_desktop_ziti_enrollment_jwt": TOKEN,
+            "hypersystem_desktop_ziti_tunnel_command": _version_stub(tmp_path),
+            "hypersystem_desktop_ziti_services": ["ledger", "sales"],
+        },
+    )
+    assert run.returncode == 0, run.stdout[-4000:]
+    results = _results(tmp_path)
+    assert "would enrol " + str(tmp_path / "identities/laptop.json") in results["Report the enrollment a real run would do"]["msg"]
+    assert "skip_reason" in results["Create a root-only file for the enrollment token"]
+    assert TOKEN not in run.stdout + run.stderr
+    assert TOKEN not in (tmp_path / "results.json").read_text()
+    assert not (tmp_path / "identities").exists()
+    # The unit does not exist, so the services are left to `hypersystem-desktop doctor`.
+    assert "were not checked" in results["Report a stopped tunnel"]["msg"]
+
+
+@pytest.mark.skipif(ANSIBLE_PLAYBOOK is None, reason="ansible-playbook is not installed")
+def test_check_mode_run_refuses_to_enrol_without_the_tunnel(tmp_path: Path) -> None:
+    run = _play(
+        tmp_path,
+        {
+            "hypersystem_desktop_ziti_identity_name": "laptop",
+            "hypersystem_desktop_ziti_identity_dir": str(tmp_path / "identities"),
+            "hypersystem_desktop_ziti_enrollment_jwt": TOKEN,
+            "hypersystem_desktop_ziti_tunnel_command": str(tmp_path / "no-such-tunnel"),
+        },
+    )
+    assert run.returncode != 0
+    assert "Cannot enrol" in run.stdout and "ziti_enabled: true" in run.stdout
+    assert TOKEN not in run.stdout + run.stderr
