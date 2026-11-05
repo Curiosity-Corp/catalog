@@ -664,11 +664,15 @@ def ensure(cfg: Config, retries: int) -> None:
 def status(cfg: Config) -> int:
     healthy, reason = health(cfg)
     state = read_state() or {}
-    print(f"namespace:  {cfg.netns} ({'present' if (NETNS_RUN / cfg.netns).exists() else 'absent'})")
-    print(f"connected:  {'yes' if healthy else 'no'} ({reason})")
+
+    def row(label: str, value: object) -> None:
+        print(f"{label + ':':<16}{value}")
+
+    row("namespace", f"{cfg.netns} ({'present' if (NETNS_RUN / cfg.netns).exists() else 'absent'})")
+    row("connected", f"{'yes' if healthy else 'no'} ({reason})")
     for key in ("region_name", "server_cn", "server_ip", "peer_ip", "dns", "established_at"):
         if key in state:
-            print(f"{key + ':':<12}{state[key]}")
+            row(key, state[key])
     return 0 if healthy else 1
 
 

@@ -2028,23 +2028,38 @@ pia_tunnel_users: "{{ dev_users | map(attribute='name') | list }}"
 # scope; `managed_policies` are root-owned browser policy files.
 pia_tunnel_app_definitions:
   brave-browser:
+    # The package's own launcher script, NOT /usr/bin/brave-browser-stable: that
+    # path is diverted (below) and holds the tunnel shim.
     command:
-      - /usr/bin/brave-browser-stable
+      - /opt/brave.com/brave/brave-browser
     guard_exe: /opt/brave.com/brave/brave
     desktop_ids:
       - brave-browser.desktop
       - com.brave.Browser.desktop
     desktop_commands:
       - /usr/bin/brave-browser-stable
-    shims:
-      - brave-browser
-      - brave-browser-stable
-    # Keeps the memory cap the old ~/.local/bin/brave-capped wrapper gave
-    # (OOM on 2026-10-17: 257 Brave processes, ~46 GB).
+      - /usr/bin/brave-browser
+    # Every launch by name or path goes through the tunnel: dpkg-divert moves the
+    # package's /usr/bin/brave-browser-stable symlink aside and the tunnel shim
+    # takes its place. /usr/bin/brave-browser (an alternative), the x-www-browser
+    # and gnome-www-browser alternatives, xdg-open, autostart entries and scripts
+    # all resolve to it. Only running /opt/brave.com/brave/* by hand bypasses it.
+    diverted:
+      - /usr/bin/brave-browser-stable
+    shims: []
+    # The hand-made wrapper (2026-10-17) that capped Brave's memory; replaced by a
+    # shim into the launcher (original kept as brave-capped.pre-pia-tunnel).
+    legacy_wrappers:
+      - .local/bin/brave-capped
+    # Keeps the memory cap of the old ~/.local/bin/brave-capped wrapper (OOM on
+    # 2026-10-17: 257 Brave processes, ~46 GB), including its overrides.
     scope:
       slice: app-browser.slice
       MemoryHigh: 16G
       MemoryMax: 24G
+    scope_env:
+      MemoryHigh: BRAVE_MEMORY_HIGH
+      MemoryMax: BRAVE_MEMORY_MAX
     # WebRTC may only use the public (tunnel) interface; the namespace already
     # has no other interface, this makes Brave agree.
     managed_policies:

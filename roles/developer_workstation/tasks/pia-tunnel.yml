@@ -13,7 +13,8 @@
 #                                 service owns it, a timer re-establishes it.
 #   curiosity-pia-run APP         user launcher; the root stage is reached only
 #                                 through a sudoers rule limited to --exec.
-#   desktop entries, PATH shims   every normal launch goes through the launcher.
+#   diverted package symlink,     every launch by name or path goes through the
+#   desktop entries, wrappers     launcher (see docs/pia-tunnel.md).
 #
 # Why a namespace and not PIA's desktop app split tunnel: the namespace has no
 # route or resolver outside the tunnel by construction, needs no GUI client or
@@ -191,7 +192,7 @@
       loop_control:
         label: "{{ item.path }}"
 
-    - name: Route desktop entries and PATH shims through the launcher
+    - name: Route the app launch paths (diverted symlinks, entries, wrappers) through the launcher
       ansible.builtin.command:
         argv: >-
           {{ ['/usr/local/bin/curiosity-pia-run', 'sync', '--homes'] + (dev_users | map(attribute='home') | list) }}
@@ -267,7 +268,7 @@
         path: /etc/systemd/system/curiosity-pia-tunnel.service
       register: _pia_tunnel_unit
 
-    - name: Restore the desktop entries and remove the PATH shims
+    - name: Restore the launch paths (diversions, entries, wrappers) of the routed apps
       ansible.builtin.command:
         argv: >-
           {{ ['/usr/local/bin/curiosity-pia-run', 'sync', '--remove-all', '--homes'] + (dev_users | map(attribute='home') | list) }}
