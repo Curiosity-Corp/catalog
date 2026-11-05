@@ -12,12 +12,10 @@
 import { h, renderList } from '../core/util.js';
 import { icon } from '../components/icons.js';
 import { relTime } from '../core/time.js';
+import { KIND_ICON, KIND_LABEL, outputDetail, ROUTE_NOTE } from '../core/outputs-meta.js';
 import { mountEchoPanel } from './audio-echo.js';
 import { testOutput, testAllOutputs, stopOutputTest, setDefaultOutput } from '../core/ops.js';
 
-const KIND_ICON = { hdmi: 'monitor', headphones: 'headphones', headset: 'headset', speaker: 'speaker', interface: 'audio', other: 'volume' };
-const BUS_LABEL = { usb: 'USB', bluetooth: 'Bluetooth', pci: 'Built in' };
-const KIND_LABEL = { hdmi: 'HDMI', headphones: 'Headphones', headset: 'Headset', speaker: 'Speakers', interface: 'Audio interface', other: 'Output' };
 const SAY = { left: 'Left channel', right: 'Right channel, two beeps', chime: 'Chime, both channels' };
 const REFRESH_MS = 15000;
 
@@ -159,8 +157,7 @@ export function mountOutputs(root, ctx) {
     el.querySelector('.ao-kind').replaceChildren(icon(KIND_ICON[d.kind] || 'volume'));
     el.querySelector('.ao-kind').title = KIND_LABEL[d.kind] || 'Output';
     el.querySelector('.ao-name').textContent = d.label;
-    const bus = BUS_LABEL[d.bus] || '';
-    el.querySelector('.ao-detail').textContent = [KIND_LABEL[d.kind], bus, d.detail].filter((x, i, a) => x && a.indexOf(x) === i).join(' · ');
+    el.querySelector('.ao-detail').textContent = outputDetail(d);
     el.querySelector('.ao-default').hidden = !d.default;
     const vol = el.querySelector('.ao-vol');
     vol.toggleAttribute('disabled', d.volume === null);
@@ -192,7 +189,7 @@ export function mountOutputs(root, ctx) {
     const b = h('ss-button', { size: 'sm', variant: 'ghost' }, 'Set as default');
     b.addEventListener('click', () => setDefaultOutput(b.closest('.ao-route').dataset.key));
     return h('div', { class: 'ao-route' }, h('span', { class: 'ao-kind' }, icon('wave')),
-      h('div', { class: 'ao-id' }, h('b', { class: 'ao-name' }), h('small', { class: 'ao-detail' }, 'A route, not a device: sound sent here is processed, then plays on your outputs')),
+      h('div', { class: 'ao-id' }, h('b', { class: 'ao-name' }), h('small', { class: 'ao-detail' }, ROUTE_NOTE)),
       h('span', { class: 'pill ao-default', 'data-state': 'info' }, icon('check'), 'Default'), b);
   };
 
@@ -248,7 +245,6 @@ export function mountOutputs(root, ctx) {
     return [
       { id: 'ao:test-all', group: 'Audio', title: 'Test all outputs', icon: 'play', keywords: 'output speakers headphones sound check test all', run: () => testAllOutputs() },
       { id: 'ao:test-default', group: 'Audio', title: 'Test the default output', icon: 'play', keywords: 'output speakers headphones sound check test default', run: () => { if (o.default) testOutput(o.default); } },
-      ...o.devices.filter((d) => !d.default).map((d) => ({ id: `ao:default:${d.name}`, group: 'Audio', title: `Set default output: ${d.label}`, icon: KIND_ICON[d.kind] || 'volume', keywords: 'output speakers headphones default sink device', run: () => setDefaultOutput(d.name) })),
     ];
   }));
   return () => off.forEach((fn) => fn());
@@ -267,7 +263,8 @@ export function mountOutputPicker(root, ctx) {
   const dot = h('span', { class: 'op-dot', role: 'img' });
   const btn = h('ss-button', { class: 'op-test', size: 'sm', icon: 'play', 'aria-label': 'Test the selected output' }, 'Test');
   root.classList.add('op');
-  root.replaceChildren(h('span', { class: 'op-ic' }, icon('volume')), sel, dot, btn);
+  const cap = h('span', { class: 'op-cap', 'aria-hidden': 'true' }, 'Sound plays on (speakers, headphones, TV)');
+  root.replaceChildren(cap, h('span', { class: 'op-ic' }, icon('volume')), sel, dot, btn);
 
   sel.addEventListener('change', () => setDefaultOutput(sel.value));
   btn.addEventListener('click', () => { if (sel.value) testOutput(sel.value); });

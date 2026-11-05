@@ -30,7 +30,12 @@ HEADSET = "bluez_output.AA_BB.1"
 EE = "streamstack_route"
 
 
-IDS = {WAVE: 45, HDMI: 50, HEADSET: 61, EE: 84}
+# The two outputs of the desk this feature was reported on: a TV's HDMI sound on the graphics card (its own name,
+# "SAMSUNG", is the sink's node.nick) and headphones on a USB interface.
+TV = "alsa_output.pci-0000_04_00.0.hdmi-stereo-extra1"
+SCARLETT = "alsa_output.usb-Focusrite_Scarlett_2i2_4th_Gen_S2UA5H03684466-00.analog-stereo"
+
+IDS = {WAVE: 45, HDMI: 50, HEADSET: 61, EE: 84, TV: 67, SCARLETT: 81}
 
 
 def props_of(percent: int, mute: bool = False) -> dict[str, Any]:
@@ -247,6 +252,24 @@ def test_parse_sinks_describes_devices_and_marks_the_effects_sink_as_a_route() -
     assert parsed[EE]["virtual"] and parsed[EE]["kind"] == "route" and parsed[EE]["bus"] == "virtual"
 
 
+@pytest.mark.parametrize(
+    ("label", "detail", "nick", "expected"),
+    [
+        ("DG2 Audio Controller", "Digital Stereo (HDMI 2)", "SAMSUNG", "SAMSUNG · Digital Stereo (HDMI 2)"),
+        ("DG2 Audio Controller", "", "SAMSUNG", "SAMSUNG"),
+        ("DG2 Audio Controller", "Digital Stereo (HDMI 2)", "", "Digital Stereo (HDMI 2)"),
+        ("DG2 Audio Controller", "Digital Stereo (HDMI 2)", "  ", "Digital Stereo (HDMI 2)"),
+        ("HDA NVidia", "Digital Stereo (HDMI)", "HDA NVidia", "Digital Stereo (HDMI)"),
+        ("HDA NVidia", "Digital Stereo (HDMI)", "NVidia", "Digital Stereo (HDMI)"),
+        ("DG2 Audio Controller", "Digital Stereo (HDMI 2)", "hdmi 2", "Digital Stereo (HDMI 2)"),
+    ],
+)
+def test_an_hdmi_output_names_the_screen_only_when_that_adds_something(
+    label: str, detail: str, nick: str, expected: str
+) -> None:
+    assert outputs.hdmi_detail(label, detail, nick) == expected
+
+
 def test_parse_sinks_knows_bluetooth_by_its_node_name_when_the_bus_is_missing() -> None:
     parsed = outputs.parse_sinks(json.dumps([sink(HEADSET, "Evolve2 65", **{"device.form-factor": "headset"})]))
     assert parsed[0]["bus"] == "bluetooth" and parsed[0]["kind"] == "headset"
@@ -413,6 +436,44 @@ def test_set_default_switches_and_clears_the_warning(sound: Sound, out: Outputs)
     assert ["wpctl", "set-default", "50"] in sound.commands
     state = out.state()
     assert state["default"] == HDMI and device(state, HDMI)["default"] and state["warning"] is None
+
+
+def test_a_tv_on_hdmi_and_headphones_on_usb_are_both_listed_and_the_default_goes_back_and_forth(
+    sound: Sound, out: Outputs
+) -> None:
+    sound.sinks = [
+        sink(
+            TV,
+            "DG2 Audio Controller Digital Stereo (HDMI 2)",
+            **{"device.bus": "pci", "api.alsa.path": "hdmi:2,1", "node.nick": "SAMSUNG"},
+        ),
+        sink(
+            SCARLETT,
+            "Scarlett 2i2 4th Gen Analog Stereo",
+            **{"device.bus": "usb", "api.alsa.path": "front:3", "node.nick": "Scarlett 2i2 4th Gen"},
+        ),
+    ]
+    sound.default = SCARLETT
+    out.refresh()
+    state = out.state()
+    assert [(d["label"], d["kind"], d["bus"], d["default"]) for d in state["devices"]] == [
+        ("DG2 Audio Controller", "hdmi", "pci", False),
+        ("Scarlett 2i2 4th Gen", "interface", "usb", True),
+    ]
+    assert device(state, TV)["detail"] == "SAMSUNG · Digital Stereo (HDMI 2)"
+    assert device(state, SCARLETT)["detail"] == "Analog Stereo"
+    for target, other in ((TV, SCARLETT), (SCARLETT, TV), (TV, SCARLETT)):
+        assert out.act("audio.output_default", {"name": target}).startswith("Default output: ")
+        state = out.state()
+        assert state["default"] == target and state["warning"] is None
+        assert device(state, target)["default"] and not device(state, other)["default"]
+        out.refresh()  # PipeWire agrees with what the Console said
+        assert out.state()["default"] == target
+    assert [c for c in sound.commands if c[:2] == ["wpctl", "set-default"]] == [
+        ["wpctl", "set-default", "67"],
+        ["wpctl", "set-default", "81"],
+        ["wpctl", "set-default", "67"],
+    ]
 
 
 @pytest.mark.parametrize(

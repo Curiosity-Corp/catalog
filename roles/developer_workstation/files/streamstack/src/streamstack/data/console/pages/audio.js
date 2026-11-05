@@ -20,6 +20,7 @@ import { icon, iconHTML } from '../components/icons.js';
 import { apiUrl } from '../core/api.js';
 import { toggleMute, selectPreset, startStudio } from '../core/ops.js';
 import { mmss } from '../core/time.js';
+import { ui, onUi, setUi } from '../core/ui.js';
 import { mountOutputs, outputBadge } from './audio-outputs.js';
 import { mountChain } from './audio-chain.js';
 
@@ -180,8 +181,12 @@ export async function mount(host, ctx) {
     const b = e.target.closest('button[data-section]');
     if (b) showSection(b.dataset.section);
   });
+  // another page (the top-bar output menu) can ask for a section: consume the request, now and while mounted
+  const requested = (which) => { if (which) { showSection(which); setUi('audioSection', ''); } };
+  off.push(onUi((key, value) => { if (key === 'audioSection') requested(value); }));
   off.push(mountChain(R.chainSec, ctx));
   off.push(mountOutputs(R.outSec, ctx));
+  requested(ui.audioSection);
   sub((s) => s.audio.outputs, (o) => {
     const badge = outputBadge(o);
     R.badge.hidden = !badge;
