@@ -19,6 +19,10 @@ own job, in three steps that follow the source's health:
    and the node changed writer every few seconds. After a fault the guard now reads one frame from the source *without
    touching the program node* (`read_one_frame`) and keeps the slate as the single writer until that read succeeds,
    asking again with a growing pause (`PROBE_BACKOFF`).
+5. **Say who holds a busy camera** (#193): v4l2loopback 0.15 lets one reader stream a loopback at a time (a second
+   one gets EBUSY from VIDIOC_REQBUFS or VIDIOC_S_FMT), so an app that opens the raw camera node takes it from the
+   engine. That is not "no signal": the card, the log and `streamstack doctor` name the program holding the node
+   (`device_holders`) and the fix, and the engine takes the camera back on its own once that program lets go.
 
 Everything here is read-only towards cameras (`v4l2-ctl --info` on a node, `os.path.exists`); only the slate and the
 engine child ever write the program node.
@@ -51,18 +55,97 @@ PROBE_BACKOFF = (1.0, 2.0, 4.0, 8.0, 15.0)  # pause before asking a silent sourc
 PROBE_TIMEOUT = 4.0  # seconds a source gets to deliver one frame
 HEALTHY_AFTER = 30.0  # a child that ran this long after a good probe was healthy: the pauses start over
 NO_PICTURE = "{label} is connected but delivers no picture (no signal?)"
+BUSY = "{label} is in use by {holders}: only one app at a time can read {device}"
+BUSY_HINT = (
+    "close {holders_short}, or switch it to StreamStack Camera: "
+    "StreamStack takes {label} back on its own once it is free"
+)
+EBUSY_TEXT = "Device or resource busy"
+UNKNOWN_HOLDER = "another program (one of another account's, or one this account may not inspect)"
 
 
-def read_one_frame(src: Source, timeout: float = PROBE_TIMEOUT) -> bool | None:
+def _is_producer(argv: list[str], device: str) -> bool:
+    """Whether a process holding `device` writes it (the bridge feeding a loopback) rather than reads it.
+
+    ffmpeg reads the device it names after `-i` and writes one it names anywhere else (its output); GStreamer writes
+    a `device=` that follows `v4l2sink` and reads one that follows `v4l2src`. Anything else is taken for a reader."""
+    for i, arg in enumerate(argv):
+        if arg == device:
+            return not (i > 0 and argv[i - 1] == "-i")
+        if arg == f"device={device}":
+            element = next((a for a in reversed(argv[:i]) if a.startswith("v4l2")), "")
+            return element == "v4l2sink"
+    return False
+
+
+def device_holders(device: str, *, proc_root: str = "/proc", self_pid: int | None = None) -> list[str]:
+    """`name (pid N)` for each process this account can see that has `device` open and is not its producer.
+
+    Read-only: /proc/<pid>/fd links and cmdline. Another account's processes are not visible (the caller says so)."""
+    me = os.getpid() if self_pid is None else self_pid
+    try:
+        target = os.path.realpath(device)
+        pids = [entry for entry in os.listdir(proc_root) if entry.isdigit()]
+    except OSError:
+        return []
+    found: list[str] = []
+    for pid in sorted(pids, key=int):
+        if int(pid) == me:
+            continue
+        base = os.path.join(proc_root, pid)
+        try:
+            fds = os.listdir(os.path.join(base, "fd"))
+        except OSError:
+            continue  # gone, or another account's
+        holds = False
+        for fd in fds:
+            try:
+                if os.path.realpath(os.readlink(os.path.join(base, "fd", fd))) == target:
+                    holds = True
+                    break
+            except OSError:
+                continue
+        if not holds:
+            continue
+        try:
+            with open(os.path.join(base, "cmdline"), "rb") as handle:
+                argv = [a.decode(errors="replace") for a in handle.read().split(b"\0") if a]
+        except OSError:
+            argv = []
+        if argv and _is_producer(argv, device):
+            continue
+        try:
+            with open(os.path.join(base, "comm"), encoding="utf-8", errors="replace") as handle:
+                name = handle.read().strip()
+        except OSError:
+            name = os.path.basename(argv[0]) if argv else "a program"
+        found.append(f"{name} (pid {pid})")
+    return found
+
+
+def busy_reason(src: Source, holders: list[str] | None = None) -> str:
+    """The sentence for a source another reader holds."""
+    named = holders if holders is not None else device_holders(src.device)
+    return BUSY.format(label=src.label, holders=", ".join(named) if named else UNKNOWN_HOLDER, device=src.device)
+
+
+def read_one_frame(src: Source, timeout: float = PROBE_TIMEOUT) -> bool | str | None:
     """Whether `src` delivers a frame now: read one with ffmpeg into the null muxer. Never opens the program node.
-    None when ffmpeg is not installed (the question cannot be asked; the caller proceeds as before)."""
+    None when ffmpeg is not installed (the question cannot be asked; the caller proceeds as before); a sentence
+    (`busy_reason`) when another reader holds the source, which is not the same as a camera without a picture."""
     if not system.have("ffmpeg"):
         return None
     argv = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "v4l2"]
     argv += ["-framerate", f"{src.fps:g}", "-video_size", f"{src.width}x{src.height}", "-input_format", src.pix_fmt]
     argv += ["-i", src.device, "-frames:v", "1", "-f", "null", "-"]
     result = system.run(argv, timeout=timeout)
-    return result is not None and result.returncode == 0
+    if result is None:
+        return False
+    if result.returncode == 0:
+        return True
+    if EBUSY_TEXT in (result.stderr or ""):
+        return busy_reason(src)
+    return False
 
 
 def loss_mode(cfg: dict[str, str]) -> str:
@@ -108,7 +191,7 @@ class Delivery:
         camera_device: Callable[[], str] | None = None,
         program_device: Callable[[], str] | None = None,
         last_frame: Callable[[], bytes | None] = lambda: None,
-        delivers: Callable[[Source], bool | None] = read_one_frame,
+        delivers: Callable[[Source], bool | str | None] = read_one_frame,
     ) -> None:
         self.cfg = cfg
         self.slate = slate or SlateFeeder(clock=clock)
@@ -130,6 +213,9 @@ class Delivery:
         self._reason = ""
         self._announced: str | None = None
         self._parked = False  # the slate is the idle placeholder (nothing is wrong), not a "camera reconnecting" card
+        self._source: Source | None = None  # what the engine reads: names a busy source when a child dies on EBUSY
+        self._last_proof = ""  # the sentence of the last failed proof, repeated inside the pause
+        self._busy = False  # the current cover is a source another reader holds, not a camera without a picture
 
     # -- is a camera deliverable? -------------------------------------------------------------------------------
 
@@ -198,6 +284,8 @@ class Delivery:
         """Engine `before_child`: None lets the child start (the node is released first); a reason keeps it waiting
         while the slate holds the node."""
         self.note_output(spec)
+        with self._lock:
+            self._source = spec.source
         reason = self.source_ready(spec.source) or self._prove_picture(spec.source)
         if reason is None:
             self.release()
@@ -208,12 +296,18 @@ class Delivery:
     def on_exit(self, reason: str, failures: int) -> None:
         """Engine `on_exit`: a child ended. Cover the node at once when it keeps failing, so the gap is the restart."""
         if failures >= 1:
+            with self._lock:
+                src = self._source
+            if src is not None and EBUSY_TEXT in reason:
+                reason = busy_reason(src)  # ffmpeg's own line says "busy" but not who: name the holder
             now = self._clock()
             with self._lock:
                 soon = self._probed_ok_at is not None and now - self._probed_ok_at < HEALTHY_AFTER
                 self._attempts = self._attempts + 1 if soon else 1
                 self._faulted = True
                 self._next_probe = now + _pause(self._attempts)
+                if " is in use by " in reason:
+                    self._last_proof = reason  # the pause repeats who holds it, not "no picture"
             self.cover(reason)
 
     def _prove_picture(self, src: Source) -> str | None:
@@ -223,7 +317,7 @@ class Delivery:
             if not self._faulted:
                 return None
             if self._clock() < self._next_probe:
-                return NO_PICTURE.format(label=src.label)
+                return self._last_proof or NO_PICTURE.format(label=src.label)
         try:
             ok = self._delivers(src)
         except Exception:
@@ -231,10 +325,11 @@ class Delivery:
             ok = None
         now = self._clock()
         with self._lock:
-            if ok is False:
+            if ok is False or isinstance(ok, str):
                 self._attempts += 1
                 self._next_probe = now + _pause(self._attempts)
-                return NO_PICTURE.format(label=src.label)
+                self._last_proof = ok if isinstance(ok, str) else NO_PICTURE.format(label=src.label)
+                return self._last_proof
             self._faulted, self._probed_ok_at = False, now
         return None
 
@@ -271,6 +366,7 @@ class Delivery:
         first = not self.slate.active or self._parked
         with self._lock:
             self._reason, self._parked = reason, False
+            self._busy = " is in use by " in reason
         spec = self._slate_spec(reason)
         self.slate.show(spec, self._last_frame() if spec.hold else None)
         if first:
@@ -284,7 +380,7 @@ class Delivery:
         if loss_mode(self.cfg) == "off":
             return False
         with self._lock:
-            self._reason, self._parked = "", True
+            self._reason, self._parked, self._busy = "", True, False
             width, height, _fps = self._out or (*self._configured_size(), DEFAULT_FPS)
         spec = SlateSpec(
             self._program_device(),
@@ -309,7 +405,8 @@ class Delivery:
         was, parked = self.slate.active, self._parked
         self.slate.clear()
         with self._lock:
-            self._reason, self._parked = "", False
+            self._reason, self._parked, self._busy = "", False, False
+            self._faulted, self._last_proof = False, ""
         if was and not parked:
             self._say("ok", "Camera is back: the program camera is live again")
 
@@ -336,7 +433,7 @@ class Delivery:
         """`mode`: live | fallback | reconnecting | starting | off, with a sentence for the person."""
         slate = self.slate.state()
         with self._lock:
-            reason, fallback = self._reason, self._fallback
+            reason, fallback, busy = self._reason, self._fallback, self._busy
         if slate["active"] and self._parked:
             mode = "idle"
         elif slate["active"]:
@@ -350,6 +447,7 @@ class Delivery:
         return {
             "mode": mode,
             "reason": reason,
+            "busy": busy and bool(slate["active"]),
             "feeding": feeding,
             "picked": picked,
             "fallback": fallback,
@@ -360,52 +458,71 @@ class Delivery:
 
     def checks(self, block: dict, external: bool) -> list[dict[str, str]]:
         """The Console's `video-delivery` health row for `state()`'s block."""
-        base = {"id": "video-delivery", "group": "video"}
-        mode = block["mode"]
-        if mode == "idle":
-            return [
-                {
-                    **base,
-                    "state": "ok",
-                    "title": "StreamStack Camera is idle: a placeholder keeps it listed",
-                    "detail": "the engine and the camera start when an app opens it",
-                    "hint": "",
-                }
-            ]
-        if mode == "live":
-            return [
-                {
-                    **base,
-                    "state": "ok",
-                    "title": f"StreamStack Camera is fed by {block['feeding']}",
-                    "detail": "",
-                    "hint": "",
-                }
-            ]
-        fix = (
-            "restart the tool that feeds the camera node (on a host with an external PTP bridge: "
-            "systemctl --user restart canonctl-ptp-webcam.service), or plug the camera in again"
-            if external
-            else "systemctl --user restart streamstack-canon.service, or plug the camera in again"
-        )
-        if mode == "fallback":
-            return [
-                {
-                    **base,
-                    "state": "warn",
-                    "title": f"StreamStack Camera is on {block['feeding']}, not {block['picked']}",
-                    "detail": f"{block['picked']} lost its picture; the engine returns to it on its own",
-                    "hint": fix,
-                }
-            ]
-        if mode == "reconnecting":
+        return delivery_checks(block, external)
+
+
+def delivery_checks(block: dict, external: bool) -> list[dict[str, str]]:
+    """The `video-delivery` health row for a `Delivery.state()` block: the Console's, and `streamstack doctor`'s through
+    the Console's state (#193: doctor called a node showing the slate "fed and delivering")."""
+    base = {"id": "video-delivery", "group": "video"}
+    mode = block.get("mode")
+    if mode == "idle":
+        return [
+            {
+                **base,
+                "state": "ok",
+                "title": "StreamStack Camera is idle: a placeholder keeps it listed",
+                "detail": "the engine and the camera start when an app opens it",
+                "hint": "",
+            }
+        ]
+    if mode == "live":
+        return [
+            {
+                **base,
+                "state": "ok",
+                "title": f"StreamStack Camera is fed by {block.get('feeding')}",
+                "detail": "",
+                "hint": "",
+            }
+        ]
+    fix = (
+        "restart the tool that feeds the camera node (on a host with an external PTP bridge: "
+        "systemctl --user restart canonctl-ptp-webcam.service), or plug the camera in again"
+        if external
+        else "systemctl --user restart streamstack-canon.service, or plug the camera in again"
+    )
+    if mode == "fallback":
+        return [
+            {
+                **base,
+                "state": "warn",
+                "title": f"StreamStack Camera is on {block.get('feeding')}, not {block.get('picked')}",
+                "detail": f"{block.get('picked')} lost its picture; the engine returns to it on its own",
+                "hint": fix,
+            }
+        ]
+    if mode == "reconnecting":
+        reason = block.get("reason") or "the camera has no picture"
+        if block.get("busy"):
+            label = block.get("picked") or "the camera"
+            holders = reason.split(" is in use by ", 1)[1].split(":", 1)[0] if " is in use by " in reason else ""
             return [
                 {
                     **base,
                     "state": "fail",
-                    "title": "StreamStack Camera is showing 'camera reconnecting'",
-                    "detail": block["reason"] or "the camera has no picture",
-                    "hint": fix,
+                    "title": f"StreamStack Camera has no picture: another app is reading {label}",
+                    "detail": reason,
+                    "hint": BUSY_HINT.format(holders_short=holders or "the other app", label=label),
                 }
             ]
-        return []
+        return [
+            {
+                **base,
+                "state": "fail",
+                "title": "StreamStack Camera is showing 'camera reconnecting'",
+                "detail": reason,
+                "hint": fix,
+            }
+        ]
+    return []

@@ -3,6 +3,7 @@
 
     scripts/release.py prepare [VERSION]   compile changelog.d/ fragments into CHANGELOG.md, bump __version__
     scripts/release.py check-fragments     CI gate for a merge request: a src/ change needs a changelog fragment
+    scripts/release.py wait-pipeline TAG   after pushing the tag: fail loudly if no tag pipeline starts
     scripts/release.py check-tag TAG       CI gate: tag == __version__, CHANGELOG section, patch-only policy
     scripts/release.py notes TAG           print the CHANGELOG section of TAG (the GitLab Release notes)
     scripts/release.py upload-assets ...   CI: upload the built files to the project's Generic Package Registry
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import re
 import subprocess
@@ -27,7 +29,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -314,7 +316,74 @@ def tag_commands(version: str) -> list[str]:
         "# the merge commit: MRs merging ahead of it on the train bring changelog fragments the tag gate refuses",
         f'git tag -a v{version} <release-MR-head-sha> -m "StreamStack {version}"',
         f"git push origin v{version}",
+        "# a push event can be lost (v0.0.30, #190): fail loudly if no tag pipeline starts",
+        f"python3 scripts/release.py wait-pipeline v{version}",
     ]
+
+
+DEFAULT_PROJECT = "Curiosity-Corp/streamstack"
+PIPELINE_WAIT_S = 300.0  # how long a pushed tag may take to show a pipeline
+PIPELINE_POLL_S = 10.0
+
+
+def glab_tag_pipelines(project: str, tag: str) -> list[dict[str, object]]:
+    """The pipelines GitLab lists for a tag ref (newest first), through the authenticated ``glab`` CLI."""
+    endpoint = f"projects/{urllib.parse.quote(project, safe='')}/pipelines?ref={urllib.parse.quote(tag, safe='')}"
+    try:
+        done = subprocess.run(["glab", "api", endpoint], capture_output=True, text=True, timeout=60, check=False)
+    except FileNotFoundError as exc:
+        raise ReleaseError("glab is not installed: cannot ask GitLab for the tag pipeline") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ReleaseError(f"glab api {endpoint} timed out") from exc
+    if done.returncode != 0:
+        raise ReleaseError(f"glab api {endpoint} failed: {(done.stderr or done.stdout).strip()}")
+    try:
+        data = json.loads(done.stdout)
+    except json.JSONDecodeError as exc:
+        raise ReleaseError(f"glab api {endpoint} did not return JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise ReleaseError(f"glab api {endpoint} returned {type(data).__name__}, not a list")
+    return [p for p in data if isinstance(p, dict)]
+
+
+def wait_for_tag_pipeline(
+    tag: str,
+    fetch: Callable[[], list[dict[str, object]]],
+    *,
+    timeout: float = PIPELINE_WAIT_S,
+    interval: float = PIPELINE_POLL_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+    project: str = DEFAULT_PROJECT,
+) -> dict[str, object]:
+    """Poll until GitLab lists a pipeline for the tag, or fail loudly. A tag push whose event was lost starts no
+    pipeline and nothing else notices (v0.0.30, #190): a release must not wait for a pipeline that never comes."""
+    deadline = clock() + timeout
+    while True:
+        found = [p for p in fetch() if p.get("ref") == tag]
+        if found:
+            return found[0]
+        if clock() >= deadline:
+            break
+        sleep(interval)
+    raise ReleaseError(
+        f"no pipeline started for {tag} within {timeout:.0f} s of the push: GitLab missed the push event "
+        f"(v0.0.30 did, #190). Start it yourself and watch it: "
+        f'glab api -X POST "projects/{urllib.parse.quote(project, safe="")}/pipeline?ref={tag}"'
+    )
+
+
+def cmd_wait_pipeline(args: argparse.Namespace) -> int:
+    tag_version(args.tag)
+    pipeline = wait_for_tag_pipeline(
+        args.tag,
+        lambda: glab_tag_pipelines(args.project, args.tag),
+        timeout=args.timeout,
+        interval=args.interval,
+        project=args.project,
+    )
+    print(f"{args.tag}: pipeline {pipeline.get('id')} (source {pipeline.get('source')}, {pipeline.get('status')})")
+    return 0
 
 
 def cmd_prepare(args: argparse.Namespace) -> int:
@@ -551,6 +620,13 @@ def build_parser() -> argparse.ArgumentParser:
     fragments.add_argument("--head", default="HEAD")
     fragments.add_argument("--labels", help="comma-separated MR labels (default: CI_MERGE_REQUEST_LABELS)")
     fragments.set_defaults(func=cmd_check_fragments)
+
+    wait = sub.add_parser("wait-pipeline", help="after pushing a tag: wait for its pipeline, fail if none starts")
+    wait.add_argument("tag")
+    wait.add_argument("--project", default=DEFAULT_PROJECT)
+    wait.add_argument("--timeout", type=float, default=PIPELINE_WAIT_S, help="seconds to wait (default: %(default)s)")
+    wait.add_argument("--interval", type=float, default=PIPELINE_POLL_S)
+    wait.set_defaults(func=cmd_wait_pipeline)
 
     notes = sub.add_parser("notes", help="print the CHANGELOG section of a tag")
     notes.add_argument("tag")

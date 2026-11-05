@@ -523,3 +523,110 @@ def test_read_one_frame_reads_the_source_and_never_names_the_program_node(monkey
     assert mod.read_one_frame(LINK_SRC) is False
     monkeypatch.setattr(system, "have", lambda tool: False)
     assert mod.read_one_frame(LINK_SRC) is None
+
+
+# -- one reader at a time (#193) ------------------------------------------------------------------------------------
+
+
+def fake_proc(tmp_path: Path, procs: dict[int, tuple[str, list[str], list[str]]]) -> Path:
+    """A /proc with `pid: (comm, argv, open fd targets)`."""
+    root = tmp_path / "proc"
+    for pid, (comm, argv, targets) in procs.items():
+        base = root / str(pid)
+        (base / "fd").mkdir(parents=True)
+        (base / "comm").write_text(comm + "\n")
+        (base / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
+        for n, target in enumerate(targets):
+            (base / "fd" / str(n)).symlink_to(target)
+    (root / "self").mkdir(parents=True, exist_ok=True)  # not a pid: skipped
+    return root
+
+
+def test_producers_are_told_apart_from_readers() -> None:
+    from streamstack.console.delivery import _is_producer
+
+    dev = "/dev/video42"
+    assert _is_producer(["ffmpeg", "-i", "pipe:0", "-f", "v4l2", dev], dev)
+    assert not _is_producer(["ffmpeg", "-f", "v4l2", "-i", dev, "-f", "null", "-"], dev)
+    assert _is_producer(["python", "-m", "canonctl.webcam", "--device", dev], dev)
+    assert _is_producer(["gst-launch-1.0", "videotestsrc", "!", "v4l2sink", f"device={dev}"], dev)
+    assert not _is_producer(["gst-launch-1.0", "v4l2src", f"device={dev}", "!", "fakesink"], dev)
+    assert not _is_producer(["obs"], dev)
+
+
+def test_device_holders_names_readers_but_not_producers_or_itself(tmp_path: Path) -> None:
+    from streamstack.console.delivery import device_holders
+
+    dev = tmp_path / "video42"
+    dev.write_text("")
+    other = tmp_path / "video0"
+    other.write_text("")
+    root = fake_proc(
+        tmp_path,
+        {
+            10: ("ffmpeg", ["ffmpeg", "-i", "pipe:0", "-f", "v4l2", str(dev)], [str(dev)]),  # the bridge
+            11: ("python3", ["python3", "tv-luma-probe.py"], [str(other), str(dev)]),  # the incident
+            12: ("streamstack", ["streamstack", "console"], [str(dev)]),  # this process
+            13: ("chrome", ["chrome"], [str(other)]),
+        },
+    )
+    assert device_holders(str(dev), proc_root=str(root), self_pid=12) == ["python3 (pid 11)"]
+    assert device_holders(str(dev), proc_root=str(tmp_path / "missing"), self_pid=12) == []
+
+
+def test_busy_reason_names_the_holder_or_says_it_cannot() -> None:
+    from streamstack.console.delivery import busy_reason
+
+    named = busy_reason(CANON_SRC, ["obs (pid 7)"])
+    assert named.startswith(f"{CANON_SRC.label} is in use by obs (pid 7)") and CANON_SRC.device in named
+    assert "another program" in busy_reason(CANON_SRC, [])
+
+
+def test_read_one_frame_tells_a_busy_source_from_a_silent_one(monkeypatch) -> None:
+    import subprocess
+
+    from streamstack import system
+    from streamstack.console import delivery as mod
+
+    stderr = f"[video4l2 @ 0x1] ioctl(VIDIOC_REQBUFS): {mod.EBUSY_TEXT}\n{CANON_SRC.device}: {mod.EBUSY_TEXT}"
+    monkeypatch.setattr(system, "have", lambda tool: True)
+    monkeypatch.setattr(system, "run", lambda argv, timeout=10: subprocess.CompletedProcess(argv, 1, "", stderr))
+    monkeypatch.setattr(mod, "device_holders", lambda device: ["obs (pid 7)"])
+    answer = mod.read_one_frame(CANON_SRC)
+    assert isinstance(answer, str) and "in use by obs (pid 7)" in answer
+    monkeypatch.setattr(system, "run", lambda argv, timeout=10: subprocess.CompletedProcess(argv, 1, "", "no signal"))
+    assert mod.read_one_frame(CANON_SRC) is False
+
+
+def test_a_busy_source_keeps_the_slate_and_says_who_holds_it(world: World, monkeypatch) -> None:
+    from streamstack.console import delivery as mod
+
+    monkeypatch.setattr(mod, "device_holders", lambda device: ["obs (pid 7)"])
+    busy = f"{CANON_SRC.label} is in use by obs (pid 7): only one app at a time can read {CANON_SRC.device}"
+    answers: list[bool | str] = [busy]
+    delivery, slate, clock, _ = make(world, delivers=lambda src: answers[0])
+    delivery.guard(SPEC)
+    delivery.on_exit("Device or resource busy", 1)
+    reason = delivery.guard(SPEC)
+    assert reason == busy and slate.active
+    clock.now += 0.1  # inside the pause: the same sentence, not "no picture"
+    assert delivery.guard(SPEC) == busy
+    block = delivery.state("waiting", CANON_SRC.label, CANON_SRC.label)
+    assert block["mode"] == "reconnecting" and block["busy"] is True
+    (row,) = delivery.checks(block, external=True)
+    assert row["state"] == "fail" and "another app is reading" in row["title"]
+    assert row["detail"] == busy and row["hint"].startswith("close obs (pid 7)")
+    answers[0] = True
+    clock.now += 60
+    assert delivery.guard(SPEC) is None and not slate.active
+    assert delivery.state("running", CANON_SRC.label, CANON_SRC.label)["busy"] is False
+
+
+def test_on_exit_names_the_holder_when_ffmpeg_only_says_busy(world: World, monkeypatch) -> None:
+    from streamstack.console import delivery as mod
+
+    monkeypatch.setattr(mod, "device_holders", lambda device: ["zoom (pid 9)"])
+    delivery, slate, *_ = make(world, delivers=lambda src: True)
+    delivery.guard(SPEC)
+    delivery.on_exit(f"{CANON_SRC.device}: {mod.EBUSY_TEXT}", 1)
+    assert slate.active and "in use by zoom (pid 9)" in slate.shown[-1][0].reason

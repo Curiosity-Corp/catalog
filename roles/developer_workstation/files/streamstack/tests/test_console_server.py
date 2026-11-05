@@ -576,6 +576,21 @@ def test_clips_are_served_with_ranges(server: ConsoleServer, clip: Path) -> None
     assert request(server, "GET", "/api/clips/..%2Fetc.wav")[0] == 404
 
 
+def test_a_clip_that_vanishes_between_the_check_and_the_read_is_a_404_not_a_crash(
+    server: ConsoleServer, rig: Rig, tmp_path: Path
+) -> None:
+    """#191: expiry, a new mic check or Clear can delete the wav after the handler saw it; that is "gone"."""
+
+    class Vanishing(type(tmp_path)):  # a path that is a file at the check and missing at the read
+        def is_file(self, **_: object) -> bool:
+            return True
+
+    rig.audio.clip = Vanishing(tmp_path / "gone.wav")
+    status, _, body = request(server, "GET", "/api/clips/abc.wav")
+    assert status == 404 and b"gone" in body
+    assert request(server, "GET", "/api/clips/abc.wav", headers={"Range": "bytes=0-3"})[0] == 404
+
+
 # -- the rig ----------------------------------------------------------------------
 
 
