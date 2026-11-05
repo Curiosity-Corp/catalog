@@ -89,14 +89,21 @@ def test_the_variable_is_derived_from_the_profile() -> None:
     assert yaml.safe_load(template.render(hardware_profiles=PROFILES, hardware_profile="unknown")) == []
 
 
-def test_brave_definition_is_complete_and_never_the_plain_wrapper() -> None:
+def test_brave_definition_is_complete_and_cannot_recurse() -> None:
     brave = DEFINITIONS["brave-browser"]
-    assert brave["command"] == ["/usr/bin/brave-browser-stable"]
+    # The command is the package's own script; /usr/bin/brave-browser-stable holds the shim.
+    assert brave["command"] == ["/opt/brave.com/brave/brave-browser"]
     assert brave["guard_exe"] == "/opt/brave.com/brave/brave"
+    assert brave["diverted"] == ["/usr/bin/brave-browser-stable"]
+    assert brave["command"][0] not in brave["diverted"]
     assert set(brave["desktop_ids"]) == {"brave-browser.desktop", "com.brave.Browser.desktop"}
-    # Every Exec= the package ships starts with this command, so every entry is wrapped.
-    assert brave["desktop_commands"] == brave["command"]
-    assert {"brave-browser", "brave-browser-stable"} <= set(brave["shims"])
+    # Every Exec= the package ships starts with one of these, so every entry is wrapped.
+    assert "/usr/bin/brave-browser-stable" in brave["desktop_commands"]
+    assert brave["legacy_wrappers"] == [".local/bin/brave-capped"]
+    assert brave["shims"] == []
+    # The old brave-capped wrapper's limits and overrides are kept.
+    assert brave["scope"] == {"slice": "app-browser.slice", "MemoryHigh": "16G", "MemoryMax": "24G"}
+    assert brave["scope_env"] == {"MemoryHigh": "BRAVE_MEMORY_HIGH", "MemoryMax": "BRAVE_MEMORY_MAX"}
     policies = {p["path"]: p["content"] for p in brave["managed_policies"]}
     assert policies["/etc/brave/policies/managed/30-pia-tunnel-webrtc.json"] == {
         "WebRtcIPHandling": "default_public_interface_only"
@@ -202,7 +209,11 @@ def _vars(**overrides):
 def test_config_template_carries_only_the_listed_apps() -> None:
     rendered = json.loads(_env().get_template("pia-tunnel-config.json.j2").render(**_vars()))
     assert list(rendered["apps"]) == ["brave-browser"]
-    assert rendered["apps"]["brave-browser"]["command"] == ["/usr/bin/brave-browser-stable"]
+    brave = rendered["apps"]["brave-browser"]
+    assert brave["command"] == ["/opt/brave.com/brave/brave-browser"]
+    assert brave["diverted"] == ["/usr/bin/brave-browser-stable"]
+    assert brave["legacy_wrappers"] == [".local/bin/brave-capped"]
+    assert brave["scope_env"]["MemoryMax"] == "BRAVE_MEMORY_MAX"
     assert rendered["netns"] == "pia" and rendered["interface"] == "wgpia"
     assert rendered["mtu"] == 1420 and rendered["max_handshake_age"] == 240
     assert rendered["run_path"] == "/usr/local/bin/curiosity-pia-run"
@@ -224,6 +235,7 @@ def test_adding_an_app_is_a_list_entry_plus_a_definition() -> None:
     assert sorted(rendered["apps"]) == ["brave-browser", "thunderbird"]
     assert rendered["apps"]["thunderbird"]["scope"] == {}
     assert rendered["apps"]["thunderbird"]["shims"] == []
+    assert rendered["apps"]["thunderbird"]["diverted"] == []
 
 
 def test_units_use_the_expected_commands() -> None:
@@ -704,9 +716,17 @@ def test_down_keeps_the_namespace_closed_and_destroy_removes_it(rig: Rig) -> Non
 def test_status_reports_connected_and_exit_code(rig: Rig) -> None:
     rig.run("up")
     ok = rig.run("status")
-    assert ok.returncode == 0 and "connected:  yes" in ok.stdout and "10.5.6.7" in ok.stdout
+    assert ok.returncode == 0 and re.search(r"connected:\s+yes", ok.stdout) and "10.5.6.7" in ok.stdout
     stale = rig.run("status", FAKE_HANDSHAKE_AGE="9999")
-    assert stale.returncode == 1 and "connected:  no" in stale.stdout
+    assert stale.returncode == 1 and re.search(r"connected:\s+no", stale.stdout)
+
+
+def test_status_values_line_up_in_one_column(rig: Rig) -> None:
+    rig.run("up")
+    lines = rig.run("status").stdout.splitlines()
+    assert len(lines) >= 8
+    columns = {len(line) - len(line.split(":", 1)[1].lstrip()) for line in lines}
+    assert len(columns) == 1, lines
 
 
 def test_the_tunnel_manager_refuses_to_run_as_a_normal_user(rig: Rig) -> None:
@@ -985,6 +1005,10 @@ def tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(launcher, "SYSTEM_APP_DIRS", (system,))
     monkeypatch.setattr(launcher, "OVERRIDE_APP_DIR", override)
     monkeypatch.setattr(launcher, "SHIM_DIR", shims)
+    admin = tmp_path / "dpkg-admin"
+    admin.mkdir()
+    (admin / "diversions").write_text("")
+    monkeypatch.setattr(launcher, "DPKG_ADMINDIR", str(admin))
     config = json.loads(json.dumps(CONFIG))
     config["apps"]["brave-browser"]["command"] = [str(binary)]
     config["apps"]["brave-browser"]["desktop_commands"] = ["/usr/bin/brave-browser-stable"]
@@ -1075,3 +1099,212 @@ def test_the_cli_sync_command_prints_changes(tree, monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("CURIOSITY_PIA_ALLOW_NON_ROOT", "1")
     assert launcher.main(["sync", "--homes", str(tree.home)]) == 0
     assert "changed: wrote" in capsys.readouterr().out
+
+
+# --- scope limits and the recursion guard ------------------------------------
+
+SCOPED = {**BRAVE_SPEC, "scope_env": {"MemoryHigh": "BRAVE_MEMORY_HIGH", "MemoryMax": "BRAVE_MEMORY_MAX"}}
+
+
+def test_scope_limits_default_to_the_old_wrapper_and_honour_its_overrides() -> None:
+    base = launcher.scope_properties(SCOPED, {})
+    assert "MemoryHigh=16G" in base and "MemoryMax=24G" in base and "--slice=app-browser.slice" in base
+    changed = launcher.scope_properties(SCOPED, {"BRAVE_MEMORY_HIGH": "8G", "BRAVE_MEMORY_MAX": "50%"})
+    assert "MemoryHigh=8G" in changed and "MemoryMax=50%" in changed
+    for bad in ("lots", "8G; rm", "-1", "8 G"):
+        with pytest.raises(launcher.LaunchError, match="not a valid MemoryHigh"):
+            launcher.scope_properties(SCOPED, {"BRAVE_MEMORY_HIGH": bad})
+    # An app without scope_env ignores the variables.
+    assert "MemoryHigh=16G" in launcher.scope_properties(BRAVE_SPEC, {"BRAVE_MEMORY_HIGH": "1G"})
+
+
+def test_the_user_stage_applies_a_scope_override() -> None:
+    config = {**CONFIG, "apps": {"brave-browser": SCOPED}}
+    command = launcher.user_stage_command(config, "brave-browser", [], {"BRAVE_MEMORY_MAX": "12G"}, True)
+    assert "MemoryMax=12G" in command and "MemoryHigh=16G" in command
+
+
+def test_root_stage_refuses_a_command_that_is_its_own_shim(root_stage, tmp_path: Path) -> None:
+    (root_stage.run / "pia").write_text("")
+    shim = tmp_path / "brave-shim"
+    shim.write_text(launcher.shim_text("brave-browser", "/usr/local/bin/curiosity-pia-run"))
+    config = json.loads(root_stage.config.read_text())
+    config["apps"]["brave-browser"]["command"] = [str(shim)]
+    root_stage.config.write_text(json.dumps(config))
+    with pytest.raises(launcher.LaunchError, match="is a PIA shim"):
+        launcher.run_root("brave-browser", [], [])
+    assert root_stage.executed == []
+
+
+# --- every launch by name or path goes through the tunnel -----------------------
+
+needs_dpkg = pytest.mark.skipif(shutil.which("dpkg-divert") is None, reason="dpkg-divert not installed")
+needs_alternatives = pytest.mark.skipif(shutil.which("update-alternatives") is None, reason="update-alternatives not installed")
+
+
+@pytest.fixture
+def pkg(tree, tmp_path: Path):
+    """The package's launcher symlink at an absolute path, with a diverted entry configured."""
+    real = tmp_path / "opt/brave-browser"
+    real.parent.mkdir(parents=True)
+    real.write_text("#!/bin/sh\necho real brave \"$@\"\n")
+    real.chmod(0o755)
+    package_link = tmp_path / "usr-bin/brave-browser-stable"
+    package_link.parent.mkdir()
+    package_link.symlink_to(real)
+    spec = tree.config["apps"]["brave-browser"]
+    spec["command"] = [str(real)]
+    spec["diverted"] = [str(package_link)]
+    spec["legacy_wrappers"] = [".local/bin/brave-capped"]
+    tree.real, tree.link = real, package_link
+    return tree
+
+
+def _divert_list() -> str:
+    return subprocess.run(
+        ["dpkg-divert", "--admindir", launcher.DPKG_ADMINDIR, "--list"], capture_output=True, text=True, check=True
+    ).stdout
+
+
+@needs_dpkg
+def test_sync_diverts_the_package_symlink_and_puts_the_shim_in_its_place(pkg) -> None:
+    changes = launcher.sync(pkg.config, [pkg.home], remove_all=False)
+    assert any(f"diverted {pkg.link}" in c for c in changes)
+    assert pkg.link.read_text().splitlines()[-1] == 'exec /usr/local/bin/curiosity-pia-run brave-browser "$@"'
+    assert not pkg.link.is_symlink() and pkg.link.stat().st_mode & 0o777 == 0o755
+    distrib = pkg.link.with_name(pkg.link.name + ".distrib")
+    assert distrib.is_symlink() and distrib.resolve() == pkg.real  # the package's file, kept
+    assert f"diversion of {pkg.link} to {distrib} by curiosity-pia-tunnel" in _divert_list()
+
+
+@needs_dpkg
+def test_sync_diversion_is_idempotent_and_survives_a_package_upgrade(pkg) -> None:
+    launcher.sync(pkg.config, [pkg.home], remove_all=False)
+    assert launcher.sync(pkg.config, [pkg.home], remove_all=False) == []
+    # dpkg unpacks an upgrade to the diverted name, never over the shim.
+    distrib = pkg.link.with_name(pkg.link.name + ".distrib")
+    distrib.unlink()
+    distrib.symlink_to(pkg.real)
+    assert launcher.sync(pkg.config, [pkg.home], remove_all=False) == []
+    assert "exec /usr/local/bin/curiosity-pia-run" in pkg.link.read_text()
+
+
+@needs_dpkg
+def test_leaving_the_app_list_gives_the_path_back_to_the_package(pkg) -> None:
+    launcher.sync(pkg.config, [pkg.home], remove_all=False)
+    changes = launcher.sync({"apps": {}}, [pkg.home], remove_all=False)
+    assert any("restored" in c for c in changes)
+    assert pkg.link.is_symlink() and pkg.link.resolve() == pkg.real
+    assert not pkg.link.with_name(pkg.link.name + ".distrib").exists()
+    assert "curiosity-pia-tunnel" not in _divert_list()
+    assert launcher.sync({"apps": {}}, [pkg.home], remove_all=False) == []
+
+
+@needs_dpkg
+def test_remove_all_restores_the_diverted_path_too(pkg) -> None:
+    launcher.sync(pkg.config, [pkg.home], remove_all=False)
+    launcher.sync(pkg.config, [pkg.home], remove_all=True)
+    assert pkg.link.is_symlink() and pkg.link.resolve() == pkg.real
+
+
+@needs_dpkg
+def test_diversions_belonging_to_other_packages_are_never_touched(pkg) -> None:
+    other = pkg.link.parent / "other-file"
+    other.write_text("x")
+    subprocess.run(
+        ["dpkg-divert", "--admindir", launcher.DPKG_ADMINDIR, "--package", "somepkg", "--add", "--rename",
+         "--divert", str(other) + ".distrib", str(other)], check=True, capture_output=True,
+    )
+    launcher.sync(pkg.config, [pkg.home], remove_all=False)
+    launcher.sync({"apps": {}}, [pkg.home], remove_all=True)
+    assert "by somepkg" in _divert_list() and not other.exists()
+
+
+@needs_dpkg
+def test_a_missing_package_file_is_reported_not_diverted(pkg) -> None:
+    pkg.link.unlink()
+    changes = launcher.sync(pkg.config, [pkg.home], remove_all=False)
+    assert any(c.startswith("warning:") and "nothing to divert" in c for c in changes)
+    assert "curiosity-pia-tunnel" not in _divert_list()
+
+
+def test_unsafe_diverted_paths_are_refused(tree) -> None:
+    for bad in ("relative/path", "/usr/bin/../../etc/passwd", "/usr/bin/x.distrib", "/usr/bin/a b", "/usr/bin/x;y"):
+        tree.config["apps"]["brave-browser"]["diverted"] = [bad]
+        with pytest.raises(launcher.LaunchError, match="invalid diverted path"):
+            launcher.sync(tree.config, [tree.home], remove_all=False)
+
+
+@needs_dpkg
+@needs_alternatives
+def test_the_browser_alternatives_resolve_to_the_tunnel_shim(pkg, tmp_path: Path) -> None:
+    """x-www-browser and gnome-www-browser name the package path, so they follow the diversion."""
+    altdir, admin = tmp_path / "etc-alternatives", tmp_path / "alt-admin"
+    altdir.mkdir()
+    admin.mkdir()
+    for name in ("x-www-browser", "gnome-www-browser"):
+        subprocess.run(
+            ["update-alternatives", "--altdir", str(altdir), "--admindir", str(admin), "--install",
+             str(tmp_path / name), name, str(pkg.link), "201"], check=True, capture_output=True,
+        )
+        assert (altdir / name).resolve() == pkg.real  # before: the real Brave, a bypass
+    launcher.sync(pkg.config, [pkg.home], remove_all=False)
+    for name in ("x-www-browser", "gnome-www-browser"):
+        target = (altdir / name).resolve()
+        assert launcher.marker_app(target) == "brave-browser", f"{name} still bypasses the tunnel"
+    launcher.sync({"apps": {}}, [pkg.home], remove_all=False)
+    for name in ("x-www-browser", "gnome-www-browser"):
+        assert (altdir / name).resolve() == pkg.real  # restored when Brave is not a tunnel app
+
+
+# --- the old brave-capped wrapper -------------------------------------------
+
+HAND_MADE = "#!/usr/bin/env bash\nexec systemd-run --user --scope /usr/bin/brave-browser-stable \"$@\"\n"
+
+
+def test_a_hand_made_wrapper_is_replaced_by_a_shim_and_backed_up(tree) -> None:
+    tree.config["apps"]["brave-browser"]["legacy_wrappers"] = [".local/bin/brave-capped"]
+    wrapper = tree.home / ".local/bin/brave-capped"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text(HAND_MADE)
+    wrapper.chmod(0o755)
+    changes = launcher.sync(tree.config, [tree.home], remove_all=False)
+    assert any("moved aside" in c for c in changes)
+    assert wrapper.read_text().splitlines()[-1] == 'exec /usr/local/bin/curiosity-pia-run brave-browser "$@"'
+    assert wrapper.stat().st_mode & 0o777 == 0o755
+    assert wrapper.with_name("brave-capped.pre-pia-tunnel").read_text() == HAND_MADE
+    assert launcher.sync(tree.config, [tree.home], remove_all=False) == []
+
+
+def test_a_wrapper_the_user_does_not_have_is_not_created(tree) -> None:
+    tree.config["apps"]["brave-browser"]["legacy_wrappers"] = [".local/bin/brave-capped"]
+    launcher.sync(tree.config, [tree.home], remove_all=False)
+    assert not (tree.home / ".local/bin/brave-capped").exists()
+
+
+def test_the_wrapper_comes_back_when_the_app_leaves_the_list(tree) -> None:
+    tree.config["apps"]["brave-browser"]["legacy_wrappers"] = [".local/bin/brave-capped"]
+    wrapper = tree.home / ".local/bin/brave-capped"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text(HAND_MADE)
+    launcher.sync(tree.config, [tree.home], remove_all=False)
+    launcher.sync({"apps": {}}, [tree.home], remove_all=False)
+    assert wrapper.read_text() == HAND_MADE
+    assert not wrapper.with_name("brave-capped.pre-pia-tunnel").exists()
+    assert launcher.sync({"apps": {}}, [tree.home], remove_all=False) == []
+
+
+def test_other_scripts_in_local_bin_are_left_alone(tree) -> None:
+    mine = tree.home / ".local/bin/my-tool"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("#!/bin/sh\necho hi\n")
+    launcher.sync(tree.config, [tree.home], remove_all=False)
+    launcher.sync({"apps": {}}, [tree.home], remove_all=True)
+    assert mine.read_text() == "#!/bin/sh\necho hi\n"
+
+
+def test_unsafe_legacy_wrapper_paths_are_refused(tree) -> None:
+    for bad in ("../outside", "/etc/passwd", ".local/../../x"):
+        tree.config["apps"]["brave-browser"]["legacy_wrappers"] = [bad]
+        with pytest.raises(launcher.LaunchError, match="invalid legacy wrapper path"):
+            launcher.sync(tree.config, [tree.home], remove_all=False)

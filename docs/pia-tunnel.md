@@ -49,13 +49,28 @@ Applied by `tasks/pia-tunnel.yml` on any desktop host whose hardware profile set
   exit 71 when the namespace does not exist, 72 when the app is already running
   outside the tunnel (a second launch would silently attach to that instance;
   quit it completely first).
-* Every normal way to start the app goes through the launcher: system desktop
-  entries are copied to `/usr/local/share/applications` with each `Exec=`
-  rewritten (marker `X-Curiosity-Pia-Tunnel-App`), a user entry in
-  `~/.local/share/applications` that shadows the system one is replaced (the
-  original is kept as `*.pre-pia-tunnel`), and PATH shims in `/usr/local/bin` take
-  over the command names (`brave-browser`, `brave-browser-stable`). Removing an app
-  from the list restores all of it.
+* Every launch by name or path goes through the launcher:
+  * `/usr/bin/brave-browser-stable` (the package's symlink) is moved aside with
+    `dpkg-divert` (diversion owned by `curiosity-pia-tunnel`, file kept as
+    `brave-browser-stable.distrib`, package upgrades unpack to that name) and the
+    tunnel shim sits at the original path. Everything that resolves there is
+    tunnelled: `/usr/bin/brave-browser`, the `x-www-browser` and
+    `gnome-www-browser` alternatives, `xdg-open` when Brave is the default browser,
+    autostart entries, systemd units, shell scripts and menus. The app's `command`
+    is the package's own script (`/opt/brave.com/brave/brave-browser`), so the shim
+    never calls itself (the launcher also refuses a command that is a shim).
+  * System desktop entries are copied to `/usr/local/share/applications` with each
+    `Exec=` rewritten (marker `X-Curiosity-Pia-Tunnel-App`); a user entry in
+    `~/.local/share/applications` that shadows the system one is replaced (the
+    original is kept as `*.pre-pia-tunnel`).
+  * `legacy_wrappers` (home-relative paths such as `.local/bin/brave-capped`) that
+    exist are replaced by a shim into the launcher, the original kept as
+    `*.pre-pia-tunnel`. A wrapper the user does not have is not created.
+  * Removing an app from the list restores all of it: the diversion is removed and
+    the package's file returns, entries and wrappers come back.
+* The memory cap (`scope`, `app-browser.slice`, `MemoryHigh` 16G, `MemoryMax` 24G
+  for Brave) is the old `brave-capped` wrapper's. `scope_env` keeps its overrides:
+  `BRAVE_MEMORY_HIGH=8G brave-browser` applies to that launch.
 * Brave also gets the managed policy `WebRtcIPHandling:
   default_public_interface_only`, so WebRTC offers only the tunnel address.
 
@@ -100,8 +115,11 @@ design). The next ansible-pull starts the tunnel.
    for it. Brave is the template:
    `command` (the real binary, as a list), `guard_exe` (the executable the
    stray-process guard looks for), `desktop_ids`, `desktop_commands` (every
-   command string the package's `Exec=` lines start with), `shims` (PATH names to
-   take over), optional `scope` (slice and memory caps) and `managed_policies`.
+   command string the package's `Exec=` lines start with), `diverted` (absolute
+   paths the package owns that must hold the shim; the app's `command` must then
+   name the real executable, not one of these) or `shims` (extra names in
+   `/usr/local/bin`), optional `legacy_wrappers`, `scope` (slice and memory caps),
+   `scope_env` and `managed_policies`.
 2. Add its name to the host's hardware profile:
 
    ```yaml
@@ -128,11 +146,19 @@ namespace in place with no interface; the app loses its network, not its jail.
 
 ## Known limits
 
-* A launch by absolute path (`/usr/bin/brave-browser-stable`,
-  `/opt/brave.com/brave/brave`, a private wrapper script) bypasses the
-  launcher. The desktop entries, the shims and the `x-www-browser` style
-  alternatives that resolve to the shim directory go through it; a binary
-  invoked by full path is a deliberate choice and is not blocked.
+* Running the Brave executable itself, `/opt/brave.com/brave/brave` or
+  `/opt/brave.com/brave/brave-browser`, starts it in the normal network. Every
+  other way to start it is routed (see above). Decision (catalog#146): no extra
+  guard. An nftables rule cannot tell such a process from the tunnelled one by
+  cgroup (they share the user's session cgroups), and diverting the AppArmor
+  confined ELF would break its profile. The stray-process guard still refuses a
+  tunnelled launch while a plain Brave runs.
+* The default browser of an account (`xdg-settings get default-web-browser`) is its
+  own choice. On dm45s2 it is Firefox, so links opened from other apps open
+  Firefox, outside the tunnel. To open them in Brave, set it to
+  `brave-browser.desktop` (the entry that the role wraps); then `xdg-open`, Slack
+  and terminals start the tunnelled Brave, or hand the link to the running one
+  (Brave's single-instance socket is a file, shared between host and namespace).
 * The stray-process guard blocks a tunnelled launch while the app is running
   outside the tunnel. After the role is first applied, quit the app completely
   once and start it again from its entry.

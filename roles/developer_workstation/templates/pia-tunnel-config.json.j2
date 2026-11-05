@@ -8,6 +8,9 @@
   'desktop_ids': definition.desktop_ids | default([]),
   'desktop_commands': definition.desktop_commands | default([]),
   'shims': definition.shims | default([]),
+  'diverted': definition.diverted | default([]),
+  'legacy_wrappers': definition.legacy_wrappers | default([]),
+  'scope_env': definition.scope_env | default({}),
   'scope': definition.scope | default({}),
   'env_passthrough': definition.env_passthrough | default([]),
 }}) -%}
