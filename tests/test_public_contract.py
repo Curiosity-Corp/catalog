@@ -90,7 +90,15 @@ def test_private_material_is_not_in_the_public_surface() -> None:
     for marker in old_private_markers:
         if marker not in host_markers:
             assert marker not in vendored_text, f"{marker} in the vendored StreamStack tree"
-    assert not list((ROLE / "files").rglob("*.crt"))
+    # No private certificates ship in the role. The one allowed exception is the
+    # public CA that PIA publishes for its WireGuard API (catalog#145); it must
+    # stay a single certificate with no key material next to it.
+    public_vendor_cas = {"pia-ca.rsa.4096.crt"}
+    certificates = {path.name for path in (ROLE / "files").rglob("*.crt")}
+    assert certificates <= public_vendor_cas
+    for name in certificates:
+        pem = (ROLE / "files" / name).read_text()
+        assert pem.count("BEGIN CERTIFICATE") == 1 and "PRIVATE KEY" not in pem
     assert 'CLIENT_ID = ""' in (ROLE / "files/teams.py").read_text()
 
 

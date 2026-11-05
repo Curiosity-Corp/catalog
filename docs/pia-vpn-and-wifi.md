@@ -4,6 +4,9 @@ Two pieces of workstation networking are managed declaratively by the
 `developer_workstation` role: the Private Internet Access (PIA) daemon
 settings, and a netplan WiFi profile. No credentials live in this repository.
 
+> A second mechanism, a fail-closed network namespace for any list of apps, is
+> described in `docs/pia-tunnel.md`. A host uses one or the other, not both.
+
 ## PIA: only Brave goes through the VPN
 
 Applied by `tasks/pia-vpn.yml` on hosts whose hardware profile sets

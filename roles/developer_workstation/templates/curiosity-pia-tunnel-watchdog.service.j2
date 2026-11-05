@@ -1,0 +1,13 @@
+# Managed by curiosity.workstation (tasks/pia-tunnel.yml). Do not edit.
+[Unit]
+Description=Re-establish the PIA tunnel when its handshake is stale or the session expired
+Documentation=file:///usr/local/sbin/curiosity-pia-tunnel
+ConditionVirtualization=!container
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Exit 0 = renewal needed, 1 = healthy (skipped quietly), 255 = could not check.
+ExecCondition=/usr/local/sbin/curiosity-pia-tunnel needs-renewal
+ExecStart=/usr/bin/systemctl restart curiosity-pia-tunnel.service
+SyslogIdentifier=curiosity-pia-tunnel-watchdog

@@ -1,0 +1,717 @@
+#!/usr/bin/python3
+# Managed by curiosity.workstation (tasks/pia-tunnel.yml).
+"""Keep a fail-closed network namespace connected to Private Internet Access.
+
+The namespace (default `pia`) holds only loopback and one WireGuard interface
+to a PIA server, with nftables dropping everything else inside it. Apps started
+inside it by `curiosity-pia-run` therefore have exactly two outcomes: their
+traffic leaves through the tunnel, or it does not leave at all. There is no
+route, no resolver and no IPv6 path around the tunnel.
+
+Registration follows PIA's published WireGuard flow (pia-foss/manual-connections):
+a token from the account login, the v6 server list, then `addKey` on port 1337
+verified against PIA's own CA. The WireGuard UDP socket is created in the host
+namespace and the interface is then moved into the PIA namespace, so the
+encrypted packets leave through the normal host link while the plaintext side
+only exists inside the namespace.
+
+Secrets: the account login is read from a root-only file; the login, token and
+private key travel to curl and wg through stdin, never argv, and are never
+logged or written anywhere (the private key lives only in memory and in the
+kernel interface).
+
+Commands (all need root):
+  up               register with PIA and (re)build the tunnel
+  down [--destroy] remove the tunnel; the namespace stays closed unless --destroy
+  ensure           `up` when the tunnel is missing, stale or too old, else no-op
+  needs-renewal    exit 0 when `ensure` would rebuild the tunnel, 1 when healthy
+  status           print the tunnel state; exit 0 only when connected
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import binascii
+import concurrent.futures
+import dataclasses
+import fcntl
+import ipaddress
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Callable, Sequence
+
+CONFIG_PATH = Path(os.environ.get("CURIOSITY_PIA_CONFIG", "/etc/curiosity/pia-tunnel/config.json"))
+STATE_DIR = Path(os.environ.get("CURIOSITY_PIA_STATE_DIR", "/run/curiosity-pia-tunnel"))
+NETNS_RUN = Path(os.environ.get("CURIOSITY_PIA_NETNS_RUN", "/run/netns"))
+NETNS_ETC = Path(os.environ.get("CURIOSITY_PIA_NETNS_ETC", "/etc/netns"))
+NSSWITCH_SOURCE = Path(os.environ.get("CURIOSITY_PIA_NSSWITCH", "/etc/nsswitch.conf"))
+
+GTOKEN_URL = "https://www.privateinternetaccess.com/gtoken/generateToken"
+V2_TOKEN_URL = "https://www.privateinternetaccess.com/api/client/v2/token"
+SERVER_LIST_URL = "https://serverlist.piaservers.net/vpninfo/servers/v6"
+ADD_KEY_PORT = 1337
+FALLBACK_DNS = ("10.0.0.243", "10.0.0.242")
+
+NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,14}$")
+REGION_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
+TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]{16,1024}$")
+WG_KEY_BYTES = 32
+
+
+class TunnelError(Exception):
+    """A step failed; the message is safe to log (it never contains a secret)."""
+
+
+def log(message: str) -> None:
+    print(f"curiosity-pia-tunnel: {message}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class Config:
+    netns: str
+    interface: str
+    region: str
+    login_file: Path
+    ca_file: Path
+    mtu: int
+    keepalive: int
+    max_handshake_age: int
+    session_max_hours: int
+
+    @staticmethod
+    def load(path: Path = CONFIG_PATH) -> "Config":
+        try:
+            raw = json.loads(path.read_text())
+        except FileNotFoundError as exc:
+            raise TunnelError(f"configuration {path} is missing") from exc
+        except (OSError, json.JSONDecodeError) as exc:
+            raise TunnelError(f"cannot read configuration {path}: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise TunnelError(f"configuration {path} must be a JSON object")
+        try:
+            cfg = Config(
+                netns=str(raw["netns"]),
+                interface=str(raw["interface"]),
+                region=str(raw["region"]),
+                login_file=Path(str(raw["login_file"])),
+                ca_file=Path(str(raw["ca_file"])),
+                mtu=int(raw["mtu"]),
+                keepalive=int(raw["keepalive"]),
+                max_handshake_age=int(raw["max_handshake_age"]),
+                session_max_hours=int(raw["session_max_hours"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TunnelError(f"configuration {path} is incomplete or invalid: {exc!r}") from exc
+        cfg.validate()
+        return cfg
+
+    def validate(self) -> None:
+        if not NAME_RE.match(self.netns):
+            raise TunnelError(f"invalid network namespace name {self.netns!r}")
+        if not NAME_RE.match(self.interface):
+            raise TunnelError(f"invalid interface name {self.interface!r}")
+        if self.region != "auto" and not REGION_RE.match(self.region):
+            raise TunnelError(f"invalid PIA region {self.region!r}")
+        if not 1280 <= self.mtu <= 1500:
+            raise TunnelError(f"mtu {self.mtu} is outside 1280-1500")
+        if not 0 <= self.keepalive <= 600:
+            raise TunnelError(f"keepalive {self.keepalive} is outside 0-600")
+        if self.max_handshake_age < 60:
+            raise TunnelError("max_handshake_age must be at least 60 seconds")
+        if self.session_max_hours < 0:
+            raise TunnelError("session_max_hours must be 0 (never) or positive")
+
+
+# ---------------------------------------------------------------------------
+# Process helpers
+# ---------------------------------------------------------------------------
+
+
+def run(
+    argv: Sequence[str],
+    *,
+    input_text: str | None = None,
+    check: bool = True,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess[str]:
+    """Run a command; argv never carries a secret, stdin does."""
+    try:
+        proc = subprocess.run(
+            list(argv),
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise TunnelError(f"{argv[0]} is not installed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise TunnelError(f"{argv[0]} timed out after {timeout}s") from exc
+    if check and proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        reason = detail[0][:200] if detail else "no output"
+        raise TunnelError(f"{' '.join(argv[:3])} failed ({proc.returncode}): {reason}")
+    return proc
+
+
+def ip_ns(cfg: Config, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return run(["ip", "-n", cfg.netns, *args], check=check)
+
+
+def exec_ns(
+    cfg: Config, argv: Sequence[str], *, input_text: str | None = None, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    return run(["ip", "netns", "exec", cfg.netns, *argv], input_text=input_text, check=check)
+
+
+def curl_value(key: str, value: str) -> str:
+    """One quoted curl config line; refuses values curl's parser would mangle."""
+    if any(ch in value for ch in "\n\r\0"):
+        raise TunnelError(f"value for {key} contains a control character")
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'{key} = "{escaped}"'
+
+
+def curl(
+    url: str, config_lines: Sequence[str] = (), extra_args: Sequence[str] = ()
+) -> str:
+    """HTTPS GET/POST through curl; secrets go in `config_lines` (stdin)."""
+    argv = [
+        "curl", "-sS", "--fail", "--max-time", "25",
+        "--proto", "=https", "--tlsv1.2",
+        *extra_args, "-K", "-", url,
+    ]
+    return run(argv, input_text="\n".join(config_lines) + "\n", timeout=40).stdout
+
+
+def parse_json_object(text: str, what: str) -> dict[str, object]:
+    """First JSON object in `text` (the server list is followed by a signature)."""
+    try:
+        value, _end = json.JSONDecoder().raw_decode(text.lstrip())
+    except json.JSONDecodeError as exc:
+        raise TunnelError(f"{what} is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise TunnelError(f"{what} is not a JSON object")
+    return value
+
+
+def atomic_write(path: Path, content: str, mode: int) -> bool:
+    """Write `content` atomically; return True when the file changed."""
+    try:
+        if path.read_text() == content and (path.stat().st_mode & 0o7777) == mode:
+            return False
+    except FileNotFoundError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    return True
+
+
+class Lock:
+    """Serialise `up`/`down` between the service and the watchdog."""
+
+    def __enter__(self) -> "Lock":
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(STATE_DIR, 0o755)
+        self._fd = os.open(STATE_DIR / "lock", os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        os.close(self._fd)
+
+
+# ---------------------------------------------------------------------------
+# PIA API
+# ---------------------------------------------------------------------------
+
+
+def read_login(path: Path) -> tuple[str, str]:
+    """Username on line one, password on line two of a root-only file."""
+    try:
+        info = path.stat()
+    except FileNotFoundError as exc:
+        raise TunnelError(
+            f"PIA login file {path} is missing; provision it from Bitwarden (see docs/pia-tunnel.md)"
+        ) from exc
+    if info.st_mode & 0o077:
+        raise TunnelError(f"PIA login file {path} must not be readable by group or others (mode 0600)")
+    if info.st_uid != os.geteuid():
+        raise TunnelError(f"PIA login file {path} must be owned by the user running the tunnel")
+    lines = path.read_text().split("\n")
+    username = lines[0].strip("\r") if lines else ""
+    password = lines[1].strip("\r") if len(lines) > 1 else ""
+    if not username or not password:
+        raise TunnelError(f"PIA login file {path} needs the username on line 1 and the password on line 2")
+    return username, password
+
+
+def get_token(username: str, password: str) -> str:
+    """Account token: the current gtoken endpoint, then the v2 endpoint."""
+    failures: list[str] = []
+    attempts: tuple[tuple[str, str, list[str]], ...] = (
+        ("gtoken", GTOKEN_URL, [curl_value("user", f"{username}:{password}")]),
+        (
+            "v2",
+            V2_TOKEN_URL,
+            [curl_value("data-urlencode", f"username={username}"),
+             curl_value("data-urlencode", f"password={password}")],
+        ),
+    )
+    for label, url, conf in attempts:
+        try:
+            token = parse_json_object(curl(url, conf), f"{label} token response").get("token")
+        except TunnelError as exc:
+            failures.append(f"{label}: {exc}")
+            continue
+        if isinstance(token, str) and TOKEN_RE.match(token):
+            return token
+        failures.append(f"{label}: response carried no usable token")
+    raise TunnelError("PIA refused the login or the token API is down (" + "; ".join(failures) + ")")
+
+
+@dataclasses.dataclass(frozen=True)
+class Server:
+    region_id: str
+    region_name: str
+    ip: str
+    cn: str
+    geo: bool = False
+
+
+def fetch_servers() -> list[Server]:
+    data = parse_json_object(curl(SERVER_LIST_URL), "PIA server list")
+    regions = data.get("regions")
+    if not isinstance(regions, list):
+        raise TunnelError("PIA server list has no regions")
+    servers: list[Server] = []
+    for region in regions:
+        if not isinstance(region, dict) or region.get("offline"):
+            continue
+        wg = (region.get("servers") or {}).get("wg") if isinstance(region.get("servers"), dict) else None
+        if not isinstance(wg, list):
+            continue
+        for entry in wg:
+            try:
+                ip = str(ipaddress.IPv4Address(str(entry["ip"])))
+                cn = str(entry["cn"])
+            except (KeyError, ValueError):
+                continue
+            if re.match(r"^[A-Za-z0-9.-]{1,100}$", cn):
+                servers.append(
+                    Server(
+                        str(region.get("id", "")),
+                        str(region.get("name", "")),
+                        ip,
+                        cn,
+                        bool(region.get("geo")),
+                    )
+                )
+    if not servers:
+        raise TunnelError("PIA server list has no online WireGuard servers")
+    return servers
+
+
+def tcp_latency(ip: str, port: int, timeout: float = 1.5) -> float | None:
+    start = time.monotonic()
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return time.monotonic() - start
+    except OSError:
+        return None
+
+
+def choose_server(
+    servers: Sequence[Server],
+    region: str,
+    latency: Callable[[str, int], float | None] = tcp_latency,
+) -> Server:
+    """The configured region's server, or the lowest-latency one for `auto`."""
+    if region != "auto":
+        matches = [s for s in servers if s.region_id == region]
+        if not matches:
+            known = ", ".join(sorted({s.region_id for s in servers})[:12])
+            raise TunnelError(f"PIA has no online WireGuard region {region!r} (examples: {known}, ...)")
+        pool = matches
+    else:
+        # Geo-located regions are virtual locations hosted elsewhere; skip them
+        # when picking by latency, but honour an explicit request for one.
+        pool = [s for s in servers if not s.geo] or list(servers)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=48) as pool_exec:
+        times = list(pool_exec.map(lambda s: latency(s.ip, ADD_KEY_PORT), pool))
+    reachable = [(t, s) for t, s in zip(times, pool) if t is not None]
+    if not reachable:
+        if region == "auto":
+            raise TunnelError("no PIA server answered on port 1337; is the host online?")
+        return pool[0]
+    return min(reachable, key=lambda item: (item[0], item[1].region_id, item[1].cn))[1]
+
+
+@dataclasses.dataclass(frozen=True)
+class Registration:
+    server_key: str
+    server_ip: str
+    server_port: int
+    peer_ip: str
+    dns: tuple[str, ...]
+
+
+def _valid_wg_key(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return len(base64.b64decode(value, validate=True)) == WG_KEY_BYTES
+    except (binascii.Error, ValueError):
+        return False
+
+
+def add_key(cfg: Config, token: str, public_key: str, server: Server) -> Registration:
+    """Register our public key with the chosen server (PIA addKey)."""
+    body = parse_json_object(
+        curl(
+            f"https://{server.cn}:{ADD_KEY_PORT}/addKey",
+            ["get", curl_value("data-urlencode", f"pt={token}"), curl_value("data-urlencode", f"pubkey={public_key}")],
+            ["--cacert", str(cfg.ca_file), "--connect-to", f"{server.cn}::{server.ip}:"],
+        ),
+        "addKey response",
+    )
+    if body.get("status") != "OK":
+        raise TunnelError(f"PIA addKey was refused: status {str(body.get('status'))[:40]!r}")
+    try:
+        server_ip = str(ipaddress.IPv4Address(str(body["server_ip"])))
+        peer_ip = str(ipaddress.IPv4Address(str(body["peer_ip"])))
+        server_port = int(str(body["server_port"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise TunnelError("PIA addKey response is missing server_ip, peer_ip or server_port") from exc
+    if not 1 <= server_port <= 65535:
+        raise TunnelError(f"PIA addKey returned port {server_port}")
+    if not _valid_wg_key(body.get("server_key")):
+        raise TunnelError("PIA addKey returned an invalid server_key")
+    dns_raw = body.get("dns_servers")
+    dns: list[str] = []
+    if isinstance(dns_raw, list):
+        for item in dns_raw:
+            try:
+                dns.append(str(ipaddress.IPv4Address(str(item))))
+            except ValueError:
+                continue
+    return Registration(
+        server_key=str(body["server_key"]),
+        server_ip=server_ip,
+        server_port=server_port,
+        peer_ip=peer_ip,
+        dns=tuple(dns) or FALLBACK_DNS,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Namespace
+# ---------------------------------------------------------------------------
+
+
+def firewall_ruleset(cfg: Config) -> str:
+    """Default-drop inside the namespace: only loopback and the tunnel interface."""
+    iface = cfg.interface
+    return f"""add table inet curiosity_pia
+delete table inet curiosity_pia
+table inet curiosity_pia {{
+  chain input {{
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept
+    iifname "{iface}" ct state established,related accept
+  }}
+  chain output {{
+    type filter hook output priority filter; policy drop;
+    oifname "lo" accept
+    oifname "{iface}" accept
+  }}
+  chain forward {{
+    type filter hook forward priority filter; policy drop;
+  }}
+}}
+"""
+
+
+def ensure_netns(cfg: Config) -> None:
+    """Create the namespace and close it before anything can run inside."""
+    if not (NETNS_RUN / cfg.netns).exists():
+        run(["ip", "netns", "add", cfg.netns])
+        log(f"created network namespace {cfg.netns}")
+    ip_ns(cfg, "link", "set", "lo", "up")
+    exec_ns(
+        cfg,
+        ["sysctl", "-qw",
+         "net.ipv6.conf.all.disable_ipv6=1",
+         "net.ipv6.conf.default.disable_ipv6=1"],
+    )
+    exec_ns(cfg, ["nft", "-f", "-"], input_text=firewall_ruleset(cfg))
+
+
+def netns_files_dir(cfg: Config) -> Path:
+    return NETNS_ETC / cfg.netns
+
+
+def write_netns_files(cfg: Config, dns: Sequence[str]) -> None:
+    """resolv.conf and nsswitch.conf that `ip netns exec` bind-mounts over /etc."""
+    target = netns_files_dir(cfg)
+    resolv = "# Managed by curiosity-pia-tunnel: PIA DNS, reachable only through the tunnel.\n"
+    resolv += "".join(f"nameserver {server}\n" for server in dns)
+    atomic_write(target / "resolv.conf", resolv, 0o644)
+    try:
+        source = NSSWITCH_SOURCE.read_text()
+    except FileNotFoundError:
+        return
+    # Resolve names with plain DNS inside the namespace; a `resolve` or `mdns`
+    # module would ask the host's resolver and leak the lookup.
+    lines = [
+        "hosts:          files dns" if line.split(":", 1)[0].strip() == "hosts" else line
+        for line in source.splitlines()
+    ]
+    atomic_write(target / "nsswitch.conf", "\n".join(lines) + "\n", 0o644)
+
+
+# ---------------------------------------------------------------------------
+# Tunnel state and health
+# ---------------------------------------------------------------------------
+
+
+def state_path() -> Path:
+    return STATE_DIR / "state.json"
+
+
+def read_state() -> dict[str, object] | None:
+    try:
+        value = json.loads(state_path().read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def handshake_age(cfg: Config) -> float | None:
+    """Seconds since the last WireGuard handshake, None when none or no interface."""
+    proc = exec_ns(cfg, ["wg", "show", cfg.interface, "latest-handshakes"], check=False)
+    if proc.returncode != 0:
+        return None
+    stamps = [int(f.split()[-1]) for f in proc.stdout.splitlines() if f.strip() and f.split()[-1].isdigit()]
+    newest = max(stamps, default=0)
+    return None if newest == 0 else max(0.0, time.time() - newest)
+
+
+def health(cfg: Config) -> tuple[bool, str]:
+    """(healthy, reason). Healthy means a fresh handshake on a young-enough session."""
+    if not (NETNS_RUN / cfg.netns).exists():
+        return False, f"network namespace {cfg.netns} does not exist"
+    age = handshake_age(cfg)
+    if age is None:
+        return False, f"no WireGuard handshake on {cfg.interface}"
+    if age > cfg.max_handshake_age:
+        return False, f"last handshake {int(age)}s ago (limit {cfg.max_handshake_age}s)"
+    state = read_state()
+    if cfg.session_max_hours > 0:
+        established = state.get("established_at") if state else None
+        if not isinstance(established, (int, float)):
+            return False, "no record of when the session was established"
+        if time.time() - established > cfg.session_max_hours * 3600:
+            return False, f"session older than {cfg.session_max_hours}h"
+    return True, f"handshake {int(age)}s ago"
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+
+def teardown_interface(cfg: Config) -> None:
+    """Remove the tunnel interface wherever it is; the namespace stays closed."""
+    if (NETNS_RUN / cfg.netns).exists():
+        ip_ns(cfg, "link", "del", cfg.interface, check=False)
+    run(["ip", "link", "del", cfg.interface], check=False)
+
+
+def generate_keypair() -> tuple[str, str]:
+    private = run(["wg", "genkey"]).stdout.strip()
+    public = run(["wg", "pubkey"], input_text=private + "\n").stdout.strip()
+    if not _valid_wg_key(private) or not _valid_wg_key(public):
+        raise TunnelError("wg produced an invalid key pair")
+    return private, public
+
+
+def wait_for_handshake(cfg: Config, dns: Sequence[str], seconds: int | None = None) -> None:
+    if seconds is None:
+        seconds = int(os.environ.get("CURIOSITY_PIA_HANDSHAKE_WAIT", "20"))
+    deadline = time.monotonic() + seconds
+    nudged = False
+    while time.monotonic() < deadline:
+        if handshake_age(cfg) is not None:
+            return
+        if not nudged and time.monotonic() > deadline - seconds + 5:
+            # Persistent keepalive normally starts the handshake; a probe is a fallback.
+            exec_ns(cfg, ["ping", "-c", "1", "-W", "2", dns[0]], check=False)
+            nudged = True
+        time.sleep(1)
+    raise TunnelError(f"no WireGuard handshake within {seconds}s")
+
+
+def up(cfg: Config) -> None:
+    ensure_netns(cfg)
+    username, password = read_login(cfg.login_file)
+    token = get_token(username, password)
+    servers = fetch_servers()
+    server = choose_server(servers, cfg.region)
+    private, public = generate_keypair()
+    reg = add_key(cfg, token, public, server)
+    log(f"registered with {server.region_name or server.region_id} ({server.cn})")
+
+    # Only now replace the running tunnel: a failed API call must not drop a
+    # working one. The namespace stays closed in the gap.
+    teardown_interface(cfg)
+    write_netns_files(cfg, reg.dns)
+    try:
+        run(["ip", "link", "add", cfg.interface, "type", "wireguard"])
+        run(
+            ["wg", "set", cfg.interface,
+             "private-key", "/dev/stdin",
+             "peer", reg.server_key,
+             "endpoint", f"{reg.server_ip}:{reg.server_port}",
+             "allowed-ips", "0.0.0.0/0",
+             "persistent-keepalive", str(cfg.keepalive)],
+            input_text=private + "\n",
+        )
+        run(["ip", "link", "set", cfg.interface, "netns", cfg.netns])
+        ip_ns(cfg, "addr", "add", f"{reg.peer_ip}/32", "dev", cfg.interface)
+        ip_ns(cfg, "link", "set", cfg.interface, "mtu", str(cfg.mtu), "up")
+        ip_ns(cfg, "route", "replace", "default", "dev", cfg.interface)
+        wait_for_handshake(cfg, reg.dns)
+    except TunnelError:
+        teardown_interface(cfg)
+        raise
+    atomic_write(
+        state_path(),
+        json.dumps(
+            {
+                "established_at": int(time.time()),
+                "region": server.region_id,
+                "region_name": server.region_name,
+                "server_ip": reg.server_ip,
+                "server_cn": server.cn,
+                "peer_ip": reg.peer_ip,
+                "dns": list(reg.dns),
+                "interface": cfg.interface,
+                "netns": cfg.netns,
+            },
+            indent=2,
+        )
+        + "\n",
+        0o644,
+    )
+    log(f"tunnel up: peer {reg.peer_ip}, dns {', '.join(reg.dns)}")
+
+
+def down(cfg: Config, destroy: bool) -> None:
+    teardown_interface(cfg)
+    state_path().unlink(missing_ok=True)
+    if destroy:
+        run(["ip", "netns", "del", cfg.netns], check=False)
+        for name in ("resolv.conf", "nsswitch.conf"):
+            (netns_files_dir(cfg) / name).unlink(missing_ok=True)
+        log(f"removed network namespace {cfg.netns}")
+    else:
+        log("tunnel removed; the namespace stays closed (no network inside it)")
+
+
+def ensure(cfg: Config, retries: int) -> None:
+    healthy, reason = health(cfg)
+    if healthy:
+        log(f"tunnel healthy ({reason})")
+        return
+    log(f"rebuilding tunnel: {reason}")
+    delay = 5
+    for attempt in range(1, retries + 1):
+        try:
+            with Lock():
+                up(cfg)
+            return
+        except TunnelError as exc:
+            log(f"attempt {attempt}/{retries} failed: {exc}")
+            if attempt == retries:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 60)
+
+
+def status(cfg: Config) -> int:
+    healthy, reason = health(cfg)
+    state = read_state() or {}
+    print(f"namespace:  {cfg.netns} ({'present' if (NETNS_RUN / cfg.netns).exists() else 'absent'})")
+    print(f"connected:  {'yes' if healthy else 'no'} ({reason})")
+    for key in ("region_name", "server_cn", "server_ip", "peer_ip", "dns", "established_at"):
+        if key in state:
+            print(f"{key + ':':<12}{state[key]}")
+    return 0 if healthy else 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("up", help="register with PIA and (re)build the tunnel")
+    p_down = sub.add_parser("down", help="remove the tunnel")
+    p_down.add_argument("--destroy", action="store_true", help="also delete the namespace")
+    p_ensure = sub.add_parser("ensure", help="rebuild only when missing, stale or too old")
+    p_ensure.add_argument("--retries", type=int, default=1)
+    sub.add_parser("needs-renewal", help="exit 0 when the tunnel must be rebuilt")
+    sub.add_parser("status", help="print the tunnel state")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if os.geteuid() != 0 and "CURIOSITY_PIA_ALLOW_NON_ROOT" not in os.environ:
+        print("curiosity-pia-tunnel: must run as root", file=sys.stderr)
+        return 2
+    try:
+        cfg = Config.load()
+        if args.command == "up":
+            with Lock():
+                up(cfg)
+        elif args.command == "down":
+            with Lock():
+                down(cfg, args.destroy)
+        elif args.command == "ensure":
+            ensure(cfg, max(1, args.retries))
+        elif args.command == "needs-renewal":
+            healthy, reason = health(cfg)
+            log(f"{'healthy' if healthy else 'needs renewal'}: {reason}")
+            return 1 if healthy else 0
+        elif args.command == "status":
+            return status(cfg)
+    except TunnelError as exc:
+        print(f"curiosity-pia-tunnel: error: {exc}", file=sys.stderr)
+        # ExecCondition= treats 1-254 as "skip quietly"; 255 makes the watchdog fail loudly.
+        return 255 if args.command == "needs-renewal" else 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

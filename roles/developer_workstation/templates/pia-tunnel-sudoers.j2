@@ -1,0 +1,7 @@
+# Managed by curiosity.workstation (tasks/pia-tunnel.yml). Do not edit.
+# Lets the listed accounts reach the privileged stage of the PIA launcher. The
+# stage only starts apps named in /etc/curiosity/pia-tunnel/config.json, inside
+# the PIA namespace, as the calling user.
+{% for user in pia_tunnel_users %}
+{{ user }} ALL=(root) NOPASSWD: /usr/local/bin/curiosity-pia-run --exec *
+{% endfor %}

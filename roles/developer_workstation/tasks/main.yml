@@ -669,6 +669,16 @@
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
+- name: Include the PIA tunnel for routed apps (fail-closed network namespace)
+  ansible.builtin.include_tasks:
+    file: pia-tunnel.yml
+    apply:
+      tags: [networking, pia-tunnel]
+  tags: [networking, pia-tunnel]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include crash diagnostics (lockup panics, pstore, hardware watchdog)
   ansible.builtin.include_tasks:
     file: crash-diagnostics.yml

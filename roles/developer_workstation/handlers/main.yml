@@ -23,6 +23,23 @@
     state: restarted
     daemon_reload: true
 
+# A config or unit change takes effect by rebuilding the tunnel. Skipped when
+# the same run just started it (first install) and when the login is not
+# provisioned yet, so a converge never bounces a tunnel it did not change.
+- name: Restart the PIA tunnel
+  ansible.builtin.systemd:
+    name: curiosity-pia-tunnel.service
+    state: restarted
+    daemon_reload: true
+  when:
+    - _pia_tunnel_login.stat.exists | default(false)
+    - not (_pia_tunnel_started.changed | default(false))
+
+- name: Refresh the local desktop entry cache
+  ansible.builtin.command: update-desktop-database /usr/local/share/applications
+  changed_when: true
+  failed_when: false
+
 - name: Reload systemd-logind
   ansible.builtin.command: systemctl kill -s HUP systemd-logind
   changed_when: true

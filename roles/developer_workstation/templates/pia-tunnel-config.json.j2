@@ -1,0 +1,27 @@
+{#- Managed by curiosity.workstation (tasks/pia-tunnel.yml). Read by curiosity-pia-tunnel and curiosity-pia-run. -#}
+{%- set apps = {} -%}
+{%- for name in pia_tunnel_apps -%}
+{%- set definition = pia_tunnel_app_definitions[name] -%}
+{%- set _ = apps.update({name: {
+  'command': definition.command,
+  'guard_exe': definition.guard_exe | default(''),
+  'desktop_ids': definition.desktop_ids | default([]),
+  'desktop_commands': definition.desktop_commands | default([]),
+  'shims': definition.shims | default([]),
+  'scope': definition.scope | default({}),
+  'env_passthrough': definition.env_passthrough | default([]),
+}}) -%}
+{%- endfor -%}
+{{ {
+  'netns': pia_tunnel_netns,
+  'interface': pia_tunnel_interface,
+  'region': pia_tunnel_region,
+  'login_file': pia_tunnel_login_file,
+  'ca_file': '/usr/share/curiosity/pia-tunnel/ca.rsa.4096.crt',
+  'mtu': pia_tunnel_mtu | int,
+  'keepalive': pia_tunnel_keepalive | int,
+  'max_handshake_age': pia_tunnel_max_handshake_age | int,
+  'session_max_hours': pia_tunnel_session_max_hours | int,
+  'run_path': '/usr/local/bin/curiosity-pia-run',
+  'apps': apps,
+} | to_nice_json }}
