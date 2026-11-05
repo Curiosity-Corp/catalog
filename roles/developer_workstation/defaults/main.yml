@@ -1908,11 +1908,14 @@ hardware_profiles:
     # Record temperatures and throttling so faults can be checked against heat
     # while the cap is evaluated (catalog#141).
     cpu_thermal_log: true
-    # Brave only, through PIA, fail-closed (catalog#145). Everything else on the
-    # host keeps the normal network. Needs the PIA login provisioned on the host
+    # Brave and qBittorrent only, through PIA, fail-closed (catalog#145, #147).
+    # Everything else on the host keeps the normal network. qBittorrent takes
+    # PIA's forwarded port, which moves the whole tunnel to a port-forwarding
+    # region (none in the US). Needs the PIA login provisioned on the host
     # (docs/pia-tunnel.md).
     pia_tunnel_apps:
       - brave-browser
+      - qbittorrent
     # Seven hard freezes 2026-10-10..31 left no trace and needed the power
     # button (catalog#139). Panic and reboot on a lockup, keep the panic log in
     # EFI pstore, and arm the PCH TCO watchdog (probed 2026-11-04: Version=6,
@@ -2003,6 +2006,16 @@ pia_tunnel_interface: wgpia
 # A PIA region id (for example us_chicago) or `auto` for the lowest-latency
 # non-geo-located WireGuard region at connect time.
 pia_tunnel_region: auto
+# Ask PIA for a forwarded port and keep it bound (getSignature/bindPort through
+# the tunnel). On by default exactly when a routed app takes the port (a
+# `port_forward` entry in its definition). Only some regions offer it (none in
+# the US), so the tunnel then connects to one of those and keeps its server;
+# an explicit pia_tunnel_region must be one of them.
+pia_tunnel_port_forward: >-
+  {{ (pia_tunnel_apps | select('in', pia_tunnel_app_definitions) | map('extract', pia_tunnel_app_definitions)
+      | selectattr('port_forward', 'defined') | list | length) > 0 }}
+# How often the forwarded port is re-bound (PIA expires a binding after 15 minutes).
+pia_tunnel_bind_interval: 10min
 # Root-only (0600) two-line file, username then password: the same format and
 # provisioning as pia_login_file (the ACTIVE Bitwarden item "Privateinternetaccess
 # / p1793859", written from `bw` straight into the file, never through git).
@@ -2025,9 +2038,16 @@ pia_tunnel_users: "{{ dev_users | map(attribute='name') | list }}"
 # that instance); `desktop_ids` and `desktop_commands` wrap the packaged desktop
 # entries (Exec= lines starting with one of the commands); `shims` are PATH
 # names in /usr/local/bin; `scope` is an optional memory-capped systemd user
-# scope; `managed_policies` are root-owned browser policy files.
+# scope; `managed_policies` are root-owned browser policy files. `packages` are
+# apt packages installed before the app is routed; `display_name` and `quit_hint`
+# are what the refusal notices say; `port_forward.config` (relative to the home)
+# is the app config that receives PIA's forwarded port; `retire_files` and
+# `retire_user_units` are hand-made helpers (home-relative; units by name) that
+# the routing replaces, moved aside as .pre-pia-tunnel backups.
 pia_tunnel_app_definitions:
   brave-browser:
+    display_name: Brave
+    quit_hint: Quit Brave (Ctrl+Shift+Q)
     # The package's own launcher script, NOT /usr/bin/brave-browser-stable: that
     # path is diverted (below) and holds the tunnel shim.
     command:
@@ -2066,6 +2086,37 @@ pia_tunnel_app_definitions:
       - path: /etc/brave/policies/managed/30-pia-tunnel-webrtc.json
         content:
           WebRtcIPHandling: default_public_interface_only
+  qbittorrent:
+    display_name: qBittorrent
+    quit_hint: Quit qBittorrent (Ctrl+Q)
+    packages:
+      - qbittorrent
+    # The package ships one ELF at /usr/bin/qbittorrent. It is diverted to
+    # .distrib and the tunnel shim takes its path, so the menu, magnet links and
+    # a shell all start it in the tunnel; the launcher runs the diverted binary.
+    command:
+      - /usr/bin/qbittorrent.distrib
+    guard_exe: /usr/bin/qbittorrent.distrib
+    desktop_ids:
+      - org.qbittorrent.qBittorrent.desktop
+    desktop_commands:
+      - qbittorrent
+      - /usr/bin/qbittorrent
+    diverted:
+      - /usr/bin/qbittorrent
+    shims: []
+    legacy_wrappers: []
+    # Listen on the forwarded port; clear any interface binding (the namespace's
+    # only interface is the tunnel, which is rebuilt with a new index).
+    port_forward:
+      config: .config/qBittorrent/qBittorrent.conf
+    # The hand-made sync (2026-09) read the PIA desktop app's port with piactl
+    # and edited the same file; the catalog now does this from the tunnel.
+    retire_files:
+      - .local/bin/pia-qbt-port-sync
+    retire_user_units:
+      - pia-qbt-port-sync.service
+      - pia-qbt-port-sync.timer
 
 # =============================================================================
 # Managed WiFi profile (netplan, NetworkManager renderer)

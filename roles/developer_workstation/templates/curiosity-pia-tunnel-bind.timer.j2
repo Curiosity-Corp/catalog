@@ -1,0 +1,12 @@
+# Managed by curiosity.workstation (tasks/pia-tunnel.yml). Do not edit.
+[Unit]
+Description=Re-bind the PIA forwarded port every {{ pia_tunnel_bind_interval }}
+ConditionVirtualization=!container
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ pia_tunnel_bind_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

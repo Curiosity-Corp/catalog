@@ -12,7 +12,12 @@
 #                                 addKey) and builds the tunnel; the
 #                                 service owns it, a timer re-establishes it.
 #   curiosity-pia-run APP         user launcher; the root stage is reached only
-#                                 through a sudoers rule limited to --exec.
+#                                 through a sudoers rule limited to --exec. It
+#                                 tells the person when it refuses or the tunnel
+#                                 is down, and gives port-forwarding apps the
+#                                 forwarded port.
+#   bind timer (port forwarding)  re-binds PIA's forwarded port every few minutes
+#                                 and writes it into the apps' config.
 #   diverted package symlink,     every launch by name or path goes through the
 #   desktop entries, wrappers     launcher (see docs/pia-tunnel.md).
 #
@@ -44,6 +49,7 @@
       - pia_tunnel_max_handshake_age | int >= 60
       - pia_tunnel_session_max_hours | int >= 0
       - pia_tunnel_watchdog_interval is match('^[0-9]+(s|min|h)$')
+      - pia_tunnel_bind_interval is match('^([1-9]|1[0-4])min$')
       - pia_tunnel_users is sequence
       - pia_tunnel_users is not string
       - pia_tunnel_users | length > 0
@@ -52,8 +58,9 @@
       pia_tunnel_apps must be a list of unique names that are keys of
       pia_tunnel_app_definitions (got {{ pia_tunnel_apps }}), and the namespace
       and interface names, region, login file path, mtu (1280-1500), handshake
-      age (at least 60), session hours, watchdog interval (for example 1min) and
-      user list must be valid.
+      age (at least 60), session hours, watchdog interval (for example 1min),
+      bind interval (1-14 minutes: PIA drops a port binding after 15) and user
+      list must be valid.
 
 - name: Refuse the PIA desktop app split tunnel and the PIA namespace together
   ansible.builtin.assert:
@@ -71,6 +78,13 @@
 - name: Install the PIA tunnel
   when: pia_tunnel_apps | length > 0
   vars:
+    _pia_tunnel_routed_definitions: >-
+      {{ pia_tunnel_app_definitions | dict2items
+         | selectattr('key', 'in', pia_tunnel_apps) | map(attribute='value') | list }}
+    _pia_tunnel_routed_packages: >-
+      {{ _pia_tunnel_routed_definitions | map(attribute='packages', default=[]) | flatten | unique | list }}
+    _pia_tunnel_retired_units: >-
+      {{ _pia_tunnel_routed_definitions | map(attribute='retire_user_units', default=[]) | flatten | unique | list }}
     _pia_tunnel_routed_policies: >-
       {{ pia_tunnel_app_definitions | dict2items
          | selectattr('key', 'in', pia_tunnel_apps)
@@ -88,6 +102,12 @@
           - sudo
           - libnotify-bin
         state: present
+
+    - name: Install the packages of the routed apps
+      ansible.builtin.apt:
+        name: "{{ _pia_tunnel_routed_packages }}"
+        state: present
+      when: _pia_tunnel_routed_packages | length > 0
 
     - name: Create the PIA tunnel directories
       ansible.builtin.file:
@@ -158,6 +178,19 @@
         - curiosity-pia-tunnel-watchdog.timer
       notify: Reload systemd
 
+    - name: Install the PIA port-forwarding bind units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - curiosity-pia-tunnel-bind.service
+        - curiosity-pia-tunnel-bind.timer
+      when: pia_tunnel_port_forward | bool
+      notify: Reload systemd
+
     - name: Create the managed policy directories of the routed apps
       ansible.builtin.file:
         path: "{{ item.path | dirname }}"
@@ -200,6 +233,42 @@
       changed_when: "'changed:' in _pia_tunnel_sync.stdout"
       notify: Refresh the local desktop entry cache
 
+    - name: Look up the account ids of the users whose retired units are stopped
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item.name }}"
+      loop: "{{ dev_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: _pia_tunnel_accounts
+      when:
+        - _pia_tunnel_retired_units | length > 0
+        - "'retired unit' in _pia_tunnel_sync.stdout"
+
+    # The retired units were moved aside by `sync`; a timer already loaded in a
+    # running user manager would keep firing the vanished script until the user
+    # logs out, so stop it there. No session (no bus) means nothing is running.
+    - name: Stop the retired hand-made user units in the users' running managers
+      ansible.builtin.command:
+        argv: [systemctl, --user, stop, "{{ item.1 }}"]
+      become: true
+      become_user: "{{ item.0.item.name }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ item.0.ansible_facts.getent_passwd[item.0.item.name][1] }}"
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ item.0.ansible_facts.getent_passwd[item.0.item.name][1] }}/bus"
+      loop: "{{ _pia_tunnel_accounts.results | default([]) | selectattr('ansible_facts', 'defined') | list | product(_pia_tunnel_retired_units) | list }}"
+      loop_control:
+        label: "{{ item.0.item.name }}: {{ item.1 }}"
+      register: _pia_tunnel_retired_stop
+      changed_when: _pia_tunnel_retired_stop.rc == 0
+      failed_when:
+        - _pia_tunnel_retired_stop.rc != 0
+        - "'Failed to connect to' not in _pia_tunnel_retired_stop.stderr"
+        - "'not loaded' not in _pia_tunnel_retired_stop.stderr"
+      when:
+        - _pia_tunnel_retired_units | length > 0
+        - "'retired unit' in _pia_tunnel_sync.stdout"
+
     - name: Check for the PIA login file
       ansible.builtin.stat:
         path: "{{ pia_tunnel_login_file }}"
@@ -231,6 +300,42 @@
         - curiosity-pia-tunnel-watchdog.timer
       register: _pia_tunnel_started
       when: _pia_tunnel_login.stat.exists
+
+    - name: Enable and start the PIA port-forwarding bind timer
+      ansible.builtin.systemd:
+        name: curiosity-pia-tunnel-bind.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when:
+        - pia_tunnel_port_forward | bool
+        - _pia_tunnel_login.stat.exists
+
+    - name: Look for bind units left from when port forwarding was on
+      ansible.builtin.stat:
+        path: /etc/systemd/system/curiosity-pia-tunnel-bind.timer
+      register: _pia_tunnel_bind_timer
+      when: not (pia_tunnel_port_forward | bool)
+
+    - name: Stop and remove the bind units when port forwarding is off
+      when:
+        - not (pia_tunnel_port_forward | bool)
+        - _pia_tunnel_bind_timer.stat.exists
+      block:
+        - name: Stop and disable the PIA port-forwarding bind timer
+          ansible.builtin.systemd:
+            name: curiosity-pia-tunnel-bind.timer
+            state: stopped
+            enabled: false
+
+        - name: Remove the PIA port-forwarding bind units
+          ansible.builtin.file:
+            path: "/etc/systemd/system/{{ item }}"
+            state: absent
+          loop:
+            - curiosity-pia-tunnel-bind.service
+            - curiosity-pia-tunnel-bind.timer
+          notify: Reload systemd
 
     - name: Say what is missing when the PIA login is not provisioned
       ansible.builtin.debug:
@@ -285,6 +390,7 @@
         state: stopped
         enabled: false
       loop:
+        - curiosity-pia-tunnel-bind.timer
         - curiosity-pia-tunnel-watchdog.timer
         - curiosity-pia-tunnel.service
       when: _pia_tunnel_unit.stat.exists
@@ -305,6 +411,8 @@
           '/etc/systemd/system/curiosity-pia-tunnel.service',
           '/etc/systemd/system/curiosity-pia-tunnel-watchdog.service',
           '/etc/systemd/system/curiosity-pia-tunnel-watchdog.timer',
+          '/etc/systemd/system/curiosity-pia-tunnel-bind.service',
+          '/etc/systemd/system/curiosity-pia-tunnel-bind.timer',
           '/etc/sudoers.d/curiosity-pia-tunnel',
           '/etc/curiosity/pia-tunnel/config.json',
           '/usr/share/curiosity/pia-tunnel/ca.rsa.4096.crt',

@@ -21,11 +21,23 @@ There is no fallback: if sudo, the namespace or the allow-list check fails, the
 app is not started at all. Nothing here ever starts the app outside the
 namespace.
 
-Root-only maintenance command (run by Ansible):
+When the launcher refuses (the namespace is missing, or the app already runs
+outside the tunnel) or the tunnel is down, it says so on the user's desktop (a
+notification) and in the journal, because a menu launch has no terminal.
+
+Apps with a `port_forward` entry get their listen port from PIA's forwarded
+port: the launcher rewrites the app's config before it starts (an app rewrites
+its own config on exit, so never while it runs), and `port-sync` does the same
+on a timer.
+
+Root-only maintenance commands (run by Ansible and the bind service):
   curiosity-pia-run sync [--remove-all] --homes HOME...
       wrap the desktop entries of every configured app so their Exec= goes
       through this launcher, install a PATH shim for each name in the app's
-      `shims`, and undo both for apps no longer configured.
+      `shims`, retire the hand-made files and user units an app lists, and undo
+      the wrapping for apps no longer configured.
+  curiosity-pia-run port-sync [--homes HOME...]
+      write the forwarded port into the config of each `port_forward` app.
 """
 
 from __future__ import annotations
@@ -38,9 +50,10 @@ import re
 import shutil
 import subprocess
 import sys
+import syslog
 import tempfile
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 CONFIG_PATH = Path(os.environ.get("CURIOSITY_PIA_CONFIG", "/etc/curiosity/pia-tunnel/config.json"))
 NETNS_RUN = Path(os.environ.get("CURIOSITY_PIA_NETNS_RUN", "/run/netns"))
@@ -51,6 +64,8 @@ SYSTEM_APP_DIRS = tuple(
 OVERRIDE_APP_DIR = Path(os.environ.get("CURIOSITY_PIA_OVERRIDE_APP_DIR", "/usr/local/share/applications"))
 SHIM_DIR = Path(os.environ.get("CURIOSITY_PIA_SHIM_DIR", "/usr/local/bin"))
 SAFE_PATH = os.environ.get("CURIOSITY_PIA_SAFE_PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+STATE_DIR = Path(os.environ.get("CURIOSITY_PIA_STATE_DIR", "/run/curiosity-pia-tunnel"))
+RUNTIME_ROOT = Path(os.environ.get("CURIOSITY_PIA_RUNTIME_ROOT", "/run/user"))
 
 MARKER_KEY = "X-Curiosity-Pia-Tunnel-App"
 MARKER_COMMENT = "# Managed by curiosity.workstation (tasks/pia-tunnel.yml). Do not edit."
@@ -82,6 +97,27 @@ APP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 def str_list(value: object) -> list[str]:
     """The string items of a JSON list (anything else is an empty list)."""
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def app_label(app: str, spec: Mapping[str, object] | None = None) -> str:
+    """The name to show a person (`display_name`, else the config key)."""
+    name = spec.get("display_name") if spec else None
+    return name if isinstance(name, str) and name else app
+
+
+def quit_hint(app: str, spec: Mapping[str, object]) -> str:
+    hint = spec.get("quit_hint")
+    return hint if isinstance(hint, str) and hint else f"Quit {app_label(app, spec)} completely"
+
+
+def log_event(message: str, priority: int = syslog.LOG_INFO) -> None:
+    """One line in the journal (as `curiosity-pia-run`); never raises."""
+    try:
+        syslog.openlog("curiosity-pia-run", 0, syslog.LOG_USER)
+        syslog.syslog(priority, message)
+        syslog.closelog()
+    except OSError:
+        return
 
 
 class LaunchError(Exception):
@@ -235,6 +271,7 @@ def systemd_user_available() -> bool:
 
 def run_user(app: str, args: Sequence[str]) -> int:
     config = load_config()
+    prepare_app_for_launch(config, app)
     command = user_stage_command(config, app, args, os.environ, systemd_user_available())
     try:
         os.execvp(command[0], command)
@@ -248,9 +285,9 @@ def run_user(app: str, args: Sequence[str]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def find_strays(guard_exe: str, uid: int, tunnel_ns_inode: int) -> list[int]:
-    """Main processes of `guard_exe` owned by `uid` that run outside the tunnel."""
-    strays: list[int] = []
+def main_processes(guard_exe: str, uid: int) -> list[tuple[int, int]]:
+    """(pid, network namespace inode) of the main processes of `guard_exe` owned by `uid`."""
+    found: list[tuple[int, int]] = []
     for entry in sorted(PROC_ROOT.iterdir(), key=lambda p: p.name):
         if not entry.name.isdigit():
             continue
@@ -264,11 +301,15 @@ def find_strays(guard_exe: str, uid: int, tunnel_ns_inode: int) -> list[int]:
             # `--type=` as a word in the raw bytes rather than as a list item.
             if HELPER_PROCESS_RE.search((entry / "cmdline").read_bytes()):
                 continue  # a helper process; the main process decides
-            if (entry / "ns" / "net").stat().st_ino != tunnel_ns_inode:
-                strays.append(int(entry.name))
+            found.append((int(entry.name), (entry / "ns" / "net").stat().st_ino))
         except (OSError, ValueError):
             continue  # the process exited, or is not ours to inspect
-    return strays
+    return found
+
+
+def find_strays(guard_exe: str, uid: int, tunnel_ns_inode: int) -> list[int]:
+    """Main processes of `guard_exe` owned by `uid` that run outside the tunnel."""
+    return [pid for pid, inode in main_processes(guard_exe, uid) if inode != tunnel_ns_inode]
 
 
 def notify_user(uid: int, gid: int, env: Mapping[str, str], message: str) -> None:
@@ -289,6 +330,27 @@ def notify_user(uid: int, gid: int, env: Mapping[str, str], message: str) -> Non
         )
     except (OSError, subprocess.TimeoutExpired):
         return
+
+
+def tunnel_interface_present(ns: str, interface: str) -> bool | None:
+    """Whether the tunnel interface exists in the namespace; None when that cannot be told."""
+    ip = shutil.which("ip", path=SAFE_PATH)
+    if not ip:
+        return None
+    try:
+        result = subprocess.run(
+            [ip, "-n", ns, "link", "show", interface], capture_output=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.returncode == 0
+
+
+def refuse(uid: int, gid: int, env: Mapping[str, str], notice: str, detail: str, code: int) -> LaunchError:
+    """Tell the person (desktop notice) and the journal, then return the error to raise."""
+    notify_user(uid, gid, env, notice)
+    log_event(f"refused: {detail}", syslog.LOG_WARNING)
+    return LaunchError(detail, code)
 
 
 def root_stage_command(
@@ -346,35 +408,286 @@ def run_root(app: str, env_pairs: Sequence[str], args: Sequence[str]) -> int:
         # would call this launcher again, forever.
         raise LaunchError(f"{real} is a PIA shim, not the real {app} command; fix `command` in {CONFIG_PATH}", EXIT_USAGE)
     ns = netns_name(config)
+    label = app_label(app, spec)
     passed = parse_env_pairs(env_pairs, str_list(spec.get("env_passthrough")))
 
     netns_file = NETNS_RUN / ns
     try:
         ns_inode = netns_file.stat().st_ino
     except FileNotFoundError:
-        message = (
+        raise refuse(
+            uid, gid, passed,
+            f"The PIA tunnel is down, so {label} was not started. It would run without the VPN otherwise.",
             f"The PIA network namespace '{ns}' does not exist, so {app} was not started "
-            "(it would otherwise run without the VPN). Start curiosity-pia-tunnel.service."
-        )
-        notify_user(uid, gid, passed, message)
-        raise LaunchError(message, EXIT_NO_NAMESPACE) from None
+            "(it would otherwise run without the VPN). Start curiosity-pia-tunnel.service.",
+            EXIT_NO_NAMESPACE,
+        ) from None
 
     guard = spec.get("guard_exe")
     if isinstance(guard, str) and guard:
         strays = find_strays(guard, uid, ns_inode)
         if strays:
-            message = (
+            raise refuse(
+                uid, gid, passed,
+                f"{label} is already open without the VPN. {quit_hint(app, spec)} and open it again to use PIA.",
                 f"{app} is already running OUTSIDE the PIA tunnel (pid {', '.join(map(str, strays))}). "
-                "Quit it completely and start it again so it runs through the VPN."
+                "Quit it completely and start it again so it runs through the VPN.",
+                EXIT_STRAY,
             )
-            notify_user(uid, gid, passed, message)
-            raise LaunchError(message, EXIT_STRAY)
+
+    interface = config.get("interface")
+    if isinstance(interface, str) and tunnel_interface_present(ns, interface) is False:
+        # Fail-closed: the app starts, but has no network until the tunnel is back.
+        notify_user(uid, gid, passed, f"The PIA tunnel is down; {label} stays offline until it reconnects.")
+        log_event(f"{app} started while the tunnel interface {interface} is down; it has no network", syslog.LOG_WARNING)
 
     command = root_stage_command(
         config, app, env_pairs, args, uid, gid, account.pw_dir, account.pw_name, account.pw_shell
     )
     os.execv(command[0], command)
     return 1  # unreachable
+
+
+# ---------------------------------------------------------------------------
+# Forwarded port -> app config
+# ---------------------------------------------------------------------------
+
+SECTION_RE = re.compile(r"^\[(.+)\]\s*$")
+# Keys that bind an app to a named interface or address. Inside the namespace the
+# only interface is the tunnel (and it is rebuilt with a new index), so a binding
+# to the old PIA app's interface would leave the app with no listen socket at all.
+QBT_BINDING_KEYS = {
+    "BitTorrent": ("Session\\Interface", "Session\\InterfaceName", "Session\\InterfaceAddress"),
+    "Preferences": ("Connection\\Interface", "Connection\\InterfaceName", "Connection\\InterfaceAddress"),
+}
+QBT_PORT_KEYS = {"BitTorrent": "Session\\Port", "Preferences": "Connection\\PortRangeMin"}
+NOTIFIED_FILE = "port-sync-notified.json"
+
+
+def read_forwarded_port() -> int | None:
+    """The port PIA has bound for the tunnel, None when there is none (tunnel down or unbound)."""
+    try:
+        value = int((STATE_DIR / "forwarded-port").read_text().strip())
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+    return value if 1024 <= value <= 65535 else None
+
+
+def ini_set(lines: list[str], section: str, key: str, value: str, create: bool) -> bool:
+    """Set `key=value` inside `[section]`; True when `lines` changed. Without `create` only an existing key is touched."""
+    start = end = None
+    for index, line in enumerate(lines):
+        match = SECTION_RE.match(line)
+        if match:
+            if start is not None and end is None:
+                end = index
+            if match.group(1) == section and start is None:
+                start = index
+    if start is not None and end is None:
+        end = len(lines)
+    if start is not None and end is not None:
+        for index in range(start + 1, end):
+            if lines[index].startswith(f"{key}="):
+                if lines[index] == f"{key}={value}":
+                    return False
+                lines[index] = f"{key}={value}"
+                return True
+    if not create:
+        return False
+    if start is None:
+        while lines and lines[-1] == "":
+            lines.pop()
+        lines += ["", f"[{section}]", f"{key}={value}", ""]
+        return True
+    assert end is not None
+    position = end
+    while position > start + 1 and lines[position - 1].strip() == "":
+        position -= 1
+    lines.insert(position, f"{key}={value}")
+    return True
+
+
+def qbittorrent_config(text: str, port: int | None) -> str:
+    """qBittorrent.conf with the forwarded port set and interface bindings cleared."""
+    lines = text.split("\n")
+    for section, keys in QBT_BINDING_KEYS.items():
+        for key in keys:
+            ini_set(lines, section, key, "", create=False)
+    for index, line in enumerate(lines):
+        key, sep, value = line.partition("=")
+        if sep and key.endswith("UseRandomPort") and value.strip().lower() == "true":
+            lines[index] = f"{key}=false"
+    if port is not None:
+        for section, key in QBT_PORT_KEYS.items():
+            ini_set(lines, section, key, str(port), create=True)
+    return "\n".join(lines)
+
+
+def qbittorrent_port(text: str) -> str | None:
+    in_section = False
+    for line in text.split("\n"):
+        match = SECTION_RE.match(line)
+        if match:
+            in_section = match.group(1) == "BitTorrent"
+        elif in_section and line.startswith(f"{QBT_PORT_KEYS['BitTorrent']}="):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def port_forward_config(app: str, spec: Mapping[str, object]) -> str | None:
+    """The app's config path relative to the home, when the app takes the forwarded port."""
+    entry = spec.get("port_forward")
+    relative = entry.get("config") if isinstance(entry, dict) else None
+    if relative is None:
+        return None
+    if not (isinstance(relative, str) and re.match(r"^[A-Za-z0-9._+-][A-Za-z0-9._/+-]*$", relative)
+            and ".." not in relative.split("/")):
+        raise LaunchError(f"invalid port_forward config path {relative!r} for {app!r}")
+    return relative
+
+
+def write_config(conf: Path, text: str) -> None:
+    """Replace `conf` atomically, keeping its mode and owner (and backing up the original once)."""
+    real = conf.resolve()
+    info = real.stat()
+    backup = real.with_name(real.name + BACKUP_SUFFIX)
+    if not backup.exists():
+        shutil.copy2(real, backup)
+    fd, tmp = tempfile.mkstemp(dir=real.parent, prefix=f".{real.name}.")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        os.chmod(tmp, info.st_mode & 0o7777)
+        if os.geteuid() == 0:
+            os.chown(tmp, info.st_uid, info.st_gid)
+        os.replace(tmp, real)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def sync_app_port(
+    app: str,
+    spec: Mapping[str, object],
+    home: Path,
+    uid: int,
+    port: int | None,
+    on_running: Callable[[int], None] | None = None,
+) -> list[str]:
+    """Bring one home's config for `app` in line with the forwarded port; returns log lines."""
+    relative = port_forward_config(app, spec)
+    if relative is None:
+        return []
+    conf = home / relative
+    try:
+        text = conf.read_text()
+    except FileNotFoundError:
+        return []  # the app has not run yet; the launcher prepares it on first launch
+    except (OSError, UnicodeDecodeError) as exc:
+        return [f"warning: cannot read {conf}: {exc}"]
+    wanted = qbittorrent_config(text, port)
+    if wanted == text:
+        return [f"unchanged: {app} listens on {port} for {home.name}"] if port else []
+    guard = spec.get("guard_exe")
+    if isinstance(guard, str) and guard and main_processes(guard, uid):
+        # The running app would overwrite the file when it quits; never edit it underneath.
+        if port is not None and on_running is not None:
+            on_running(port)
+        return [f"deferred: {app} is running, so {conf} keeps its port until it is restarted (forwarded port {port})"]
+    old = qbittorrent_port(text)
+    try:
+        write_config(conf, wanted)
+    except OSError as exc:
+        return [f"warning: cannot update {conf}: {exc}"]
+    if port is None:
+        return [f"changed: cleared the interface bindings in {conf}"]
+    return [f"changed: {app} listen port {old or 'unset'} -> {port} in {conf}"]
+
+
+def prepare_app_for_launch(config: Mapping[str, object], app: str) -> None:
+    """User stage: update the app's own config before it starts; failures never block the launch."""
+    spec = app_spec(config, app)
+    try:
+        if port_forward_config(app, spec) is None:
+            return
+        account = pwd.getpwuid(os.getuid())
+        lines = sync_app_port(app, spec, Path(account.pw_dir), os.getuid(), read_forwarded_port())
+    except (LaunchError, KeyError, OSError) as exc:
+        log_event(f"cannot prepare {app} for launch: {exc}", syslog.LOG_WARNING)
+        return
+    for line in lines:
+        log_event(line, syslog.LOG_NOTICE if line.startswith("changed") else syslog.LOG_INFO)
+
+
+def notified_before(uid: int, app: str, port: int) -> bool:
+    try:
+        recorded = json.loads((STATE_DIR / NOTIFIED_FILE).read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return False
+    return isinstance(recorded, dict) and recorded.get(f"{uid}:{app}") == port
+
+
+def remember_notified(uid: int, app: str, port: int) -> None:
+    path = STATE_DIR / NOTIFIED_FILE
+    try:
+        recorded = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        recorded = {}
+    if not isinstance(recorded, dict):
+        recorded = {}
+    recorded[f"{uid}:{app}"] = port
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(recorded))
+    except OSError as exc:
+        log_event(f"cannot record the port notice: {exc}", syslog.LOG_WARNING)
+
+
+def port_sync(config: Mapping[str, object], homes: Sequence[Path]) -> list[str]:
+    """Root: write the forwarded port into every port_forward app's config, once per change."""
+    port = read_forwarded_port()
+    raw_apps = config.get("apps")
+    apps = {str(k): v for k, v in raw_apps.items() if isinstance(v, dict)} if isinstance(raw_apps, dict) else {}
+    lines: list[str] = []
+    if port is None:
+        lines.append("no forwarded port is bound; the apps keep the port they have")
+    for app, spec in sorted(apps.items()):
+        if port_forward_config(app, spec) is None:
+            continue
+        for home in homes:
+            uid, gid = home_owner(home)
+            if uid is None or gid is None:
+                continue
+
+            def tell(bound: int, uid: int = uid, gid: int = gid, app: str = app, spec: Mapping[str, object] = spec) -> None:
+                if notified_before(uid, app, bound):
+                    return
+                bus = RUNTIME_ROOT / str(uid) / "bus"
+                if bus.exists():
+                    notify_user(
+                        uid, gid,
+                        {"XDG_RUNTIME_DIR": str(RUNTIME_ROOT / str(uid)), "DBUS_SESSION_BUS_ADDRESS": f"unix:path={bus}"},
+                        f"PIA gave {app_label(app, spec)} a new port ({bound}). "
+                        f"{quit_hint(app, spec)} and open it again to use it.",
+                    )
+                remember_notified(uid, app, bound)
+
+            lines += sync_app_port(app, spec, home, uid, port, tell)
+    return lines
+
+
+def run_port_sync(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(prog="curiosity-pia-run port-sync")
+    parser.add_argument("--homes", nargs="*", type=Path, default=None)
+    args = parser.parse_args(argv)
+    if os.geteuid() != 0 and "CURIOSITY_PIA_ALLOW_NON_ROOT" not in os.environ:
+        raise LaunchError("port-sync must run as root", EXIT_USAGE)
+    config = load_config()
+    homes = args.homes if args.homes is not None else [Path(h) for h in str_list(config.get("homes"))]
+    for line in port_sync(config, homes):
+        print(line, flush=True)
+        log_event(line, syslog.LOG_NOTICE if line.startswith("changed") else syslog.LOG_INFO)
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -480,9 +793,15 @@ def remove_entry(target: Path) -> list[str]:
 
 
 def installed(spec: Mapping[str, object]) -> bool:
-    """Whether the app's real command exists on this host."""
+    """Whether the app is on this host: its real command, or a path to be diverted, exists.
+
+    A diverted binary (qbittorrent) is only at its `command` once diverted, so the
+    package's own path counts too.
+    """
     command = str_list(spec.get("command"))
-    return bool(command) and Path(command[0]).exists()
+    return (bool(command) and Path(command[0]).exists()) or any(
+        Path(path).exists() for path in str_list(spec.get("diverted"))
+    )
 
 
 def home_owner(home: Path) -> tuple[int | None, int | None]:
@@ -533,6 +852,43 @@ def legacy_paths(app: str, spec: Mapping[str, object]) -> list[str]:
         if not re.match(r"^[A-Za-z0-9._+-][A-Za-z0-9._/+-]*$", path) or ".." in path.split("/"):
             raise LaunchError(f"invalid legacy wrapper path {path!r} for {app!r}")
     return paths
+
+
+def retire_paths(app: str, spec: Mapping[str, object]) -> list[str]:
+    """Home-relative files and user units of hand-made helpers this app's routing replaces."""
+    paths = str_list(spec.get("retire_files"))
+    for unit in str_list(spec.get("retire_user_units")):
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9@._-]*\.(?:service|timer)$", unit):
+            raise LaunchError(f"invalid retire_user_units entry {unit!r} for {app!r}")
+        paths.append(f".config/systemd/user/{unit}")
+    for path in paths:
+        if not re.match(r"^[A-Za-z0-9._+-][A-Za-z0-9._/+-]*$", path) or ".." in path.split("/"):
+            raise LaunchError(f"invalid retire path {path!r} for {app!r}")
+    return paths
+
+
+def retire(home: Path, app: str, spec: Mapping[str, object]) -> list[str]:
+    """Move a replaced helper aside (kept as a backup) and drop its enablement links."""
+    changes: list[str] = []
+    for relative in retire_paths(app, spec):
+        path = home / relative
+        if path.is_file() and not path.is_symlink() and marker_app(path) is None:
+            kind = "unit" if relative.startswith(".config/systemd/user/") else "file"
+            backup = path.with_name(path.name + BACKUP_SUFFIX)
+            if backup.exists():
+                path.unlink()
+                changes.append(f"changed: retired {kind} {path} (a backup already exists)")
+            else:
+                path.rename(backup)
+                changes.append(f"changed: retired {kind} {path} -> {backup.name}")
+    units_dir = home / ".config/systemd/user"
+    for unit in str_list(spec.get("retire_user_units")):
+        if units_dir.is_dir():
+            for link in sorted(units_dir.glob(f"*.wants/{unit}")):
+                if link.is_symlink():
+                    link.unlink()
+                    changes.append(f"changed: retired unit {unit} (removed {link})")
+    return changes
 
 
 def divert_shim(path: str, app: str, run_path: str) -> list[str]:
@@ -602,6 +958,10 @@ def sync(config: Mapping[str, object], homes: Sequence[Path], remove_all: bool) 
                 legacy = home / relative
                 if legacy.is_file() and not legacy.is_symlink():
                     changes += install_entry(legacy, shim_text(app, run_path), uid, gid, 0o755)
+
+    for app, spec in sorted(apps.items()):
+        for home in homes:
+            changes += retire(home, app, spec)
 
     for desktop_id, app in sorted(wanted.items()):
         source = next((d / desktop_id for d in SYSTEM_APP_DIRS if (d / desktop_id).is_file()), None)
@@ -685,6 +1045,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return run_root(app, env_pairs, args)
         if argv[0] == "sync":
             return run_sync(argv[1:])
+        if argv[0] == "port-sync":
+            return run_port_sync(argv[1:])
         return run_user(argv[0], argv[1:])
     except LaunchError as exc:
         print(f"curiosity-pia-run: {exc}", file=sys.stderr)
