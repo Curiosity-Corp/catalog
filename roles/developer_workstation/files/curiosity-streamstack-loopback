@@ -3,23 +3,39 @@
 #
 # Bring up the StreamStack loopback cameras from /etc/streamstack/streamstack.env
 # without disturbing an open camera, and print what happened: current, added,
-# reloaded or busy. Runs at boot (curiosity-streamstack-loopback.service) and
-# on every catalog run.
+# loaded, reloaded, pending or busy. Runs at boot (curiosity-streamstack-loopback.service)
+# and on every catalog run.
 #
-# An idle module is reloaded so the modprobe options apply. A module in use (a
-# call, the Console, a camera bridge) - or one another tool configures, with
-# STREAMSTACK_CAMERA_EXTERNAL=true - is never unloaded: missing nodes are added
-# next to the open ones and a node with another name is reported as busy.
+# --no-reload (the catalog run): NEVER unloads v4l2loopback, not even an idle
+# one. A card name only changes when the module reloads, and that is a planned
+# step a person runs with no call active (docs/streamstack.md, "Renaming the
+# raw camera"). With the flag the script loads an absent module, adds missing
+# nodes, and prints "pending" for a node whose name differs from the options
+# file. Without the flag (boot) an idle module is reloaded so the options apply.
+# A module in use (a call, OBS, a camera bridge) - or one another tool
+# configures, with STREAMSTACK_CAMERA_EXTERNAL=true - is never unloaded.
 set -euo pipefail
+
+no_reload=false
+[[ "${1:-}" == "--no-reload" ]] && no_reload=true
 
 env_file=${STREAMSTACK_ENV_FILE:-/etc/streamstack/streamstack.env}
 # shellcheck source=/dev/null
 . "$env_file"
 
+# The camera node's card name is what the options file gives it (the settings
+# file's label is the camera's name inside StreamStack, "Canon EOS 50D").
+conf=${STREAMSTACK_LOOPBACK_CONF:-/etc/modprobe.d/curiosity-streamstack-v4l2loopback.conf}
+camera_card=$STREAMSTACK_CAMERA_LABEL
+if [[ -r "$conf" ]]; then
+  configured=$(grep -o 'card_label="[^"]*"' "$conf" | head -n 1 | sed -e 's/^card_label="//' -e 's/"$//' -e 's/,.*//' || true)
+  [[ -n "$configured" ]] && camera_card=$configured
+fi
+
 external=${STREAMSTACK_CAMERA_EXTERNAL:-false}
 nodes=()
 if [[ "$external" != true ]]; then
-  nodes+=("${STREAMSTACK_CAMERA_DEVICE#/dev/video}|$STREAMSTACK_CAMERA_LABEL")
+  nodes+=("${STREAMSTACK_CAMERA_DEVICE#/dev/video}|$camera_card")
 fi
 nodes+=("${STREAMSTACK_PROGRAM_DEVICE#/dev/video}|$STREAMSTACK_PROGRAM_LABEL")
 
@@ -33,12 +49,13 @@ all_named() {
 }
 
 add_missing() {
-  local node state=added
+  local node state=added differs=busy
+  [[ "$no_reload" == true ]] && differs=pending
   for node in "${nodes[@]}"; do
     if [[ ! -e "/dev/video${node%%|*}" ]]; then
       v4l2loopback-ctl add -n "${node#*|}" -x 1 -b 2 "${node%%|*}" >/dev/null
     elif ! named "${node%%|*}" "${node#*|}"; then
-      state=busy
+      state=$differs
     fi
   done
   echo "$state"
@@ -50,7 +67,7 @@ if all_named; then
 fi
 
 if [[ -d /sys/module/v4l2loopback ]]; then
-  if [[ "$external" == true || "$(cat /sys/module/v4l2loopback/refcnt)" != "0" ]]; then
+  if [[ "$no_reload" == true || "$external" == true || "$(cat /sys/module/v4l2loopback/refcnt)" != "0" ]]; then
     add_missing
     exit 0
   fi
@@ -58,7 +75,7 @@ if [[ -d /sys/module/v4l2loopback ]]; then
 fi
 modprobe v4l2loopback
 if all_named; then
-  echo reloaded
+  if [[ "$no_reload" == true ]]; then echo loaded; else echo reloaded; fi
 else
   add_missing
 fi

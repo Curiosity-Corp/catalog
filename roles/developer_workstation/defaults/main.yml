@@ -1335,6 +1335,14 @@ minimal_desktop_display_guard_enabled: "{{ (minimal_desktop_display_setup_enable
 streamstack_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('streamstack', false) | bool }}"
 streamstack_camera_video_nr: 42
 streamstack_camera_label: Canon EOS 50D
+# What call apps (Firefox, Chromium, Teams, Zoom) show for the raw camera node
+# (StreamStack #198): written to the module options only. A card name changes
+# when v4l2loopback reloads, and this role never reloads it: the new name takes
+# effect at the next planned reload (docs/streamstack.md, "Renaming the raw
+# camera"). streamstack_camera_label stays the camera's name inside StreamStack
+# (settings file, Console) and the name of an external node in external mode.
+# 31 characters at most (a V4L2 card name is 32 bytes with its terminator).
+streamstack_camera_card_label: StreamStack RAW - not for calls
 # Adopt a camera node another tool on the host already owns and feeds (its own
 # v4l2loopback options and service): set streamstack_camera_video_nr/_label to
 # that node. StreamStack then writes no module options, runs no bridge, and only

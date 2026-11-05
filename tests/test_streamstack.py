@@ -81,8 +81,11 @@ def test_loopback_options_make_two_browser_visible_cameras() -> None:
     (options,) = [line for line in content.splitlines() if line.startswith("options")]
     assert options == (
         "options v4l2loopback devices=2 video_nr=42,43 "
-        'card_label="Canon EOS 50D,StreamStack Camera" exclusive_caps=1,1 max_buffers=2'
+        'card_label="StreamStack RAW - not for calls,StreamStack Camera" exclusive_caps=1,1 max_buffers=2'
     )
+    # The raw node's card name is separate from the camera's name inside StreamStack (settings file, Console).
+    assert "STREAMSTACK_CAMERA_LABEL='Canon EOS 50D'" in _env() or "STREAMSTACK_CAMERA_LABEL=Canon EOS 50D" in _env()
+    assert len(DEFAULTS["streamstack_camera_card_label"]) <= 31, "a V4L2 card name is 31 characters at most"
 
 
 def test_udev_rules_cover_both_nodes_and_the_capture_card() -> None:
@@ -112,13 +115,19 @@ def test_loopback_reload_never_touches_a_busy_module() -> None:
     assert script.startswith("#!/usr/bin/env bash")
     # A busy (or externally owned) module only gains missing nodes; it is
     # never unloaded under a call.
-    guard = script.index('"$external" == true || "$(cat /sys/module/v4l2loopback/refcnt)" != "0"')
+    guard = script.index('"$no_reload" == true || "$external" == true || "$(cat /sys/module/v4l2loopback/refcnt)" != "0"')
     assert guard < script.index("modprobe -r v4l2loopback")
     busy_branch = script[guard:script.index("modprobe -r v4l2loopback")]
     assert "add_missing" in busy_branch and "exit 0" in busy_branch
+    assert "--no-reload" in script
     assert "v4l2loopback-ctl add" in script
     task = _task("Bring up the StreamStack loopback cameras")
-    assert task["ansible.builtin.command"] == "/usr/local/sbin/curiosity-streamstack-loopback"
+    # A catalog run never reloads the module (StreamStack #198): names change in a planned window.
+    assert task["ansible.builtin.command"] == "/usr/local/sbin/curiosity-streamstack-loopback --no-reload"
+    assert "reloaded" not in task["changed_when"]
+    notice = _task("Report a loopback camera rename that waits for the next planned reload")
+    assert "pending" in notice["when"] and "next planned reload" in notice["ansible.builtin.debug"]["msg"]
+    assert "--no-reload" not in (ROLE / "files/curiosity-streamstack-loopback.service").read_text()
     unit = (ROLE / "files/curiosity-streamstack-loopback.service").read_text()
     assert "ExecStart=/usr/local/sbin/curiosity-streamstack-loopback" in unit
     assert "After=systemd-modules-load.service" in unit
@@ -407,3 +416,53 @@ def test_streamstack_wireplumber_dropins_are_installed_from_the_release() -> Non
     assert copy["src"] == "streamstack/packaging/wireplumber/wireplumber.conf.d/"
     assert copy["dest"] == "/etc/wireplumber/wireplumber.conf.d/"
     assert not [t for t in TASKS if "wireplumber" in str(t.get("ansible.builtin.systemd", ""))]
+
+
+def _run_loopback(tmp_path: Path, args: list[str], live_name: str, refcnt: str = "0") -> tuple[str, list[str]]:
+    """Run the bring-up against a fake sysfs and /etc: an idle module whose camera node has `live_name`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls"
+    log.touch()
+    for tool in ("modprobe", "v4l2loopback-ctl", "cat"):
+        stub = bin_dir / tool
+        if tool == "cat":
+            stub.write_text(f'#!/bin/sh\ncase "$1" in */video42/name) echo "{live_name}";; '
+                            f'*/video43/name) echo "StreamStack Camera";; */refcnt) echo {refcnt};; *) exit 1;; esac\n')
+        else:
+            stub.write_text(f'#!/bin/sh\necho "{tool} $*" >> {log}\n')
+        stub.chmod(0o755)
+    (tmp_path / "dev").mkdir()
+    for node in ("video42", "video43"):
+        (tmp_path / "dev" / node).touch()
+    conf = tmp_path / "loopback.conf"
+    conf.write_text(_render(_task("Configure the StreamStack loopback cameras")["ansible.builtin.copy"]["content"]))
+    env_file = tmp_path / "streamstack.env"
+    env_file.write_text(_env())
+    script = (LOOPBACK.read_text().replace("/sys/module/v4l2loopback", str(tmp_path))
+              .replace('"/dev/video', f'"{tmp_path}/dev/video'))
+    patched = tmp_path / "loopback"
+    patched.write_text(script)
+    result = subprocess.run(["bash", str(patched), *args], capture_output=True, text=True, check=False, timeout=30,
+                            env=dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+                                     STREAMSTACK_ENV_FILE=str(env_file), STREAMSTACK_LOOPBACK_CONF=str(conf)))
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip(), log.read_text().splitlines()
+
+
+def test_a_catalog_run_never_reloads_an_idle_module_and_reports_the_rename_as_pending(tmp_path: Path) -> None:
+    # The live camera node still has its old name and nothing holds the module (refcnt 0): the old script reloaded here.
+    out, calls = _run_loopback(tmp_path, ["--no-reload"], live_name="Canon EOS 50D")
+    assert out == "pending"
+    assert calls == []
+
+
+def test_a_catalog_run_is_current_once_the_module_carries_the_new_name(tmp_path: Path) -> None:
+    out, calls = _run_loopback(tmp_path, ["--no-reload"], live_name="StreamStack RAW - not for calls")
+    assert (out, calls) == ("current", [])
+
+
+def test_boot_still_reloads_an_idle_module_so_the_options_apply(tmp_path: Path) -> None:
+    # Boot (the oneshot unit, no flag) is not a live desk; this is the only path that unloads the module.
+    _out, calls = _run_loopback(tmp_path, [], live_name="Canon EOS 50D")
+    assert calls[:2] == ["modprobe -r v4l2loopback", "modprobe v4l2loopback"]
