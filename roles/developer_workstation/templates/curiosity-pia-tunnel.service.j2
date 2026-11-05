@@ -1,0 +1,23 @@
+# Managed by curiosity.workstation (tasks/pia-tunnel.yml). Do not edit.
+[Unit]
+Description=PIA WireGuard tunnel for the fail-closed "{{ pia_tunnel_netns }}" network namespace
+Documentation=file:///usr/local/sbin/curiosity-pia-tunnel
+After=network-online.target
+Wants=network-online.target
+ConditionVirtualization=!container
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# `ensure` creates and closes the namespace first, then registers with PIA; it
+# retries with a back-off because the link may still be coming up at boot.
+ExecStart=/usr/local/sbin/curiosity-pia-tunnel ensure --retries 6
+# Stopping removes the tunnel but leaves the namespace closed, so a running app
+# loses its network instead of leaking out.
+ExecStop=/usr/local/sbin/curiosity-pia-tunnel down
+TimeoutStartSec=420
+SyslogIdentifier=curiosity-pia-tunnel
+
+[Install]
+WantedBy=multi-user.target

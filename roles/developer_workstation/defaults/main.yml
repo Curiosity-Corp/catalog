@@ -1049,6 +1049,9 @@ pro_mimic_motd_news_enabled: false
 # developer_workstation_intel_media_non_free),
 # browser_hw_video_decode (bool, default false: start Google Chrome with
 # VA-API decode enabled; see developer_workstation_browser_hw_video_decode),
+# pia_tunnel_apps (list of app names, default empty: run those apps only
+# through Private Internet Access inside a fail-closed network namespace; see
+# pia_tunnel_apps and tasks/pia-tunnel.yml),
 # crash_diagnostics (mapping, default unset: lockup panics, pstore, journald
 # sync and an optional hardware watchdog; see
 # developer_workstation_crash_diagnostics and tasks/crash-diagnostics.yml),
@@ -1905,6 +1908,11 @@ hardware_profiles:
     # Record temperatures and throttling so faults can be checked against heat
     # while the cap is evaluated (catalog#141).
     cpu_thermal_log: true
+    # Brave only, through PIA, fail-closed (catalog#145). Everything else on the
+    # host keeps the normal network. Needs the PIA login provisioned on the host
+    # (docs/pia-tunnel.md).
+    pia_tunnel_apps:
+      - brave-browser
     # Seven hard freezes 2026-10-10..31 left no trace and needed the power
     # button (catalog#139). Panic and reboot on a lockup, keep the panic log in
     # EFI pstore, and arm the PCH TCO watchdog (probed 2026-11-04: Version=6,
@@ -1976,6 +1984,73 @@ pia_daemon_oom_score_adjust: -900
 # from the ACTIVE Bitwarden item "Privateinternetaccess / p1793859". Empty or
 # missing skips `piactl login`; the daemon keeps any existing login.
 pia_login_file: ""
+
+# =============================================================================
+# PIA tunnel for chosen apps (tasks/pia-tunnel.yml, docs/pia-tunnel.md)
+# =============================================================================
+# The apps named here run ONLY through Private Internet Access: each is started
+# inside a network namespace that holds loopback and one WireGuard interface to
+# PIA and nothing else, so with the tunnel down the app has no network at all
+# (no route, no resolver, no IPv6). Every other program on the host keeps the
+# normal network. Derived from the hardware profile's `pia_tunnel_apps`; a host
+# may override it from /etc/ansible/local-vars.yml. Each name must be a key of
+# pia_tunnel_app_definitions. Adding an app is one line in a profile (plus a
+# definition when it is not listed below); see docs/pia-tunnel.md.
+# Mutually exclusive with the PIA desktop app's split tunnel (profile `pia_vpn`).
+pia_tunnel_apps: "{{ (hardware_profiles.get(hardware_profile, {})).get('pia_tunnel_apps', []) }}"
+pia_tunnel_netns: pia
+pia_tunnel_interface: wgpia
+# A PIA region id (for example us_chicago) or `auto` for the lowest-latency
+# non-geo-located WireGuard region at connect time.
+pia_tunnel_region: auto
+# Root-only (0600) two-line file, username then password: the same format and
+# provisioning as pia_login_file (the ACTIVE Bitwarden item "Privateinternetaccess
+# / p1793859", written from `bw` straight into the file, never through git).
+pia_tunnel_login_file: "{{ pia_login_file if (pia_login_file | length > 0) else '/etc/curiosity/pia-tunnel/login' }}"
+pia_tunnel_mtu: 1420
+pia_tunnel_keepalive: 25
+# Rebuild the tunnel when the newest WireGuard handshake is older than this
+# (seconds; with keepalive a healthy tunnel re-handshakes about every 2 minutes).
+pia_tunnel_max_handshake_age: 240
+# Rebuild the tunnel after this many hours regardless of health; 0 relies on the
+# handshake check alone (PIA drops a stale registration, which that check sees).
+pia_tunnel_session_max_hours: 0
+# How often the watchdog timer checks the tunnel.
+pia_tunnel_watchdog_interval: 1min
+# Accounts allowed to start tunnelled apps (sudoers rule for the launcher).
+pia_tunnel_users: "{{ dev_users | map(attribute='name') | list }}"
+# What each routable app needs. `command` is what the launcher runs inside the
+# namespace; `guard_exe` is the executable the launcher refuses to shadow when
+# a copy already runs outside the tunnel (a browser would hand a new window to
+# that instance); `desktop_ids` and `desktop_commands` wrap the packaged desktop
+# entries (Exec= lines starting with one of the commands); `shims` are PATH
+# names in /usr/local/bin; `scope` is an optional memory-capped systemd user
+# scope; `managed_policies` are root-owned browser policy files.
+pia_tunnel_app_definitions:
+  brave-browser:
+    command:
+      - /usr/bin/brave-browser-stable
+    guard_exe: /opt/brave.com/brave/brave
+    desktop_ids:
+      - brave-browser.desktop
+      - com.brave.Browser.desktop
+    desktop_commands:
+      - /usr/bin/brave-browser-stable
+    shims:
+      - brave-browser
+      - brave-browser-stable
+    # Keeps the memory cap the old ~/.local/bin/brave-capped wrapper gave
+    # (OOM on 2026-10-17: 257 Brave processes, ~46 GB).
+    scope:
+      slice: app-browser.slice
+      MemoryHigh: 16G
+      MemoryMax: 24G
+    # WebRTC may only use the public (tunnel) interface; the namespace already
+    # has no other interface, this makes Brave agree.
+    managed_policies:
+      - path: /etc/brave/policies/managed/30-pia-tunnel-webrtc.json
+        content:
+          WebRtcIPHandling: default_public_interface_only
 
 # =============================================================================
 # Managed WiFi profile (netplan, NetworkManager renderer)

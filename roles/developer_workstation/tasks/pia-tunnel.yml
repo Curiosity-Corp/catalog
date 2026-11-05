@@ -1,0 +1,313 @@
+---
+# =============================================================================
+# PIA tunnel for chosen apps: fail-closed network namespace (opt-in)
+# =============================================================================
+# pia_tunnel_apps (a hardware profile's `pia_tunnel_apps`; empty = off) lists
+# apps that must reach the network ONLY through Private Internet Access. Each
+# runs inside the `pia` network namespace, which holds loopback and one
+# WireGuard interface and nothing else, so with the tunnel down the app has no
+# network at all. Everything else on the host is untouched.
+#
+#   curiosity-pia-tunnel (root)   registers with PIA (token, server list,
+#                                 addKey) and builds the tunnel; the
+#                                 service owns it, a timer re-establishes it.
+#   curiosity-pia-run APP         user launcher; the root stage is reached only
+#                                 through a sudoers rule limited to --exec.
+#   desktop entries, PATH shims   every normal launch goes through the launcher.
+#
+# Why a namespace and not PIA's desktop app split tunnel: the namespace has no
+# route or resolver outside the tunnel by construction, needs no GUI client or
+# daemon, survives the OOM and restart paths that left the app split tunnel
+# Disconnected on 2026-10-23, and one launcher serves any number of apps. The
+# two mechanisms are mutually exclusive on a host (asserted below).
+#
+# Removing an app from the list (or emptying it) undoes its desktop entry, shim
+# and policy; emptying the list also stops the service and timer, deletes the
+# namespace and removes every file. docs/pia-tunnel.md has the details.
+# =============================================================================
+
+- name: Validate the PIA tunnel settings
+  ansible.builtin.assert:
+    that:
+      - pia_tunnel_apps is sequence
+      - pia_tunnel_apps is not string
+      - pia_tunnel_apps | unique | list | length == pia_tunnel_apps | length
+      - pia_tunnel_apps | select('in', pia_tunnel_app_definitions) | list | length == pia_tunnel_apps | length
+      - pia_tunnel_netns is match('^[a-z][a-z0-9_-]{0,14}$')
+      - pia_tunnel_interface is match('^[a-z][a-z0-9_-]{0,14}$')
+      - pia_tunnel_region == 'auto' or pia_tunnel_region is match('^[a-z0-9_-]{1,64}$')
+      - pia_tunnel_login_file is match('^/[^ ]+$')
+      - pia_tunnel_mtu | int >= 1280
+      - pia_tunnel_mtu | int <= 1500
+      - pia_tunnel_keepalive | int >= 0
+      - pia_tunnel_max_handshake_age | int >= 60
+      - pia_tunnel_session_max_hours | int >= 0
+      - pia_tunnel_watchdog_interval is match('^[0-9]+(s|min|h)$')
+      - pia_tunnel_users is sequence
+      - pia_tunnel_users is not string
+      - pia_tunnel_users | length > 0
+      - pia_tunnel_users | select('match', '^[a-z_][a-z0-9_-]*$') | list | length == pia_tunnel_users | length
+    fail_msg: >-
+      pia_tunnel_apps must be a list of unique names that are keys of
+      pia_tunnel_app_definitions (got {{ pia_tunnel_apps }}), and the namespace
+      and interface names, region, login file path, mtu (1280-1500), handshake
+      age (at least 60), session hours, watchdog interval (for example 1min) and
+      user list must be valid.
+
+- name: Refuse the PIA desktop app split tunnel and the PIA namespace together
+  ansible.builtin.assert:
+    that:
+      - (pia_tunnel_apps | length == 0) or not ((hardware_profiles.get(hardware_profile, {})).get('pia_vpn', false) | bool)
+    fail_msg: >-
+      Hardware profile {{ hardware_profile }} sets pia_vpn: true (the PIA desktop
+      app split tunnel) and also lists pia_tunnel_apps. Use one mechanism per
+      host: the namespace (fail-closed by construction) or the desktop app.
+
+# -----------------------------------------------------------------------------
+# Install
+# -----------------------------------------------------------------------------
+
+- name: Install the PIA tunnel
+  when: pia_tunnel_apps | length > 0
+  vars:
+    _pia_tunnel_routed_policies: >-
+      {{ pia_tunnel_app_definitions | dict2items
+         | selectattr('key', 'in', pia_tunnel_apps)
+         | map(attribute='value') | map(attribute='managed_policies', default=[])
+         | flatten }}
+  block:
+    - name: Install the PIA tunnel tooling
+      ansible.builtin.apt:
+        name:
+          - wireguard-tools
+          - nftables
+          - iproute2
+          - util-linux
+          - curl
+          - sudo
+          - libnotify-bin
+        state: present
+
+    - name: Create the PIA tunnel directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /etc/curiosity
+        - /etc/curiosity/pia-tunnel
+        - /usr/share/curiosity
+        - /usr/share/curiosity/pia-tunnel
+
+    - name: Install PIA's WireGuard API certificate authority
+      ansible.builtin.copy:
+        src: pia-ca.rsa.4096.crt
+        dest: /usr/share/curiosity/pia-tunnel/ca.rsa.4096.crt
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install the PIA tunnel manager
+      ansible.builtin.copy:
+        src: curiosity-pia-tunnel
+        dest: /usr/local/sbin/curiosity-pia-tunnel
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the PIA app launcher
+      ansible.builtin.copy:
+        src: curiosity-pia-run
+        dest: /usr/local/bin/curiosity-pia-run
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the PIA tunnel configuration
+      ansible.builtin.template:
+        src: pia-tunnel-config.json.j2
+        dest: /etc/curiosity/pia-tunnel/config.json
+        owner: root
+        group: root
+        mode: "0644"
+      register: _pia_tunnel_config
+      notify: Restart the PIA tunnel
+
+    - name: Allow the listed users to reach the launcher's privileged stage
+      ansible.builtin.template:
+        src: pia-tunnel-sudoers.j2
+        dest: /etc/sudoers.d/curiosity-pia-tunnel
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+
+    - name: Install the PIA tunnel units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - curiosity-pia-tunnel.service
+        - curiosity-pia-tunnel-watchdog.service
+        - curiosity-pia-tunnel-watchdog.timer
+      notify: Reload systemd
+
+    - name: Create the managed policy directories of the routed apps
+      ansible.builtin.file:
+        path: "{{ item.path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: "{{ _pia_tunnel_routed_policies }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Install the managed policies of the routed apps
+      ansible.builtin.copy:
+        content: "{{ item.content | to_nice_json }}\n"
+        dest: "{{ item.path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ _pia_tunnel_routed_policies }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Remove managed policies of defined apps that are not routed
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: >-
+        {{ pia_tunnel_app_definitions | dict2items
+           | rejectattr('key', 'in', pia_tunnel_apps)
+           | map(attribute='value') | map(attribute='managed_policies', default=[])
+           | flatten }}
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Route desktop entries and PATH shims through the launcher
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/local/bin/curiosity-pia-run', 'sync', '--homes'] + (dev_users | map(attribute='home') | list) }}
+      register: _pia_tunnel_sync
+      changed_when: "'changed:' in _pia_tunnel_sync.stdout"
+      notify: Refresh the local desktop entry cache
+
+    - name: Check for the PIA login file
+      ansible.builtin.stat:
+        path: "{{ pia_tunnel_login_file }}"
+      register: _pia_tunnel_login
+
+    - name: Keep the PIA login file root-only
+      ansible.builtin.file:
+        path: "{{ pia_tunnel_login_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: _pia_tunnel_login.stat.exists
+
+    - name: Enable the PIA tunnel and its watchdog at boot
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        daemon_reload: true
+      loop:
+        - curiosity-pia-tunnel.service
+        - curiosity-pia-tunnel-watchdog.timer
+
+    - name: Start the PIA tunnel and its watchdog
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - curiosity-pia-tunnel.service
+        - curiosity-pia-tunnel-watchdog.timer
+      register: _pia_tunnel_started
+      when: _pia_tunnel_login.stat.exists
+
+    - name: Say what is missing when the PIA login is not provisioned
+      ansible.builtin.debug:
+        msg: >-
+          {{ pia_tunnel_login_file }} does not exist, so the PIA tunnel is not
+          started and {{ pia_tunnel_apps | join(', ') }} will not launch (no
+          tunnel, no network, by design). Provision it from Bitwarden as
+          described in docs/pia-tunnel.md; the next pull starts the tunnel.
+      when: not _pia_tunnel_login.stat.exists
+
+# -----------------------------------------------------------------------------
+# Remove (the list is empty): undo everything an earlier run installed
+# -----------------------------------------------------------------------------
+
+- name: Remove the PIA tunnel when no app is routed through it
+  when: pia_tunnel_apps | length == 0
+  block:
+    - name: Look for a previously installed PIA launcher
+      ansible.builtin.stat:
+        path: /usr/local/bin/curiosity-pia-run
+      register: _pia_tunnel_launcher
+
+    - name: Look for a previously installed PIA tunnel configuration
+      ansible.builtin.stat:
+        path: /etc/curiosity/pia-tunnel/config.json
+      register: _pia_tunnel_config_file
+
+    - name: Look for a previously installed PIA tunnel manager
+      ansible.builtin.stat:
+        path: /usr/local/sbin/curiosity-pia-tunnel
+      register: _pia_tunnel_manager
+
+    - name: Look for a previously installed PIA tunnel service
+      ansible.builtin.stat:
+        path: /etc/systemd/system/curiosity-pia-tunnel.service
+      register: _pia_tunnel_unit
+
+    - name: Restore the desktop entries and remove the PATH shims
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/local/bin/curiosity-pia-run', 'sync', '--remove-all', '--homes'] + (dev_users | map(attribute='home') | list) }}
+      register: _pia_tunnel_unsync
+      changed_when: "'changed:' in _pia_tunnel_unsync.stdout"
+      notify: Refresh the local desktop entry cache
+      when:
+        - _pia_tunnel_launcher.stat.exists
+        - _pia_tunnel_config_file.stat.exists
+
+    - name: Stop and disable the PIA tunnel watchdog and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - curiosity-pia-tunnel-watchdog.timer
+        - curiosity-pia-tunnel.service
+      when: _pia_tunnel_unit.stat.exists
+
+    - name: Delete the PIA network namespace
+      ansible.builtin.command: /usr/local/sbin/curiosity-pia-tunnel down --destroy
+      register: _pia_tunnel_destroy
+      changed_when: "'removed network namespace' in _pia_tunnel_destroy.stdout"
+      failed_when: false
+      when: _pia_tunnel_manager.stat.exists
+
+    - name: Remove the PIA tunnel files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ [
+          '/etc/systemd/system/curiosity-pia-tunnel.service',
+          '/etc/systemd/system/curiosity-pia-tunnel-watchdog.service',
+          '/etc/systemd/system/curiosity-pia-tunnel-watchdog.timer',
+          '/etc/sudoers.d/curiosity-pia-tunnel',
+          '/etc/curiosity/pia-tunnel/config.json',
+          '/usr/share/curiosity/pia-tunnel/ca.rsa.4096.crt',
+          '/usr/local/sbin/curiosity-pia-tunnel',
+          '/usr/local/bin/curiosity-pia-run',
+        ] + (pia_tunnel_app_definitions.values() | map(attribute='managed_policies', default=[]) | flatten | map(attribute='path') | list) }}
+      notify: Reload systemd

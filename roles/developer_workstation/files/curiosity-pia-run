@@ -1,0 +1,574 @@
+#!/usr/bin/python3
+# Managed by curiosity.workstation (tasks/pia-tunnel.yml).
+"""Run an app inside the fail-closed PIA network namespace.
+
+  curiosity-pia-run APP [ARGS...]      start APP (any name in the configuration)
+
+APP is a key of `apps` in /etc/curiosity/pia-tunnel/config.json. The command it
+runs comes from that root-owned file, never from the caller; the caller only
+supplies APP and arguments for the app. The launch has two stages:
+
+  user stage   collects the display/session environment, optionally wraps the
+               app in a systemd user scope (memory caps), and calls
+               `sudo -n curiosity-pia-run --exec ...`.
+  root stage   (--exec, reached only through the sudoers rule) checks that the
+               namespace exists, refuses when the same app already runs outside
+               it, then enters the namespace and drops to the invoking user
+               before exec'ing the app. The environment handed to the app is
+               rebuilt from an allow-list.
+
+There is no fallback: if sudo, the namespace or the allow-list check fails, the
+app is not started at all. Nothing here ever starts the app outside the
+namespace.
+
+Root-only maintenance command (run by Ansible):
+  curiosity-pia-run sync [--remove-all] --homes HOME...
+      wrap the desktop entries of every configured app so their Exec= goes
+      through this launcher, install a PATH shim for each name in the app's
+      `shims`, and undo both for apps no longer configured.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Mapping, Sequence
+
+CONFIG_PATH = Path(os.environ.get("CURIOSITY_PIA_CONFIG", "/etc/curiosity/pia-tunnel/config.json"))
+NETNS_RUN = Path(os.environ.get("CURIOSITY_PIA_NETNS_RUN", "/run/netns"))
+PROC_ROOT = Path(os.environ.get("CURIOSITY_PIA_PROC", "/proc"))
+SYSTEM_APP_DIRS = tuple(
+    Path(p) for p in os.environ.get("CURIOSITY_PIA_SYSTEM_APP_DIRS", "/usr/share/applications").split(":")
+)
+OVERRIDE_APP_DIR = Path(os.environ.get("CURIOSITY_PIA_OVERRIDE_APP_DIR", "/usr/local/share/applications"))
+SHIM_DIR = Path(os.environ.get("CURIOSITY_PIA_SHIM_DIR", "/usr/local/bin"))
+SAFE_PATH = os.environ.get("CURIOSITY_PIA_SAFE_PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+
+MARKER_KEY = "X-Curiosity-Pia-Tunnel-App"
+MARKER_COMMENT = "# Managed by curiosity.workstation (tasks/pia-tunnel.yml). Do not edit."
+BACKUP_SUFFIX = ".pre-pia-tunnel"
+
+EXIT_USAGE = 2
+EXIT_NO_NAMESPACE = 71
+EXIT_STRAY = 72
+
+# Names (exact or by prefix) of the session variables an app needs from the
+# user's desktop. Everything else is dropped; LD_* and friends never pass.
+ENV_EXACT = frozenset(
+    {
+        "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS",
+        "PATH", "LANG", "LANGUAGE", "TZ", "PULSE_SERVER", "PULSE_COOKIE",
+        "PULSE_RUNTIME_PATH", "DESKTOP_STARTUP_ID", "SSH_AUTH_SOCK",
+    }
+)
+ENV_PREFIXES = ("LC_", "XDG_", "GTK_", "GDK_", "QT_", "XCURSOR_", "BRAVE_", "CHROME_")
+ENV_VALUE_LIMIT = 8192
+HELPER_PROCESS_RE = re.compile(rb"(?:^|[\0 ])--type=")
+APP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def str_list(value: object) -> list[str]:
+    """The string items of a JSON list (anything else is an empty list)."""
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+class LaunchError(Exception):
+    """The launch must not proceed; the message is shown to the user."""
+
+    def __init__(self, message: str, code: int = 1) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+
+def load_config(path: Path | None = None) -> dict[str, object]:
+    path = CONFIG_PATH if path is None else path
+    try:
+        value = json.loads(path.read_text())
+    except FileNotFoundError as exc:
+        raise LaunchError(f"{path} is missing: the PIA tunnel is not configured on this host", EXIT_USAGE) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LaunchError(f"cannot read {path}: {exc}", EXIT_USAGE) from exc
+    if not isinstance(value, dict) or not isinstance(value.get("apps"), dict):
+        raise LaunchError(f"{path} has no `apps` table", EXIT_USAGE)
+    return value
+
+
+def app_spec(config: Mapping[str, object], app: str) -> dict[str, object]:
+    if not APP_NAME_RE.match(app):
+        raise LaunchError(f"invalid app name {app!r}", EXIT_USAGE)
+    apps = config.get("apps")
+    spec = apps.get(app) if isinstance(apps, dict) else None
+    if not isinstance(spec, dict):
+        known = ", ".join(sorted(apps)) if isinstance(apps, dict) and apps else "none"
+        raise LaunchError(f"{app!r} is not routed through PIA on this host (configured: {known})", EXIT_USAGE)
+    command = spec.get("command")
+    if not (isinstance(command, list) and command and all(isinstance(c, str) and c for c in command)):
+        raise LaunchError(f"{app!r} has no command in {CONFIG_PATH}", EXIT_USAGE)
+    return spec
+
+
+def netns_name(config: Mapping[str, object]) -> str:
+    name = str(config.get("netns", ""))
+    if not re.match(r"^[a-z][a-z0-9_-]{0,14}$", name):
+        raise LaunchError(f"invalid network namespace name {name!r} in {CONFIG_PATH}", EXIT_USAGE)
+    return name
+
+
+# ---------------------------------------------------------------------------
+# Environment allow-list
+# ---------------------------------------------------------------------------
+
+
+def env_allowed(name: str, extra: Sequence[str] = ()) -> bool:
+    return name in ENV_EXACT or name in extra or name.startswith(ENV_PREFIXES)
+
+
+def collect_env(environ: Mapping[str, str], extra: Sequence[str] = ()) -> dict[str, str]:
+    """The variables worth passing from the caller's session."""
+    return {
+        name: value
+        for name, value in environ.items()
+        if env_allowed(name, extra) and "\0" not in value and len(value) <= ENV_VALUE_LIMIT
+    }
+
+
+def parse_env_pairs(pairs: Sequence[str], extra: Sequence[str] = ()) -> dict[str, str]:
+    """Validate NAME=VALUE pairs received on the root stage's command line."""
+    result: dict[str, str] = {}
+    for pair in pairs:
+        name, sep, value = pair.partition("=")
+        if not sep or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            raise LaunchError(f"malformed environment entry {name!r}", EXIT_USAGE)
+        if not env_allowed(name, extra):
+            raise LaunchError(f"environment variable {name} is not allowed through the PIA launcher", EXIT_USAGE)
+        if "\0" in value or len(value) > ENV_VALUE_LIMIT:
+            raise LaunchError(f"environment variable {name} has an invalid value", EXIT_USAGE)
+        result[name] = value
+    return result
+
+
+# ---------------------------------------------------------------------------
+# User stage
+# ---------------------------------------------------------------------------
+
+
+def scope_properties(spec: Mapping[str, object]) -> list[str]:
+    """systemd-run arguments for the app's optional memory-capped user scope."""
+    scope = spec.get("scope")
+    if not isinstance(scope, dict) or not scope:
+        return []
+    args = ["--user", "--scope", "--quiet", "--collect"]
+    slice_name = scope.get("slice")
+    if isinstance(slice_name, str) and slice_name:
+        args.append(f"--slice={slice_name}")
+    for key, value in scope.items():
+        if key != "slice":
+            args += ["-p", f"{key}={value}"]
+    return args
+
+
+def user_stage_command(
+    config: Mapping[str, object],
+    app: str,
+    args: Sequence[str],
+    environ: Mapping[str, str],
+    scope_available: bool,
+) -> list[str]:
+    spec = app_spec(config, app)
+    extra = str_list(spec.get("env_passthrough"))
+    run_path = str(config.get("run_path", "/usr/local/bin/curiosity-pia-run"))
+    inner = ["sudo", "-n", run_path, "--exec", app]
+    for name, value in sorted(collect_env(environ, extra).items()):
+        inner += ["--env", f"{name}={value}"]
+    inner += ["--", *args]
+    props = scope_properties(spec)
+    if props and scope_available:
+        return ["systemd-run", *props, "--", *inner]
+    return inner
+
+
+def systemd_user_available() -> bool:
+    if shutil.which("systemd-run") is None or shutil.which("systemctl") is None:
+        return False
+    return (
+        subprocess.run(
+            ["systemctl", "--user", "show-environment"],
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def run_user(app: str, args: Sequence[str]) -> int:
+    config = load_config()
+    command = user_stage_command(config, app, args, os.environ, systemd_user_available())
+    try:
+        os.execvp(command[0], command)
+    except FileNotFoundError as exc:
+        raise LaunchError(f"{command[0]} is not installed; refusing to start {app} outside the tunnel") from exc
+    return 1  # unreachable
+
+
+# ---------------------------------------------------------------------------
+# Root stage
+# ---------------------------------------------------------------------------
+
+
+def find_strays(guard_exe: str, uid: int, tunnel_ns_inode: int) -> list[int]:
+    """Main processes of `guard_exe` owned by `uid` that run outside the tunnel."""
+    strays: list[int] = []
+    for entry in sorted(PROC_ROOT.iterdir(), key=lambda p: p.name):
+        if not entry.name.isdigit():
+            continue
+        try:
+            if entry.stat().st_uid != uid:
+                continue
+            exe = os.readlink(entry / "exe").removesuffix(" (deleted)")
+            if exe != guard_exe:
+                continue
+            # Chromium rewrites a child's argv with spaces for NULs, so match
+            # `--type=` as a word in the raw bytes rather than as a list item.
+            if HELPER_PROCESS_RE.search((entry / "cmdline").read_bytes()):
+                continue  # a helper process; the main process decides
+            if (entry / "ns" / "net").stat().st_ino != tunnel_ns_inode:
+                strays.append(int(entry.name))
+        except (OSError, ValueError):
+            continue  # the process exited, or is not ours to inspect
+    return strays
+
+
+def notify_user(uid: int, gid: int, env: Mapping[str, str], message: str) -> None:
+    """Best-effort desktop notification as the user; never blocks the launch result."""
+    notify = shutil.which("notify-send", path=SAFE_PATH)
+    setpriv = shutil.which("setpriv", path=SAFE_PATH)
+    if not notify or not setpriv:
+        return
+    clean = {k: v for k, v in env.items() if k in ("DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR")}
+    try:
+        subprocess.run(
+            [setpriv, f"--reuid={uid}", f"--regid={gid}", "--init-groups", "--",
+             notify, "--urgency=critical", "--app-name=PIA tunnel", "PIA tunnel", message],
+            env=clean,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+
+
+def root_stage_command(
+    config: Mapping[str, object],
+    app: str,
+    env_pairs: Sequence[str],
+    args: Sequence[str],
+    uid: int,
+    gid: int,
+    home: str,
+    login: str,
+    shell: str,
+) -> list[str]:
+    """The argv that enters the namespace, drops to the user and starts the app."""
+    spec = app_spec(config, app)
+    ns = netns_name(config)
+    extra = str_list(spec.get("env_passthrough"))
+    passed = parse_env_pairs(env_pairs, extra)
+    base = {"HOME": home, "USER": login, "LOGNAME": login, "SHELL": shell}
+    environment = {**{"PATH": "/usr/local/bin:/usr/bin:/bin"}, **passed, **base}
+    ip = shutil.which("ip", path=SAFE_PATH)
+    setpriv = shutil.which("setpriv", path=SAFE_PATH)
+    env_bin = shutil.which("env", path=SAFE_PATH)
+    if not (ip and setpriv and env_bin):
+        raise LaunchError("ip, setpriv and env are required to enter the PIA namespace")
+    command = str_list(spec.get("command"))
+    assignments = [f"{k}={v}" for k, v in sorted(environment.items())]
+    return [
+        ip, "netns", "exec", ns,
+        setpriv, f"--reuid={uid}", f"--regid={gid}", "--init-groups", "--",
+        env_bin, "-i", *assignments, *command, *args,
+    ]
+
+
+def run_root(app: str, env_pairs: Sequence[str], args: Sequence[str]) -> int:
+    if os.geteuid() != 0:
+        raise LaunchError("--exec is the privileged stage; start apps with `curiosity-pia-run APP`", EXIT_USAGE)
+    try:
+        uid = int(os.environ["SUDO_UID"])
+        gid = int(os.environ["SUDO_GID"])
+    except (KeyError, ValueError) as exc:
+        raise LaunchError("--exec must be reached through sudo", EXIT_USAGE) from exc
+    if uid == 0:
+        raise LaunchError("refusing to start an app as root inside the PIA namespace", EXIT_USAGE)
+    try:
+        account = pwd.getpwuid(uid)
+    except KeyError as exc:
+        raise LaunchError(f"uid {uid} has no account", EXIT_USAGE) from exc
+
+    config = load_config()
+    spec = app_spec(config, app)
+    ns = netns_name(config)
+    passed = parse_env_pairs(env_pairs, str_list(spec.get("env_passthrough")))
+
+    netns_file = NETNS_RUN / ns
+    try:
+        ns_inode = netns_file.stat().st_ino
+    except FileNotFoundError:
+        message = (
+            f"The PIA network namespace '{ns}' does not exist, so {app} was not started "
+            "(it would otherwise run without the VPN). Start curiosity-pia-tunnel.service."
+        )
+        notify_user(uid, gid, passed, message)
+        raise LaunchError(message, EXIT_NO_NAMESPACE) from None
+
+    guard = spec.get("guard_exe")
+    if isinstance(guard, str) and guard:
+        strays = find_strays(guard, uid, ns_inode)
+        if strays:
+            message = (
+                f"{app} is already running OUTSIDE the PIA tunnel (pid {', '.join(map(str, strays))}). "
+                "Quit it completely and start it again so it runs through the VPN."
+            )
+            notify_user(uid, gid, passed, message)
+            raise LaunchError(message, EXIT_STRAY)
+
+    command = root_stage_command(
+        config, app, env_pairs, args, uid, gid, account.pw_dir, account.pw_name, account.pw_shell
+    )
+    os.execv(command[0], command)
+    return 1  # unreachable
+
+
+# ---------------------------------------------------------------------------
+# Desktop entries
+# ---------------------------------------------------------------------------
+
+
+def wrap_desktop(text: str, app: str, spec: Mapping[str, object], run_path: str, source: str) -> str:
+    """The desktop entry `text` with every Exec= pointed at this launcher."""
+    wrapped_commands = set(str_list(spec.get("desktop_commands")))
+    out: list[str] = []
+    seen_header = False
+    exec_lines = 0
+    for line in text.splitlines():
+        if line.startswith("Exec="):
+            match = re.match(r"^Exec=(\S+)(.*)$", line)
+            if not match or match.group(1) not in wrapped_commands:
+                raise LaunchError(
+                    f"{source}: cannot route {line!r} through the launcher; add its command to "
+                    f"desktop_commands of {app!r}"
+                )
+            out.append(f"Exec={run_path} {app}{match.group(2)}")
+            exec_lines += 1
+            continue
+        out.append(line)
+        if not seen_header and line.strip() == "[Desktop Entry]":
+            seen_header = True
+            out.append(MARKER_COMMENT)
+            out.append(f"{MARKER_KEY}={app}")
+    if not seen_header or exec_lines == 0:
+        raise LaunchError(f"{source} is not a launchable desktop entry")
+    return "\n".join(out) + "\n"
+
+
+def marker_app(path: Path) -> str | None:
+    """The app a managed file belongs to (desktop key or shim comment), else None."""
+    try:
+        if path.stat().st_size > 65536:
+            return None
+        for line in path.read_text().splitlines():
+            bare = line.lstrip("# ")
+            if bare.startswith(f"{MARKER_KEY}="):
+                return bare.split("=", 1)[1].strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return None
+
+
+def shim_text(app: str, run_path: str) -> str:
+    return (
+        "#!/bin/sh\n"
+        f"{MARKER_COMMENT}\n"
+        f"# {MARKER_KEY}={app}\n"
+        f'exec {run_path} {app} "$@"\n'
+    )
+
+
+def write_file(path: Path, content: str, uid: int | None, gid: int | None, mode: int = 0o644) -> bool:
+    try:
+        if path.read_text() == content and (path.stat().st_mode & 0o7777) == mode:
+            return False
+    except (FileNotFoundError, UnicodeDecodeError):
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+        os.chmod(tmp, mode)
+        if uid is not None and gid is not None:
+            os.chown(tmp, uid, gid)
+        os.replace(tmp, path)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+    return True
+
+
+def install_entry(
+    target: Path, content: str, uid: int | None, gid: int | None, mode: int = 0o644
+) -> list[str]:
+    """Write a wrapped entry, keeping a one-time backup of an unmanaged one."""
+    changes: list[str] = []
+    backup = target.with_name(target.name + BACKUP_SUFFIX)
+    if target.exists() and marker_app(target) is None and not backup.exists():
+        target.rename(backup)
+        changes.append(f"changed: moved aside {target} -> {backup.name}")
+    if write_file(target, content, uid, gid, mode):
+        changes.append(f"changed: wrote {target}")
+    return changes
+
+
+def remove_entry(target: Path) -> list[str]:
+    """Drop a managed entry and restore the unmanaged one it replaced."""
+    backup = target.with_name(target.name + BACKUP_SUFFIX)
+    changes: list[str] = []
+    target.unlink(missing_ok=True)
+    changes.append(f"changed: removed {target}")
+    if backup.exists():
+        backup.rename(target)
+        changes.append(f"changed: restored {target}")
+    return changes
+
+
+def installed(spec: Mapping[str, object]) -> bool:
+    """Whether the app's real command exists on this host."""
+    command = str_list(spec.get("command"))
+    return bool(command) and Path(command[0]).exists()
+
+
+def home_owner(home: Path) -> tuple[int | None, int | None]:
+    try:
+        info = home.stat()
+    except OSError:
+        return None, None
+    return info.st_uid, info.st_gid
+
+
+def sync(config: Mapping[str, object], homes: Sequence[Path], remove_all: bool) -> list[str]:
+    run_path = str(config.get("run_path", "/usr/local/bin/curiosity-pia-run"))
+    raw_apps = config.get("apps")
+    apps: dict[str, dict[str, object]] = (
+        {} if remove_all or not isinstance(raw_apps, dict)
+        else {str(k): v for k, v in raw_apps.items() if isinstance(v, dict)}
+    )
+    wanted: dict[str, str] = {}  # desktop id -> app
+    wanted_shims: dict[str, str] = {}  # shim name -> app
+    for app, spec in apps.items():
+        for desktop_id in str_list(spec.get("desktop_ids")):
+            wanted[desktop_id] = app
+        for shim in str_list(spec.get("shims")):
+            wanted_shims[shim] = app
+    changes: list[str] = []
+
+    for shim, app in sorted(wanted_shims.items()):
+        if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", shim):
+            raise LaunchError(f"invalid shim name {shim!r} for {app!r}")
+        if not installed(apps[app]):
+            continue
+        changes += install_entry(SHIM_DIR / shim, shim_text(app, run_path), None, None, 0o755)
+
+    for desktop_id, app in sorted(wanted.items()):
+        source = next((d / desktop_id for d in SYSTEM_APP_DIRS if (d / desktop_id).is_file()), None)
+        if source is None or not installed(apps[app]):
+            continue  # the app is not installed; nothing to route
+        content = wrap_desktop(source.read_text(), app, apps[app], run_path, str(source))
+        changes += install_entry(OVERRIDE_APP_DIR / desktop_id, content, None, None)
+        for home in homes:
+            override = home / ".local/share/applications" / desktop_id
+            if override.exists():
+                uid, gid = home_owner(home)
+                changes += install_entry(override, content, uid, gid)
+
+    # Prune files this launcher wrote for apps, ids or shims that are no longer configured.
+    if SHIM_DIR.is_dir():
+        for entry in sorted(p for p in SHIM_DIR.iterdir() if p.is_file() and not p.is_symlink()):
+            owner = marker_app(entry)
+            if owner is not None and wanted_shims.get(entry.name) != owner:
+                changes += remove_entry(entry)
+    for directory in [OVERRIDE_APP_DIR, *(h / ".local/share/applications" for h in homes)]:
+        if not directory.is_dir():
+            continue
+        for entry in sorted(directory.glob("*.desktop")):
+            owner = marker_app(entry)
+            if owner is not None and wanted.get(entry.name) != owner:
+                changes += remove_entry(entry)
+    return changes
+
+
+def run_sync(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(prog="curiosity-pia-run sync")
+    parser.add_argument("--homes", nargs="*", default=[], type=Path)
+    parser.add_argument("--remove-all", action="store_true")
+    args = parser.parse_args(argv)
+    if os.geteuid() != 0 and "CURIOSITY_PIA_ALLOW_NON_ROOT" not in os.environ:
+        raise LaunchError("sync must run as root", EXIT_USAGE)
+    for line in sync(load_config(), args.homes, args.remove_all):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def parse_exec_args(argv: Sequence[str]) -> tuple[str, list[str], list[str]]:
+    """`APP [--env N=V]... -- ARGS...` for the privileged stage."""
+    if not argv:
+        raise LaunchError("usage: curiosity-pia-run --exec APP [--env NAME=VALUE]... -- [ARGS...]", EXIT_USAGE)
+    app, rest = argv[0], list(argv[1:])
+    env_pairs: list[str] = []
+    while rest:
+        head = rest.pop(0)
+        if head == "--":
+            return app, env_pairs, rest
+        if head == "--env" and rest:
+            env_pairs.append(rest.pop(0))
+        else:
+            raise LaunchError(f"unexpected argument {head!r} before --", EXIT_USAGE)
+    return app, env_pairs, []
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        if not argv or argv[0] in ("-h", "--help"):
+            print(__doc__)
+            return 0 if argv else EXIT_USAGE
+        if argv[0] == "--exec":
+            app, env_pairs, args = parse_exec_args(argv[1:])
+            return run_root(app, env_pairs, args)
+        if argv[0] == "sync":
+            return run_sync(argv[1:])
+        return run_user(argv[0], argv[1:])
+    except LaunchError as exc:
+        print(f"curiosity-pia-run: {exc}", file=sys.stderr)
+        return exc.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

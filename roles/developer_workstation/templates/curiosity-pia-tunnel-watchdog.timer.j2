@@ -1,0 +1,12 @@
+# Managed by curiosity.workstation (tasks/pia-tunnel.yml). Do not edit.
+[Unit]
+Description=Check the PIA tunnel every {{ pia_tunnel_watchdog_interval }}
+ConditionVirtualization=!container
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec={{ pia_tunnel_watchdog_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
