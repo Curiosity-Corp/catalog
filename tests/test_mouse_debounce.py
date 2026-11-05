@@ -290,6 +290,20 @@ def test_parse_buttons_accepts_names_and_numbers() -> None:
             md.parse_buttons(bad)
 
 
+def test_parse_buttons_looks_other_names_up_in_evdev(monkeypatch: pytest.MonkeyPatch) -> None:
+    import types
+
+    fake = types.ModuleType("evdev")
+    fake.ecodes = types.SimpleNamespace(BTN_STYLUS=331)
+    monkeypatch.setitem(sys.modules, "evdev", fake)
+    assert md.parse_buttons("BTN_STYLUS") == {331}
+    with pytest.raises(ValueError, match="unknown button"):
+        md.parse_buttons("BTN_NOPE")
+    monkeypatch.setitem(sys.modules, "evdev", None)  # import fails
+    with pytest.raises(ValueError, match="not installed"):
+        md.parse_buttons("BTN_STYLUS")
+
+
 def test_serialise_packs_a_whole_packet_in_one_buffer() -> None:
     events = press(1.0)
     assert len(md.serialise(events)) == len(events) * md.INPUT_EVENT.size == 48

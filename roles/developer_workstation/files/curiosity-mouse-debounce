@@ -125,7 +125,10 @@ def parse_buttons(text: str) -> frozenset[int]:
             codes.add(int(item))
         elif item.upper().startswith(("BTN_", "KEY_")):
             # Any other evdev name; python-evdev is only needed for these.
-            from evdev import ecodes
+            try:
+                from evdev import ecodes
+            except ImportError as exc:
+                raise ValueError(f"cannot look up {item!r}: python3-evdev is not installed") from exc
 
             code = getattr(ecodes, item.upper(), None)
             if not isinstance(code, int):
