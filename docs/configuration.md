@@ -337,6 +337,44 @@ background Chrome apps) of the profile, then start it again. Check with
 `chrome://gpu` (Video Decode: Hardware accelerated) and `chrome://media-internals`
 (decoder `VaapiVideoDecoder`).
 
+### Mouse button debounce (chattering switch)
+
+`developer_workstation_mouse_debounce_ms` (hardware-profile key
+`mouse_debounce_ms`; `0`, meaning off, everywhere except `deskmeet-b760`, which
+uses `80`) fixes a worn mouse switch that sends one click as two (catalog#143).
+A 2 h recording of deskmeet1's Logitech G604 showed 67 of 372 left presses
+arriving 3-150 ms after the previous release (median 22 ms). Application-level
+double-click intervals cannot fix that, so the filter works on the input device:
+
+- `/usr/local/sbin/curiosity-mouse-debounce` (python3-evdev, installed by the
+  role) grabs the mouse's evdev node and re-emits every event through a uinput
+  clone named `<device name> (debounced)` (same bus, vendor, product and version,
+  so libinput and X treat it as the same model).
+- Each release of a debounced button is held back for the window. A press of the
+  same button inside the window drops the held release and that press: the
+  button just stays down, so a drag that glitches stays held and a phantom double
+  click vanishes. Presses are never delayed; motion, wheel, other buttons and MSC
+  pass through unchanged. Gaps are measured on kernel event timestamps, so a busy
+  CPU cannot turn a real double click into a bounce.
+- `90-curiosity-mouse-debounce.rules` starts `curiosity-mouse-debounce@<eventN>.service`
+  (hardened, `BindsTo` the node's device unit) for every matching mouse, so
+  hot-plug and replug need no action; the service exits 0 when the mouse goes away.
+  If the service stops, the kernel releases the grab and the real mouse is live again.
+- `curiosity-g604` works on the clone while it exists (pointer speed, thumb-button
+  keyboard) and on the real device otherwise.
+
+Tuning: set `mouse_debounce_ms` in the hardware profile (1-1000) and pull; running
+instances restart with the new window. Pick a window above the chatter's longest
+release-to-press gap and below your fastest deliberate double click. Optional
+profile keys `mouse_debounce_buttons` (default `[BTN_LEFT]`; evdev names or
+numbers) and `mouse_debounce_devices` (default `[{name: "Logitech G604", vendor:
+"046d"}]`; the exact input `name` from `/proc/bus/input/devices` and an optional
+four digit hex vendor) cover other buttons and mice. Verify with
+`journalctl -t curiosity-mouse-debounce` (one debug line per suppressed bounce, one
+info summary per minute while bounces occur) and `systemctl list-units
+'curiosity-mouse-debounce@*'`. Setting `mouse_debounce_ms` to `0` stops the
+instances and removes the rule, unit, script and module list.
+
 ### Crash diagnostics (lockup panics, pstore, hardware watchdog)
 
 `developer_workstation_crash_diagnostics` (derived from the hardware profile's

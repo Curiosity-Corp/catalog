@@ -1,0 +1,517 @@
+#!/usr/bin/python3
+# Managed by curiosity.workstation (tasks/mouse-debounce.yml).
+"""Debounce a chattering mouse button at the input layer (catalog#143).
+
+A worn mouse switch bounces: one physical click arrives as press, release,
+press, release within a few milliseconds, and applications see a double click
+(or a drag that lets go). This service EVIOCGRABs the mouse's evdev node and
+re-emits every event through a uinput clone, with a release-delay debounce on
+the configured buttons:
+
+  * a press goes through at once (no added click latency);
+  * a release is held back for WINDOW milliseconds;
+  * if the same button is pressed again inside the window, the held release and
+    that press are both dropped (the button simply stays down, so a drag that
+    glitches stays held and a phantom double click vanishes);
+  * otherwise the release is sent when the window ends.
+
+Everything else (motion, wheel and hi-res wheel, other buttons, MSC, ABS) is
+forwarded unchanged, one input packet per write. Event timestamps come from the
+kernel on CLOCK_MONOTONIC (EVIOCSCLOCKID), so a delay in this process never
+turns a real double click into a bounce. The loop blocks in select() until an
+event arrives or the next release is due; it never polls.
+
+The clone is named "<device name> (debounced)" with the original's bus, vendor,
+product and version, so libinput, X11 and udev's hwdb treat it as the same
+model. The original stays open but silent while grabbed; if this service stops,
+the kernel releases the grab and the original works again.
+
+Run by curiosity-mouse-debounce@<eventN>.service (started by udev when a
+configured mouse appears). It exits 0 when the device disappears.
+
+Usage:
+  curiosity-mouse-debounce [--window-ms N] [--buttons BTN_LEFT,...] /dev/input/eventN
+
+  --window-ms N        release hold in milliseconds, 1 to 1000 (default 60)
+  --buttons LIST       comma-separated button names or numbers (default BTN_LEFT)
+
+Journal: one debug line per suppressed bounce, one info summary a minute while
+bounces occur (journalctl -t curiosity-mouse-debounce).
+"""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import fcntl
+import os
+import select
+import signal
+import statistics
+import struct
+import sys
+import time
+from dataclasses import dataclass, field
+from typing import Iterable, NamedTuple, Sequence
+
+# Linux input event types and codes used by the state machine. The machine
+# needs no python-evdev, so it can be tested without the library or the device.
+EV_SYN = 0x00
+EV_KEY = 0x01
+EV_MSC = 0x04
+SYN_REPORT = 0
+SYN_DROPPED = 3
+MSC_SCAN = 4
+
+BUTTON_NAMES = {
+    "BTN_LEFT": 0x110,
+    "BTN_RIGHT": 0x111,
+    "BTN_MIDDLE": 0x112,
+    "BTN_SIDE": 0x113,
+    "BTN_EXTRA": 0x114,
+    "BTN_FORWARD": 0x115,
+    "BTN_BACK": 0x116,
+    "BTN_TASK": 0x117,
+}
+
+DEFAULT_WINDOW_MS = 60
+MAX_WINDOW_MS = 1000
+SUMMARY_SECONDS = 60.0
+CLONE_SUFFIX = " (debounced)"
+CLONE_PHYS = "curiosity-mouse-debounce"
+IDLE_WAIT_SECONDS = 5.0
+
+# ioctl numbers (linux/input.h): EVIOCSCLOCKID = _IOW('E', 0xa0, int).
+EVIOCSCLOCKID = 0x400445A0
+# struct input_event: struct timeval (two native longs), type, code, value.
+INPUT_EVENT = struct.Struct("@llHHi")
+
+LOG_DEBUG = "<7>"
+LOG_INFO = "<6>"
+LOG_WARNING = "<4>"
+LOG_ERR = "<3>"
+
+
+def log(level: str, message: str) -> None:
+    """One journal line; journald reads the <N> prefix as the syslog priority."""
+    print(f"{level}{message}", flush=True)
+
+
+class Event(NamedTuple):
+    """One input event; ts is seconds on CLOCK_MONOTONIC."""
+
+    ts: float
+    type: int
+    code: int
+    value: int
+
+
+def button_name(code: int) -> str:
+    for name, number in BUTTON_NAMES.items():
+        if number == code:
+            return name
+    return f"key {code}"
+
+
+def parse_buttons(text: str) -> frozenset[int]:
+    """Parse "BTN_LEFT,BTN_RIGHT" or numeric codes into a set of key codes."""
+    codes: set[int] = set()
+    for item in (part.strip() for part in text.split(",")):
+        if not item:
+            continue
+        if item.upper() in BUTTON_NAMES:
+            codes.add(BUTTON_NAMES[item.upper()])
+        elif item.isdigit():
+            codes.add(int(item))
+        elif item.upper().startswith(("BTN_", "KEY_")):
+            # Any other evdev name; python-evdev is only needed for these.
+            try:
+                from evdev import ecodes
+            except ImportError as exc:
+                raise ValueError(f"cannot look up {item!r}: python3-evdev is not installed") from exc
+
+            code = getattr(ecodes, item.upper(), None)
+            if not isinstance(code, int):
+                raise ValueError(f"unknown button {item!r}")
+            codes.add(code)
+        else:
+            raise ValueError(f"unknown button {item!r}")
+    if not codes:
+        raise ValueError("no buttons to debounce")
+    return frozenset(codes)
+
+
+@dataclass
+class _Held:
+    """A release that is being held back."""
+
+    released_at: float
+    scan: Event | None  # the MSC_SCAN that preceded the release, re-emitted with it
+
+
+@dataclass
+class Bounce:
+    """A suppressed press: which button and how long after the release it came."""
+
+    code: int
+    gap: float
+
+
+@dataclass
+class Debouncer:
+    """Release-delay debounce state machine over one device's event stream.
+
+    feed() takes events as they are read and returns the events to write now
+    (whole packets, each ending in SYN_REPORT). expire() releases any held
+    button whose window ended. deadline() says when expire() next has work. All
+    times are seconds on one clock; the caller passes the same clock to expire().
+    """
+
+    window: float
+    buttons: frozenset[int]
+    _packet: list[Event] = field(default_factory=list)
+    _held: dict[int, _Held] = field(default_factory=dict)
+    _down: set[int] = field(default_factory=set)  # keys currently down on the clone
+    _discarding: bool = False  # inside a SYN_DROPPED packet
+    resync_needed: bool = False  # a SYN_DROPPED packet just closed: call resync()
+    bounces: list[Bounce] = field(default_factory=list)  # drained by the caller
+    presses: int = 0  # debounced-button presses passed through, in total
+
+    def deadline(self) -> float | None:
+        """When the earliest held release is due, or None when nothing is held."""
+        if not self._held:
+            return None
+        return min(held.released_at for held in self._held.values()) + self.window
+
+    def expire(self, now: float) -> list[Event]:
+        """Emit every held release whose window has ended by `now`."""
+        out: list[Event] = []
+        for code in sorted(self._held, key=lambda c: self._held[c].released_at):
+            held = self._held[code]
+            if held.released_at + self.window <= now:
+                out.extend(self._emit_release(code, held, held.released_at + self.window))
+        return out
+
+    def feed(self, event: Event) -> list[Event]:
+        """Take one event from the device; return what to write to the clone now."""
+        if event.type == EV_SYN and event.code == SYN_DROPPED:
+            # The kernel dropped events: everything up to the next SYN_REPORT is
+            # unreliable, and the key state must be re-read (see resync()).
+            self._packet.clear()
+            self._discarding = True
+            return []
+        if event.type == EV_SYN and event.code == SYN_REPORT:
+            if self._discarding:
+                self._discarding = False
+                self.resync_needed = True
+                return []
+            packet, self._packet = self._packet, []
+            return self._process(packet, event.ts)
+        if not self._discarding:
+            self._packet.append(event)
+        return []
+
+    def resync(self, pressed: Iterable[int], now: float) -> list[Event]:
+        """Reconcile the clone with the keys the device reports as down.
+
+        After a SYN_DROPPED the stream may have lost releases or presses. Keys
+        the clone shows down but the device does not are released (a debounced
+        button through the normal hold), and keys down on the device but not on
+        the clone are pressed.
+        """
+        physical = set(pressed)
+        out: list[Event] = []
+        for code in sorted(self._down - physical):
+            if code in self.buttons and code not in self._held:
+                self._held[code] = _Held(released_at=now, scan=None)
+            elif code not in self.buttons:
+                out.extend(self._frame([Event(now, EV_KEY, code, 0)]))
+        for code in sorted(physical - self._down):
+            if code in self._held:
+                del self._held[code]  # never really released
+                continue
+            out.extend(self._frame([Event(now, EV_KEY, code, 1)]))
+            self._down.add(code)
+        for code in sorted(physical & self._held.keys()):
+            del self._held[code]  # pressed again: the release was lost
+        return out
+
+    def flush(self, now: float) -> list[Event]:
+        """Release everything still held; used when the service stops."""
+        out: list[Event] = []
+        for code in sorted(self._held):
+            out.extend(self._emit_release(code, self._held[code], now))
+        return out
+
+    # -- internals ---------------------------------------------------------
+
+    @staticmethod
+    def _frame(events: list[Event]) -> list[Event]:
+        return [*events, Event(events[-1].ts, EV_SYN, SYN_REPORT, 0)]
+
+    def _emit_release(self, code: int, held: _Held, ts: float) -> list[Event]:
+        del self._held[code]
+        self._down.discard(code)
+        events = [held.scan] if held.scan else []
+        events.append(Event(ts, EV_KEY, code, 0))
+        return self._frame(events)
+
+    def _process(self, packet: list[Event], ts: float) -> list[Event]:
+        # Releases whose window ended before this packet go out first, so a press
+        # after a long gap is a new click and never mistaken for a bounce.
+        out = self.expire(ts)
+        kept: list[Event] = []
+        for event in packet:
+            if event.type != EV_KEY or event.code not in self.buttons:
+                kept.append(event)
+                if event.type == EV_KEY:
+                    self._track(event)
+                continue
+            scan = kept.pop() if kept and kept[-1].type == EV_MSC and kept[-1].code == MSC_SCAN else None
+            self._debounced_key(event, scan, kept)
+        if kept:
+            out.extend([*kept, Event(ts, EV_SYN, SYN_REPORT, 0)])
+        return out
+
+    def _track(self, event: Event) -> None:
+        if event.value == 0:
+            self._down.discard(event.code)
+        elif event.value == 1:
+            self._down.add(event.code)
+
+    def _debounced_key(self, event: Event, scan: Event | None, kept: list[Event]) -> None:
+        code = event.code
+        held = self._held.get(code)
+        if event.value == 1:
+            if held is not None:
+                gap = event.ts - held.released_at
+                del self._held[code]
+                self.bounces.append(Bounce(code, gap))
+                return  # the button stayed down: drop this press and the held release
+            self.presses += 1
+            self._down.add(code)
+        elif event.value == 0:
+            if held is None and code in self._down:
+                self._held[code] = _Held(released_at=event.ts, scan=scan)
+                return
+            if held is not None:
+                return  # a second release while one is held: nothing to add
+            # A release for a button the clone never saw pressed: pass it on.
+        elif held is not None:
+            return  # autorepeat while a release is held
+        if scan is not None:
+            kept.append(scan)
+        kept.append(event)
+
+
+@dataclass
+class Summary:
+    """Per-window bounce statistics for the journal's info line."""
+
+    started: float
+    presses_at_start: int = 0
+    bounces: list[Bounce] = field(default_factory=list)
+    presses: int = 0
+
+    def line(self, window_seconds: float) -> str | None:
+        if not self.bounces:
+            return None
+        gaps = [b.gap * 1000 for b in self.bounces]
+        names = sorted({button_name(b.code) for b in self.bounces})
+        return (
+            f"suppressed {len(self.bounces)} bounce(s) in the last {window_seconds:.0f} s "
+            f"({', '.join(names)}); {self.presses} press(es) passed; release-to-press gap "
+            f"min {min(gaps):.1f} ms, median {statistics.median(gaps):.1f} ms, max {max(gaps):.1f} ms"
+        )
+
+
+def serialise(events: Sequence[Event]) -> bytes:
+    """Pack events as one buffer so a whole packet reaches uinput in one write."""
+    return b"".join(INPUT_EVENT.pack(0, 0, e.type, e.code, e.value) for e in events)
+
+
+class DeviceGone(Exception):
+    """The input device was unplugged."""
+
+
+def run(path: str, window_ms: int, buttons: frozenset[int]) -> int:
+    """Grab `path`, clone it and run the debounce loop until it goes away."""
+    from evdev import InputDevice, UInput
+
+    try:
+        device = InputDevice(path)
+    except OSError as exc:
+        log(LOG_ERR, f"cannot open {path}: {exc}")
+        return 1 if exc.errno != errno.ENOENT else 0
+    if device.phys == CLONE_PHYS:
+        log(LOG_INFO, f"{path} is a debounce clone itself; nothing to do")
+        return 0
+    wanted = {code for code in buttons}
+    available = set(device.capabilities().get(EV_KEY, []))
+    missing = wanted - available
+    if missing:
+        log(LOG_WARNING, f"{device.name} lacks {', '.join(button_name(c) for c in sorted(missing))}; ignoring them")
+        buttons = frozenset(wanted & available)
+        if not buttons:
+            log(LOG_ERR, f"{device.name} has none of the configured buttons; leaving it alone")
+            return 0
+
+    try:
+        fcntl.ioctl(device.fd, EVIOCSCLOCKID, struct.pack("i", time.CLOCK_MONOTONIC))
+    except OSError as exc:
+        log(LOG_ERR, f"cannot select the monotonic clock on {path}: {exc}")
+        return 1
+
+    machine = Debouncer(window=window_ms / 1000.0, buttons=buttons)
+    clone = None
+    grabbed = False
+    try:
+        _wait_until_idle(device)
+        clone = UInput.from_device(
+            device,
+            name=device.name + CLONE_SUFFIX,
+            vendor=device.info.vendor,
+            product=device.info.product,
+            version=device.info.version,
+            bustype=device.info.bustype,
+            phys=CLONE_PHYS,
+            input_props=device.input_props(),
+        )
+        device.grab()
+        grabbed = True
+        log(
+            LOG_INFO,
+            f"debouncing {', '.join(button_name(c) for c in sorted(buttons))} on {device.name} "
+            f"({path}) with a {window_ms} ms release window; clone is {clone.device.path if clone.device else clone.name}",
+        )
+        _loop(device, clone, machine)
+    except DeviceGone:
+        log(LOG_INFO, f"{device.name} disappeared; stopping")
+    except OSError as exc:
+        if exc.errno == errno.ENODEV:
+            log(LOG_INFO, f"{device.name} disappeared; stopping")
+        else:
+            log(LOG_ERR, f"{path}: {exc}")
+            return 1
+    finally:
+        _shutdown(device, clone, machine, grabbed)
+    return 0
+
+
+def _wait_until_idle(device) -> None:
+    """Wait (bounded) until no key is held, so grabbing cannot strand a press.
+
+    A button held when the grab starts would never show its release to the
+    clients of the original node. Reading the stream while waiting keeps the
+    kernel buffer from filling; those events reach the original's clients too
+    because the grab has not happened yet.
+    """
+    end = time.monotonic() + IDLE_WAIT_SECONDS
+    while device.active_keys():
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            log(LOG_WARNING, "a button is still held; grabbing anyway")
+            return
+        readable, _, _ = select.select([device.fd], [], [], remaining)
+        if readable:
+            for _ in device.read():
+                pass
+
+
+def _loop(device, clone, machine: Debouncer) -> None:
+    fd = device.fd
+    summary = Summary(started=time.monotonic())
+    while True:
+        now = time.monotonic()
+        wake = summary.started + SUMMARY_SECONDS
+        due = machine.deadline()
+        if due is not None:
+            wake = min(wake, due)
+        readable, _, _ = select.select([fd], [], [], max(0.0, wake - now))
+        out: list[Event] = []
+        if readable:
+            try:
+                events = list(device.read())
+            except BlockingIOError:
+                events = []
+            except OSError as exc:
+                if exc.errno == errno.ENODEV:
+                    raise DeviceGone from exc
+                raise
+            for raw in events:
+                out.extend(machine.feed(Event(raw.timestamp(), raw.type, raw.code, raw.value)))
+                if machine.resync_needed:
+                    machine.resync_needed = False
+                    out.extend(machine.resync(device.active_keys(), time.monotonic()))
+        out.extend(machine.expire(time.monotonic()))
+        if out:
+            os.write(clone.fd, serialise(out))
+        _account(machine, summary)
+
+
+def _account(machine: Debouncer, summary: Summary) -> None:
+    """Log new bounces and, once a window ends, the summary line."""
+    for bounce in machine.bounces:
+        log(
+            LOG_DEBUG,
+            f"suppressed {button_name(bounce.code)} bounce: pressed {bounce.gap * 1000:.1f} ms "
+            f"after the release (window {machine.window * 1000:.0f} ms)",
+        )
+    summary.bounces.extend(machine.bounces)
+    machine.bounces.clear()
+    now = time.monotonic()
+    if now - summary.started >= SUMMARY_SECONDS:
+        summary.presses = machine.presses - summary.presses_at_start
+        line = summary.line(now - summary.started)
+        if line:
+            log(LOG_INFO, line)
+        summary.bounces.clear()
+        summary.presses_at_start = machine.presses
+        summary.started = now
+
+
+def _shutdown(device, clone, machine: Debouncer, grabbed: bool) -> None:
+    """Send held releases, give the grab back and remove the clone."""
+    if clone is not None:
+        pending = machine.flush(time.monotonic())
+        if pending:
+            try:
+                os.write(clone.fd, serialise(pending))
+            except OSError as exc:
+                log(LOG_WARNING, f"could not flush held releases: {exc}")
+    if grabbed:
+        try:
+            device.ungrab()
+        except OSError as exc:
+            if exc.errno != errno.ENODEV:
+                log(LOG_WARNING, f"could not release the grab: {exc}")
+    if clone is not None:
+        clone.close()
+    device.close()
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Debounce mouse buttons through a uinput clone.")
+    parser.add_argument("device", help="evdev node, e.g. /dev/input/event6")
+    parser.add_argument("--window-ms", type=int, default=DEFAULT_WINDOW_MS)
+    parser.add_argument("--buttons", default="BTN_LEFT")
+    args = parser.parse_args(argv)
+    if not 1 <= args.window_ms <= MAX_WINDOW_MS:
+        log(LOG_ERR, f"--window-ms must be 1 to {MAX_WINDOW_MS}, got {args.window_ms}")
+        return 2
+    try:
+        buttons = parse_buttons(args.buttons)
+    except ValueError as exc:
+        log(LOG_ERR, str(exc))
+        return 2
+
+    def stop(signum: int, _frame: object) -> None:
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    return run(args.device, args.window_ms, buttons)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,9 @@
+# Managed by curiosity.workstation (tasks/mouse-debounce.yml). Do not edit.
+# Start curiosity-mouse-debounce@<eventN>.service for each configured mouse's
+# event node; BindsTo on the node's .device unit stops it when the mouse goes
+# away, and the next "add" starts a fresh instance on replug. Runs after
+# 60-input-id so ID_INPUT_MOUSE is set. The debounce clone (phys
+# curiosity-mouse-debounce) never matches, so a clone is never cloned.
+{% for device in developer_workstation_mouse_debounce_devices %}
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_MOUSE}=="1", ATTRS{name}=="{{ device.name }}", {% if device.vendor | default('') | length > 0 %}ATTRS{id/vendor}=="{{ device.vendor | lower }}", {% endif %}ATTRS{phys}!="curiosity-mouse-debounce", TAG+="systemd", ENV{SYSTEMD_WANTS}+="curiosity-mouse-debounce@%k.service"
+{% endfor %}

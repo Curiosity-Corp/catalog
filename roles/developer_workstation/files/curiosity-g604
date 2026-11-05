@@ -2,7 +2,11 @@
 # curiosity-g604: apply the Logitech G604 button profile while the mouse is
 # present on this X display. Managed by the curiosity workstation role.
 #
-# The mouse is detected by its X input device name. While it is attached:
+# The mouse is detected by its X input device name. When curiosity-mouse-debounce
+# (catalog#143) filters the mouse it grabs the real device, which stays in X but
+# goes silent, and re-emits the events from a clone named "<name> (debounced)";
+# the helper then works on the clone and falls back to the real device when no
+# clone exists, re-binding whenever the one in use changes. While it is attached:
 #   - xbindkeys (config rendered by the role to /etc/curiosity/g604-xbindkeys.rc)
 #     maps the wheel tilt buttons;
 #   - the G604's thumb buttons 1-3 (keycodes 10-12) and its two top buttons
@@ -52,6 +56,7 @@ zone_command=${CURIOSITY_G604_ZONE_COMMAND:-openbox-zone toggle browser}
 accel_speed=${CURIOSITY_G604_ACCEL_SPEED:-}
 conf=${CURIOSITY_G604_CONF:-/etc/curiosity/g604-xbindkeys.rc}
 device_name=${CURIOSITY_G604_NAME:-Logitech G604}
+clone_name="$device_name (debounced)"
 interval=${CURIOSITY_G604_INTERVAL:-5}
 lock_dir=${XDG_RUNTIME_DIR:-/tmp}
 lock=${CURIOSITY_G604_LOCK:-$lock_dir/curiosity-g604.$(printf '%s' "${DISPLAY:-none}" | tr -c 'A-Za-z0-9' '_').lock}
@@ -73,23 +78,35 @@ flock -n 9 || exit 0
 bindings_pid=
 keys_pid=
 accel_applied=
+bound_name=
 
-mouse_present() {
-    xinput list --name-only 2>/dev/null | grep -Fxq "$device_name"
+# The X device name to work on: the debounce clone when it is present (the real
+# device is grabbed and silent then), else the real device, else nothing.
+active_name() {
+    names=$(xinput list --name-only 2>/dev/null)
+    if printf '%s\n' "$names" | grep -Fxq "$clone_name"; then
+        printf '%s\n' "$clone_name"
+    elif printf '%s\n' "$names" | grep -Fxq "$device_name"; then
+        printf '%s\n' "$device_name"
+    fi
 }
 
-# X id of the G604's keyboard-class slave (or floating) device, if any.
+# X id of the keyboard-class slave (or floating) device with exactly this name.
+# An exact match matters: "Logitech G604" is a prefix of its debounce clone.
 keyboard_id() {
-    xinput list 2>/dev/null | awk -v name="$device_name" '
-        index($0, name) && /keyboard|floating slave/ {
-            if (match($0, /id=[0-9]+/)) { print substr($0, RSTART + 3, RLENGTH - 3); exit }
+    xinput list 2>/dev/null | awk -v name="$1" '
+        /keyboard|floating slave/ {
+            line = $0
+            sub(/[ \t]+id=[0-9]+.*/, "", line)
+            sub(/^[^A-Za-z0-9]*/, "", line)
+            if (line == name && match($0, /id=[0-9]+/)) { print substr($0, RSTART + 3, RLENGTH - 3); exit }
         }'
 }
 
 # Float the G604's keyboard so its buttons stop typing, then run the command
 # bound to each watched keycode on every press.
 watch_thumb_buttons() {
-    kbd_id=$(keyboard_id)
+    kbd_id=$(keyboard_id "$1")
     [ -n "$kbd_id" ] || return 1
     xinput float "$kbd_id" 2>/dev/null
     xinput test "$kbd_id" 2>/dev/null | while read -r kind state code _; do
@@ -128,7 +145,7 @@ apply_accel_speed() {
     [ -z "$accel_applied" ] || return 0
     # The G604 shows up twice in X (pointer, and the keyboard node this script
     # floats), so the bare name is ambiguous and xinput refuses it.
-    if xinput set-prop "pointer:$device_name" "libinput Accel Speed" "$accel_speed" 2>/dev/null; then
+    if xinput set-prop "pointer:$1" "libinput Accel Speed" "$accel_speed" 2>/dev/null; then
         accel_applied=1
     else
         echo "curiosity-g604: could not set libinput Accel Speed to $accel_speed" >&2
@@ -139,8 +156,17 @@ trap 'stop_bindings; exit 0' INT TERM HUP
 trap stop_bindings EXIT
 
 while :; do
-    if mouse_present; then
-        apply_accel_speed
+    name=$(active_name)
+    if [ -n "$name" ]; then
+        # The debounce clone appearing (or going away) swaps the device in use:
+        # the watcher floated the old keyboard node and the speed was set on the
+        # old pointer, so start over on the new one.
+        if [ "$name" != "$bound_name" ]; then
+            stop_bindings
+            accel_applied=
+            bound_name=$name
+        fi
+        apply_accel_speed "$name"
         if [ -z "$bindings_pid" ] || ! kill -0 "$bindings_pid" 2>/dev/null; then
             bindings_pid=
             xbindkeys -n -f "$conf" 9>&- &
@@ -148,12 +174,13 @@ while :; do
         fi
         if [ -z "$keys_pid" ] || ! kill -0 "$keys_pid" 2>/dev/null; then
             keys_pid=
-            watch_thumb_buttons 9>&- &
+            watch_thumb_buttons "$name" 9>&- &
             keys_pid=$!
         fi
     else
         stop_bindings
         accel_applied=
+        bound_name=
     fi
     sleep "$interval" 9>&- &
     wait $!
