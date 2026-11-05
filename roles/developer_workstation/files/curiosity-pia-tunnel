@@ -56,7 +56,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Collection, Sequence
 
 CONFIG_PATH = Path(os.environ.get("CURIOSITY_PIA_CONFIG", "/etc/curiosity/pia-tunnel/config.json"))
 STATE_DIR = Path(os.environ.get("CURIOSITY_PIA_STATE_DIR", "/run/curiosity-pia-tunnel"))
@@ -70,6 +70,11 @@ V2_TOKEN_URL = "https://www.privateinternetaccess.com/api/client/v2/token"
 SERVER_LIST_URL = "https://serverlist.piaservers.net/vpninfo/servers/v6"
 ADD_KEY_PORT = 1337
 PF_API_PORT = 19999
+# Some servers in a port-forwarding region do not answer on the API port at all;
+# a rebuild tries up to this many servers and avoids a dead one for the TTL.
+CURL_UNREACHABLE = (7, 28)
+PF_SERVER_ATTEMPTS = 4
+PF_BAD_SERVER_TTL = 6 * 3600
 # Reuse a stored port grant only while it has at least this long left.
 PF_MIN_REMAINING = 86400
 FALLBACK_DNS = ("10.0.0.243", "10.0.0.242")
@@ -83,6 +88,14 @@ BASE64_RE = re.compile(r"^[A-Za-z0-9+/=_-]{8,8192}$")
 
 class TunnelError(Exception):
     """A step failed; the message is safe to log (it never contains a secret)."""
+
+    def __init__(self, message: str, returncode: int | None = None) -> None:
+        super().__init__(message)
+        self.returncode = returncode
+
+
+class PortForwardUnreachable(TunnelError):
+    """The server does not answer on PIA's port forwarding API (not a refusal by it)."""
 
 
 def log(message: str) -> None:
@@ -181,7 +194,7 @@ def run(
     if check and proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip().splitlines()
         reason = detail[0][:200] if detail else "no output"
-        raise TunnelError(f"{' '.join(argv[:3])} failed ({proc.returncode}): {reason}")
+        raise TunnelError(f"{' '.join(argv[:3])} failed ({proc.returncode}): {reason}", proc.returncode)
     return proc
 
 
@@ -376,12 +389,15 @@ def choose_server(
     *,
     port_forward: bool = False,
     prefer_cn: str | None = None,
+    exclude: Collection[str] = (),
 ) -> Server:
     """The configured region's server, or the lowest-latency one for `auto`.
 
     With `port_forward` only regions that offer it qualify (PIA has none in the
     US), and `prefer_cn` (the server the tunnel had) wins while it still answers,
-    because a forwarded port belongs to one server.
+    because a forwarded port belongs to one server. Servers named in `exclude`
+    (ones whose port forwarding API did not answer) are skipped while any other
+    server qualifies.
     """
     if region != "auto":
         matches = [s for s in servers if s.region_id == region]
@@ -403,6 +419,7 @@ def choose_server(
         if port_forward and not candidates:
             raise TunnelError("PIA lists no online region that offers port forwarding")
         pool = [s for s in candidates if not s.geo] or candidates
+    pool = [s for s in pool if s.cn not in exclude] or pool
     with concurrent.futures.ThreadPoolExecutor(max_workers=48) as pool_exec:
         times = list(pool_exec.map(lambda s: latency(s.ip, ADD_KEY_PORT), pool))
     reachable = [(t, s) for t, s in zip(times, pool) if t is not None]
@@ -621,6 +638,10 @@ def port_file() -> Path:
     return STATE_DIR / "forwarded-port"
 
 
+def bad_servers_path() -> Path:
+    return STATE_DIR / "pf-unreachable.json"
+
+
 def persist_json(path: Path, value: dict[str, object]) -> None:
     """Keep `value` across reboots (root-only); a failure must not break the tunnel."""
     try:
@@ -702,7 +723,9 @@ def pf_call(cfg: Config, endpoint: str, cn: str, vip: str, config_lines: Sequenc
             netns=cfg.netns,
         )
     except TunnelError as exc:
-        raise TunnelError(f"PIA {endpoint} could not be reached through the tunnel: {exc}") from exc
+        # curl 7 (connection refused or no route) and 28 (timeout): nothing answers on the API port.
+        error = PortForwardUnreachable if exc.returncode in CURL_UNREACHABLE else TunnelError
+        raise error(f"PIA {endpoint} could not be reached through the tunnel: {exc}") from exc
     body = parse_json_object(reply, f"{endpoint} response")
     if body.get("status") != "OK":
         raise TunnelError(f"PIA {endpoint} was refused: status {str(body.get('status'))[:40]!r}")
@@ -725,6 +748,24 @@ def bind_port(cfg: Config, cn: str, vip: str, grant: PortGrant) -> None:
         [curl_value("data-urlencode", f"payload={grant.payload}"),
          curl_value("data-urlencode", f"signature={grant.signature}")],
     )
+
+
+def bad_servers(now: float | None = None) -> set[str]:
+    """Servers whose port forwarding API did not answer recently."""
+    now = time.time() if now is None else now
+    stored = read_json(bad_servers_path()) or {}
+    return {cn for cn, at in stored.items() if isinstance(at, (int, float)) and now - at < PF_BAD_SERVER_TTL}
+
+
+def mark_bad_server(cn: str) -> None:
+    now = time.time()
+    stored = {cn_: at for cn_, at in (read_json(bad_servers_path()) or {}).items()
+              if isinstance(at, (int, float)) and now - at < PF_BAD_SERVER_TTL}
+    stored[cn] = int(now)
+    try:
+        atomic_write(bad_servers_path(), json.dumps(stored) + "\n", 0o644)
+    except OSError as exc:
+        log(f"warning: cannot remember that {cn} has no port forwarding: {exc}")
 
 
 def publish_port(port: int) -> None:
@@ -797,6 +838,30 @@ def wait_for_handshake(cfg: Config, dns: Sequence[str], seconds: int | None = No
 
 
 def up(cfg: Config) -> None:
+    """Build the tunnel; with port forwarding, move on from a server whose API is dead."""
+    attempts = PF_SERVER_ATTEMPTS if cfg.port_forward else 1
+    for attempt in range(1, attempts + 1):
+        token, server = bring_up(cfg)
+        if not cfg.port_forward:
+            return
+        persist_json(last_server_path(), {"server_cn": server.cn, "region": server.region_id})
+        try:
+            log(f"forwarded port {refresh_port(cfg, lambda: token)} bound")
+            return
+        except PortForwardUnreachable as exc:
+            mark_bad_server(server.cn)
+            if attempt == attempts:
+                # The tunnel itself works; the bind timer keeps trying.
+                log(f"warning: port forwarding is not bound yet: {exc}")
+                return
+            log(f"{server.cn} has no reachable port forwarding API ({exc}); trying another server")
+        except TunnelError as exc:
+            log(f"warning: port forwarding is not bound yet: {exc}")
+            return
+
+
+def bring_up(cfg: Config) -> tuple[str, Server]:
+    """One tunnel build: (PIA token, the server it registered with)."""
     ensure_netns(cfg)
     username, password = read_login(cfg.login_file)
     token = get_token(username, password)
@@ -804,7 +869,11 @@ def up(cfg: Config) -> None:
     last = read_json(last_server_path()) if cfg.port_forward else None
     prefer = last.get("server_cn") if last else None
     server = choose_server(
-        servers, cfg.region, port_forward=cfg.port_forward, prefer_cn=prefer if isinstance(prefer, str) else None
+        servers,
+        cfg.region,
+        port_forward=cfg.port_forward,
+        prefer_cn=prefer if isinstance(prefer, str) else None,
+        exclude=bad_servers() if cfg.port_forward else (),
     )
     private, public = generate_keypair()
     reg = add_key(cfg, token, public, server)
@@ -854,13 +923,7 @@ def up(cfg: Config) -> None:
         0o644,
     )
     log(f"tunnel up: peer {reg.peer_ip}, dns {', '.join(reg.dns)}")
-    if cfg.port_forward:
-        persist_json(last_server_path(), {"server_cn": server.cn, "region": server.region_id})
-        try:
-            log(f"forwarded port {refresh_port(cfg, lambda: token)} bound")
-        except TunnelError as exc:
-            # The tunnel itself works; the bind timer keeps trying.
-            log(f"warning: port forwarding is not bound yet: {exc}")
+    return token, server
 
 
 def down(cfg: Config, destroy: bool) -> None:
@@ -905,7 +968,14 @@ def bind(cfg: Config) -> None:
         log(f"not binding a port while the tunnel is down ({reason}); the watchdog rebuilds it")
         return
     with Lock():
-        port = refresh_port(cfg, lambda: get_token(*read_login(cfg.login_file)))
+        try:
+            port = refresh_port(cfg, lambda: get_token(*read_login(cfg.login_file)))
+        except PortForwardUnreachable as exc:
+            cn, _vip = pf_target(cfg)
+            mark_bad_server(cn)
+            log(f"{cn} has no reachable port forwarding API ({exc}); moving the tunnel to another server")
+            up(cfg)
+            return
     log(f"forwarded port {port} bound")
 
 

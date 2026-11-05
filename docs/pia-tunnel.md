@@ -110,6 +110,13 @@ listen port. `qbittorrent` has one, so `pia_tunnel_port_forward` is on for
   answers. An explicit `pia_tunnel_region` must be a port-forwarding region, or
   `up` fails and says which ones are. **Everything in the namespace, Brave included,
   leaves through that region**, so its exit IP is no longer in the US.
+  Not every server PIA hands out in such a region runs the port API: on
+  2026-11-04 `Server-10996-8a` (Toronto) refused connections on 19999 while all 12
+  listed Canadian servers answered. When the API does not answer at all (curl 7 or
+  28, not a refusal by PIA), `up` remembers the server for six hours
+  (`/run/curiosity-pia-tunnel/pf-unreachable.json`) and builds the tunnel again
+  on another one, up to four servers; `bind` does the same when a server stops
+  answering later. The last attempt's tunnel stays up even without a port.
 * **Renewal.** `curiosity-pia-tunnel-bind.timer` (every `pia_tunnel_bind_interval`,
   default 10 min, at most 14) runs `curiosity-pia-tunnel bind`, which re-binds the
   stored grant (or gets a new one when PIA refuses it), and then
