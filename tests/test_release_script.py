@@ -618,3 +618,53 @@ def test_main_ancestor_problem(release: ModuleType, tmp_path: Path) -> None:
     run("commit", "-qm", "b")
     problem = release.main_ancestor_problem(tmp_path)
     assert problem is not None and "not an ancestor" in problem
+
+
+def test_tag_commands_end_with_the_pipeline_gate(release: ModuleType) -> None:
+    lines = release.tag_commands("0.0.31")
+    assert lines[-1] == "python3 scripts/release.py wait-pipeline v0.0.31"
+    assert lines.index("git push origin v0.0.31") < len(lines) - 1
+
+
+def test_wait_for_tag_pipeline_returns_the_pipeline_once_it_appears(release: ModuleType) -> None:
+    clock = [0.0]
+    answers = [[], [{"id": 9, "ref": "v0.0.31", "source": "push"}]]
+    polls: list[float] = []
+
+    def fetch() -> list[dict[str, object]]:
+        return answers.pop(0)
+
+    def sleep(seconds: float) -> None:
+        polls.append(seconds)
+        clock[0] += seconds
+
+    found = release.wait_for_tag_pipeline("v0.0.31", fetch, interval=10, sleep=sleep, clock=lambda: clock[0])
+    assert found["id"] == 9 and polls == [10]
+
+
+def test_wait_for_tag_pipeline_fails_loudly_when_none_starts(release: ModuleType) -> None:
+    clock = [0.0]
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    with pytest.raises(release.ReleaseError) as err:
+        release.wait_for_tag_pipeline(
+            "v0.0.30", lambda: [{"id": 1, "ref": "main"}], timeout=60, interval=10, sleep=sleep, clock=lambda: clock[0]
+        )
+    message = str(err.value)
+    assert "no pipeline started for v0.0.30 within 60 s" in message and "pipeline?ref=v0.0.30" in message
+    assert clock[0] == 60  # it kept polling for the whole window
+
+
+def test_wait_pipeline_command_exits_non_zero_without_a_pipeline(
+    release: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(release, "glab_tag_pipelines", lambda project, tag: [])
+    assert release.main(["wait-pipeline", "v0.0.30", "--timeout", "0", "--interval", "0"]) == 1
+    assert "no pipeline started for v0.0.30" in capsys.readouterr().err
+    monkeypatch.setattr(
+        release, "glab_tag_pipelines", lambda project, tag: [{"id": 7, "ref": tag, "status": "pending"}]
+    )
+    assert release.main(["wait-pipeline", "v0.0.30"]) == 0
+    assert "pipeline 7" in capsys.readouterr().out

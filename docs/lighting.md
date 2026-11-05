@@ -168,7 +168,12 @@ The policy since #182 (a Litra Beam stayed on overnight on dm313red):
    (`NO_CAMERA_OFF_SECONDS`, always under 5), every light that is on is switched off. Nothing stops this: not a hold
    after a change by hand, not the `manual` role, not "Camera follow" or the schedule being off. It is not a setting.
    A light switched on again with no camera is switched off again (the service retries a failed switch-off every
-   30 s and says so in the log).
+   30 s and says so in the log). **A light a person switches on gets its own window** (#195): the rule counts from
+   that moment, 30 minutes by day (`HAND_ON_SECONDS`) and 5 minutes at night (`HAND_ON_NIGHT_SECONDS`), and the log
+   says when it goes off ("was switched on by hand; with no camera in use it goes off at 19:34"). Before #195 the
+   rule counted from the end of the last camera use only, so a Beam switched on with a mouse button an hour after a
+   call went off again within seconds. A camera opening keeps it on as before; once that camera closes the normal
+   4 minutes apply.
 2. **At night nothing is on unless a camera is open.** From local 22:00 to 07:00 the same rule applies after 60
    seconds with no camera user (`NIGHT_OFF_SECONDS`), so a call ending at night does not wait for the 120 s grace
    period.
@@ -188,7 +193,7 @@ The policy since #182 (a Litra Beam stayed on overnight on dm313red):
    person. A tool that talks to the hidraw node itself (the `litra` command, a script not using `Litra`) cannot be
    tagged, and looks like the light's own button: that is why `litra toggle` on a mouse button still counts as a
    person. An agent that runs the `litra` CLI to try a light must switch it off when done (the hard rule does it
-   within 5 minutes at the latest).
+   within the 30-minute hand window, 5 minutes at night, at the latest).
 
 Tests leave nothing on: the unit suite tracks every simulated light and every fake light and switches them off in a
 shared teardown (`tests/conftest.py`, fixture `beams_off`, with `tests/light_support.py`), and the e2e suite switches

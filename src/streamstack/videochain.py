@@ -33,8 +33,13 @@ def chain_checks(
     probe: Probe = system.loopback_has_producer,
     exists: Callable[[str], bool] = os.path.exists,
     can_open: Callable[[str], bool] = virtualdevices.can_open,
+    video: dict | None = None,
 ) -> list[dict[str, str]]:
-    """The `video-chain` row: one verdict for "will Teams list StreamStack Camera, and with what picture"."""
+    """The `video-chain` row: one verdict for "will Teams list StreamStack Camera, and with what picture".
+
+    `video` is the running Console's video block (None without a Console). A node that is fed only proves that
+    something writes it: when the Console says that something is the 'camera reconnecting' card, the ok row is
+    dropped and `delivery_checks` says what is wrong (#193)."""
     camera, program = cfg["STREAMSTACK_CAMERA_DEVICE"], cfg["STREAMSTACK_PROGRAM_DEVICE"]
     label = cfg["STREAMSTACK_PROGRAM_LABEL"]
     if not exists(program) or not can_open(program):
@@ -69,7 +74,25 @@ def chain_checks(
                 restart_hint(cfg),
             )
         ]
+    if _delivery_block(video).get("mode") == "reconnecting":
+        return []
     return [_row("ok", "video-chain", f"{label} is fed and its source is delivering")]
+
+
+def _delivery_block(video: dict | None) -> dict:
+    block = ((video or {}).get("engine") or {}).get("delivery")
+    return block if isinstance(block, dict) else {}
+
+
+def delivery_checks(cfg: dict[str, str], video: dict | None) -> list[dict[str, str]]:
+    """The Console's `video-delivery` row, as the doctor sees it: a fault only (the ok rows are the chain's and the
+    idle row's job). Nothing without a Console."""
+    from streamstack.console.delivery import delivery_checks as console_checks
+
+    block = _delivery_block(video)
+    if block.get("mode") not in ("reconnecting", "fallback"):
+        return []
+    return console_checks(block, config.camera_external(cfg))
 
 
 def idle_checks(video: dict | None) -> list[dict[str, str]]:

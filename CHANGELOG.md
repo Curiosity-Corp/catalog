@@ -5,6 +5,17 @@ All notable changes are recorded here. The project follows
 
 ## [Unreleased]
 
+## [0.0.31] - 2026-11-04
+
+### Added
+- scripts/release.py wait-pipeline vX.Y.Z waits up to five minutes after the tag push for the tag pipeline and fails loudly if GitLab started none, as it did for v0.0.30; the release steps and docs/release.md name it (#190).
+
+### Fixed
+- The automatic mic revive log names the burst or the backoff step and the next delay instead of reading "try N of 3" after the burst (#189).
+- A mic-check recording that is expired, cleared or replaced while a window is fetching it now answers 404 "gone" instead of raising a FileNotFoundError that the crash page then lists (#191).
+- When another program reads the camera source (one reader at a time on a v4l2loopback node), the "camera reconnecting" card, the Console and `streamstack doctor` now name that program and say how to free it, instead of "no picture" and an ok doctor row; the engine takes the source back by itself once it is free (#193).
+- A Litra Beam that a person switches on with no camera in use now stays on for 30 minutes (5 at night) instead of being switched off again within seconds by the no-camera rule; the log says when it goes off (#195).
+
 ## [0.0.30] - 2026-11-04
 
 ### Fixed

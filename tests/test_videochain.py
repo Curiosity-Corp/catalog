@@ -71,3 +71,37 @@ def test_idle_row_for_waking_running_keep_alive_and_off() -> None:
     assert "Keep awake" in kept["detail"]
     (off,) = idle_row({"engine": {"idle": {"mode": "off", "state": "running"}}})
     assert "never idles" in off["title"]
+
+
+# -- the doctor sees the Console's delivery (#193) --------------------------------------------------------------------
+
+
+def console_video(mode: str, **extra) -> dict:
+    return {"engine": {"delivery": {"mode": mode, "picked": "Canon EOS 50D", "feeding": "Canon EOS 50D", **extra}}}
+
+
+def test_a_node_fed_by_the_reconnecting_card_is_not_called_healthy() -> None:
+    fed = {"/dev/video42": True, "/dev/video43": True}
+    healthy = videochain.chain_checks(CFG, probe=fed.get, exists=lambda d: True, can_open=lambda d: True)
+    assert healthy[0]["state"] == "ok"
+    rows = videochain.chain_checks(
+        CFG, probe=fed.get, exists=lambda d: True, can_open=lambda d: True, video=console_video("reconnecting")
+    )
+    assert rows == []
+
+
+def test_delivery_checks_reports_a_busy_camera_with_the_holder() -> None:
+    reason = "Canon EOS 50D is in use by obs (pid 7): only one app at a time can read /dev/video42"
+    (row,) = videochain.delivery_checks(CFG, console_video("reconnecting", reason=reason, busy=True))
+    assert row["state"] == "fail" and row["id"] == "video-delivery"
+    assert "another app is reading Canon EOS 50D" in row["title"] and "close obs (pid 7)" in row["hint"]
+    (plain,) = videochain.delivery_checks(CFG, console_video("reconnecting", reason="no producer"))
+    assert plain["state"] == "fail" and "canonctl-ptp-webcam.service" in plain["hint"]
+
+
+def test_delivery_checks_is_silent_when_live_idle_or_without_a_console() -> None:
+    assert videochain.delivery_checks(CFG, None) == []
+    assert videochain.delivery_checks(CFG, console_video("live")) == []
+    assert videochain.delivery_checks(CFG, console_video("idle")) == []
+    (warn,) = videochain.delivery_checks(CFG, console_video("fallback", feeding="Cam Link 4K"))
+    assert warn["state"] == "warn"

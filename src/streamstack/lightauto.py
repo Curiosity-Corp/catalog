@@ -16,7 +16,10 @@ closed) and, in the demo rig, inside the Console. Each tick it
 4. enforces the **hard rule** (#182), after 1 and before 2 and 3, whatever any hold, role or setting says: with no
    camera user, every light that is on is switched off once nothing has used the camera for `NO_CAMERA_OFF_SECONDS`
    (5 minutes at most), and at night (local 22:00 to 07:00) once nothing has for `NIGHT_OFF_SECONDS`. Nothing stays on
-   overnight without a camera open. It is not a setting and no override reaches it.
+   overnight without a camera open. It is not a setting and no override reaches it. The one thing it measures
+   differently (#195): a light a *person* switches on counts from that moment, for `HAND_ON_SECONDS` (30 min) by day
+   and `HAND_ON_NIGHT_SECONDS` (5 min) at night, so a person who switches a light on is not overruled within seconds
+   because the camera has been idle for an hour. Only a switch-on no software write explains counts (step 1).
 
 What is *not* a change by hand (#182): the engine's own writes, read back right after they are made (a light may keep
 its own limit: a Beam that shows at most 204 lm is not "changed by hand" when asked for 265, the engine learns the
@@ -48,7 +51,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -65,6 +68,8 @@ KELVIN_EPS = 100  # one step of the light's own scale
 SETTLE_SECONDS = 2.0  # after the engine's own write the light's answer is not compared
 NO_CAMERA_OFF_SECONDS = 240.0  # hard rule: nothing uses the camera this long and every light goes off (under 5 minutes)
 NIGHT_OFF_SECONDS = 60.0  # the same at night, when nothing may be on without a camera
+HAND_ON_SECONDS = 30 * 60.0  # a light a person switched on with no camera stays on this long (#195)
+HAND_ON_NIGHT_SECONDS = 5 * 60.0  # the same at night
 NIGHT_START_HOUR, NIGHT_END_HOUR = 22, 7  # local time: night is 22:00 up to 07:00
 OFF_RETRY_SECONDS = 30.0  # a light that would not switch off is tried again this often
 JOURNAL_WINDOW_SECONDS = 20.0  # a write by software this recent can explain a change the engine finds on a light
@@ -129,6 +134,7 @@ class _Run:
         self.kelvin_floor: int | None = None
         self.kelvin_ceiling: int | None = None
         self.off_tried = float("-inf")  # when the hard rule last tried to switch this light off
+        self.hand_on_at: float | None = None  # when a person last switched it on (#195): the hard rule counts from then
 
 
 def _clock(when: datetime) -> str:
@@ -325,8 +331,13 @@ class Automation:
                     run.ours = run.ours and bool(power)
                     continue
                 run.held_at = run.held_wall = None
+                run.hand_on_at = now if power else None
                 if power:
-                    self._event(wall, "manual", f"{name} was switched on by hand")
+                    window = HAND_ON_NIGHT_SECONDS if is_night(wall) else HAND_ON_SECONDS
+                    until = _clock(wall + timedelta(seconds=window))
+                    self._event(
+                        wall, "manual", f"{name} was switched on by hand; with no camera in use it goes off at {until}"
+                    )
                 else:
                     if run.ours:
                         self._event(wall, "manual", f"{name} was switched off by hand; it stays off")
@@ -433,13 +444,17 @@ class Automation:
             return
         if self._idle_since is None:
             self._idle_since = now
-        limit = NIGHT_OFF_SECONDS if is_night(wall) else NO_CAMERA_OFF_SECONDS
-        if now - self._idle_since < limit:
-            return
-        why = "at night with no camera open" if is_night(wall) else "with no camera in use"
+        night = is_night(wall)
+        why = "at night with no camera open" if night else "with no camera in use"
         for view in views:
             run = self._run_for(view["id"])
             if view["power"] is not True or view.get("identifying") or now - run.off_tried < OFF_RETRY_SECONDS:
+                continue
+            if run.hand_on_at is not None and run.hand_on_at >= self._idle_since:
+                since, limit = run.hand_on_at, HAND_ON_NIGHT_SECONDS if night else HAND_ON_SECONDS
+            else:
+                since, limit = self._idle_since, NIGHT_OFF_SECONDS if night else NO_CAMERA_OFF_SECONDS
+            if now - since < limit:
                 continue
             run.off_tried = now
             try:
@@ -448,7 +463,7 @@ class Automation:
                 self._event(wall, "error", f"Could not switch {view['name']} off {why}: {exc}")
                 continue
             run.ours = False
-            run.held_at = run.held_wall = None
+            run.held_at = run.held_wall = run.hand_on_at = None
             self._event(wall, "hard-off", f"{view['name']} switched off {why} at {_clock(wall)}")
 
     # -- 2. camera follow ---------------------------------------------------------------
