@@ -166,3 +166,121 @@ def test_live_page_has_the_output_picker_and_a_test_button(app: App, rig: Rig) -
     assert poll(rig, lambda s: device(s, SCARLETT)["playing"])
     assert poll(rig, lambda s: device(s, SCARLETT)["result"] is not None)
     expect(app.page.get_by_role("img", name="Did you hear it?")).to_be_visible(timeout=LOADED)
+
+
+# ---- the output menu in the top bar: on every page, so the switch is never hard to find ----
+
+SCARLETT_SINK = "alsa_output.demo-scarlett.analog-stereo"
+
+
+def menu_button(app: App) -> Locator:
+    return app.page.get_by_role("button", name=re.compile("^Sound output"))
+
+
+def menu(app: App) -> Locator:
+    return app.page.get_by_role("menu", name="Sound output")
+
+
+@pytest.mark.parametrize("route", ["live", "camera", "audio", "system"])
+def test_top_bar_shows_where_the_sound_plays_on_every_page(app: App, route: str) -> None:
+    app.goto(route)
+    expect(menu_button(app)).to_contain_text(WAVE)
+    expect(menu_button(app)).to_have_attribute("aria-expanded", "false")
+    expect(menu(app)).to_be_hidden()
+
+
+def test_top_bar_menu_lists_every_output_and_switches_back_and_forth(app: App, rig: Rig) -> None:
+    app.goto("system")
+    button, pop = menu_button(app), menu(app)
+    button.click()
+    expect(pop.get_by_role("menuitemradio")).to_have_count(5)  # four outputs and the route
+    for label in LABELS:
+        expect(pop.get_by_role("menuitemradio", name=label)).to_be_visible()
+    expect(pop.get_by_role("menuitemradio", name=WAVE)).to_have_attribute("aria-checked", "true")
+    expect(pop.get_by_role("menuitemradio", name=SCARLETT)).to_have_attribute("aria-checked", "false")
+
+    pop.get_by_role("menuitemradio", name=SCARLETT).click()
+    assert poll(rig, lambda s: device(s, SCARLETT)["default"] and not device(s, WAVE)["default"])
+    expect(pop).to_be_hidden()
+    expect(button).to_contain_text(SCARLETT)
+
+    button.click()
+    pop.get_by_role("menuitemradio", name=WAVE).click()
+    assert poll(rig, lambda s: device(s, WAVE)["default"] and not device(s, SCARLETT)["default"])
+    expect(button).to_contain_text(WAVE)
+
+
+def test_top_bar_menu_follows_a_switch_made_elsewhere(app: App, rig: Rig) -> None:
+    app.goto("live")
+    rig.act("audio.output_default", name=SCARLETT_SINK)
+    expect(menu_button(app)).to_contain_text(SCARLETT, timeout=LOADED)
+    menu_button(app).click()
+    expect(menu(app).get_by_role("menuitemradio", name=SCARLETT)).to_have_attribute("aria-checked", "true")
+
+
+def test_top_bar_menu_is_operable_from_the_keyboard(app: App, rig: Rig) -> None:
+    app.goto("live")
+    button, pop = menu_button(app), menu(app)
+    button.focus()
+    button.press("ArrowDown")
+    expect(pop.get_by_role("menuitemradio", name=WAVE)).to_be_focused()  # opens on the current output
+    app.page.keyboard.press("ArrowDown")
+    expect(pop.get_by_role("menuitemradio", name=SCARLETT)).to_be_focused()
+    app.page.keyboard.press("Enter")
+    assert poll(rig, lambda s: device(s, SCARLETT)["default"])
+    expect(pop).to_be_hidden()
+    expect(button).to_be_focused()
+    button.press("ArrowDown")
+    expect(pop).to_be_visible()
+    app.page.keyboard.press("Escape")
+    expect(pop).to_be_hidden()
+    expect(button).to_be_focused()
+    assert device(rig.state(), SCARLETT)["default"], "Escape must not change the output"
+
+
+def test_top_bar_menu_closes_on_an_outside_click(app: App) -> None:
+    app.goto("live")
+    menu_button(app).click()
+    expect(menu(app)).to_be_visible()
+    app.page.locator("a.rail-item[data-id=camera]").click()
+    expect(menu(app)).to_be_hidden()
+
+
+def test_top_bar_menu_follows_hot_plug_while_open(app: App, rig: Rig) -> None:
+    app.goto("live")
+    menu_button(app).click()
+    pop = menu(app)
+    rig.act("audio.demo_output_plug", name=WAVE_SINK, plugged=False)
+    expect(pop.get_by_role("menuitemradio", name=WAVE)).to_have_count(0, timeout=LOADED)
+    expect(pop.get_by_role("menuitemradio")).to_have_count(4)
+    expect(pop).to_contain_text("was the default output")  # and says so
+    expect(menu_button(app)).not_to_contain_text(WAVE)
+    rig.act("audio.demo_output_plug", name=WAVE_SINK, plugged=True)
+    expect(pop.get_by_role("menuitemradio", name=WAVE)).to_be_visible(timeout=LOADED)
+    expect(pop.get_by_role("menuitemradio")).to_have_count(5)
+
+
+def test_top_bar_menu_opens_the_audio_pages_output_section(app: App) -> None:
+    app.goto("live")
+    menu_button(app).click()
+    menu(app).get_by_role("menuitem", name="Volume, mute and sound test").click()
+    expect(app.page.get_by_role("list", name="Outputs")).to_be_visible(timeout=LOADED)
+    expect(app.region("Audio section").get_by_role("button", name=re.compile("^Output"))).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    expect(menu(app)).to_be_hidden()
+
+
+def test_the_live_pickers_label_says_what_it_is(app: App) -> None:
+    app.goto("live")
+    expect(app.page.get_by_text("Sound plays on")).to_be_visible()
+
+
+def test_the_palette_can_switch_the_output_from_any_page(app: App, rig: Rig) -> None:
+    app.goto("system")
+    app.press("Control+k")
+    expect(app.palette).to_be_visible()
+    app.palette.get_by_role("combobox").fill("Play sound on Focusrite")
+    app.palette.get_by_role("option", name=re.compile("Play sound on Focusrite Scarlett")).click()
+    assert poll(rig, lambda s: device(s, SCARLETT)["default"])
+    expect(menu_button(app)).to_contain_text(SCARLETT, timeout=LOADED)

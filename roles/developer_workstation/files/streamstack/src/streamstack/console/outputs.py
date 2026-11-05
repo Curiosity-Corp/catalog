@@ -104,6 +104,17 @@ def split_label(description: str) -> tuple[str, str]:
     return text[: match.start()].strip(), match.group(0).strip()
 
 
+def hdmi_detail(label: str, detail: str, nick: str) -> str:
+    """An HDMI sink is named for the graphics card, which does not say which screen it is: lead with the screen's name.
+
+    PipeWire's ``node.nick`` is the monitor name the display reports (a TV's "SAMSUNG"). It is added only when it says
+    something the label and the profile do not, so a card name that merely repeats the label stays out."""
+    mine = nick.strip().lower()
+    if not mine or mine in label.lower() or label.lower() in mine or mine in detail.lower():
+        return detail
+    return f"{nick.strip()} · {detail}" if detail else nick.strip()
+
+
 def output_kind(props: dict[str, Any], name: str, description: str, port: str) -> str:
     """What the output is, from PipeWire's hints: hdmi, headphones, headset, speaker, interface or other."""
     form = str(props.get("device.form-factor", props.get("device.form_factor", ""))).lower()
@@ -182,13 +193,16 @@ def parse_dump(text: str) -> tuple[list[dict[str, Any]], str]:
             else str(props.get("device.bus", "") or ("bluetooth" if name.startswith("bluez") else ""))
         )
         levels = node_props(obj)
+        kind = "route" if virtual else output_kind(props, name, description, "")
+        if kind == "hdmi":
+            detail = hdmi_detail(label, detail, str(props.get("node.nick") or ""))
         found.append(
             {
                 "id": obj["id"],
                 "name": name,
                 "label": label,
                 "detail": detail,
-                "kind": "route" if virtual else output_kind(props, name, description, ""),
+                "kind": kind,
                 "bus": bus.lower(),
                 "virtual": virtual,
                 "state": str(obj["info"].get("state", "")).lower(),
