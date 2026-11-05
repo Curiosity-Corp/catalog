@@ -15,6 +15,14 @@ namespace and the interface is then moved into the PIA namespace, so the
 encrypted packets leave through the normal host link while the plaintext side
 only exists inside the namespace.
 
+Port forwarding (optional, `port_forward` in the configuration): PIA's
+getSignature/bindPort API is only reachable through the tunnel, so the manager
+calls it from inside the namespace. The port belongs to one server, so the tunnel
+then only connects to port-forwarding regions and keeps the server it had. The
+signed grant is kept (root-only) so a rebuilt tunnel to the same server gets the
+same port back; `bind` renews it every few minutes and publishes the port in
+/run/curiosity-pia-tunnel/forwarded-port for the launcher's port sync.
+
 Secrets: the account login is read from a root-only file; the login, token and
 private key travel to curl and wg through stdin, never argv, and are never
 logged or written anywhere (the private key lives only in memory and in the
@@ -25,6 +33,7 @@ Commands (all need root):
   down [--destroy] remove the tunnel; the namespace stays closed unless --destroy
   ensure           `up` when the tunnel is missing, stale or too old, else no-op
   needs-renewal    exit 0 when `ensure` would rebuild the tunnel, 1 when healthy
+  bind             (re)acquire and re-bind the forwarded port; run by a timer
   status           print the tunnel state; exit 0 only when connected
 """
 
@@ -33,6 +42,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import calendar
 import concurrent.futures
 import dataclasses
 import fcntl
@@ -53,17 +63,22 @@ STATE_DIR = Path(os.environ.get("CURIOSITY_PIA_STATE_DIR", "/run/curiosity-pia-t
 NETNS_RUN = Path(os.environ.get("CURIOSITY_PIA_NETNS_RUN", "/run/netns"))
 NETNS_ETC = Path(os.environ.get("CURIOSITY_PIA_NETNS_ETC", "/etc/netns"))
 NSSWITCH_SOURCE = Path(os.environ.get("CURIOSITY_PIA_NSSWITCH", "/etc/nsswitch.conf"))
+PERSIST_DIR = Path(os.environ.get("CURIOSITY_PIA_PERSIST_DIR", "/var/lib/curiosity-pia-tunnel"))
 
 GTOKEN_URL = "https://www.privateinternetaccess.com/gtoken/generateToken"
 V2_TOKEN_URL = "https://www.privateinternetaccess.com/api/client/v2/token"
 SERVER_LIST_URL = "https://serverlist.piaservers.net/vpninfo/servers/v6"
 ADD_KEY_PORT = 1337
+PF_API_PORT = 19999
+# Reuse a stored port grant only while it has at least this long left.
+PF_MIN_REMAINING = 86400
 FALLBACK_DNS = ("10.0.0.243", "10.0.0.242")
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,14}$")
 REGION_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]{16,1024}$")
 WG_KEY_BYTES = 32
+BASE64_RE = re.compile(r"^[A-Za-z0-9+/=_-]{8,8192}$")
 
 
 class TunnelError(Exception):
@@ -90,6 +105,7 @@ class Config:
     keepalive: int
     max_handshake_age: int
     session_max_hours: int
+    port_forward: bool = False
 
     @staticmethod
     def load(path: Path = CONFIG_PATH) -> "Config":
@@ -112,6 +128,7 @@ class Config:
                 keepalive=int(raw["keepalive"]),
                 max_handshake_age=int(raw["max_handshake_age"]),
                 session_max_hours=int(raw["session_max_hours"]),
+                port_forward=raw.get("port_forward", False) is True,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise TunnelError(f"configuration {path} is incomplete or invalid: {exc!r}") from exc
@@ -187,10 +204,17 @@ def curl_value(key: str, value: str) -> str:
 
 
 def curl(
-    url: str, config_lines: Sequence[str] = (), extra_args: Sequence[str] = ()
+    url: str,
+    config_lines: Sequence[str] = (),
+    extra_args: Sequence[str] = (),
+    netns: str | None = None,
 ) -> str:
-    """HTTPS GET/POST through curl; secrets go in `config_lines` (stdin)."""
+    """HTTPS GET/POST through curl; secrets go in `config_lines` (stdin).
+
+    With `netns` the request is made from inside that network namespace.
+    """
     argv = [
+        *(["ip", "netns", "exec", netns] if netns else []),
         "curl", "-sS", "--fail", "--max-time", "25",
         "--proto", "=https", "--tlsv1.2",
         *extra_args, "-K", "-", url,
@@ -299,6 +323,7 @@ class Server:
     ip: str
     cn: str
     geo: bool = False
+    port_forward: bool = False
 
 
 def fetch_servers() -> list[Server]:
@@ -327,6 +352,7 @@ def fetch_servers() -> list[Server]:
                         ip,
                         cn,
                         bool(region.get("geo")),
+                        region.get("port_forward") is True,
                     )
                 )
     if not servers:
@@ -347,18 +373,36 @@ def choose_server(
     servers: Sequence[Server],
     region: str,
     latency: Callable[[str, int], float | None] = tcp_latency,
+    *,
+    port_forward: bool = False,
+    prefer_cn: str | None = None,
 ) -> Server:
-    """The configured region's server, or the lowest-latency one for `auto`."""
+    """The configured region's server, or the lowest-latency one for `auto`.
+
+    With `port_forward` only regions that offer it qualify (PIA has none in the
+    US), and `prefer_cn` (the server the tunnel had) wins while it still answers,
+    because a forwarded port belongs to one server.
+    """
     if region != "auto":
         matches = [s for s in servers if s.region_id == region]
         if not matches:
             known = ", ".join(sorted({s.region_id for s in servers})[:12])
             raise TunnelError(f"PIA has no online WireGuard region {region!r} (examples: {known}, ...)")
+        if port_forward:
+            matches = [s for s in matches if s.port_forward]
+            if not matches:
+                capable = ", ".join(sorted({s.region_id for s in servers if s.port_forward})[:12])
+                raise TunnelError(
+                    f"PIA region {region!r} does not offer port forwarding; use `auto` or one of: {capable}, ..."
+                )
         pool = matches
     else:
         # Geo-located regions are virtual locations hosted elsewhere; skip them
         # when picking by latency, but honour an explicit request for one.
-        pool = [s for s in servers if not s.geo] or list(servers)
+        candidates = [s for s in servers if s.port_forward] if port_forward else list(servers)
+        if port_forward and not candidates:
+            raise TunnelError("PIA lists no online region that offers port forwarding")
+        pool = [s for s in candidates if not s.geo] or candidates
     with concurrent.futures.ThreadPoolExecutor(max_workers=48) as pool_exec:
         times = list(pool_exec.map(lambda s: latency(s.ip, ADD_KEY_PORT), pool))
     reachable = [(t, s) for t, s in zip(times, pool) if t is not None]
@@ -366,6 +410,10 @@ def choose_server(
         if region == "auto":
             raise TunnelError("no PIA server answered on port 1337; is the host online?")
         return pool[0]
+    if port_forward and prefer_cn:
+        for _t, server in reachable:
+            if server.cn == prefer_cn:
+                return server
     return min(reachable, key=lambda item: (item[0], item[1].region_id, item[1].cn))[1]
 
 
@@ -376,6 +424,7 @@ class Registration:
     server_port: int
     peer_ip: str
     dns: tuple[str, ...]
+    server_vip: str | None = None
 
 
 def _valid_wg_key(value: object) -> bool:
@@ -417,12 +466,18 @@ def add_key(cfg: Config, token: str, public_key: str, server: Server) -> Registr
                 dns.append(str(ipaddress.IPv4Address(str(item))))
             except ValueError:
                 continue
+    server_vip: str | None = None
+    try:
+        server_vip = str(ipaddress.IPv4Address(str(body["server_vip"])))
+    except (KeyError, ValueError):
+        server_vip = None  # only port forwarding needs it
     return Registration(
         server_key=str(body["server_key"]),
         server_ip=server_ip,
         server_port=server_port,
         peer_ip=peer_ip,
         dns=tuple(dns) or FALLBACK_DNS,
+        server_vip=server_vip,
     )
 
 
@@ -539,12 +594,179 @@ def health(cfg: Config) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# Port forwarding (PIA getSignature / bindPort, through the tunnel)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class PortGrant:
+    """A signed port assignment; payload and signature are secrets (the payload embeds the token)."""
+
+    server_cn: str
+    port: int
+    expires_at: int
+    payload: str
+    signature: str
+
+
+def grant_path() -> Path:
+    return PERSIST_DIR / "portforward.json"
+
+
+def last_server_path() -> Path:
+    return PERSIST_DIR / "last-server.json"
+
+
+def port_file() -> Path:
+    return STATE_DIR / "forwarded-port"
+
+
+def persist_json(path: Path, value: dict[str, object]) -> None:
+    """Keep `value` across reboots (root-only); a failure must not break the tunnel."""
+    try:
+        PERSIST_DIR.mkdir(parents=True, exist_ok=True)
+        os.chmod(PERSIST_DIR, 0o700)
+        atomic_write(path, json.dumps(value, indent=2) + "\n", 0o600)
+    except OSError as exc:
+        log(f"warning: cannot store {path}: {exc}")
+
+
+def read_json(path: Path) -> dict[str, object] | None:
+    try:
+        value = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def parse_expiry(value: object) -> int:
+    """Epoch seconds of PIA's `expires_at` (ISO 8601, UTC, nanosecond fraction)."""
+    match = re.match(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", str(value))
+    if not match:
+        raise TunnelError("PIA port payload has no usable expires_at")
+    try:
+        return calendar.timegm(time.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S"))
+    except ValueError as exc:
+        raise TunnelError("PIA port payload has an invalid expires_at") from exc
+
+
+def decode_payload(payload: str) -> tuple[int, int]:
+    """(port, expires_at) from a getSignature payload."""
+    try:
+        body = json.loads(base64.b64decode(payload, validate=True))
+        port = int(body["port"])
+        expires_at = parse_expiry(body["expires_at"])
+    except (binascii.Error, ValueError, KeyError, TypeError) as exc:
+        raise TunnelError("PIA returned a port payload that cannot be decoded") from exc
+    if not 1024 <= port <= 65535:
+        raise TunnelError(f"PIA returned the forwarded port {port}, outside 1024-65535")
+    return port, expires_at
+
+
+def load_grant() -> PortGrant | None:
+    raw = read_json(grant_path())
+    if raw is None:
+        return None
+    try:
+        grant = PortGrant(
+            server_cn=str(raw["server_cn"]),
+            port=int(str(raw["port"])),
+            expires_at=int(str(raw["expires_at"])),
+            payload=str(raw["payload"]),
+            signature=str(raw["signature"]),
+        )
+    except (KeyError, ValueError):
+        return None
+    return grant if BASE64_RE.match(grant.payload) and BASE64_RE.match(grant.signature) else None
+
+
+def pf_target(cfg: Config) -> tuple[str, str]:
+    """(server name, in-tunnel gateway) of the running tunnel, from its state."""
+    state = read_state() or {}
+    cn, vip = state.get("server_cn"), state.get("server_vip")
+    if not isinstance(cn, str) or not isinstance(vip, str):
+        raise TunnelError(
+            "port forwarding needs the PIA server's name and in-tunnel address; "
+            "the tunnel is not up or PIA's addKey reply had no server_vip"
+        )
+    return cn, vip
+
+
+def pf_call(cfg: Config, endpoint: str, cn: str, vip: str, config_lines: Sequence[str]) -> dict[str, object]:
+    """One call to PIA's port forwarding API, made from inside the namespace."""
+    try:
+        reply = curl(
+            f"https://{cn}:{PF_API_PORT}/{endpoint}",
+            ["get", *config_lines],
+            ["--cacert", str(cfg.ca_file), "--connect-to", f"{cn}::{vip}:"],
+            netns=cfg.netns,
+        )
+    except TunnelError as exc:
+        raise TunnelError(f"PIA {endpoint} could not be reached through the tunnel: {exc}") from exc
+    body = parse_json_object(reply, f"{endpoint} response")
+    if body.get("status") != "OK":
+        raise TunnelError(f"PIA {endpoint} was refused: status {str(body.get('status'))[:40]!r}")
+    return body
+
+
+def get_signature(cfg: Config, cn: str, vip: str, token: str) -> PortGrant:
+    body = pf_call(cfg, "getSignature", cn, vip, [curl_value("data-urlencode", f"token={token}")])
+    payload, signature = body.get("payload"), body.get("signature")
+    if not (isinstance(payload, str) and isinstance(signature, str)
+            and BASE64_RE.match(payload) and BASE64_RE.match(signature)):
+        raise TunnelError("PIA getSignature returned no usable payload and signature")
+    port, expires_at = decode_payload(payload)
+    return PortGrant(cn, port, expires_at, payload, signature)
+
+
+def bind_port(cfg: Config, cn: str, vip: str, grant: PortGrant) -> None:
+    pf_call(
+        cfg, "bindPort", cn, vip,
+        [curl_value("data-urlencode", f"payload={grant.payload}"),
+         curl_value("data-urlencode", f"signature={grant.signature}")],
+    )
+
+
+def publish_port(port: int) -> None:
+    """Tell the launcher's port sync which port is bound; the mtime is the bind time."""
+    atomic_write(port_file(), f"{port}\n", 0o644)
+    os.utime(port_file())
+
+
+def unpublish_port() -> None:
+    port_file().unlink(missing_ok=True)
+
+
+def refresh_port(cfg: Config, token_for: Callable[[], str]) -> int:
+    """Bind the forwarded port: the stored grant when still good, else a new one."""
+    cn, vip = pf_target(cfg)
+    grant = load_grant()
+    if grant and grant.server_cn == cn and grant.expires_at - time.time() > PF_MIN_REMAINING:
+        try:
+            bind_port(cfg, cn, vip, grant)
+            publish_port(grant.port)
+            return grant.port
+        except TunnelError as exc:
+            log(f"the stored port grant was not accepted ({exc}); requesting a new one")
+    grant = get_signature(cfg, cn, vip, token_for())
+    persist_json(
+        grant_path(),
+        {"server_cn": cn, "port": grant.port, "expires_at": grant.expires_at,
+         "payload": grant.payload, "signature": grant.signature},
+    )
+    bind_port(cfg, cn, vip, grant)
+    publish_port(grant.port)
+    return grant.port
+
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
 
 def teardown_interface(cfg: Config) -> None:
     """Remove the tunnel interface wherever it is; the namespace stays closed."""
+    unpublish_port()  # the old port is only valid on the old tunnel
     if (NETNS_RUN / cfg.netns).exists():
         ip_ns(cfg, "link", "del", cfg.interface, check=False)
     run(["ip", "link", "del", cfg.interface], check=False)
@@ -579,7 +801,11 @@ def up(cfg: Config) -> None:
     username, password = read_login(cfg.login_file)
     token = get_token(username, password)
     servers = fetch_servers()
-    server = choose_server(servers, cfg.region)
+    last = read_json(last_server_path()) if cfg.port_forward else None
+    prefer = last.get("server_cn") if last else None
+    server = choose_server(
+        servers, cfg.region, port_forward=cfg.port_forward, prefer_cn=prefer if isinstance(prefer, str) else None
+    )
     private, public = generate_keypair()
     reg = add_key(cfg, token, public, server)
     log(f"registered with {server.region_name or server.region_id} ({server.cn})")
@@ -616,6 +842,7 @@ def up(cfg: Config) -> None:
                 "region_name": server.region_name,
                 "server_ip": reg.server_ip,
                 "server_cn": server.cn,
+                "server_vip": reg.server_vip,
                 "peer_ip": reg.peer_ip,
                 "dns": list(reg.dns),
                 "interface": cfg.interface,
@@ -627,6 +854,13 @@ def up(cfg: Config) -> None:
         0o644,
     )
     log(f"tunnel up: peer {reg.peer_ip}, dns {', '.join(reg.dns)}")
+    if cfg.port_forward:
+        persist_json(last_server_path(), {"server_cn": server.cn, "region": server.region_id})
+        try:
+            log(f"forwarded port {refresh_port(cfg, lambda: token)} bound")
+        except TunnelError as exc:
+            # The tunnel itself works; the bind timer keeps trying.
+            log(f"warning: port forwarding is not bound yet: {exc}")
 
 
 def down(cfg: Config, destroy: bool) -> None:
@@ -661,6 +895,20 @@ def ensure(cfg: Config, retries: int) -> None:
             delay = min(delay * 2, 60)
 
 
+def bind(cfg: Config) -> None:
+    """Keep PIA's port binding alive (it lapses after about 15 minutes)."""
+    if not cfg.port_forward:
+        log("port forwarding is off (port_forward is false); nothing to bind")
+        return
+    healthy, reason = health(cfg)
+    if not healthy:
+        log(f"not binding a port while the tunnel is down ({reason}); the watchdog rebuilds it")
+        return
+    with Lock():
+        port = refresh_port(cfg, lambda: get_token(*read_login(cfg.login_file)))
+    log(f"forwarded port {port} bound")
+
+
 def status(cfg: Config) -> int:
     healthy, reason = health(cfg)
     state = read_state() or {}
@@ -673,6 +921,13 @@ def status(cfg: Config) -> int:
     for key in ("region_name", "server_cn", "server_ip", "peer_ip", "dns", "established_at"):
         if key in state:
             row(key, state[key])
+    if cfg.port_forward:
+        try:
+            port = int(port_file().read_text().strip())
+            age = int(max(0.0, time.time() - port_file().stat().st_mtime))
+            row("forwarded_port", f"{port} (bound {age}s ago)")
+        except (FileNotFoundError, ValueError, OSError):
+            row("forwarded_port", "none (not bound; the bind timer retries)")
     return 0 if healthy else 1
 
 
@@ -685,6 +940,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ensure = sub.add_parser("ensure", help="rebuild only when missing, stale or too old")
     p_ensure.add_argument("--retries", type=int, default=1)
     sub.add_parser("needs-renewal", help="exit 0 when the tunnel must be rebuilt")
+    sub.add_parser("bind", help="(re)acquire and re-bind the forwarded port")
     sub.add_parser("status", help="print the tunnel state")
     return parser
 
@@ -708,6 +964,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             healthy, reason = health(cfg)
             log(f"{'healthy' if healthy else 'needs renewal'}: {reason}")
             return 1 if healthy else 0
+        elif args.command == "bind":
+            bind(cfg)
         elif args.command == "status":
             return status(cfg)
     except TunnelError as exc:

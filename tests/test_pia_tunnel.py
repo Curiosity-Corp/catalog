@@ -64,9 +64,9 @@ launcher = _load(RUN, "curiosity_pia_run")
 # --------------------------------------------------------------------------
 
 
-def test_only_deskmeet_routes_brave_through_pia() -> None:
+def test_only_deskmeet_routes_brave_and_qbittorrent_through_pia() -> None:
     routed = {name: p["pia_tunnel_apps"] for name, p in PROFILES.items() if p.get("pia_tunnel_apps")}
-    assert routed == {"deskmeet-b760": ["brave-browser"]}
+    assert routed == {"deskmeet-b760": ["brave-browser", "qbittorrent"]}
 
 
 def test_every_profile_app_has_a_definition() -> None:
@@ -84,7 +84,7 @@ def test_the_variable_is_derived_from_the_profile() -> None:
     env = jinja2.Environment()
     template = env.from_string(DEFAULTS["pia_tunnel_apps"])
     rendered = template.render(hardware_profiles=PROFILES, hardware_profile="deskmeet-b760")
-    assert yaml.safe_load(rendered) == ["brave-browser"]
+    assert yaml.safe_load(rendered) == ["brave-browser", "qbittorrent"]
     assert yaml.safe_load(template.render(hardware_profiles=PROFILES, hardware_profile="generic")) == []
     assert yaml.safe_load(template.render(hardware_profiles=PROFILES, hardware_profile="unknown")) == []
 
@@ -184,6 +184,7 @@ def _env() -> jinja2.Environment:
         undefined=jinja2.StrictUndefined,
     )
     env.filters["to_nice_json"] = lambda value: json.dumps(value, indent=4, sort_keys=True)
+    env.filters["bool"] = lambda value: value if isinstance(value, bool) else str(value).lower() in ("true", "yes", "1")
     return env
 
 
@@ -201,6 +202,9 @@ def _vars(**overrides):
         "pia_tunnel_session_max_hours": 0,
         "pia_tunnel_watchdog_interval": "1min",
         "pia_tunnel_users": ["mrh", "second"],
+        "pia_tunnel_port_forward": False,
+        "pia_tunnel_bind_interval": "10min",
+        "dev_users": [{"name": "mrh", "home": "/home/mrh"}, {"name": "second", "home": "/home/second"}],
     }
     values.update(overrides)
     return values
@@ -275,7 +279,7 @@ def test_sudoers_passes_visudo(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 FAKE_CURL = r'''#!/usr/bin/python3
-import json, os, sys
+import base64, json, os, sys
 state = os.environ["FAKE_DIR"]
 argv = sys.argv[1:]
 stdin = sys.stdin.read()
@@ -300,6 +304,21 @@ elif url.endswith("/addKey"):
         "server_ip": "203.0.113.9", "server_vip": "10.0.0.1", "peer_ip": "10.5.6.7",
         "peer_pubkey": os.environ["FAKE_WG_KEY"], "dns_servers": ["10.0.0.243", "10.0.0.242"],
     }))
+elif url.endswith("/getSignature"):
+    count_file = state + "/getsig.count"
+    count = int(open(count_file).read()) + 1 if os.path.exists(count_file) else 1
+    open(count_file, "w").write(str(count))
+    payload = base64.b64encode(json.dumps({
+        "token": os.environ["FAKE_TOKEN"], "port": int(os.environ.get("FAKE_PF_PORT", "47047")),
+        "expires_at": os.environ.get("FAKE_PF_EXPIRES", "2099-01-01T00:00:00.123456789Z"),
+    }).encode()).decode()
+    print(json.dumps({"status": "OK", "payload": payload, "signature": "c2lnbmF0dXJlLW9mLXRoZS1wYXlsb2Fk"}))
+elif url.endswith("/bindPort"):
+    count_file = state + "/bind.count"
+    count = int(open(count_file).read()) + 1 if os.path.exists(count_file) else 1
+    open(count_file, "w").write(str(count))
+    refused = os.environ.get("FAKE_BIND_FAIL") or (os.environ.get("FAKE_BIND_FAIL_FIRST") and count == 1)
+    print(json.dumps({"status": "ERROR" if refused else "OK", "message": "port scheduled for add"}))
 else:
     sys.stderr.write("fake curl: unexpected url " + url + "\n")
     sys.exit(7)
@@ -369,7 +388,7 @@ SERVERS = {
     "regions": [
         {"id": "us_chicago", "name": "US Chicago", "geo": False, "offline": False,
          "servers": {"wg": [{"ip": "203.0.113.9", "cn": "chicago401"}]}},
-        {"id": "nl_amsterdam", "name": "Netherlands", "geo": False, "offline": False,
+        {"id": "nl_amsterdam", "name": "Netherlands", "geo": False, "offline": False, "port_forward": True,
          "servers": {"wg": [{"ip": "203.0.113.20", "cn": "amsterdam441"}]}},
         {"id": "dead", "name": "Offline", "geo": False, "offline": True,
          "servers": {"wg": [{"ip": "203.0.113.30", "cn": "dead1"}]}},
@@ -381,8 +400,11 @@ SERVERS = {
 class Rig:
     """A fake root filesystem and network toolbox for one tunnel run."""
 
-    def __init__(self, tmp: Path, region: str = "us_chicago", session_max_hours: int = 0) -> None:
+    def __init__(
+        self, tmp: Path, region: str = "us_chicago", session_max_hours: int = 0, port_forward: bool = False
+    ) -> None:
         self.tmp = tmp
+        self.persist = tmp / "persist"
         self.fake = tmp / "fake"
         self.bin = tmp / "bin"
         self.netns_run = tmp / "netns-run"
@@ -403,7 +425,7 @@ class Rig:
                     "netns": "pia", "interface": "wgpia", "region": region,
                     "login_file": str(self.login), "ca_file": "/ca.crt", "mtu": 1420,
                     "keepalive": 25, "max_handshake_age": 240, "session_max_hours": session_max_hours,
-                    "run_path": "/usr/local/bin/curiosity-pia-run", "apps": {},
+                    "port_forward": port_forward, "run_path": "/usr/local/bin/curiosity-pia-run", "apps": {},
                 }
             )
         )
@@ -422,6 +444,7 @@ class Rig:
             "FAKE_WG_KEY": WG_KEY,
             "CURIOSITY_PIA_CONFIG": str(self.config),
             "CURIOSITY_PIA_STATE_DIR": str(self.state),
+            "CURIOSITY_PIA_PERSIST_DIR": str(self.persist),
             "CURIOSITY_PIA_NETNS_RUN": str(self.netns_run),
             "CURIOSITY_PIA_NETNS_ETC": str(self.netns_etc),
             "CURIOSITY_PIA_NSSWITCH": str(self.nsswitch),
@@ -515,7 +538,7 @@ def test_state_has_no_secrets_and_is_world_readable(rig: Rig) -> None:
     result = rig.run("up")
     state = json.loads((rig.state / "state.json").read_text())
     assert state["peer_ip"] == "10.5.6.7" and state["region"] == "us_chicago"
-    assert set(state) == {"established_at", "region", "region_name", "server_ip", "server_cn",
+    assert set(state) == {"established_at", "region", "region_name", "server_ip", "server_cn", "server_vip",
                           "peer_ip", "dns", "interface", "netns"}
     assert (rig.state / "state.json").stat().st_mode & 0o777 == 0o644
     _assert_no_secret(rig, result)
@@ -743,15 +766,18 @@ def test_the_tunnel_manager_refuses_to_run_as_a_normal_user(rig: Rig) -> None:
 # --------------------------------------------------------------------------
 
 BRAVE_SPEC = {
-    "command": ["/usr/bin/brave-browser-stable"],
+    # Never /usr/bin/brave-browser-stable: on a converged host that path is the tunnel shim.
+    "command": ["/opt/brave.com/brave/brave-browser"],
     "guard_exe": "/opt/brave.com/brave/brave",
     "desktop_ids": ["brave-browser.desktop"],
     "desktop_commands": ["/usr/bin/brave-browser-stable"],
     "shims": ["brave-browser"],
     "scope": {"slice": "app-browser.slice", "MemoryHigh": "16G", "MemoryMax": "24G"},
     "env_passthrough": [],
+    "display_name": "Brave",
+    "quit_hint": "Quit Brave (Ctrl+Shift+Q)",
 }
-CONFIG = {"netns": "pia", "run_path": "/usr/local/bin/curiosity-pia-run", "apps": {"brave-browser": BRAVE_SPEC}}
+CONFIG = {"netns": "pia", "interface": "wgpia", "run_path": "/usr/local/bin/curiosity-pia-run", "apps": {"brave-browser": BRAVE_SPEC}}
 
 BRAVE_DESKTOP = """[Desktop Entry]
 Version=1.0
@@ -847,10 +873,10 @@ def test_root_stage_enters_the_namespace_drops_privileges_and_scrubs_env(
     assert command[:4] == [ip, "netns", "exec", "pia"]
     assert command[4:9] == [setpriv, "--reuid=1001", "--regid=1001", "--init-groups", "--"]
     assert command[9:11] == [env, "-i"]
-    assignments = command[11:command.index("/usr/bin/brave-browser-stable")]
+    assignments = command[11:command.index("/opt/brave.com/brave/brave-browser")]
     assert "HOME=/home/u" in assignments and "USER=u" in assignments and "DISPLAY=:0" in assignments
     assert "PATH=/home/u/bin:/usr/bin" in assignments
-    assert command[-3:] == ["/usr/bin/brave-browser-stable", "--incognito", "https://example.com"][-3:]
+    assert command[-3:] == ["/opt/brave.com/brave/brave-browser", "--incognito", "https://example.com"]
     assert not any(a.startswith(("LD_", "SUDO_")) for a in assignments)
 
 
@@ -949,7 +975,7 @@ def test_root_stage_starts_the_app_inside_the_namespace(root_stage) -> None:
     (root_stage.run / "pia").write_text("")
     launcher.run_root("brave-browser", ["DISPLAY=:0"], ["--new-window"])
     argv = root_stage.executed[0]
-    assert argv[1:4] == ["netns", "exec", "pia"] and argv[-2:] == ["/usr/bin/brave-browser-stable", "--new-window"]
+    assert argv[1:4] == ["netns", "exec", "pia"] and argv[-2:] == ["/opt/brave.com/brave/brave-browser", "--new-window"]
     assert "DISPLAY=:0" in argv and any(a.startswith("--reuid=") for a in argv)
 
 
@@ -1308,3 +1334,654 @@ def test_unsafe_legacy_wrapper_paths_are_refused(tree) -> None:
         tree.config["apps"]["brave-browser"]["legacy_wrappers"] = [bad]
         with pytest.raises(launcher.LaunchError, match="invalid legacy wrapper path"):
             launcher.sync(tree.config, [tree.home], remove_all=False)
+
+
+# --------------------------------------------------------------------------
+# Refusal feedback: the person is told on the desktop and in the journal
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def feedback(root_stage, monkeypatch: pytest.MonkeyPatch):
+    notices: list[str] = []
+    journal: list[tuple[str, int]] = []
+    monkeypatch.setattr(launcher, "notify_user", lambda uid, gid, env, message: notices.append(message))
+    monkeypatch.setattr(launcher, "log_event", lambda message, priority=6: journal.append((message, priority)))
+    root_stage.notices, root_stage.journal = notices, journal
+    return root_stage
+
+
+def test_a_stray_app_gets_a_plain_sentence_notice_and_a_journal_entry(feedback, tmp_path: Path) -> None:
+    (feedback.run / "pia").write_text("")
+    host_ns, exe = tmp_path / "host-ns", tmp_path / "brave"
+    host_ns.write_text("")
+    exe.write_text("")
+    _proc(feedback, 100, str(exe), b"brave\0", host_ns)
+    config = json.loads(feedback.config.read_text())
+    config["apps"]["brave-browser"]["guard_exe"] = str(exe)
+    feedback.config.write_text(json.dumps(config))
+    with pytest.raises(launcher.LaunchError) as raised:
+        launcher.run_root("brave-browser", [], [])
+    assert raised.value.code == launcher.EXIT_STRAY
+    assert feedback.notices == [
+        "Brave is already open without the VPN. Quit Brave (Ctrl+Shift+Q) and open it again to use PIA."
+    ]
+    assert len(feedback.journal) == 1
+    line, priority = feedback.journal[0]
+    assert line.startswith("refused:") and "pid 100" in line and priority == launcher.syslog.LOG_WARNING
+
+
+def test_a_missing_namespace_gets_a_notice_and_a_journal_entry(feedback) -> None:
+    with pytest.raises(launcher.LaunchError) as raised:
+        launcher.run_root("brave-browser", [], [])
+    assert raised.value.code == launcher.EXIT_NO_NAMESPACE
+    assert feedback.notices == ["The PIA tunnel is down, so Brave was not started. It would run without the VPN otherwise."]
+    assert feedback.journal and feedback.journal[0][0].startswith("refused:") and "'pia' does not exist" in feedback.journal[0][0]
+
+
+def test_a_down_tunnel_interface_is_announced_but_the_app_still_starts_offline(feedback) -> None:
+    (feedback.run / "pia").write_text("")
+    (Path(launcher.SAFE_PATH) / "ip").write_text("#!/bin/sh\nexit 1\n")  # `ip -n pia link show wgpia` fails
+    launcher.run_root("brave-browser", [], [])
+    assert feedback.notices == ["The PIA tunnel is down; Brave stays offline until it reconnects."]
+    assert feedback.executed, "fail-closed: the app starts inside the closed namespace, it never runs outside"
+    assert any("tunnel interface wgpia is down" in line for line, _ in feedback.journal)
+
+
+def test_a_healthy_tunnel_launch_is_silent(feedback) -> None:
+    (feedback.run / "pia").write_text("")
+    launcher.run_root("brave-browser", [], [])
+    assert feedback.notices == [] and feedback.journal == []
+
+
+def test_the_default_wording_uses_the_app_name(feedback, tmp_path: Path) -> None:
+    config = json.loads(feedback.config.read_text())
+    spec = config["apps"]["brave-browser"]
+    for key in ("display_name", "quit_hint"):
+        spec.pop(key)
+    feedback.config.write_text(json.dumps(config))
+    with pytest.raises(launcher.LaunchError):
+        launcher.run_root("brave-browser", [], [])
+    assert feedback.notices == ["The PIA tunnel is down, so brave-browser was not started. It would run without the VPN otherwise."]
+
+
+def test_notify_user_runs_notify_send_as_the_user_with_only_the_session_variables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tools = tmp_path / "recording-tools"
+    tools.mkdir()
+    (tools / "setpriv").write_text(
+        "#!/usr/bin/python3\nimport json, os, sys\n"
+        "open(os.environ['RECORD'], 'w').write(json.dumps({'argv': sys.argv[1:], 'env': dict(os.environ)}))\n"
+    )
+    (tools / "notify-send").write_text("#!/bin/sh\n")
+    for tool in tools.iterdir():
+        tool.chmod(0o755)
+    record = tmp_path / "record.json"
+    monkeypatch.setattr(launcher, "SAFE_PATH", str(tools))
+    # subprocess is given only the cleaned env, so RECORD must be one of the kept names to reach the fake.
+    real_run = subprocess.run  # the launcher shares this module, so capture it before patching
+    monkeypatch.setattr(launcher.subprocess, "run", lambda argv, env, **kw: real_run(
+        argv, env={**env, "RECORD": str(record)}, **kw))
+    launcher.notify_user(
+        1001, 1002, {"DISPLAY": ":0", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1001/bus", "SECRET": "x"}, "hello"
+    )
+    recorded = json.loads(record.read_text())
+    assert recorded["argv"][:4] == ["--reuid=1001", "--regid=1002", "--init-groups", "--"]
+    assert recorded["argv"][4].endswith("notify-send") and recorded["argv"][-1] == "hello"
+    assert recorded["env"]["DISPLAY"] == ":0" and "SECRET" not in recorded["env"]
+
+
+def test_notify_user_without_the_tools_is_silent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(launcher, "SAFE_PATH", str(tmp_path))
+    launcher.notify_user(1000, 1000, {}, "nobody hears this")  # must not raise
+
+
+# --------------------------------------------------------------------------
+# qBittorrent: definition, config sync, retirement of the hand-made helper
+# --------------------------------------------------------------------------
+
+QBT_CONF = """[AddNewTorrentDialog]
+Enabled=true
+
+[BitTorrent]
+Session\\DefaultSavePath=/home/u/Downloads
+Session\\Interface=wgpia0
+Session\\InterfaceAddress=
+Session\\InterfaceName=wgpia0
+Session\\Port=41083
+Session\\SSL\\Port=49462
+
+[Network]
+PortForwardingEnabled=false
+
+[Preferences]
+Connection\\Interface=wgpia0
+Connection\\InterfaceAddress=
+Connection\\InterfaceName=wgpia0
+Connection\\PortRangeMin=41083
+Connection\\UPnP=false
+WebUI\\Enabled=false
+"""
+
+
+def test_qbittorrent_definition_is_complete_and_cannot_recurse() -> None:
+    qbt = DEFINITIONS["qbittorrent"]
+    assert qbt["packages"] == ["qbittorrent"]
+    # The ELF at /usr/bin/qbittorrent is diverted; the launcher runs the diverted binary.
+    assert qbt["diverted"] == ["/usr/bin/qbittorrent"]
+    assert qbt["command"] == ["/usr/bin/qbittorrent.distrib"] == [qbt["guard_exe"]]
+    assert qbt["command"][0] not in qbt["diverted"]
+    assert qbt["desktop_ids"] == ["org.qbittorrent.qBittorrent.desktop"]
+    assert "qbittorrent" in qbt["desktop_commands"]  # the packaged entry says `Exec=qbittorrent %U`
+    assert qbt["port_forward"] == {"config": ".config/qBittorrent/qBittorrent.conf"}
+    assert qbt["retire_files"] == [".local/bin/pia-qbt-port-sync"]
+    assert qbt["retire_user_units"] == ["pia-qbt-port-sync.service", "pia-qbt-port-sync.timer"]
+    assert DEFINITIONS["brave-browser"].get("port_forward") is None
+
+
+def test_the_packaged_qbittorrent_entry_is_routed_through_the_launcher() -> None:
+    entry = "[Desktop Entry]\nName=qBittorrent\nExec=qbittorrent %U\nMimeType=application/x-bittorrent;x-scheme-handler/magnet;\n"
+    out = launcher.wrap_desktop(entry, "qbittorrent", DEFINITIONS["qbittorrent"], "/usr/local/bin/curiosity-pia-run", "src")
+    assert "Exec=/usr/local/bin/curiosity-pia-run qbittorrent %U" in out
+    assert "Exec=qbittorrent" not in out
+
+
+def test_port_forward_defaults_on_exactly_when_a_routed_app_takes_the_port() -> None:
+    env = jinja2.Environment()
+    env.filters["extract"] = lambda key, container: container[key]  # Ansible's `extract`
+    template = env.from_string(DEFAULTS["pia_tunnel_port_forward"])
+    for apps, expected in ((["brave-browser"], False), (["qbittorrent"], True), (["brave-browser", "qbittorrent"], True), ([], False)):
+        rendered = template.render(pia_tunnel_apps=apps, pia_tunnel_app_definitions=DEFINITIONS)
+        assert (rendered.strip() == "True") is expected, apps
+
+
+def test_the_config_template_carries_the_port_forward_settings() -> None:
+    rendered = json.loads(
+        _env().get_template("pia-tunnel-config.json.j2").render(
+            **_vars(pia_tunnel_apps=["brave-browser", "qbittorrent"], pia_tunnel_port_forward=True)
+        )
+    )
+    assert rendered["port_forward"] is True
+    assert rendered["homes"] == ["/home/mrh", "/home/second"]
+    qbt = rendered["apps"]["qbittorrent"]
+    assert qbt["port_forward"] == {"config": ".config/qBittorrent/qBittorrent.conf"}
+    assert qbt["display_name"] == "qBittorrent" and qbt["quit_hint"] == "Quit qBittorrent (Ctrl+Q)"
+    assert qbt["retire_user_units"] == ["pia-qbt-port-sync.service", "pia-qbt-port-sync.timer"]
+    assert rendered["apps"]["brave-browser"]["port_forward"] == {}
+
+
+def test_the_bind_units_run_bind_then_the_port_sync() -> None:
+    env = _env()
+    service = env.get_template("curiosity-pia-tunnel-bind.service.j2").render(**_vars())
+    assert "ExecStart=/usr/local/sbin/curiosity-pia-tunnel bind\n" in service
+    assert "ExecStartPost=/usr/local/bin/curiosity-pia-run port-sync\n" in service
+    assert "Type=oneshot" in service and "After=curiosity-pia-tunnel.service" in service
+    timer = env.get_template("curiosity-pia-tunnel-bind.timer.j2").render(**_vars())
+    assert "OnUnitActiveSec=10min" in timer and "WantedBy=timers.target" in timer
+
+
+def test_the_tasks_install_packages_units_and_retire_the_old_helper() -> None:
+    text = TASKS.read_text()
+    assert "_pia_tunnel_routed_packages" in text and "curiosity-pia-tunnel-bind.timer" in text
+    assert "pia_tunnel_bind_interval is match" in text  # PIA drops a binding after 15 minutes
+    assert "Stop the retired hand-made user units" in text
+    # Removing the tunnel removes the bind units too.
+    assert text.count("curiosity-pia-tunnel-bind.service") >= 3
+
+
+def test_the_qbittorrent_config_gets_the_port_and_loses_the_interface_binding() -> None:
+    out = launcher.qbittorrent_config(QBT_CONF, 52311)
+    lines = out.split("\n")
+    assert "Session\\Port=52311" in lines and "Connection\\PortRangeMin=52311" in lines
+    for key in ("Session\\Interface", "Session\\InterfaceName", "Connection\\Interface", "Connection\\InterfaceName"):
+        assert f"{key}=" in lines, key  # present and empty
+    assert "wgpia0" not in out
+    # Nothing else moves: other sections, the SSL port and the WebUI switch.
+    assert "Session\\SSL\\Port=49462" in lines and "WebUI\\Enabled=false" in lines
+    assert "[Network]" in lines and "PortForwardingEnabled=false" in lines
+    assert launcher.qbittorrent_config(out, 52311) == out  # idempotent
+
+
+def test_the_qbittorrent_config_edit_adds_missing_keys_and_sections() -> None:
+    out = launcher.qbittorrent_config("[GUI]\nx=1\n", 40000)
+    assert "[BitTorrent]\nSession\\Port=40000" in out and "[Preferences]\nConnection\\PortRangeMin=40000" in out
+    assert out.startswith("[GUI]\nx=1\n")
+    # A key goes into its own section, before the next one, not at the end of the file.
+    partial = launcher.qbittorrent_config("[BitTorrent]\nSession\\Foo=1\n\n[Preferences]\nA=1\n", 40001).split("\n")
+    assert partial.index("Session\\Port=40001") < partial.index("[Preferences]")
+    assert partial.index("Connection\\PortRangeMin=40001") > partial.index("[Preferences]")
+    # A random listen port would ignore the forwarded one.
+    assert "Session\\UseRandomPort=false" in launcher.qbittorrent_config("[BitTorrent]\nSession\\UseRandomPort=true\n", 40002)
+
+
+def test_without_a_forwarded_port_only_the_binding_is_cleared() -> None:
+    out = launcher.qbittorrent_config(QBT_CONF, None)
+    assert "Session\\Port=41083" in out and "wgpia0" not in out
+
+
+@pytest.fixture
+def qbt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    home = tmp_path / "home/u"
+    conf = home / ".config/qBittorrent/qBittorrent.conf"
+    conf.parent.mkdir(parents=True)
+    conf.write_text(QBT_CONF)
+    conf.chmod(0o600)
+    proc, state, runtime = tmp_path / "proc", tmp_path / "state", tmp_path / "runtime"
+    for d in (proc, state, runtime):
+        d.mkdir()
+    exe = tmp_path / "qbittorrent.distrib"
+    exe.write_text("")
+    monkeypatch.setattr(launcher, "PROC_ROOT", proc)
+    monkeypatch.setattr(launcher, "STATE_DIR", state)
+    monkeypatch.setattr(launcher, "RUNTIME_ROOT", runtime)
+    monkeypatch.setattr(launcher, "log_event", lambda *a, **k: None)
+    spec = {
+        "command": [str(exe)], "guard_exe": str(exe), "display_name": "qBittorrent",
+        "quit_hint": "Quit qBittorrent (Ctrl+Q)", "port_forward": {"config": ".config/qBittorrent/qBittorrent.conf"},
+    }
+    config = {"netns": "pia", "interface": "wgpia", "homes": [str(home)], "apps": {"qbittorrent": spec}}
+    return type("Qbt", (), {"home": home, "conf": conf, "proc": proc, "state": state, "runtime": runtime,
+                            "exe": exe, "spec": spec, "config": config, "tmp": tmp_path})()
+
+
+def _run_qbt(q, pid: int = 4242) -> None:
+    ns = q.tmp / "some-ns"
+    ns.write_text("")
+    _proc(type("S", (), {"proc": q.proc})(), pid, str(q.exe), b"qbittorrent\0", ns)
+
+
+def test_the_sync_writes_the_port_keeps_the_mode_and_backs_up_once(qbt) -> None:
+    lines = launcher.sync_app_port("qbittorrent", qbt.spec, qbt.home, os.getuid(), 52311)
+    assert lines == [f"changed: qbittorrent listen port 41083 -> 52311 in {qbt.conf}"]
+    assert "Session\\Port=52311" in qbt.conf.read_text()
+    assert qbt.conf.stat().st_mode & 0o777 == 0o600
+    backup = qbt.conf.with_name("qBittorrent.conf.pre-pia-tunnel")
+    assert backup.read_text() == QBT_CONF
+    launcher.sync_app_port("qbittorrent", qbt.spec, qbt.home, os.getuid(), 52312)
+    assert backup.read_text() == QBT_CONF  # the first, hand-made version is what stays
+    assert launcher.sync_app_port("qbittorrent", qbt.spec, qbt.home, os.getuid(), 52312) == [
+        f"unchanged: qbittorrent listens on 52312 for u"
+    ]
+
+
+def test_the_sync_never_edits_a_running_app_and_reports_it_once(qbt) -> None:
+    _run_qbt(qbt)
+    told: list[int] = []
+    lines = launcher.sync_app_port("qbittorrent", qbt.spec, qbt.home, os.getuid(), 52311, told.append)
+    assert qbt.conf.read_text() == QBT_CONF  # qBittorrent rewrites it on exit; we must not race it
+    assert told == [52311] and lines[0].startswith("deferred: qbittorrent is running")
+
+
+def test_a_missing_config_is_left_for_the_first_run(qbt) -> None:
+    qbt.conf.unlink()
+    assert launcher.sync_app_port("qbittorrent", qbt.spec, qbt.home, os.getuid(), 52311) == []
+    assert not qbt.conf.exists()
+
+
+def test_apps_without_a_port_forward_entry_are_not_touched(qbt) -> None:
+    assert launcher.sync_app_port("brave-browser", BRAVE_SPEC, qbt.home, os.getuid(), 52311) == []
+
+
+def test_unsafe_port_forward_config_paths_are_refused(qbt) -> None:
+    for bad in ("/etc/passwd", "../x", "a/../../b"):
+        with pytest.raises(launcher.LaunchError):
+            launcher.port_forward_config("qbittorrent", {"port_forward": {"config": bad}})
+
+
+def test_the_forwarded_port_file_is_validated(qbt) -> None:
+    assert launcher.read_forwarded_port() is None
+    for text, expected in (("52311\n", 52311), ("80\n", None), ("junk\n", None), ("99999\n", None)):
+        (qbt.state / "forwarded-port").write_text(text)
+        assert launcher.read_forwarded_port() == expected, text
+
+
+def test_the_launch_prepares_the_config_before_the_app_starts(qbt, monkeypatch: pytest.MonkeyPatch) -> None:
+    (qbt.state / "forwarded-port").write_text("52311\n")
+    monkeypatch.setattr(launcher.pwd, "getpwuid", lambda _uid: type("P", (), {"pw_dir": str(qbt.home)})())
+    launcher.prepare_app_for_launch(qbt.config, "qbittorrent")
+    assert "Session\\Port=52311" in qbt.conf.read_text() and "wgpia0" not in qbt.conf.read_text()
+
+
+def test_a_launch_without_a_forwarded_port_still_clears_the_dead_interface_binding(qbt, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(launcher.pwd, "getpwuid", lambda _uid: type("P", (), {"pw_dir": str(qbt.home)})())
+    launcher.prepare_app_for_launch(qbt.config, "qbittorrent")
+    text = qbt.conf.read_text()
+    assert "Session\\Port=41083" in text and "wgpia0" not in text
+
+
+def test_a_failing_prepare_never_blocks_the_launch(qbt, monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(_uid):
+        raise KeyError("no account")
+    monkeypatch.setattr(launcher.pwd, "getpwuid", broken)
+    launcher.prepare_app_for_launch(qbt.config, "qbittorrent")  # logs, does not raise
+
+
+def test_the_user_stage_prepares_the_app_then_goes_through_sudo(qbt, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(launcher, "load_config", lambda: qbt.config)
+    monkeypatch.setattr(launcher, "prepare_app_for_launch", lambda config, app: seen.append(app))
+    monkeypatch.setattr(launcher, "systemd_user_available", lambda: False)
+    monkeypatch.setattr(launcher.os, "execvp", lambda cmd, argv: seen.append(" ".join(argv[:3])))
+    launcher.run_user("qbittorrent", ["magnet:?xt=urn:btih:x"])
+    assert seen[0] == "qbittorrent" and seen[1].startswith("sudo -n /usr/local/bin/curiosity-pia-run")
+
+
+def test_port_sync_updates_every_home_and_tells_the_user_once_when_the_app_runs(qbt, monkeypatch: pytest.MonkeyPatch) -> None:
+    (qbt.state / "forwarded-port").write_text("52311\n")
+    uid = os.getuid()
+    (qbt.runtime / str(uid)).mkdir()
+    (qbt.runtime / str(uid) / "bus").write_text("")
+    notices: list[tuple[int, dict, str]] = []
+    monkeypatch.setattr(launcher, "notify_user", lambda u, g, env, message: notices.append((u, dict(env), message)))
+    _run_qbt(qbt)
+    first = launcher.port_sync(qbt.config, [qbt.home])
+    second = launcher.port_sync(qbt.config, [qbt.home])
+    assert first[0].startswith("deferred:") and second[0].startswith("deferred:")
+    assert len(notices) == 1, "the 10-minute timer must not repeat the same notice"
+    assert notices[0][1]["DBUS_SESSION_BUS_ADDRESS"] == f"unix:path={qbt.runtime / str(uid) / 'bus'}"
+    assert notices[0][2] == "PIA gave qBittorrent a new port (52311). Quit qBittorrent (Ctrl+Q) and open it again to use it."
+    # A new port is a new notice.
+    (qbt.state / "forwarded-port").write_text("52400\n")
+    launcher.port_sync(qbt.config, [qbt.home])
+    assert len(notices) == 2 and "52400" in notices[1][2]
+
+
+def test_port_sync_with_the_app_closed_just_writes_the_port(qbt, monkeypatch: pytest.MonkeyPatch) -> None:
+    (qbt.state / "forwarded-port").write_text("52311\n")
+    monkeypatch.setattr(launcher, "notify_user", lambda *a: pytest.fail("nothing to tell: the app is not running"))
+    assert launcher.port_sync(qbt.config, [qbt.home])[0].startswith("changed:")
+    assert "Session\\Port=52311" in qbt.conf.read_text()
+
+
+def test_port_sync_without_a_bound_port_says_so_and_changes_no_port(qbt) -> None:
+    lines = launcher.port_sync(qbt.config, [qbt.home])
+    assert lines[0] == "no forwarded port is bound; the apps keep the port they have"
+    assert "Session\\Port=41083" in qbt.conf.read_text()
+
+
+def test_the_cli_port_sync_command_prints_and_uses_the_configured_homes(qbt, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> None:
+    (qbt.state / "forwarded-port").write_text("52311\n")
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps(qbt.config))
+    monkeypatch.setattr(launcher, "CONFIG_PATH", config)
+    monkeypatch.setenv("CURIOSITY_PIA_ALLOW_NON_ROOT", "1")
+    assert launcher.main(["port-sync"]) == 0
+    assert "listen port 41083 -> 52311" in capsys.readouterr().out
+
+
+def test_port_sync_needs_root(qbt, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.delenv("CURIOSITY_PIA_ALLOW_NON_ROOT", raising=False)
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    assert launcher.main(["port-sync"]) == launcher.EXIT_USAGE
+    assert "must run as root" in capsys.readouterr().err
+
+
+def test_an_app_that_is_diverted_counts_as_installed_before_the_diversion(tmp_path: Path) -> None:
+    package_file = tmp_path / "qbittorrent"
+    package_file.write_text("")
+    spec = {"command": [str(package_file) + ".distrib"], "diverted": [str(package_file)]}
+    assert launcher.installed(spec)  # otherwise nothing would ever divert it
+    assert not launcher.installed({"command": [str(tmp_path / "absent")], "diverted": [str(tmp_path / "absent2")]})
+
+
+@pytest.fixture
+def qbt_pkg(tree, tmp_path: Path):
+    """qBittorrent as dpkg ships it: one ELF at its final path, diverted to .distrib."""
+    (tree.system / "org.qbittorrent.qBittorrent.desktop").write_text(
+        "[Desktop Entry]\nName=qBittorrent\nExec=qbittorrent %U\nMimeType=x-scheme-handler/magnet;\n"
+    )
+    elf = tmp_path / "usr-bin/qbittorrent"
+    elf.parent.mkdir()
+    elf.write_text("#!/bin/sh\necho real qbittorrent\n")
+    elf.chmod(0o755)
+    tree.config["apps"]["qbittorrent"] = {
+        **json.loads(json.dumps(DEFINITIONS["qbittorrent"])),
+        "command": [str(elf) + ".distrib"], "guard_exe": str(elf) + ".distrib", "diverted": [str(elf)],
+        "desktop_commands": ["qbittorrent", str(elf)],
+    }
+    tree.config["apps"].pop("brave-browser")
+    tree.elf = elf
+    return tree
+
+
+@needs_dpkg
+def test_sync_diverts_the_qbittorrent_binary_and_the_shim_runs_the_launcher(qbt_pkg) -> None:
+    changes = launcher.sync(qbt_pkg.config, [qbt_pkg.home], remove_all=False)
+    assert any("diverted" in c for c in changes)
+    diverted = Path(str(qbt_pkg.elf) + ".distrib")
+    assert "echo real qbittorrent" in diverted.read_text()  # the real program is kept
+    assert launcher.marker_app(qbt_pkg.elf) == "qbittorrent"  # its old path is the shim
+    assert "Exec=/usr/local/bin/curiosity-pia-run qbittorrent %U" in (qbt_pkg.override / "org.qbittorrent.qBittorrent.desktop").read_text()
+    assert launcher.sync(qbt_pkg.config, [qbt_pkg.home], remove_all=False) == []  # idempotent
+    # The recursion guard accepts the diverted binary (it is not a shim).
+    assert launcher.marker_app(diverted) is None
+    launcher.sync(qbt_pkg.config, [qbt_pkg.home], remove_all=True)
+    assert "echo real qbittorrent" in qbt_pkg.elf.read_text()
+
+
+def test_sync_retires_the_hand_made_port_sync_and_its_units(qbt_pkg) -> None:
+    home = qbt_pkg.home
+    helper = home / ".local/bin/pia-qbt-port-sync"
+    units = home / ".config/systemd/user"
+    (units / "timers.target.wants").mkdir(parents=True)
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    helper.write_text("#!/usr/bin/env bash\npiactl get portforward\n")
+    for unit in ("pia-qbt-port-sync.service", "pia-qbt-port-sync.timer"):
+        (units / unit).write_text("[Unit]\nDescription=old\n")
+    (units / "timers.target.wants/pia-qbt-port-sync.timer").symlink_to("../pia-qbt-port-sync.timer")
+    (units / "other.timer").write_text("[Unit]\n")
+    changes = launcher.sync(qbt_pkg.config, [home], remove_all=False)
+    assert not helper.exists() and (helper.parent / "pia-qbt-port-sync.pre-pia-tunnel").read_text().endswith("portforward\n")
+    assert not (units / "pia-qbt-port-sync.timer").exists() and (units / "pia-qbt-port-sync.timer.pre-pia-tunnel").exists()
+    assert not (units / "timers.target.wants/pia-qbt-port-sync.timer").is_symlink()
+    assert (units / "other.timer").exists()  # nothing else is touched
+    assert any("retired unit" in c for c in changes)  # what the playbook keys the live stop on
+    assert launcher.sync(qbt_pkg.config, [home], remove_all=False) == []  # nothing left to retire
+
+
+def test_unsafe_retire_entries_are_refused(tree) -> None:
+    for bad in ({"retire_files": ["../x"]}, {"retire_user_units": ["../evil.service"]}, {"retire_user_units": ["a.sh"]}):
+        with pytest.raises(launcher.LaunchError):
+            launcher.retire_paths("x", bad)
+
+
+# --------------------------------------------------------------------------
+# Port forwarding in the tunnel manager
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def pf_rig(tmp_path: Path) -> Rig:
+    return Rig(tmp_path, region="nl_amsterdam", port_forward=True)
+
+
+def _api_calls(rig: Rig, endpoint: str) -> list[list[str]]:
+    return [json.loads(line) for line in rig.read("curl.argv").splitlines() if line.endswith(f"/{endpoint}\"]")]
+
+
+def test_up_gets_and_binds_a_forwarded_port_from_inside_the_namespace(pf_rig: Rig) -> None:
+    result = pf_rig.run("up")
+    assert result.returncode == 0, result.stderr
+    assert (pf_rig.state / "forwarded-port").read_text() == "47047\n"
+    assert (pf_rig.state / "forwarded-port").stat().st_mode & 0o777 == 0o644
+    assert "forwarded port 47047 bound" in result.stdout
+    for endpoint in ("getSignature", "bindPort"):
+        (call,) = _api_calls(pf_rig, endpoint)
+        assert f"https://amsterdam441:19999/{endpoint}" == call[-1]
+        assert call[call.index("--connect-to") + 1] == "amsterdam441::10.0.0.1:"  # the in-tunnel gateway
+        assert "--cacert" in call
+    # The calls are made through `ip netns exec`, never from the host namespace.
+    execs = pf_rig.read("exec.calls").splitlines()
+    assert sum(1 for line in execs if line.startswith("curl") and ":19999/" in line) == 2
+    # The addKey call, in contrast, is made from the host (the tunnel does not exist yet).
+    assert not any(":1337/addKey" in line for line in execs)
+
+
+def test_the_port_grant_and_token_travel_only_through_stdin(pf_rig: Rig) -> None:
+    result = pf_rig.run("up")
+    stdin = pf_rig.read("curl.stdin")
+    assert f"token={TOKEN}" in stdin and "payload=" in stdin and "signature=" in stdin
+    grant = json.loads((pf_rig.persist / "portforward.json").read_text())
+    visible = "\n".join([result.stdout, result.stderr, pf_rig.read("curl.argv"), pf_rig.read("ip.calls"), pf_rig.read("exec.calls")])
+    for secret in (grant["payload"], grant["signature"], TOKEN):
+        assert secret not in visible
+    assert (pf_rig.persist / "portforward.json").stat().st_mode & 0o777 == 0o600
+    assert pf_rig.persist.stat().st_mode & 0o777 == 0o700
+    assert grant["port"] == 47047 and grant["server_cn"] == "amsterdam441"
+
+
+def test_a_rebuilt_tunnel_to_the_same_server_keeps_its_port_without_a_new_signature(pf_rig: Rig) -> None:
+    pf_rig.run("up")
+    again = pf_rig.run("up")
+    assert again.returncode == 0
+    assert pf_rig.read("getsig.count") == "1"  # the stored grant was re-bound, not re-requested
+    assert pf_rig.read("bind.count") == "2"
+    assert (pf_rig.state / "forwarded-port").read_text() == "47047\n"
+
+
+def test_a_grant_for_another_server_or_nearly_expired_is_replaced(pf_rig: Rig) -> None:
+    pf_rig.run("up")
+    grant_file = pf_rig.persist / "portforward.json"
+    grant = json.loads(grant_file.read_text())
+    grant["server_cn"] = "somewhere-else"
+    grant_file.write_text(json.dumps(grant))
+    assert pf_rig.run("up", FAKE_PF_PORT="48000").returncode == 0
+    assert pf_rig.read("getsig.count") == "2" and (pf_rig.state / "forwarded-port").read_text() == "48000\n"
+    grant = json.loads(grant_file.read_text())
+    grant["expires_at"] = int(time.time()) + 3600  # under a day left
+    grant_file.write_text(json.dumps(grant))
+    assert pf_rig.run("up", FAKE_PF_PORT="48001").returncode == 0
+    assert pf_rig.read("getsig.count") == "3" and (pf_rig.state / "forwarded-port").read_text() == "48001\n"
+
+
+def test_bind_renews_with_the_stored_grant_and_needs_no_login(pf_rig: Rig) -> None:
+    pf_rig.run("up")
+    token_calls = pf_rig.read("curl.argv").count("gtoken")
+    result = pf_rig.run("bind")
+    assert result.returncode == 0 and "forwarded port 47047 bound" in result.stdout
+    assert pf_rig.read("bind.count") == "2" and pf_rig.read("getsig.count") == "1"
+    assert pf_rig.read("curl.argv").count("gtoken") == token_calls  # no new login for a plain renewal
+
+
+def test_bind_falls_back_to_a_new_signature_when_pia_rejects_the_stored_one(pf_rig: Rig) -> None:
+    pf_rig.run("up")
+    (pf_rig.fake / "bind.count").write_text("0")  # the fake refuses the first bind of this run
+    result = pf_rig.run("bind", FAKE_BIND_FAIL_FIRST="1", FAKE_PF_PORT="47999")
+    assert result.returncode == 0, result.stderr
+    assert "stored port grant was not accepted" in result.stdout
+    assert pf_rig.read("getsig.count") == "2" and (pf_rig.state / "forwarded-port").read_text() == "47999\n"
+
+
+def test_a_port_failure_never_takes_the_tunnel_down(pf_rig: Rig) -> None:
+    result = pf_rig.run("up", FAKE_CURL_FAIL="getSignature")
+    assert result.returncode == 0, "the tunnel works without a port; Brave must not lose its VPN over it"
+    assert "port forwarding is not bound yet" in result.stdout
+    assert not (pf_rig.state / "forwarded-port").exists()
+    status = pf_rig.run("status")
+    assert status.returncode == 0 and re.search(r"forwarded_port:\s+none", status.stdout)
+    failed = pf_rig.run("bind", FAKE_CURL_FAIL="getSignature")
+    assert failed.returncode == 1 and "getSignature" in failed.stderr  # the timer unit shows failed
+    assert pf_rig.run("bind").returncode == 0 and (pf_rig.state / "forwarded-port").exists()  # and recovers
+
+
+def test_status_shows_the_forwarded_port(pf_rig: Rig) -> None:
+    pf_rig.run("up")
+    status = pf_rig.run("status")
+    assert re.search(r"forwarded_port:\s+47047 \(bound \d+s ago\)", status.stdout)
+    columns = {len(line) - len(line.split(":", 1)[1].lstrip()) for line in status.stdout.splitlines()}
+    assert len(columns) == 1, status.stdout
+
+
+def test_down_unpublishes_the_port(pf_rig: Rig) -> None:
+    pf_rig.run("up")
+    assert pf_rig.run("down").returncode == 0
+    assert not (pf_rig.state / "forwarded-port").exists()  # a stale port must not reach an app's config
+    assert (pf_rig.persist / "portforward.json").exists()  # but the grant is kept for the next tunnel
+
+
+def test_the_published_port_is_cleared_while_a_replacement_tunnel_is_built(pf_rig: Rig) -> None:
+    pf_rig.run("up")
+    assert pf_rig.run("up", FAKE_CURL_FAIL="privateinternetaccess.com").returncode == 1
+    # a failed registration keeps the working tunnel (and its binding) - nothing was torn down
+    assert (pf_rig.state / "forwarded-port").exists()
+
+
+def test_bind_is_a_no_op_when_port_forwarding_is_off_or_the_tunnel_is_down(tmp_path: Path) -> None:
+    (tmp_path / "off").mkdir()
+    (tmp_path / "on").mkdir()
+    off = Rig(tmp_path / "off", region="nl_amsterdam")
+    off.run("up")
+    result = off.run("bind")
+    assert result.returncode == 0 and "port forwarding is off" in result.stdout
+    assert off.read("bind.count") == ""
+    on = Rig(tmp_path / "on", region="nl_amsterdam", port_forward=True)
+    down = on.run("bind")  # nothing is up yet
+    assert down.returncode == 0 and "not binding a port while the tunnel is down" in down.stdout
+    assert on.read("bind.count") == ""
+
+
+def test_without_port_forwarding_nothing_is_asked_of_pia_or_stored(tmp_path: Path) -> None:
+    plain = Rig(tmp_path)
+    assert plain.run("up").returncode == 0
+    assert plain.read("getsig.count") == "" and not (plain.state / "forwarded-port").exists()
+    assert not plain.persist.exists()
+    assert "forwarded_port" not in plain.run("status").stdout
+
+
+def test_a_region_without_port_forwarding_is_refused_with_the_ones_that_have_it(tmp_path: Path) -> None:
+    rig = Rig(tmp_path, region="us_chicago", port_forward=True)
+    result = rig.run("up")
+    assert result.returncode == 1
+    assert "does not offer port forwarding" in result.stderr and "nl_amsterdam" in result.stderr
+    assert not (rig.fake / "ns-link").exists(), "no tunnel was built"
+
+
+def test_only_port_forwarding_regions_qualify_and_the_previous_server_is_kept() -> None:
+    servers = [
+        tunnel.Server("us_chicago", "Chicago", "203.0.113.9", "chicago401"),
+        tunnel.Server("nl_amsterdam", "Amsterdam", "203.0.113.20", "amsterdam441", port_forward=True),
+        tunnel.Server("ca_ontario", "Ontario", "203.0.113.21", "ontario401", port_forward=True),
+    ]
+    latency = {"203.0.113.9": 0.001, "203.0.113.20": 0.09, "203.0.113.21": 0.02}
+    fast = lambda ip, port: latency[ip]  # noqa: E731
+    assert tunnel.choose_server(servers, "auto", fast).region_id == "us_chicago"  # without PF: nearest wins
+    assert tunnel.choose_server(servers, "auto", fast, port_forward=True).region_id == "ca_ontario"
+    # The port belongs to the server: stay on it while it answers, even when another is faster.
+    assert tunnel.choose_server(servers, "auto", fast, port_forward=True, prefer_cn="amsterdam441").cn == "amsterdam441"
+    # ... and move on when it does not.
+    flaky = lambda ip, port: None if ip == "203.0.113.20" else latency[ip]  # noqa: E731
+    assert tunnel.choose_server(servers, "auto", flaky, port_forward=True, prefer_cn="amsterdam441").cn == "ontario401"
+    # A server that is not port-forwarding capable is never preferred.
+    assert tunnel.choose_server(servers, "auto", fast, port_forward=True, prefer_cn="chicago401").cn == "ontario401"
+    with pytest.raises(tunnel.TunnelError, match="does not offer port forwarding.*ca_ontario"):
+        tunnel.choose_server(servers, "us_chicago", fast, port_forward=True)
+    with pytest.raises(tunnel.TunnelError, match="no online region that offers port forwarding"):
+        tunnel.choose_server(servers[:1], "auto", fast, port_forward=True)
+
+
+def test_the_server_list_flags_port_forwarding_regions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tunnel, "curl", lambda url, *a, **k: json.dumps(SERVERS) + "\nc2ln\n")
+    assert {s.region_id: s.port_forward for s in tunnel.fetch_servers()} == {"us_chicago": False, "nl_amsterdam": True}
+
+
+def test_the_port_payload_is_decoded_and_bounded() -> None:
+    def payload(body: dict) -> str:
+        return base64.b64encode(json.dumps(body).encode()).decode()
+    assert tunnel.decode_payload(payload({"port": 47047, "expires_at": "2026-12-30T12:34:56.789012345Z"})) == (
+        47047, 1798634096,
+    )
+    for bad in (payload({"port": 80, "expires_at": "2026-12-30T12:34:56Z"}),
+                payload({"port": 47047, "expires_at": "tomorrow"}),
+                payload({"expires_at": "2026-12-30T12:34:56Z"}), "!!notbase64", base64.b64encode(b"not json").decode()):
+        with pytest.raises(tunnel.TunnelError):
+            tunnel.decode_payload(bad)
+
+
+def test_the_curl_helper_can_run_inside_a_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+    monkeypatch.setattr(tunnel, "run", lambda argv, **kw: seen.append(list(argv)) or type("R", (), {"stdout": "{}"})())
+    tunnel.curl("https://example.invalid/x", netns="pia")
+    assert seen[0][:5] == ["ip", "netns", "exec", "pia", "curl"] and seen[0][-1] == "https://example.invalid/x"
+    tunnel.curl("https://example.invalid/x")
+    assert seen[1][0] == "curl"

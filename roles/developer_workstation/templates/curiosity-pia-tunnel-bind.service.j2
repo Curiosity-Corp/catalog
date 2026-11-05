@@ -1,0 +1,16 @@
+# Managed by curiosity.workstation (tasks/pia-tunnel.yml). Do not edit.
+[Unit]
+Description=Re-bind the PIA forwarded port and give it to the apps that listen on it
+Documentation=file:///usr/local/sbin/curiosity-pia-tunnel
+After=curiosity-pia-tunnel.service
+ConditionVirtualization=!container
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# PIA drops a binding after about 15 minutes; `bind` renews it (and gets a new
+# port grant when the stored one is gone), then the launcher's port-sync writes
+# the port into each port-forwarding app's config (never while the app runs).
+ExecStart=/usr/local/sbin/curiosity-pia-tunnel bind
+ExecStartPost=/usr/local/bin/curiosity-pia-run port-sync
+SyslogIdentifier=curiosity-pia-tunnel-bind

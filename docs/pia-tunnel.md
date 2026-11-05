@@ -7,7 +7,8 @@ PIA's desktop app split tunnel. Everything not listed (Chrome, Ziti, the system,
 StreamStack and the rest) keeps the normal network.
 
 Applied by `tasks/pia-tunnel.yml` on any desktop host whose hardware profile sets
-`pia_tunnel_apps` to a non-empty list. `deskmeet-b760` lists `brave-browser`.
+`pia_tunnel_apps` to a non-empty list. `deskmeet-b760` lists `brave-browser` and
+`qbittorrent` (catalog#147).
 
 ## How it works
 
@@ -45,10 +46,21 @@ Applied by `tasks/pia-tunnel.yml` on any desktop host whose hardware profile set
   drops to the calling user with `setpriv` and starts the command that the
   root-owned `config.json` names for that app. The caller cannot choose the
   command.
-* Refusals (the app does not start, with a desktop notification and a message):
-  exit 71 when the namespace does not exist, 72 when the app is already running
-  outside the tunnel (a second launch would silently attach to that instance;
-  quit it completely first).
+* Refusals (the app does not start): exit 71 when the namespace does not exist,
+  72 when the app is already running outside the tunnel (a second launch would
+  silently attach to that instance; quit it completely first). A menu launch has
+  no terminal, so the launcher also says it where the person looks, as a desktop
+  notification (`notify-send` as the user, on their session bus) and as a journal
+  line (`journalctl -t curiosity-pia-run`):
+  * 72: "Brave is already open without the VPN. Quit Brave (Ctrl+Shift+Q) and
+    open it again to use PIA."
+  * 71: "The PIA tunnel is down, so Brave was not started. It would run without
+    the VPN otherwise."
+  * Namespace present but no tunnel interface in it (the tunnel is being rebuilt):
+    the app starts and has no network, the notification says "The PIA tunnel is
+    down; Brave stays offline until it reconnects."
+
+  The wording comes from the app definition (`display_name`, `quit_hint`).
 * Every launch by name or path goes through the launcher:
   * `/usr/bin/brave-browser-stable` (the package's symlink) is moved aside with
     `dpkg-divert` (diversion owned by `curiosity-pia-tunnel`, file kept as
@@ -74,12 +86,74 @@ Applied by `tasks/pia-tunnel.yml` on any desktop host whose hardware profile set
 * Brave also gets the managed policy `WebRtcIPHandling:
   default_public_interface_only`, so WebRTC offers only the tunnel address.
 
+## Port forwarding (qBittorrent)
+
+An app definition with a `port_forward` entry takes PIA's forwarded port as its
+listen port. `qbittorrent` has one, so `pia_tunnel_port_forward` is on for
+`deskmeet-b760` (it defaults to on exactly when a routed app takes the port).
+
+* **API.** PIA's `getSignature` and `bindPort` (port 19999 on the server's
+  in-tunnel address, `server_vip` from `addKey`, TLS verified against PIA's CA by
+  server name) answer only inside the tunnel, so `curiosity-pia-tunnel` calls them
+  from inside the namespace (`ip netns exec pia curl ...`). `getSignature` returns
+  a signed payload (port, expiry about two months out, and the account token) and
+  a signature; `bindPort` with both holds the port for about 15 minutes. Payload,
+  signature and token go to curl on stdin and never appear in an argument list,
+  the journal or git. The signed grant is kept in `/var/lib/curiosity-pia-tunnel/portforward.json`
+  (root, 0600), so a rebuilt tunnel to the same server gets the same port back
+  without a new signature; a grant for another server, or with under a day left, is
+  replaced.
+* **Region.** A forwarded port belongs to one server, and PIA offers it only in
+  some regions (none in the US). With port forwarding on, the tunnel therefore
+  connects only to such regions, and with `pia_tunnel_region: auto` it keeps the
+  server it had (the lowest-latency one at first) for as long as that server
+  answers. An explicit `pia_tunnel_region` must be a port-forwarding region, or
+  `up` fails and says which ones are. **Everything in the namespace, Brave included,
+  leaves through that region**, so its exit IP is no longer in the US.
+* **Renewal.** `curiosity-pia-tunnel-bind.timer` (every `pia_tunnel_bind_interval`,
+  default 10 min, at most 14) runs `curiosity-pia-tunnel bind`, which re-binds the
+  stored grant (or gets a new one when PIA refuses it), and then
+  `curiosity-pia-run port-sync`. `up` does the same right after it builds a tunnel.
+  A port failure never takes the tunnel down (the browser keeps its VPN); the bind
+  unit fails visibly and retries. The bound port is published in
+  `/run/curiosity-pia-tunnel/forwarded-port` (removed whenever the tunnel is torn
+  down) and shown by `curiosity-pia-tunnel status` as `forwarded_port`.
+* **App config.** `port_forward.config` names the app's config file (relative to
+  the home). For qBittorrent the launcher sets `Session\Port` and
+  `Connection\PortRangeMin` to the forwarded port and empties the interface and
+  address bindings (`Session\Interface*`, `Connection\Interface*`). The old
+  binding to the PIA desktop app's `wgpia0` would leave qBittorrent without a
+  listen socket in the namespace, whose only interface is the tunnel (recreated
+  with a new index at every rebuild). The first change keeps the user's file as
+  `qBittorrent.conf.pre-pia-tunnel`. This runs at every launch (before the app
+  starts) and every bind. **A running app is never edited**, because it rewrites
+  its config on exit: if the port changes while qBittorrent runs, the user gets one
+  notification ("PIA gave qBittorrent a new port (N). Quit qBittorrent (Ctrl+Q) and
+  open it again to use it.") and the file is updated once it has quit. The port
+  changes only when the server changes or the grant expires.
+* **Retired helper.** `~/.local/bin/pia-qbt-port-sync` and the user units
+  `pia-qbt-port-sync.{service,timer}` (hand-made, they read the PIA desktop app's
+  port with `piactl`) are moved aside as `*.pre-pia-tunnel` backups, their
+  enablement links removed, and the timer is stopped in the running user manager.
+  The catalog-managed equivalent is the bind timer above; it logs every port
+  change to the journal (`journalctl -t curiosity-pia-run -u curiosity-pia-tunnel-bind`).
+* **qBittorrent has no network outside the namespace.** Its binary is diverted
+  (`/usr/bin/qbittorrent` becomes the shim, the program runs from
+  `qbittorrent.distrib`), so the menu, magnet links, `xdg-open` and a shell all
+  start it in the tunnel. Its WebUI is disabled on dm45s2 (`WebUI\Enabled=false`);
+  if it is enabled it listens inside the namespace, which the host cannot reach
+  (the namespace has its own loopback). Reach it from the host with
+  `sudo ip netns exec pia curl http://127.0.0.1:8080/`; a host-side forward is not
+  built because the owner does not use the WebUI.
+
 ## Settings
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `pia_tunnel_apps` | profile key `pia_tunnel_apps`, else `[]` | Apps routed through PIA (keys of `pia_tunnel_app_definitions`). Empty removes the feature. |
-| `pia_tunnel_region` | `auto` | `auto` picks the lowest-latency real region (virtual geo regions are skipped); or a PIA region id such as `us_chicago`. `auto` can choose another region after a rebuild, so the exit IP changes; set a region for a stable exit. |
+| `pia_tunnel_region` | `auto` | `auto` picks the lowest-latency real region (virtual geo regions are skipped); or a PIA region id such as `us_chicago`. Without port forwarding `auto` can choose another region after a rebuild, so the exit IP changes; set a region for a stable exit. With port forwarding only port-forwarding regions qualify and `auto` keeps its server. |
+| `pia_tunnel_port_forward` | on when a routed app has `port_forward` | Get and keep a forwarded port (see "Port forwarding"). |
+| `pia_tunnel_bind_interval` | `10min` | Re-bind period, 1 to 14 minutes. |
 | `pia_tunnel_login_file` | `pia_login_file`, else `/etc/curiosity/pia-tunnel/login` | Root-only login file (see below). |
 | `pia_tunnel_netns`, `pia_tunnel_interface` | `pia`, `wgpia` | Names. |
 | `pia_tunnel_mtu`, `pia_tunnel_keepalive` | 1420, 25 | WireGuard settings. |
@@ -119,7 +193,12 @@ design). The next ansible-pull starts the tunnel.
    paths the package owns that must hold the shim; the app's `command` must then
    name the real executable, not one of these) or `shims` (extra names in
    `/usr/local/bin`), optional `legacy_wrappers`, `scope` (slice and memory caps),
-   `scope_env` and `managed_policies`.
+   `scope_env`, `managed_policies`, `packages` (apt packages installed first),
+   `display_name` and `quit_hint` (the refusal notices), `port_forward.config`
+   (the app config that gets PIA's forwarded port) and `retire_files` /
+   `retire_user_units` (hand-made helpers the routing replaces). qBittorrent is
+   the template for an app whose binary is the package's ELF: divert it and set
+   `command` to the `.distrib` file.
 2. Add its name to the host's hardware profile:
 
    ```yaml
@@ -162,4 +241,13 @@ namespace in place with no interface; the app loses its network, not its jail.
 * The stray-process guard blocks a tunnelled launch while the app is running
   outside the tunnel. After the role is first applied, quit the app completely
   once and start it again from its entry.
-* With `region: auto` the exit region can differ between rebuilds.
+* With `region: auto` and no port forwarding the exit region can differ between
+  rebuilds.
+* Port forwarding moves the exit to a non-US region for every tunnelled app. If
+  Brave must exit in the US, the choice is a second tunnel (a second namespace,
+  not built) or no forwarded port.
+* qBittorrent's second instance (a magnet link while it runs) attaches to the
+  running one; it does not need the forwarded port to be applied again.
+* PIA ports are available only while the tunnel is up. After a reboot, qBittorrent
+  started before the first bind (about a minute after boot) listens on the port
+  it had; the next bind prepares the config and notifies if the port differs.

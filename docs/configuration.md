@@ -378,12 +378,15 @@ instances and removes the rule, unit, script and module list.
 ### PIA tunnel for chosen apps
 
 Hardware-profile key `pia_tunnel_apps` (derived `pia_tunnel_apps`; empty, meaning
-off, everywhere except `deskmeet-b760`, which lists `brave-browser`) runs the
+off, everywhere except `deskmeet-b760`, which lists `brave-browser` and
+`qbittorrent`) runs the
 listed apps inside a fail-closed network namespace whose only way out is a PIA
 WireGuard tunnel (catalog#145). The other settings are `pia_tunnel_region`,
 `pia_tunnel_login_file`, `pia_tunnel_netns`, `pia_tunnel_interface`,
 `pia_tunnel_mtu`, `pia_tunnel_keepalive`, `pia_tunnel_max_handshake_age`,
-`pia_tunnel_session_max_hours`, `pia_tunnel_watchdog_interval` and
+`pia_tunnel_session_max_hours`, `pia_tunnel_watchdog_interval`,
+`pia_tunnel_port_forward` (on when a routed app takes PIA's forwarded port, which
+limits the tunnel to port-forwarding regions), `pia_tunnel_bind_interval` and
 `pia_tunnel_users`. Adding an app is a one-line profile change plus an entry in
 `pia_tunnel_app_definitions`. It cannot be combined with `pia_vpn`. See
 `docs/pia-tunnel.md` for the design, the login provisioning and how to add an app.

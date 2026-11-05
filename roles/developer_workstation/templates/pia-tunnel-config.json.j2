@@ -13,6 +13,11 @@
   'scope_env': definition.scope_env | default({}),
   'scope': definition.scope | default({}),
   'env_passthrough': definition.env_passthrough | default([]),
+  'display_name': definition.display_name | default(name),
+  'quit_hint': definition.quit_hint | default(''),
+  'port_forward': definition.port_forward | default({}),
+  'retire_files': definition.retire_files | default([]),
+  'retire_user_units': definition.retire_user_units | default([]),
 }}) -%}
 {%- endfor -%}
 {{ {
@@ -25,6 +30,8 @@
   'keepalive': pia_tunnel_keepalive | int,
   'max_handshake_age': pia_tunnel_max_handshake_age | int,
   'session_max_hours': pia_tunnel_session_max_hours | int,
+  'port_forward': pia_tunnel_port_forward | bool,
+  'homes': dev_users | map(attribute='home') | list,
   'run_path': '/usr/local/bin/curiosity-pia-run',
   'apps': apps,
 } | to_nice_json }}
