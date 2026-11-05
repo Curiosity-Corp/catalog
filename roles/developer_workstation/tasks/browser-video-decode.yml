@@ -1,0 +1,115 @@
+---
+# =============================================================================
+# Hardware video decode for Google Chrome (opt-in per hardware profile)
+# =============================================================================
+# deskmeet1 (profile deskmeet-b760) played YouTube choppily at 8K because Chrome
+# ran entirely on the CPU (catalog#144): GPU compositing, rasterization and video
+# decode were all "disabled_software" with an ANGLE llvmpipe GL renderer. Three
+# things have to line up for Chrome to decode on an Intel GPU:
+#
+# 1. X must offer DRI3. Chrome's GBM/VA-API path and Mesa's Vulkan presentation
+#    both need it, and the modesetting driver only provides it through glamor
+#    (hardware profile `xorg_accel_method`, minimal-desktop-lightdm.yml).
+# 2. The VA-API driver must expose the codec. On an Arc A380 only the non-free
+#    iHD build lists AV1 decode, and YouTube serves AV1 at high resolutions
+#    (hardware profile `intel_media_non_free`, the first block below).
+# 3. Chrome must be started with the VA-API decode feature enabled. Google's
+#    launcher reads no flags file and managed policy cannot set features, so
+#    the second block puts a wrapper ahead of the package's launchers on PATH
+#    and in the application menu (hardware profile `browser_hw_video_decode`).
+#
+# Everything here is skipped on a host without an Intel GPU or without Chrome,
+# and the wrapper block removes its files when the flag is off.
+# =============================================================================
+
+- name: Detect an Intel GPU for the media driver
+  ansible.builtin.shell:
+    cmd: grep -qx 0x8086 /sys/class/drm/card*/device/vendor
+    executable: /bin/bash
+  register: _browser_video_intel_gpu
+  changed_when: false
+  failed_when: false
+
+# apt replaces the conflicting free intel-media-va-driver in the same
+# transaction. Takes effect for the next process that opens the VA display.
+- name: Install the non-free Intel VA-API driver
+  ansible.builtin.apt:
+    name: intel-media-va-driver-non-free
+    state: present
+  when:
+    - developer_workstation_intel_media_non_free | bool
+    - _browser_video_intel_gpu.rc == 0
+
+- name: Check for Google Chrome
+  ansible.builtin.stat:
+    path: /opt/google/chrome/google-chrome
+  register: _browser_video_chrome
+
+- name: Read the packaged Chrome launcher entry
+  ansible.builtin.slurp:
+    src: /usr/share/applications/google-chrome.desktop
+  register: _browser_video_desktop
+  when:
+    - developer_workstation_browser_hw_video_decode | bool
+    - _browser_video_chrome.stat.exists
+    - _browser_video_intel_gpu.rc == 0
+  failed_when: false
+
+- name: Install the Chrome hardware video decode wrappers
+  when:
+    - developer_workstation_browser_hw_video_decode | bool
+    - _browser_video_chrome.stat.exists
+    - _browser_video_intel_gpu.rc == 0
+  block:
+    - name: Install the Chrome launcher wrappers
+      ansible.builtin.copy:
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          # Managed by Ansible (catalog#144). Starts Google Chrome with VA-API
+          # video decode enabled; the package's own launcher does the rest.
+          exec /opt/google/chrome/google-chrome --enable-features={{ developer_workstation_browser_hw_decode_features | join(',') }} "$@"
+      loop:
+        - google-chrome
+        - google-chrome-stable
+
+    - name: Create the local application directory
+      ansible.builtin.file:
+        path: /usr/local/share/applications
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # /usr/local/share/applications comes before /usr/share/applications in
+    # XDG_DATA_DIRS, so the menu, the panel and xdg-open pick this entry up.
+    # It is derived from the packaged file on every run, so a Chrome upgrade
+    # that changes the entry is followed.
+    - name: Override the Chrome application entry to use the wrapper
+      ansible.builtin.copy:
+        dest: /usr/local/share/applications/google-chrome.desktop
+        owner: root
+        group: root
+        mode: "0644"
+        content: "# Managed by Ansible (catalog#144).\n{{ _browser_video_desktop.content | b64decode | regex_replace('/usr/bin/google-chrome-stable', '/usr/local/bin/google-chrome-stable') }}"
+      when: _browser_video_desktop.content is defined
+
+# Only files that carry this role's marker are removed, so a launcher a person
+# put in /usr/local/bin by hand is left alone.
+- name: Remove the Chrome hardware video decode wrappers when they are not configured
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      for f in /usr/local/bin/google-chrome /usr/local/bin/google-chrome-stable /usr/local/share/applications/google-chrome.desktop; do
+        if [ -f "$f" ] && grep -q 'Managed by Ansible (catalog#144)' "$f"; then
+          rm -f "$f"
+          echo "removed $f"
+        fi
+      done
+    executable: /bin/bash
+  register: _browser_video_removed
+  changed_when: "'removed ' in _browser_video_removed.stdout"
+  when: not (developer_workstation_browser_hw_video_decode | bool)

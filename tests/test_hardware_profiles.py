@@ -46,7 +46,6 @@ def test_deskmeet_b760_profile_shape() -> None:
         "bluez",
         "bluez-tools",
         "linux-firmware",
-        "intel-media-va-driver",
         "intel-gpu-tools",
         "vainfo",
         "intel-opencl-icd",
@@ -71,6 +70,11 @@ def test_deskmeet_b760_profile_shape() -> None:
     # nct6775: Nuvoton Super I/O hwmon (fan and temperature sensors).
     assert profile["kernel_modules"] == ["v4l2loopback", "nct6775"]
     assert profile["cpu_max_perf_pct"] == 70
+    # The iHD VA-API driver comes from tasks/browser-video-decode.yml (non-free
+    # build for AV1 decode on the A380, catalog#144); listing the free package
+    # here too would make apt swap them on every run.
+    assert "intel-media-va-driver" not in profile["packages"]
+    assert profile["intel_media_non_free"] is True
 
 
 def test_udev_rule_names_precede_seat_late_and_are_unique() -> None:

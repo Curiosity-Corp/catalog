@@ -304,6 +304,39 @@ logged at once at warning priority. Read it with
 `journalctl -b -1 -t curiosity-thermal-log`, which crash diagnostics keep within
 15 s of the freeze. Turning the flag off stops and removes the service.
 
+### Hardware video decode in Google Chrome
+
+Chrome decodes video on an Intel GPU only when three things line up
+(catalog#144; deskmeet1 played YouTube choppily at 8K with GPU compositing,
+rasterization and decode all `disabled_software` on an ANGLE llvmpipe renderer):
+
+1. X offers DRI3. Chrome's GBM/VA-API path and Mesa's Vulkan presentation need
+   it, and the modesetting driver provides it only through glamor, so the
+   hardware profile's `xorg_accel_method` must not be `none` (`deskmeet-b760`
+   sets `glamor`; it is read at the next X start).
+2. The VA-API driver exposes the codec. `developer_workstation_intel_media_non_free`
+   (hardware-profile flag `intel_media_non_free`, off by default, on for
+   `deskmeet-b760`) installs `intel-media-va-driver-non-free` (multiverse) when an
+   Intel GPU is present; apt replaces the conflicting free
+   `intel-media-va-driver`. It is the build that lists AV1 decode on an Arc A380.
+   A profile that sets it must not list `intel-media-va-driver` in `packages`,
+   and StreamStack's media task follows the same flag.
+3. Chrome starts with the VA-API decode feature. `developer_workstation_browser_hw_video_decode`
+   (hardware-profile flag `browser_hw_video_decode`, off by default, on for
+   `deskmeet-b760`) writes `/usr/local/bin/google-chrome` and
+   `/usr/local/bin/google-chrome-stable` (they run Chrome with
+   `--enable-features=` the list in `developer_workstation_browser_hw_decode_features`,
+   default `AcceleratedVideoDecodeLinuxGL`) and a
+   `/usr/local/share/applications/google-chrome.desktop` copy of the packaged
+   entry that points at the wrapper, when Chrome and an Intel GPU are present.
+   Chrome upgrades leave them alone. Turning the flag off removes only files that
+   carry the role's marker line.
+
+Chrome keeps the flags it was started with: quit every Chrome window (and any
+background Chrome apps) of the profile, then start it again. Check with
+`chrome://gpu` (Video Decode: Hardware accelerated) and `chrome://media-internals`
+(decoder `VaapiVideoDecoder`).
+
 ### Crash diagnostics (lockup panics, pstore, hardware watchdog)
 
 `developer_workstation_crash_diagnostics` (derived from the hardware profile's
@@ -522,7 +555,7 @@ LightDM autologin, remains primary-account or system-wide; set
 | `minimal_desktop_lightdm_minimum_vt` | `8` | First VT LightDM may use. |
 | `minimal_desktop_lightdm_vtswitch_wrapper` | `false` | Installs `/usr/local/bin/lightdm-xserver-wrapper`, which drops `-novtswitch` so Ctrl+Alt+Fn keeps working. |
 | `minimal_desktop_lightdm_remove_dropins` | `[]` | File names to delete from `/etc/lightdm/lightdm.conf.d`. |
-| `minimal_desktop_xorg_accel_method` | `''` (profile key `xorg_accel_method`) | `none` or `glamor` sets the modesetting driver's `AccelMethod` through `/etc/X11/xorg.conf.d/20-curiosity-modesetting-accel.conf`; empty removes the file. `deskmeet-b760` sets `none`: glamor at 7680x4320 crashes Xorg in the greeter's first XRender paint (catalog#122). |
+| `minimal_desktop_xorg_accel_method` | `''` (profile key `xorg_accel_method`) | `none` or `glamor` sets the modesetting driver's `AccelMethod` through `/etc/X11/xorg.conf.d/20-curiosity-modesetting-accel.conf`; empty removes the file. `none` removes X's DRI3 extension, which leaves Chrome on llvmpipe (catalog#144); `deskmeet-b760` sets `glamor` (it had used `none` for the catalog#122 greeter SIGBUS, whose root cause was corrupted RAM, not glamor). |
 | `minimal_desktop_xorg_auto_add_gpu` | `''` (profile key `xorg_auto_add_gpu`) | `true`/`false` sets the X server flag `AutoAddGPU` in `/etc/X11/xorg.conf.d/20-curiosity-server-flags.conf`; empty removes the file. `deskmeet-b760` sets `false` so X does not drive the display-less iGPU as a second GPU (catalog#122). |
 | `minimal_desktop_xorg_preferred_modes` | `{}` (profile key `xorg_preferred_modes`) | Connector to mode map written as `PreferredMode` Monitor sections in `/etc/X11/xorg.conf.d/20-curiosity-preferred-modes.conf`; empty removes the file. `deskmeet-b760` starts `DP-3` at `3840x2160` while the 8K60 DP-4 path is down (catalog#122). |
 | `minimal_desktop_lightdm_restart_sec` | `10` | `RestartSec` of the `lightdm.service` drop-in. The packaged unit restarts with no delay, so an X server that dies at start was relaunched every ~3 s. |
