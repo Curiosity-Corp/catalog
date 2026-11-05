@@ -812,9 +812,10 @@ minimal_desktop_greeter_effective: "{{ (hardware_profiles.get(hardware_profile, 
 # The hardware profile's optional `xorg_accel_method` (`none` or `glamor`) sets
 # the modesetting driver's AccelMethod for every X server on the machine,
 # LightDM's greeter included. Empty (the default) leaves the driver's own
-# choice and removes the drop-in. deskmeet-b760 sets `none`: with glamor the
-# greeter's first XRender paint at 7680x4320 ends in an Xorg SIGBUS in
-# ValidatePicture/CompositeRects, with either greeter (catalog#122).
+# choice and removes the drop-in. `none` removes X's DRI3 extension, which
+# leaves Chrome on llvmpipe with no VA-API decode (catalog#144); deskmeet-b760
+# briefly used it for the greeter SIGBUS that turned out to be corrupted RAM,
+# not glamor (catalog#122), and now sets `glamor`.
 minimal_desktop_xorg_accel_method: "{{ (hardware_profiles.get(hardware_profile, {})).get('xorg_accel_method', '') }}"
 # The hardware profile's optional `xorg_auto_add_gpu` (true/false) sets the X
 # server flag AutoAddGPU. false keeps X on the GPU that owns the boot display
@@ -1043,6 +1044,11 @@ pro_mimic_motd_news_enabled: false
 # max_perf_pct at boot; see developer_workstation_cpu_max_perf_pct),
 # cpu_thermal_log (bool, default false: log CPU temperatures and thermal
 # throttling to the journal; see developer_workstation_cpu_thermal_log),
+# intel_media_non_free (bool, default false: install the non-free iHD VA-API
+# driver, needed for AV1 decode on Arc; see
+# developer_workstation_intel_media_non_free),
+# browser_hw_video_decode (bool, default false: start Google Chrome with
+# VA-API decode enabled; see developer_workstation_browser_hw_video_decode),
 # crash_diagnostics (mapping, default unset: lockup panics, pstore, journald
 # sync and an optional hardware watchdog; see
 # developer_workstation_crash_diagnostics and tasks/crash-diagnostics.yml),
@@ -1194,6 +1200,26 @@ developer_workstation_cpu_max_perf_pct: "{{ (hardware_profiles.get(hardware_prof
 # (`journalctl -t curiosity-thermal-log`). Off by default; derived from the
 # hardware profile's optional `cpu_thermal_log` flag.
 developer_workstation_cpu_thermal_log: "{{ (hardware_profiles.get(hardware_profile, {})).get('cpu_thermal_log', false) | bool }}"
+
+# Intel media driver flavour (tasks/browser-video-decode.yml, StreamStack's
+# media task). true installs intel-media-va-driver-non-free, which apt swaps in
+# for the free intel-media-va-driver (they conflict) when an Intel GPU is
+# present; the non-free build is the one that exposes AV1 decode on Arc/DG2.
+# Needs multiverse. Derived from the hardware profile's `intel_media_non_free`
+# flag; a profile that sets it must not list intel-media-va-driver in `packages`.
+developer_workstation_intel_media_non_free: "{{ (hardware_profiles.get(hardware_profile, {})).get('intel_media_non_free', false) | bool }}"
+
+# Hardware video decode in Google Chrome (tasks/browser-video-decode.yml).
+# true installs /usr/local/bin/google-chrome and google-chrome-stable wrappers
+# plus a /usr/local/share/applications/google-chrome.desktop override that start
+# Chrome with --enable-features=<developer_workstation_browser_hw_decode_features>
+# (VA-API decode over GL). The wrappers sit ahead of the package's launchers, so
+# a Chrome upgrade never removes them; false removes them. Derived from the
+# hardware profile's `browser_hw_video_decode` flag. A running Chrome keeps its
+# old flags until every window of that profile is closed.
+developer_workstation_browser_hw_video_decode: "{{ (hardware_profiles.get(hardware_profile, {})).get('browser_hw_video_decode', false) | bool }}"
+developer_workstation_browser_hw_decode_features:
+  - AcceleratedVideoDecodeLinuxGL
 
 # Crash diagnostics (tasks/crash-diagnostics.yml): turn a silent hard freeze
 # into a logged panic and an automatic reboot. Empty (the default) installs
@@ -1460,9 +1486,13 @@ streamstack_usb_no_autosuspend_ids:
   - "04a9:*"       # Canon cameras
 # Intel media stack. latest follows the Ubuntu archive; present never upgrades.
 streamstack_media_package_state: latest
-# The -non-free iHD build adds HEVC encode and VC-1 decode; it replaces the
-# free build, needs multiverse, and changes nothing for H.264/AV1 calls.
-streamstack_intel_media_non_free: false
+# The -non-free iHD build adds VC-1 decode and, on Arc (DG2) GPUs, AV1 decode
+# (the free build lists AV1 as encode only on an A380, catalog#144); it replaces
+# the free build and needs multiverse. Derived from the hardware profile's
+# `intel_media_non_free` flag (developer_workstation_intel_media_non_free) so
+# this task and tasks/browser-video-decode.yml never fight over the one iHD
+# package.
+streamstack_intel_media_non_free: "{{ developer_workstation_intel_media_non_free }}"
 streamstack_intel_media_packages:
   - linux-firmware
   - libvpl2
@@ -1672,8 +1702,8 @@ hardware_profiles:
       - bluez-tools
       # Firmware blobs (Intel BT/WiFi, Arc GPU GuC/HuC, etc.)
       - linux-firmware
-      # Intel Arc A380 VA-API video acceleration and diagnostics
-      - intel-media-va-driver
+      # Intel Arc A380 VA-API diagnostics (the iHD driver itself comes from
+      # tasks/browser-video-decode.yml: intel_media_non_free below)
       - intel-gpu-tools
       - vainfo
       # Arc A380 compute (OpenCL, Level Zero) and Quick Sync (oneVPL GPU
@@ -1774,10 +1804,18 @@ hardware_profiles:
     compositor_enabled: false
     # slick-greeter's 8K background renders crash Xorg on the Arc A380 (catalog#122).
     greeter: gtk
-    # The GTK greeter crashes Xorg the same way on the glamor render path
-    # (ValidatePicture/CompositeRects SIGBUS every ~70 s, catalog#122), so the
-    # modesetting driver runs without glamor acceleration.
-    xorg_accel_method: none
+    # glamor gives X its DRI3 extension; without it Chrome falls back to
+    # llvmpipe (no GPU compositing, no VA-API decode, catalog#144). It was
+    # switched off as an experiment during the greeter crash loop, but that
+    # SIGBUS was bit-flipped RAM in the Xorg binary, not glamor (catalog#122,
+    # root cause 2026-10-30), so the driver's own acceleration is back on. Read
+    # at the next X start.
+    xorg_accel_method: glamor
+    # The non-free iHD build is the one that exposes AV1 decode on the A380
+    # (the free build lists AV1 as encode only, catalog#144).
+    intel_media_non_free: true
+    # Chrome decodes YouTube on the A380 through VA-API (catalog#144).
+    browser_hw_video_decode: true
     # Glamor off did not stop the SIGBUS either; X also drove the iGPU as a
     # second GPU (modeset(G0)) that has no display attached.
     xorg_auto_add_gpu: false

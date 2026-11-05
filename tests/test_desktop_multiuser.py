@@ -166,21 +166,25 @@ def test_deskmeet_greeter_is_gtk_even_when_local_vars_ask_for_slick() -> None:
     assert "greeter_effective" in _named(tasks, "Select the LightDM greeter")["ansible.builtin.copy"]["content"]
 
 
-def test_deskmeet_modesetting_runs_without_glamor() -> None:
-    """catalog#122: the glamor render path crashes Xorg at 8K with either greeter."""
+def test_deskmeet_modesetting_runs_with_glamor() -> None:
+    """catalog#144: glamor gives X its DRI3 extension; without it Chrome ran on llvmpipe.
+
+    catalog#122 had turned glamor off for the greeter SIGBUS, whose root cause was
+    corrupted RAM in the Xorg binary, so the profile now asks for glamor.
+    """
     defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
-    assert defaults["hardware_profiles"]["deskmeet-b760"]["xorg_accel_method"] == "none"
+    assert defaults["hardware_profiles"]["deskmeet-b760"]["xorg_accel_method"] == "glamor"
     assert not any("xorg_accel_method" in p for n, p in defaults["hardware_profiles"].items() if n != "deskmeet-b760")
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
     expr = env.from_string(defaults["minimal_desktop_xorg_accel_method"])
-    for profile, want in (("deskmeet-b760", "none"), ("other", "")):
+    for profile, want in (("deskmeet-b760", "glamor"), ("other", "")):
         ctx = {"hardware_profiles": defaults["hardware_profiles"], "hardware_profile": profile}
         assert expr.render(**ctx) == want
     tasks = _tasks("minimal-desktop-lightdm.yml")
     task = _named(tasks, "Set the modesetting driver's acceleration method")["ansible.builtin.copy"]
     assert task["dest"] == "/etc/X11/xorg.conf.d/20-curiosity-modesetting-accel.conf"
-    rendered = env.from_string(task["content"]).render(minimal_desktop_xorg_accel_method="none")
-    assert 'Option "AccelMethod" "none"' in rendered and 'Driver "modesetting"' in rendered
+    rendered = env.from_string(task["content"]).render(minimal_desktop_xorg_accel_method="glamor")
+    assert 'Option "AccelMethod" "glamor"' in rendered and 'Driver "modesetting"' in rendered
     assert "Managed by Ansible" in rendered
     removal = _named(tasks, "Remove the modesetting acceleration override")["ansible.builtin.file"]
     assert removal["state"] == "absent" and removal["path"] == task["dest"]

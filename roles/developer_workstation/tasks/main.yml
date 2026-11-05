@@ -649,6 +649,16 @@
   tags: [hardware]
   when: workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
 
+- name: Include browser hardware video decode (Intel VA-API driver, Chrome wrapper)
+  ansible.builtin.include_tasks:
+    file: browser-video-decode.yml
+    apply:
+      tags: [hardware, browser-video-decode]
+  tags: [hardware, browser-video-decode]
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include the CPU thermal guard
   ansible.builtin.include_tasks:
     file: cpu-thermal-guard.yml
