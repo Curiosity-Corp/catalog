@@ -21,7 +21,10 @@ systemd and the operator. Every decision is logged to the journal.
 
 Environment:
   ZITI_HEALTH_UNIT          unit to restart            (ziti-edge-tunnel.service)
-  ZITI_HEALTH_TUNNEL_BIN    tunnel binary              (ziti-edge-tunnel)
+  ZITI_HEALTH_TUNNEL_BIN    tunnel binary: a path, or a name looked up on
+                            PATH. When unset, `ziti-edge-tunnel` on PATH, else
+                            /opt/openziti/bin/ziti-edge-tunnel (the OpenZiti
+                            package path, which systemd's PATH does not have)
   ZITI_HEALTH_IDENTITIES    comma-separated identity names to watch; empty
                             watches every identity the system tunnel reports
   ZITI_HEALTH_PROBE_HOSTS   comma-separated hostnames that must resolve; empty
@@ -40,11 +43,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
+
+
+TUNNEL_BIN_NAME = "ziti-edge-tunnel"
+# Where the OpenZiti package installs the tunneler; systemd's default PATH omits it.
+DEFAULT_TUNNEL_BIN = "/opt/openziti/bin/ziti-edge-tunnel"
 
 
 class CheckError(Exception):
@@ -72,6 +81,29 @@ def int_env(name: str, default: int, minimum: int) -> int:
     if value < minimum:
         raise CheckError(f"{name}={value} is below the minimum of {minimum}")
     return value
+
+
+def resolve_tunnel_bin() -> str:
+    """Find the tunnel binary: ZITI_HEALTH_TUNNEL_BIN, else PATH, else the package path.
+
+    An explicit ZITI_HEALTH_TUNNEL_BIN is authoritative: when it names nothing
+    runnable the check fails clearly instead of quietly using another binary.
+    """
+    configured = os.environ.get("ZITI_HEALTH_TUNNEL_BIN", "").strip()
+    if configured:
+        found = shutil.which(configured)
+        if found:
+            return found
+        raise CheckError(f"ZITI_HEALTH_TUNNEL_BIN={configured!r} is not an executable file or a command on PATH")
+    found = shutil.which(TUNNEL_BIN_NAME)
+    if found:
+        return found
+    if os.path.isfile(DEFAULT_TUNNEL_BIN) and os.access(DEFAULT_TUNNEL_BIN, os.X_OK):
+        return DEFAULT_TUNNEL_BIN
+    raise CheckError(
+        f"{TUNNEL_BIN_NAME} not found on PATH or at {DEFAULT_TUNNEL_BIN}; "
+        "install the OpenZiti tunneler or set ZITI_HEALTH_TUNNEL_BIN"
+    )
 
 
 def run(argv: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
@@ -163,7 +195,6 @@ def save_state(path: Path, state: dict[str, float | None]) -> None:
 
 def main() -> int:
     unit = os.environ.get("ZITI_HEALTH_UNIT", "ziti-edge-tunnel.service")
-    binary = os.environ.get("ZITI_HEALTH_TUNNEL_BIN", "ziti-edge-tunnel")
     watched = csv_env("ZITI_HEALTH_IDENTITIES")
     probes = csv_env("ZITI_HEALTH_PROBE_HOSTS")
     grace = int_env("ZITI_HEALTH_GRACE", 60, 0)
@@ -184,7 +215,7 @@ def main() -> int:
         log("info", f"{unit} started {uptime:.0f}s ago; waiting out the {grace}s grace period")
         return 0
 
-    identities = tunnel_identities(binary, timeout)
+    identities = tunnel_identities(resolve_tunnel_bin(), timeout)
     if watched:
         known = {str(item.get("Name")) for item in identities}
         for name in watched:

@@ -501,7 +501,11 @@ one per `ziti_health_check_min_interval` seconds (600), so a tunnel that cannot
 authenticate is not restarted in a loop. `ziti_health_check_identities` limits the
 watched identities (empty means all the system tunnel reports). The check queries
 only the system tunnel's default IPC socket and restarts only the one unit; a
-hand-started tunneler with its own IPC prefix is never touched. Set
+hand-started tunneler with its own IPC prefix is never touched. The unit passes
+`ziti_health_check_tunnel_bin` (`/opt/openziti/bin/ziti-edge-tunnel`, the package
+path, which systemd's PATH lacks) as `ZITI_HEALTH_TUNNEL_BIN`; without it the script
+tries `ziti-edge-tunnel` on PATH, then that same path, and a missing binary is a
+one-line failed check naming where it looked (nothing is restarted). Set
 `ziti_health_check_enabled: false` to remove it. Activity:
 `journalctl -u curiosity-ziti-health --since today`.
 
