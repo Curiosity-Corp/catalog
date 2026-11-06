@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Ziti health check could never find the tunneler (catalog#149). Under systemd, `ziti-edge-tunnel` (installed at `/opt/openziti/bin`) is not on PATH, so `curiosity-ziti-health` failed every two minutes with `cannot run ziti-edge-tunnel: [Errno 2]` and never checked anything (771 failures on deskmeet1 since 2026-11-04). The script now resolves the binary from `ZITI_HEALTH_TUNNEL_BIN`, else PATH, else `/opt/openziti/bin/ziti-edge-tunnel`, and the unit sets it from the new `ziti_health_check_tunnel_bin` default. A binary that cannot be found fails the check with one clear line naming the places searched; nothing is restarted.
 - PIA port forwarding no longer sticks to a server without a port API (catalog#148). On 2026-11-04 the tunnel registered with Toronto `Server-10996-8a`, which refused connections on 19999, so no port was ever bound. `curiosity-pia-tunnel up` now treats a port API that does not answer (curl 7/28) as a dead server, remembers it for six hours in `/run/curiosity-pia-tunnel/pf-unreachable.json` and rebuilds on another port-forwarding server (up to four per rebuild; the last tunnel stays up without a port), and `bind` moves the tunnel the same way when its server stops answering. A refusal by PIA itself is not treated as a dead server.
 
 ### Added

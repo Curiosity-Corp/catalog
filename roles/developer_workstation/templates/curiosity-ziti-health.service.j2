@@ -7,6 +7,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 Environment=ZITI_HEALTH_UNIT={{ ziti_service_name }}
+Environment=ZITI_HEALTH_TUNNEL_BIN={{ ziti_health_check_tunnel_bin }}
 Environment=ZITI_HEALTH_IDENTITIES={{ ziti_health_check_identities | join(',') }}
 Environment=ZITI_HEALTH_PROBE_HOSTS={{ ziti_health_check_probe_hosts | join(',') }}
 Environment=ZITI_HEALTH_GRACE={{ ziti_health_check_grace }}

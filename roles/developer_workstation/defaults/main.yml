@@ -638,6 +638,10 @@ ziti_health_check_probe_hosts: []
 ziti_health_check_grace: 60
 ziti_health_check_min_interval: 600
 ziti_health_check_timeout: 15
+# The tunneler the check queries. The OpenZiti package installs it under /opt,
+# which is not on systemd's PATH, so the unit is given the full path. Empty lets
+# the script search PATH and then this same package path.
+ziti_health_check_tunnel_bin: /opt/openziti/bin/ziti-edge-tunnel
 ziti_health_check_script_path: /usr/local/sbin/curiosity-ziti-health
 
 # Optional certificates for private lab services. `src` is read from the

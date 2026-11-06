@@ -8,6 +8,8 @@ checks pin the role wiring and run the real script against stub `systemctl`,
 
 from __future__ import annotations
 
+import importlib.machinery
+import importlib.util
 import json
 import os
 import stat
@@ -433,3 +435,100 @@ def test_a_corrupt_state_file_is_ignored(stubs: Path) -> None:
     result = _run(stubs)
     assert result.returncode == 0
     assert "ignoring unreadable state file" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Finding the tunnel binary (#149): systemd's PATH lacks /opt/openziti/bin
+# ---------------------------------------------------------------------------
+
+
+def _load_script():
+    loader = importlib.machinery.SourceFileLoader("curiosity_ziti_health", str(SCRIPT))
+    spec = importlib.util.spec_from_loader("curiosity_ziti_health", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def test_default_tunnel_bin_is_the_package_path() -> None:
+    assert DEFAULTS["ziti_health_check_tunnel_bin"] == "/opt/openziti/bin/ziti-edge-tunnel"
+    assert _load_script().DEFAULT_TUNNEL_BIN == DEFAULTS["ziti_health_check_tunnel_bin"]
+
+
+def test_service_passes_the_tunnel_binary_to_the_check() -> None:
+    text = _render("curiosity-ziti-health.service.j2")
+    assert "Environment=ZITI_HEALTH_TUNNEL_BIN=/opt/openziti/bin/ziti-edge-tunnel" in text
+    custom = _render("curiosity-ziti-health.service.j2", ziti_health_check_tunnel_bin="/srv/zet")
+    assert "Environment=ZITI_HEALTH_TUNNEL_BIN=/srv/zet" in custom
+
+
+def test_binary_is_found_on_path_when_the_variable_is_unset(stubs: Path) -> None:
+    env = {k: v for k, v in os.environ.items()}
+    result = subprocess.run(
+        ["python3", "-I", str(SCRIPT)],
+        env={
+            "PATH": f"{stubs}:{env['PATH']}",
+            "STUB_DIR": str(stubs),
+            "ZITI_HEALTH_STATE_FILE": str(stubs / "state.json"),
+            "ZITI_HEALTH_TIMEOUT": "2",
+            "STUB_ENTER_US": "1000000",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout
+    assert "healthy" in result.stdout
+    assert "tunnel tunnel_status" in _calls(stubs)
+
+
+def test_binary_falls_back_to_the_package_path_when_not_on_path(
+    stubs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script()
+    package_bin = stubs / "opt-ziti-edge-tunnel"
+    package_bin.write_text("#!/bin/bash\n")
+    package_bin.chmod(0o755)
+    monkeypatch.delenv("ZITI_HEALTH_TUNNEL_BIN", raising=False)
+    monkeypatch.setenv("PATH", "/nonexistent")
+    monkeypatch.setattr(module, "DEFAULT_TUNNEL_BIN", str(package_bin))
+    assert module.resolve_tunnel_bin() == str(package_bin)
+
+
+def test_the_variable_wins_over_path_and_the_package_path(
+    stubs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script()
+    chosen = stubs / "chosen"
+    chosen.write_text("#!/bin/bash\n")
+    chosen.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stubs}:{os.environ['PATH']}")  # has a ziti-edge-tunnel stub
+    monkeypatch.setenv("ZITI_HEALTH_TUNNEL_BIN", str(chosen))
+    assert module.resolve_tunnel_bin() == str(chosen)
+
+
+def test_a_missing_binary_is_a_clear_failed_check_not_a_crash(
+    stubs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # In-process so the package-path fallback can be pointed at a missing file
+    # whether or not the test host has OpenZiti installed.
+    module = _load_script()
+    (stubs / "ziti-edge-tunnel").unlink()
+    monkeypatch.delenv("ZITI_HEALTH_TUNNEL_BIN", raising=False)
+    monkeypatch.setenv("PATH", str(stubs))
+    monkeypatch.setenv("STUB_DIR", str(stubs))
+    monkeypatch.setenv("STUB_ENTER_US", "1000000")
+    monkeypatch.setenv("ZITI_HEALTH_STATE_FILE", str(stubs / "state.json"))
+    monkeypatch.setattr(module, "DEFAULT_TUNNEL_BIN", str(stubs / "absent/ziti-edge-tunnel"))
+    with pytest.raises(module.CheckError) as raised:  # `__main__` logs it and exits 1
+        module.main()
+    assert f"ziti-edge-tunnel not found on PATH or at {stubs}/absent/ziti-edge-tunnel" in str(raised.value)
+    assert "Errno" not in str(raised.value)
+    assert _restarts(stubs) == []
+
+
+def test_a_configured_binary_that_does_not_exist_is_named_in_the_error(stubs: Path) -> None:
+    result = _run(stubs, ZITI_HEALTH_TUNNEL_BIN=str(stubs / "nope"))
+    assert result.returncode == 1
+    assert "ZITI_HEALTH_TUNNEL_BIN=" in result.stdout and "nope" in result.stdout
+    assert _restarts(stubs) == []
