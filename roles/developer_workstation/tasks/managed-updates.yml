@@ -194,6 +194,18 @@
     - ansible_architecture == 'x86_64'
     - workstation_update_install_allowed | default(true)
 
+- name: Include Slack desktop app
+  ansible.builtin.include_tasks:
+    file: slack-desktop.yml
+    apply:
+      tags: [collaboration, slack]
+  tags: [collaboration, slack]
+  when:
+    - workstation_profile == 'desktop'
+    - slack_desktop_enabled | default(false) | bool
+    - ansible_architecture == 'x86_64'
+    - workstation_update_install_allowed | default(true)
+
 - name: Include WeeChat TUI chat client
   ansible.builtin.include_tasks:
     file: weechat.yml

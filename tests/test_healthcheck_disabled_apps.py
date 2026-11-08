@@ -27,6 +27,7 @@ EXPECTED_CONDITIONS = {
     "claude": "claude_native_enabled",
     "litra": "litra_cli_enabled",
     "bitwarden_desktop": "bitwarden_desktop_enabled",
+    "slack_desktop": "slack_desktop_enabled",
 }
 # Flags derived from other configuration (a template string) rather than a
 # literal boolean; tests/test_litra_cli.py evaluates the litra expression.

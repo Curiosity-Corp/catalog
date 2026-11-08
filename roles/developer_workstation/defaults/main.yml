@@ -136,6 +136,16 @@ latest_github_release_tag_prefixes:
 # credentials or vault data.
 bitwarden_desktop_enabled: true
 
+# Install the official Slack desktop app (the `slack` snap: publisher Slack,
+# verified; strict confinement) system-wide on desktop workstations
+# (tasks/slack-desktop.yml). Off by default; a host or an internal overlay
+# turns it on. The role never touches a user's Slack data or sign-in. The
+# snap-id pins the store identity, so another snap published as `slack` is
+# refused; updates come from `snap refresh` in system-updates.yml.
+slack_desktop_enabled: false
+slack_desktop_snap_channel: latest/stable
+slack_desktop_snap_id: JUJH91Ved74jd4ZgJCpzMBtYbPOzTlsD
+
 # Force-install the Bitwarden browser extension into the Chromium-family
 # browsers, the way the Firefox policy already does for Firefox
 # (collaboration.yml). One managed-policy file per browser is written only when
@@ -236,6 +246,7 @@ workstation_application_contracts:
   codex: {installer: codex-standalone, verification: official-installer, scope: user, enabled_when: codex_standalone_enabled, healthcheck: [.local/bin/codex, --version]}
   claude: {installer: claude-native, verification: official-installer, scope: user, enabled_when: claude_native_enabled, healthcheck: [.local/bin/claude, --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
+  slack_desktop: {installer: snap-store, verification: snap-assertions, enabled_when: slack_desktop_enabled, healthcheck: [/usr/local/sbin/curiosity-slack-desktop-check]}
 
 # Dynamic includes are entered only when their include task carries the
 # selected tag. These tags cover the managed update transaction and its
