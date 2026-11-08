@@ -1,0 +1,111 @@
+---
+# =============================================================================
+# Slack desktop app (system-wide, official snap)
+# =============================================================================
+# Slack ships its Linux desktop app through the Snap Store as `slack`
+# (publisher Slack, verified; strict confinement). snapd verifies the
+# store-signed assertions of every revision before it mounts it; the role
+# additionally requires the installed snap to carry the store snap-id in
+# slack_desktop_snap_id, so a different snap published under the same name is
+# refused. Updates come from the `snap refresh` in system-updates.yml.
+#
+# The snap provides:
+#   /snap/bin/slack                                         launcher (on PATH)
+#   /var/lib/snapd/desktop/applications/slack_slack.desktop menu entry and
+#                                                           slack:// handler
+# so every managed user sees the app; XDG_DATA_DIRS of the managed desktop
+# session already includes /var/lib/snapd/desktop. The role never reads or
+# writes any user's Slack data or sign-in; each user signs in to their own
+# workspaces.
+#
+# The healthcheck helper is installed only here, so the post-update
+# healthcheck runs only on hosts where Slack was installed (see
+# update-health.yml).
+#
+# Snap Store publishes Slack for amd64 only, so the include is skipped on other
+# architectures (see managed-updates.yml).
+# =============================================================================
+
+- name: Check that snapd is installed for the Slack desktop app
+  ansible.builtin.stat:
+    path: /usr/bin/snap
+  register: _slack_desktop_snapd
+
+- name: Require snapd before installing the Slack desktop app
+  ansible.builtin.assert:
+    that:
+      - _slack_desktop_snapd.stat.exists | default(false)
+    fail_msg: >-
+      /usr/bin/snap is missing, so the Slack desktop snap cannot be installed.
+      Install snapd or set slack_desktop_enabled to false.
+
+- name: Install the Slack desktop snap
+  community.general.snap:
+    name: slack
+    channel: "{{ slack_desktop_snap_channel }}"
+    state: present
+
+# Read-only, so it also runs in check mode.
+- name: Read the installed Slack snap identity
+  ansible.builtin.command:
+    argv:
+      - snap
+      - info
+      - --unicode=never
+      - slack
+  register: _slack_desktop_info
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Require the installed Slack snap to be the official one
+  ansible.builtin.assert:
+    that:
+      - _slack_desktop_info.rc == 0
+      - "_slack_desktop_info.stdout is regex('(?m)^snap-id: +' ~ (slack_desktop_snap_id | regex_escape) ~ ' *$')"
+      - "_slack_desktop_info.stdout is regex('(?m)^installed: +[0-9]')"
+    fail_msg: >-
+      The installed `slack` snap is not the official Slack snap (expected
+      snap-id {{ slack_desktop_snap_id }}; snap info rc={{ _slack_desktop_info.rc }}).
+      Remove it with `snap remove slack` and run the role again.
+  when: not ansible_check_mode
+
+- name: Install the Slack desktop healthcheck helper
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/curiosity-slack-desktop-check
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by Curiosity-Corp/catalog (developer_workstation, slack-desktop.yml).
+      # Post-update healthcheck of the Slack desktop snap: installed, the
+      # official snap-id, launcher and menu entry present. Prints one line.
+      set -eu
+      snap list slack >/dev/null 2>&1 || {
+        echo "slack snap: not installed" >&2
+        exit 1
+      }
+      info=$(snap info --unicode=never slack 2>/dev/null) || {
+        echo "slack snap: snap info failed" >&2
+        exit 1
+      }
+      printf '%s\n' "$info" | grep -Eq '^snap-id: +{{ slack_desktop_snap_id }} *$' || {
+        echo "slack snap: unexpected snap-id (want {{ slack_desktop_snap_id }})" >&2
+        exit 1
+      }
+      for path in /snap/bin/slack /var/lib/snapd/desktop/applications/slack_slack.desktop; do
+        [ -e "$path" ] || {
+          echo "slack snap: $path missing" >&2
+          exit 1
+        }
+      done
+      printf '%s\n' "$info" | sed -n 's/^installed: */slack snap /p'
+
+- name: Run the Slack desktop healthcheck
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/curiosity-slack-desktop-check
+  register: _slack_desktop_health
+  changed_when: false
+  when: not ansible_check_mode

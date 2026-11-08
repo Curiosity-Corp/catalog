@@ -781,6 +781,22 @@ Chromium-family browsers are driven by automation that must not see the first-ru
 tab, set `bitwarden_browser_extensions_enabled: false`; the Firefox policy is not
 affected by that switch. The `bw` CLI session helper is not part of the catalog.
 
+Slack Desktop is opt-in. With `slack_desktop_enabled: true` on a desktop
+profile (x86_64 only), the role installs the official `slack` snap (publisher
+Slack, verified; strict confinement) from `slack_desktop_snap_channel`
+(default `latest/stable`) and fails the run unless `snap info slack` reports it
+installed with the store snap-id in `slack_desktop_snap_id`, so another snap
+published under the name is refused. The snap puts `/snap/bin/slack` on PATH and
+`slack_slack.desktop` (menu entry and `slack://` handler) in
+`/var/lib/snapd/desktop/applications`, which the managed Openbox session already
+has in `XDG_DATA_DIRS`; sign-in opens the user's default browser through snapd's
+session launcher. Updates come from the nightly `snap refresh`. The post-update
+healthcheck is `/usr/local/sbin/curiosity-slack-desktop-check` (application
+contract `slack_desktop`), installed only where Slack is. Each user signs in to
+their own workspaces; the role never touches Slack data or sign-in. Setting the
+flag back to false leaves an installed snap in place (remove it with
+`snap remove slack`).
+
 The branded FocusPass screen-lock package is an optional local-PAM integration.
 It is installed only when all three variables below are supplied for a
 desktop or thin-client profile with the minimal desktop enabled:
