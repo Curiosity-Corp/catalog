@@ -174,6 +174,72 @@
   when: bitwarden_browser_extensions_enabled | default(true) | bool
 
 # =============================================================================
+# Chromium-family managed policy — removed extensions
+# =============================================================================
+# chromium_removed_extensions lists store ids a host removes from every
+# profile (ExtensionSettings, installation_mode: removed). One root-owned
+# 25-removed-extensions.json per installed Chromium-family browser; deleted
+# again when the list is empty. Never touches a profile or its data.
+# =============================================================================
+
+- name: Check the removed Chromium-family extension ids
+  ansible.builtin.assert:
+    that:
+      - chromium_removed_extensions is sequence
+      - chromium_removed_extensions is not string
+      - chromium_removed_extensions | reject('match', '^[a-p]{32}$') | list | length == 0
+    fail_msg: >-
+      chromium_removed_extensions must be a list of Chromium store ids (32 letters a-p);
+      got {{ chromium_removed_extensions }}
+    quiet: true
+
+- name: Detect installed Chromium-family browsers for removed extensions
+  ansible.builtin.stat:
+    path: "{{ item.binary }}"
+  loop: "{{ bitwarden_chromium_extension_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _chromium_removed_extension_binaries
+
+- name: Ensure managed policy directories exist for removed extensions
+  ansible.builtin.file:
+    path: "{{ item.policy_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ _chromium_removed_extension_binaries.results | selectattr('stat', 'defined') | selectattr('stat.exists') | map(attribute='item') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: chromium_removed_extensions | length > 0
+
+- name: Remove the listed extensions in Chromium-family browsers
+  ansible.builtin.copy:
+    content: |
+      {% set ns = namespace(settings={}) -%}
+      {% for ext_id in chromium_removed_extensions -%}
+      {% set ns.settings = ns.settings | combine({ext_id: {'installation_mode': 'removed'}}) -%}
+      {% endfor -%}
+      {{ {'ExtensionSettings': ns.settings} | to_nice_json }}
+    dest: "{{ item.policy_dir }}/25-removed-extensions.json"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ _chromium_removed_extension_binaries.results | selectattr('stat', 'defined') | selectattr('stat.exists') | map(attribute='item') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: chromium_removed_extensions | length > 0
+
+- name: Delete the removed-extensions policy when no extension is listed
+  ansible.builtin.file:
+    path: "{{ item.policy_dir }}/25-removed-extensions.json"
+    state: absent
+  loop: "{{ bitwarden_chromium_extension_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: chromium_removed_extensions | length == 0
+
+# =============================================================================
 # Snap Firefox — custom CA trust
 # =============================================================================
 # Snap Firefox is sandboxed and may not read the host CA store. Add configured
