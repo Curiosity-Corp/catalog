@@ -1,0 +1,173 @@
+---
+# =============================================================================
+# Declarative retirement of system services and files
+# =============================================================================
+# A host can be told which system units must never run again
+# (workstation_system_masked_units) and which paths must not exist
+# (workstation_removed_paths). Both lists are empty in the public baseline;
+# site operators set them in /etc/ansible/local-vars.yml or protected inventory
+# so private service names stay out of this collection.
+#
+# Why this exists: `systemctl disable` (without --now) only removes the boot
+# link. A unit that is merely disabled keeps running until the next reboot and
+# is brought back by any helper, `Wants=` dependency or needrestart's automatic
+# restart after a library upgrade. The role therefore stops the unit, removes
+# its enablement links, converges the unit path to systemd's native /dev/null
+# mask and finishes with a tripwire that fails the run, loudly, when a declared
+# unit is still loadable, running, or when a declared path exists again.
+# =============================================================================
+
+- name: Validate system unit mask declarations
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item | length > 0
+      - item is match('^[A-Za-z0-9@_.:-]+$')
+      - item is match('.*[.](service|timer|socket|path|mount|target)$')
+    fail_msg: >-
+      workstation_system_masked_units entries must be bare systemd unit names
+      with a unit-type suffix and no path separators: {{ item | default('undefined') }}
+    quiet: true
+  loop: "{{ workstation_system_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Validate removed path declarations
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^/[A-Za-z0-9_.@+:-]+(/[A-Za-z0-9_.@+:-]+)+/?$')
+      - "'/../' not in item"
+      - not item.endswith('/..')
+      - item.split('/') | reject('equalto', '') | list | length >= 2
+      - item.split('/')[1] not in ['bin', 'boot', 'dev', 'lib', 'lib32', 'lib64', 'proc', 'sbin', 'sys', 'usr']
+      - item is not match('^/etc/(ansible|systemd|ssh|sudoers[.]d|apt|passwd|shadow|group|fstab)(/|$)')
+      - item is not match('^/home/[^/]+/?$')
+    fail_msg: >-
+      workstation_removed_paths entries must be absolute, glob-free paths at
+      least two levels deep (for example /opt/old-service) and must not point
+      at system roots, the role's own control files or a whole home directory:
+      {{ item | default('undefined') }}
+    quiet: true
+  loop: "{{ workstation_removed_paths }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Stop and disable the declared system units
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  register: _system_retirement_stop
+  failed_when: >-
+    _system_retirement_stop is failed and
+    not (
+      'not found' in ((_system_retirement_stop.msg | default('')) | lower) or
+      'could not find' in ((_system_retirement_stop.msg | default('')) | lower) or
+      'not loaded' in ((_system_retirement_stop.msg | default('')) | lower) or
+      'masked' in ((_system_retirement_stop.msg | default('')) | lower)
+    )
+  loop: "{{ workstation_system_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+  when: ansible_service_mgr | default('') == 'systemd'
+
+- name: Remove stale enablement links for the declared system units
+  ansible.builtin.file:
+    path: "{{ workstation_system_unit_dir }}/{{ item.0 }}/{{ item.1 }}"
+    state: absent
+  loop: "{{ ['multi-user.target.wants', 'timers.target.wants', 'sockets.target.wants', 'default.target.wants'] | product(workstation_system_masked_units) | list }}"
+  loop_control:
+    label: "{{ item.0 }}/{{ item.1 }}"
+
+- name: Enforce native systemd masks for the declared system units
+  ansible.builtin.file:
+    src: /dev/null
+    dest: "{{ workstation_system_unit_dir }}/{{ item }}"
+    state: link
+    force: true
+    owner: root
+    group: root
+  loop: "{{ workstation_system_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Reload systemd after mask convergence
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - ansible_service_mgr | default('') == 'systemd'
+    - workstation_system_masked_units | length > 0
+
+- name: Clear stale failure state for the declared system units  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - reset-failed
+      - "{{ item }}"
+  register: _system_retirement_reset
+  changed_when: false
+  failed_when: false
+  loop: "{{ workstation_system_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+  when: ansible_service_mgr | default('') == 'systemd'
+
+- name: Remove the declared paths
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ workstation_removed_paths }}"
+  loop_control:
+    label: "{{ item }}"
+
+# -----------------------------------------------------------------------------
+# Tripwire: the run fails when a retired thing is back.
+# -----------------------------------------------------------------------------
+- name: Read the load and active state of the declared system units  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - --property=LoadState
+      - --property=ActiveState
+      - "{{ item }}"
+  register: _system_retirement_state
+  changed_when: false
+  loop: "{{ workstation_system_masked_units }}"
+  loop_control:
+    label: "{{ item }}"
+  when: ansible_service_mgr | default('') == 'systemd'
+
+- name: Assert the declared system units are masked and not running
+  ansible.builtin.assert:
+    that:
+      - item.stdout is search('(?m)^LoadState=masked$')
+      - item.stdout is not search('(?m)^ActiveState=(active|activating|deactivating|reloading)$')
+    fail_msg: >-
+      Retired system unit {{ item.item }} is not masked and stopped
+      ({{ item.stdout | default('') | replace('\n', ' ') }}). Something re-enabled or
+      restarted it; find and remove that source instead of unmasking.
+    quiet: true
+  loop: "{{ _system_retirement_state.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: ansible_service_mgr | default('') == 'systemd'
+
+- name: Look up the declared removed paths
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  register: _system_retirement_paths
+  loop: "{{ workstation_removed_paths }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Assert the declared paths do not exist
+  ansible.builtin.assert:
+    that: not item.stat.exists
+    fail_msg: "Retired path {{ item.item }} exists after convergence."
+    quiet: true
+  loop: "{{ _system_retirement_paths.results }}"
+  loop_control:
+    label: "{{ item.item }}"

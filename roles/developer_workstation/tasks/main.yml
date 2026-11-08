@@ -171,6 +171,16 @@
   tags: [systemd, user-systemd]
   when: workstation_user_systemd_masked_units | default([]) | length > 0
 
+- name: Retire declared system services and remove declared paths
+  ansible.builtin.include_tasks:
+    file: system-retirement.yml
+    apply:
+      tags: [systemd, system-retirement]
+  tags: [systemd, system-retirement]
+  when: >-
+    (workstation_system_masked_units | default([]) | length > 0) or
+    (workstation_removed_paths | default([]) | length > 0)
+
 - name: Initialize workstation update control plane
   ansible.builtin.include_tasks:
     file: update-foundation.yml

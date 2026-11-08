@@ -38,6 +38,21 @@ developer_workstation_local_vars_file: /etc/ansible/local-vars.yml
 # removes stale target-wants links idempotently on every convergence.
 workstation_user_systemd_masked_units: []
 
+# System-scoped counterpart: units that must stay stopped and masked, and paths
+# that must not exist, on this host. Empty in the public baseline; site values
+# belong in /etc/ansible/local-vars.yml or protected inventory. A unit is
+# stopped, its enablement links removed, its unit path converged to the native
+# /dev/null mask, and the run fails if it is ever loadable or running again.
+# Plain `systemctl disable` is not enough: it leaves the unit running until the
+# next boot and any `Wants=` dependency or automatic needrestart brings it back.
+workstation_system_masked_units: []
+# Absolute, glob-free paths (files or directories) the role deletes on every
+# convergence and then asserts absent. Used to retire credential or service
+# material that must not remain on a host (tasks/system-retirement.yml).
+workstation_removed_paths: []
+# Directory holding system unit files and *.wants links.
+workstation_system_unit_dir: /etc/systemd/system
+
 # Role profile:
 #   desktop   = full workstation (physical/VM desktop host)
 #   workspace = container-safe Coder workspace profile
