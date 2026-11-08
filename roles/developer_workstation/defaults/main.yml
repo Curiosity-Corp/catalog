@@ -171,6 +171,17 @@ bitwarden_chromium_extension_targets:
     extension_id: nngceckbapebfimnlniiiahkandclblb
     update_url: https://clients2.google.com/service/update2/crx
 
+# Chromium-family extensions a host removes from every profile, by store id
+# (32 letters a-p). The role writes a managed ExtensionSettings policy
+# (installation_mode: removed) as 25-removed-extensions.json for each installed
+# browser in bitwarden_chromium_extension_targets; running browsers apply it
+# without a restart, uninstall the extension and refuse to reinstall it. Empty
+# by default; a host or an overlay lists ids, for example a second password
+# manager beside Bitwarden. With an empty list the policy file is deleted,
+# which allows the extensions again. A browser keeps only the last policy file
+# that sets ExtensionSettings, so no other Chromium policy file may set it.
+chromium_removed_extensions: []
+
 # Every API-backed release source also has an explicit application contract.
 # The contract is inventory/provenance data, not a release pin: it says how an
 # application is obtained and how its installed result can be checked.

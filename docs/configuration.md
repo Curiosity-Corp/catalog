@@ -781,6 +781,18 @@ Chromium-family browsers are driven by automation that must not see the first-ru
 tab, set `bitwarden_browser_extensions_enabled: false`; the Firefox policy is not
 affected by that switch. The `bw` CLI session helper is not part of the catalog.
 
+A host can also remove Chromium-family extensions, for example a second
+password manager beside Bitwarden: list their store ids (32 letters a-p) in
+`chromium_removed_extensions`. The role then writes `25-removed-extensions.json`
+(`ExtensionSettings` with `installation_mode: removed` for each id) next to the
+Bitwarden file of every installed Chrome, Edge and Brave. Running browsers
+apply it without a restart: the extension is uninstalled from every profile and
+cannot be installed again. Chrome and Brave use Chrome Web Store ids; an Edge
+Add-ons copy of the same extension has another id. With an empty list (the
+default) the file is deleted. A browser keeps only the last policy file that
+sets `ExtensionSettings`, so no other Chromium policy file may set it. The
+role never opens a profile or its data.
+
 Slack Desktop is opt-in. With `slack_desktop_enabled: true` on a desktop
 profile (x86_64 only), the role installs the official `slack` snap (publisher
 Slack, verified; strict confinement) from `slack_desktop_snap_channel`
