@@ -522,6 +522,40 @@ again by an installer or helper. The default is empty so unrelated workstations
 are unchanged; keep organization-specific unit names in protected inventory
 rather than in this public collection.
 
+## Retired system services and removed paths
+
+`workstation_system_masked_units` (bare system unit names with a type suffix,
+for example `old-helper.service`) and `workstation_removed_paths` (absolute,
+glob-free files or directories) are opt-in lists, empty by default. Keep real
+names in `/etc/ansible/local-vars.yml` or protected inventory, never in this
+public collection.
+
+For each unit the role stops it, disables it, removes its `multi-user`,
+`timers`, `sockets` and `default` target links, converges
+`/etc/systemd/system/<unit>` to systemd's native `/dev/null` mask (replacing a
+regular unit file), reloads systemd and clears any failed state. Each listed
+path is then deleted. Plain `systemctl disable` is not a retirement: it leaves
+the unit running until the next reboot, and a `Wants=` dependency or
+needrestart's automatic restart after a library upgrade starts it again. A
+masked unit cannot be started by any of those.
+
+The last tasks are a tripwire. The run fails, naming the unit or path, when a
+declared unit is not `LoadState=masked`, is active, activating or reloading,
+or when a declared path exists after convergence. Remove whatever brought it
+back; do not unmask. Paths must be at least two levels deep and may not point
+at system roots (`/usr`, `/proc`, ...), `/etc/ansible`, `/etc/systemd`,
+`/etc/ssh`, other core `/etc` files or a whole home directory. Tags:
+`system-retirement`, `systemd`.
+
+```yaml
+workstation_system_masked_units:
+  - old-helper.service
+  - old-helper.timer
+workstation_removed_paths:
+  - /opt/old-helper
+  - /etc/old-helper/credentials.json
+```
+
 ## Custom CA certificates
 
 The source path is local to the Ansible controller. With `ansible-pull`, that
