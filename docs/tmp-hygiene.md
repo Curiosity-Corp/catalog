@@ -27,6 +27,8 @@ set back to `false`, the next pull removes everything the group installed.
 | `/etc/systemd/system/curiosity-tmp-pressure.{service,timer}` | Hourly oneshot, `ConditionPathIsMountPoint=/tmp`, `Nice=10`, idle I/O class |
 | `/etc/curiosity/tmp-pressure-tmpfiles.conf` | Shorter-age rules for the second pressure pass; deliberately not in `tmpfiles.d` |
 | `/etc/systemd/system/tmp.mount.d/50-curiosity-inodes.conf` | Raises the tmpfs inode cap (`nr_inodes`) of `/tmp`; see [Inode cap](#inode-cap) |
+| `/etc/curiosity/tmp-short-age-tmpfiles.conf` | `e` lines that age out the contents of known leaky application folders (default `/tmp/scoped_dir*`, 6h); deliberately not in `tmpfiles.d` |
+| `/etc/systemd/system/curiosity-tmp-short-age.{service,timer}` | Hourly oneshot running `systemd-tmpfiles --clean` on that file; see [Short-age pass](#short-age-pass) |
 
 The drop-in is named `00-curiosity-tmp.conf` on purpose. When several
 tmpfiles.d files declare `/tmp`, systemd keeps the first by file name and logs
@@ -135,6 +137,53 @@ View activity with `journalctl -u curiosity-tmp-pressure --since today`; check
 the schedule with `systemctl list-timers curiosity-tmp-pressure.timer
 systemd-tmpfiles-clean.timer`.
 
+## Short-age pass
+
+Chromium-based browsers (Google Chrome, Chromium, Electron apps,
+chromedriver) unpack each extension they install into a fresh
+`/tmp/scoped_dir*/CRX_INSTALL/` and delete it when the install finishes. A
+browser that exits or is killed first, as a headless `--screenshot`,
+`--print-to-pdf` or `--dump-dom` run with a new profile does within a few
+seconds, leaves the folder behind. With an extension force-installed by policy
+that happens on every such run, at 25 to 120 MB each. On an agent workstation
+in November 2026 this left 158 folders (about 10 GiB) in six hours. The owner
+reached the per-user `/tmp` quota, which systemd sets to 80% of the tmpfs,
+while the filesystem was at 67%. So neither the daily 3d age nor the 85%
+pressure check acted in time.
+
+`curiosity-tmp-short-age.timer` runs `systemd-tmpfiles --clean` hourly on
+`/etc/curiosity/tmp-short-age-tmpfiles.conf`, which holds one line per entry
+of `tmp_hygiene_short_age_paths`:
+
+```text
+e /tmp/scoped_dir* - - - 6h
+```
+
+- tmpfiles removes an entry inside a matching folder only when its access,
+  modification and change (or birth) times are all older than
+  `tmp_hygiene_short_age`, and it skips any entry, and everything below it,
+  on which a process holds a BSD lock (`flock`). A browser's own unpack folder
+  is seconds old while it is in use.
+- The matching folder itself stays, empty, and ages out with the normal `/tmp`
+  rule. That is why the file is not in `tmpfiles.d`: a glob line there would
+  exempt the matching folders from the `/tmp` age for good (systemd logs
+  "a separate glob exists"), so the emptied folders would never be removed.
+- It also runs where `/tmp` is disk-backed.
+- Every entry must name a direct child of `/tmp` with a literal prefix of at
+  least three characters. An empty list stops the timer and removes its files.
+
+This is the one place the group ages by name. The default names only Chromium's
+`ScopedTempDir` prefix. One caveat: chromedriver
+also keeps a test session's whole browser profile in `/tmp/scoped_dir*`, so a
+Selenium session that runs longer than the age can lose profile files it has
+not touched since. On such a host, raise `tmp_hygiene_short_age` or remove the
+entry.
+
+Check it with `systemctl list-timers curiosity-tmp-short-age.timer` and
+`journalctl -u curiosity-tmp-short-age`. To preview what it would remove, run
+`sudo SYSTEMD_LOG_LEVEL=debug systemd-tmpfiles --clean --dry-run
+/etc/curiosity/tmp-short-age-tmpfiles.conf` (systemd 256 or later).
+
 ## Variables
 
 | Variable | Default | Meaning |
@@ -148,6 +197,10 @@ systemd-tmpfiles-clean.timer`.
 | `tmp_hygiene_pressure_interval` | `1h` | Time between pressure checks |
 | `tmp_hygiene_exclusions` | X11, ICE, XIM, font sockets, `systemd-private-%b-*`, `tmux-*`, `ssh-*`, `snap-private-tmp`, Chromium singletons, AppImage mounts, `tsx-*`, `claude-*`, OpenZiti tunneler IPC sockets (`.ziti`) | tmpfiles `x`/`X` lines excluded from aging |
 | `tmp_hygiene_extra_exclusions` | `[]` | Host-specific additions, for example `X /tmp/my-long-lived-dir` |
+| `tmp_hygiene_short_age_paths` | `[/tmp/scoped_dir*]` | Leaky application folders whose contents the hourly short-age pass ages out; empty turns the pass off |
+| `tmp_hygiene_short_age` | `6h` | Age for the short-age pass (systemd span: `m`, `h`, `d`, `w`) |
+| `tmp_hygiene_short_age_interval` | `1h` | Time between short-age passes |
+| `tmp_hygiene_short_age_config_path` | `/etc/curiosity/tmp-short-age-tmpfiles.conf` | Short-age rules, outside `tmpfiles.d` |
 | `tmp_hygiene_tmpfiles_path` | `/etc/tmpfiles.d/00-curiosity-tmp.conf` | Drop-in location |
 | `tmp_hygiene_pressure_script_path` | `/usr/local/sbin/curiosity-tmp-pressure` | Helper location |
 | `tmp_hygiene_pressure_config_path` | `/etc/curiosity/tmp-pressure-tmpfiles.conf` | Second-pass rules |

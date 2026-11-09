@@ -1006,6 +1006,7 @@ tmpfs holding `/tmp` is nearly full. Variables:
 | `tmp_hygiene_pressure_age` | `1d` (empty: warn only, no second pass) |
 | `tmp_hygiene_pressure_interval` | `1h` |
 | `tmp_hygiene_exclusions` / `tmp_hygiene_extra_exclusions` | live-session paths / `[]` |
+| `tmp_hygiene_short_age_paths` / `tmp_hygiene_short_age` | `[/tmp/scoped_dir*]` / `6h` (hourly short-age pass for Chromium's leaked extension unpack folders) |
 
 It is skipped on the `workspace` profile and in containers. See
 [`docs/tmp-hygiene.md`](tmp-hygiene.md) for the design, safety properties, and

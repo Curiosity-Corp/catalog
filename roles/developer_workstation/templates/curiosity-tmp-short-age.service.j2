@@ -1,0 +1,17 @@
+# Managed by curiosity.workstation (tmp_hygiene_short_age_paths)
+[Unit]
+Description=Curiosity short-age cleanup of leaky /tmp application folders
+Documentation=man:systemd-tmpfiles(8) man:tmpfiles.d(5)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemd-tmpfiles --clean {{ tmp_hygiene_short_age_config_path }}
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+# This unit must see the real /tmp, so no private temporary directory and no
+# read-only filesystem sandboxing here.
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectKernelModules=yes

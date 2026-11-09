@@ -815,6 +815,22 @@ tmp_hygiene_exclusions:
   - X /tmp/.ziti
 # Host-specific additions without replacing the list above.
 tmp_hygiene_extra_exclusions: []
+# Short-age pass for known leaky application temp folders directly under /tmp.
+# Chromium-based browsers (Chrome, Chromium, Electron, chromedriver) unpack
+# extensions into /tmp/scoped_dir*/ (about 25-120 MB each) and leave the folder
+# behind when the browser exits or is killed mid-install, which a headless
+# browser started many times a day does. An hourly systemd-tmpfiles pass removes
+# the contents of each matching folder that are older than
+# tmp_hygiene_short_age; tmpfiles' own age check (newest of access, change and
+# modification time) and its BSD-lock check keep anything recent or locked. The
+# emptied folders then age out with the /tmp rule above. Every entry is a glob
+# for a direct child of /tmp with a literal name prefix of at least three
+# characters. An empty list turns the pass off. See docs/tmp-hygiene.md.
+tmp_hygiene_short_age_paths:
+  - /tmp/scoped_dir*
+tmp_hygiene_short_age: 6h
+tmp_hygiene_short_age_interval: 1h
+tmp_hygiene_short_age_config_path: /etc/curiosity/tmp-short-age-tmpfiles.conf
 tmp_hygiene_tmpfiles_path: /etc/tmpfiles.d/00-curiosity-tmp.conf
 tmp_hygiene_pressure_script_path: /usr/local/sbin/curiosity-tmp-pressure
 tmp_hygiene_pressure_config_path: /etc/curiosity/tmp-pressure-tmpfiles.conf

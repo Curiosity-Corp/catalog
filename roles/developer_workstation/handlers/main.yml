@@ -180,6 +180,12 @@
     state: restarted
     daemon_reload: true
 
+- name: Restart curiosity tmp-short-age timer
+  ansible.builtin.systemd:
+    name: curiosity-tmp-short-age.timer
+    state: restarted
+    daemon_reload: true
+
 - name: Restart curiosity display-integrity timer
   ansible.builtin.systemd:
     name: curiosity-display-integrity.timer

@@ -775,3 +775,147 @@ def test_unparseable_inode_output_fails_loudly(stubs: Path) -> None:
     assert result.returncode == 1
     assert "cannot determine inode usage" in result.stderr
     assert _calls(stubs) == []
+
+
+# ---------------------------------------------------------------------------
+# Short-age pass for leaky application folders (tmp_hygiene_short_age_paths)
+# ---------------------------------------------------------------------------
+
+SHORT_AGE_PATH_RE = r"^/tmp/[A-Za-z0-9_.-]{3,}[^ /]*$"
+
+
+def test_short_age_defaults_target_chromium_scoped_dirs_hourly() -> None:
+    assert DEFAULTS["tmp_hygiene_short_age_paths"] == ["/tmp/scoped_dir*"]
+    assert DEFAULTS["tmp_hygiene_short_age"] == "6h"
+    assert DEFAULTS["tmp_hygiene_short_age_interval"] == "1h"
+    config = DEFAULTS["tmp_hygiene_short_age_config_path"]
+    # A glob line in tmpfiles.d would exempt the matching folders from the /tmp
+    # age rule, so their emptied shells would never be removed.
+    assert not config.startswith(("/etc/tmpfiles.d/", "/usr/lib/tmpfiles.d/", "/run/tmpfiles.d/"))
+    assert config.startswith("/etc/curiosity/")
+
+
+def test_short_age_paths_are_validated_with_a_literal_prefix() -> None:
+    tasks = yaml.safe_load(TASK_FILE.read_text())
+    block = next(t for t in tasks if t["name"] == "Apply /tmp hygiene policy")["block"]
+    check = next(t for t in block if "ansible.builtin.assert" in t)
+    text = "\n".join(check["ansible.builtin.assert"]["that"])
+    assert f"reject('match', '{SHORT_AGE_PATH_RE}')" in text
+    assert "tmp_hygiene_short_age is match('^[1-9][0-9]*(m|h|d|w)$')" in text
+    assert "tmp_hygiene_short_age_interval is match('^[1-9][0-9]*(min|m|h|d)$')" in text
+    # Ansible's `match` test anchors at the start like re.match.
+    for good in ("/tmp/scoped_dir*", "/tmp/.org.chromium.Chromium.*", "/tmp/my-tool-cache"):
+        assert re.match(SHORT_AGE_PATH_RE, good), good
+    for bad in ("/tmp/*", "/tmp/a*", "/tmp/*scoped", "/tmp/scoped_dir*/x", "/var/tmp/scoped_dir*",
+                "/tmp/scoped dir*", "/tmp"):
+        assert not re.match(SHORT_AGE_PATH_RE, bad), bad
+
+
+def test_short_age_config_only_ages_the_listed_folders() -> None:
+    rules = _rules(_render("curiosity-tmp-short-age.tmpfiles.conf.j2"))
+    assert rules == [["e", "/tmp/scoped_dir*", "-", "-", "-", "6h"]]
+    rules = _rules(
+        _render(
+            "curiosity-tmp-short-age.tmpfiles.conf.j2",
+            tmp_hygiene_short_age="2h",
+            tmp_hygiene_short_age_paths=["/tmp/scoped_dir*", "/tmp/.org.chromium.Chromium.*"],
+        )
+    )
+    assert rules == [
+        ["e", "/tmp/scoped_dir*", "-", "-", "-", "2h"],
+        ["e", "/tmp/.org.chromium.Chromium.*", "-", "-", "-", "2h"],
+    ]
+
+
+def test_short_age_service_runs_native_tmpfiles_on_its_own_config() -> None:
+    unit = _render("curiosity-tmp-short-age.service.j2")
+    assert "Type=oneshot" in unit
+    assert (
+        "ExecStart=/usr/bin/systemd-tmpfiles --clean /etc/curiosity/tmp-short-age-tmpfiles.conf"
+        in unit
+    )
+    assert "Nice=10" in unit
+    assert "IOSchedulingClass=idle" in unit
+    # It also runs on a disk-backed /tmp, where the leak fills the root filesystem.
+    assert "ConditionPathIsMountPoint" not in unit
+    for forbidden in ("PrivateTmp", "DynamicUser", "ProtectSystem", "RemainAfterExit", "--remove"):
+        assert forbidden not in unit
+
+
+def test_short_age_timer_is_hourly() -> None:
+    timer = _render("curiosity-tmp-short-age.timer.j2")
+    assert "OnUnitActiveSec=1h" in timer
+    assert "OnBootSec=10min" in timer
+    assert "WantedBy=timers.target" in timer
+    assert "Persistent" not in timer
+
+
+def test_short_age_pass_is_gated_and_retired_and_its_handler_exists() -> None:
+    tasks = yaml.safe_load(TASK_FILE.read_text())
+    by_name = {task["name"]: task for task in tasks}
+    apply = by_name["Apply the /tmp short-age pass"]
+    assert apply["when"] == [
+        "tmp_hygiene_enabled | bool",
+        "tmp_hygiene_short_age_paths | length > 0",
+    ]
+    timer = next(
+        t
+        for t in apply["block"]
+        if "ansible.builtin.template" in t
+        and t["ansible.builtin.template"]["dest"].endswith("curiosity-tmp-short-age.timer")
+    )
+    assert timer["notify"] == "Restart curiosity tmp-short-age timer"
+    retire = by_name["Retire the /tmp short-age pass when it is not wanted"]
+    assert "tmp_hygiene_short_age_paths | length > 0" in retire["when"]
+    removed = next(t for t in retire["block"] if "ansible.builtin.file" in t)
+    assert removed["ansible.builtin.file"]["state"] == "absent"
+    assert "{{ tmp_hygiene_short_age_config_path }}" in removed["loop"]
+    handlers = yaml.safe_load(HANDLERS.read_text())
+    assert any(h["name"] == "Restart curiosity tmp-short-age timer" for h in handlers)
+
+
+@pytest.mark.skipif(shutil.which("systemd-tmpfiles") is None, reason="systemd-tmpfiles is not installed")
+def test_short_age_pass_empties_only_old_unlocked_folders(tmp_path: Path) -> None:
+    """Real systemd-tmpfiles on a scratch tree: old contents go, young or locked ones stay."""
+    import fcntl
+    import time
+
+    root = tmp_path / "tmp"
+    root.mkdir()
+
+    def leak(name: str) -> Path:
+        folder = root / name
+        (folder / "CRX_INSTALL" / "assets").mkdir(parents=True)
+        (folder / "CRX_INSTALL" / "manifest.json").write_text("{}")
+        (folder / "CRX_INSTALL" / "assets" / "a.js").write_text("x")
+        (folder / ".com.google.Chrome.AbCdEf").write_text("y")
+        return folder
+
+    old = leak("scoped_dirOLD")
+    locked = leak("scoped_dirLOCKED")
+    other = root / "unrelated"
+    other.mkdir()
+    (other / "keep").write_text("z")
+    time.sleep(3)
+    young = leak("scoped_dirYOUNG")
+
+    config = tmp_path / "short-age.conf"
+    config.write_text(
+        _render(
+            "curiosity-tmp-short-age.tmpfiles.conf.j2",
+            tmp_hygiene_short_age="2s",
+            tmp_hygiene_short_age_paths=[f"{root}/scoped_dir*"],
+        )
+    )
+    # A process that holds a BSD lock on an entry keeps it from being aged.
+    lock_fd = os.open(locked / "CRX_INSTALL", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_SH)
+        subprocess.run(["systemd-tmpfiles", "--clean", str(config)], check=True)
+    finally:
+        os.close(lock_fd)
+
+    assert old.is_dir() and list(old.iterdir()) == []
+    assert (locked / "CRX_INSTALL" / "manifest.json").exists()
+    assert (young / "CRX_INSTALL" / "manifest.json").exists()
+    assert (other / "keep").exists()
