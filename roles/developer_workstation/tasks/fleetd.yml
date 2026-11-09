@@ -98,6 +98,9 @@
   ansible.builtin.get_url:
     url: "{{ _fleetd_url }}/SHA256SUMS"
     dest: "{{ _fleetd_cache }}/SHA256SUMS"
+    # Fetched every run (get_url reports a change only when it differs),
+    # so a damaged or replaced cached copy never wedges the host.
+    force: true
     checksum: "{{ ('sha256:' ~ fleetd_sha256sums_sha256) if fleetd_sha256sums_sha256 | length > 0 else omit }}"
     owner: root
     group: root
@@ -109,6 +112,9 @@
   ansible.builtin.get_url:
     url: "{{ _fleetd_url }}/SHA256SUMS.cose.sig"
     dest: "{{ _fleetd_cache }}/SHA256SUMS.cose.sig"
+    # Fetched every run (get_url reports a change only when it differs),
+    # so a damaged or replaced cached copy never wedges the host.
+    force: true
     owner: root
     group: root
     mode: "0600"
