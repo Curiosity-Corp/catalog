@@ -1,0 +1,77 @@
+---
+# =============================================================================
+# Notation verifier for the fleetd checksum list
+# =============================================================================
+# A pinned Notation release (checksum-verified download) and a trust store that
+# holds only the site's signing certificate. The trust policy accepts any
+# identity in that store, so nothing but that one certificate can sign the list.
+# Notation reads its configuration from $XDG_CONFIG_HOME/notation; the verify
+# task points XDG_CONFIG_HOME at fleetd_notation_config_dir.
+# =============================================================================
+
+- name: Create the Notation install directory
+  ansible.builtin.file:
+    path: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the pinned Notation release
+  ansible.builtin.get_url:
+    url: "{{ fleetd_notation_url }}"
+    dest: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}/notation.tar.gz"
+    checksum: "sha256:{{ fleetd_notation_sha256[_fleetd_arch] }}"
+    owner: root
+    group: root
+    mode: "0644"
+    timeout: 120
+
+- name: Unpack the Notation binary
+  ansible.builtin.unarchive:
+    src: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}/notation.tar.gz"
+    dest: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}"
+    remote_src: true
+    include: [notation]
+    owner: root
+    group: root
+    creates: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}/notation"
+
+- name: Create the Notation trust store
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ fleetd_notation_config_dir }}"
+    - "{{ fleetd_notation_config_dir }}/notation"
+    - "{{ fleetd_notation_config_dir }}/notation/truststore/x509/ca/{{ fleetd_notation_policy_name }}"
+
+- name: Install the fleetd signing certificate
+  ansible.builtin.copy:
+    dest: "{{ fleetd_notation_config_dir }}/notation/truststore/x509/ca/{{ fleetd_notation_policy_name }}/signing.crt"
+    content: "{{ fleetd_signing_certificate | trim }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the fleetd blob trust policy
+  ansible.builtin.copy:
+    dest: "{{ fleetd_notation_config_dir }}/notation/trustpolicy.blob.json"
+    content: "{{ _fleetd_trust_policy | to_nice_json(indent=2) }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    _fleetd_trust_policy:
+      version: "1.0"
+      trustPolicies:
+        - name: "{{ fleetd_notation_policy_name }}"
+          signatureVerification:
+            level: strict
+          trustStores:
+            - "ca:{{ fleetd_notation_policy_name }}"
+          trustedIdentities:
+            - "*"

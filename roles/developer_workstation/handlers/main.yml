@@ -250,3 +250,13 @@
 - name: Start the mouse debounce for the attached mice
   ansible.builtin.command: udevadm trigger --action=change --subsystem-match=input --property-match=ID_INPUT_MOUSE=1
   changed_when: true
+
+# An enroll secret or drop-in change on an installed agent takes effect by
+# restarting orbit. Skipped when this run installed the package: its postinst
+# already restarted orbit with the new secret in place.
+- name: Restart orbit
+  ansible.builtin.systemd:
+    name: orbit.service
+    state: restarted
+    daemon_reload: true
+  when: not (_fleetd_installed.changed | default(false))

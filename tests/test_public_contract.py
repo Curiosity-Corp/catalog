@@ -46,6 +46,7 @@ def test_defaults_are_safe_for_unrelated_machines() -> None:
     assert defaults["ziti_enabled"] is False
     assert defaults["sunshine_enabled"] is False
     assert defaults["profile_cleanup_enabled"] is False
+    assert defaults["fleetd_enabled"] is False
     assert defaults["ziti_etc_hosts_pins"] == []
     assert defaults["ziti_intercept_domains"] == []
     assert defaults["custom_ca_certificates"] == []

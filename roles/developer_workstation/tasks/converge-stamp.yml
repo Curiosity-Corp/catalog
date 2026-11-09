@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# Converge stamp
+# =============================================================================
+# Written by site.yml's post_tasks, so only a run that got through every role
+# (a failed task ends the play first) refreshes it. Monitoring reads the file's
+# modification time, for example a Fleet policy that fails when the catalog has
+# not converged recently. The content is for people; it is rewritten every run,
+# which is not a change to the host's configuration.
+# =============================================================================
+
+- name: Create the converge stamp directory
+  ansible.builtin.file:
+    path: "{{ workstation_converge_stamp_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the converge stamp
+  ansible.builtin.copy:
+    dest: "{{ workstation_converge_stamp_path }}"
+    content: "{{ _converge_stamp | to_nice_json(indent=2) }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    _converge_stamp:
+      converged_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+      workstation_profile: "{{ workstation_profile }}"
+      update_ring: "{{ workstation_update_ring }}"
+      registry_id: "{{ fleetd_registry_id }}"
+      playbook: "{{ ansible_play_name | default('') }}"
+  changed_when: false

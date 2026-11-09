@@ -509,6 +509,72 @@ one-line failed check naming where it looked (nothing is restarted). Set
 `ziti_health_check_enabled: false` to remove it. Activity:
 `journalctl -u curiosity-ziti-health --since today`.
 
+## Fleet agent (fleetd)
+
+`fleetd_enabled` (default `false`) installs a site-built fleetd package
+(Fleet's orbit, osquery and Fleet Desktop, made with `fleetctl package`) on a
+Debian-family amd64 or arm64 host and enrolls it with the site's Fleet server.
+The role names no server, package host or secret; set everything per host in
+protected inventory or `/etc/ansible/local-vars.yml`:
+
+```yaml
+---
+fleetd_enabled: true
+fleetd_registry_id: lab-ws-17          # the id in the site's device registry
+fleetd_device_class: workstation       # written to /etc/curiosity/device-class
+fleetd_package_class: workstation      # which recipe: fleetd-<class>-<orbit>-<arch>.deb
+fleetd_package_base_url: https://packages.lab.example.edu/fleetd
+fleetd_package_release: 1.62.1-osquery5.24.0-0123456789ab
+fleetd_package_netrc_file: /etc/lab/fleetd-package.netrc   # optional, root 0600
+fleetd_signing_certificate: |
+  -----BEGIN CERTIFICATE-----
+  ...the site's public package signing certificate...
+  -----END CERTIFICATE-----
+```
+
+The package host serves one directory per recipe version under
+`fleetd_package_base_url`, holding the packages, a `SHA256SUMS` list and its
+detached Notation (COSE) signature `SHA256SUMS.cose.sig`. Each run:
+
+1. Downloads `SHA256SUMS` and the signature (with the netrc file's credentials
+   when `fleetd_package_netrc_file` is set; the role checks the file is root
+   0600 or 0400 and never reads it), verifies the signature with a pinned
+   Notation release whose trust store holds only `fleetd_signing_certificate`,
+   and only then takes the package checksum from that list. A missing entry,
+   a bad signature or a checksum mismatch fails the run before anything is
+   installed. `fleetd_signature_verify: false` skips the signature (not
+   recommended); `fleetd_sha256sums_sha256` adds a pin on the list itself.
+2. Writes `/etc/curiosity/device-class` and `/etc/curiosity/registry-id`.
+3. Makes sure the enroll secret is in place before the package is installed,
+   because the package carries only Fleet's placeholder and its postinst starts
+   orbit at once. The secret lives in `fleetd_enroll_secret_env_file`
+   (`/etc/fleetd/enroll-secret.env`, root, 0600, one
+   `ORBIT_ENROLL_SECRET=<secret>` line), loaded by the drop-in
+   `/etc/systemd/system/orbit.service.d/10-enroll-secret.conf` after the
+   package's `/etc/default/orbit`. Deliver that file out of band (the
+   recommended way), or set `fleetd_enroll_secret` from a vault and the role
+   writes it with `no_log`. The role checks the file's owner, mode and shape
+   with `grep` and never reads the value into the play.
+4. Installs the package with `dpkg` when it is missing or the recipe changed
+   (the recipe and package checksum are kept in
+   `/var/lib/curiosity/fleetd/installed`, since the package version is only
+   orbit's), and keeps `orbit.service` enabled and running. A changed secret or
+   drop-in on an installed agent restarts orbit. The install touches only
+   orbit; no other service is restarted.
+
+orbit then keeps orbit, osquery and Fleet Desktop on the update channels the
+package was built with. Turning `fleetd_enabled` off stops managing the agent
+but does not uninstall it.
+
+### Converge stamp
+
+Where fleetd is enabled (`workstation_converge_stamp_enabled`, default
+`fleetd_enabled`), `site.yml` writes `/var/lib/curiosity/converged.json`
+(`workstation_converge_stamp_path`) as its last step. Only a run that got
+through every role reaches it, so the file's modification time is the last
+complete converge, and a Fleet policy can fail a host whose catalog stopped
+converging.
+
 ## User-scoped systemd masks
 
 `workstation_user_systemd_masked_units` is an opt-in list of bare user-unit

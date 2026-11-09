@@ -1,0 +1,330 @@
+---
+# =============================================================================
+# Fleet agent (fleetd: orbit, osquery and Fleet Desktop), opt-in
+# =============================================================================
+# Installs a site-built fleetd package from the operator's package host and
+# enrolls it with a secret that never enters this repository. Order matters:
+#
+#   1. Validate the host variables (nothing private has a default here).
+#   2. Download SHA256SUMS and its detached Notation signature, verify the
+#      signature against the site's signing certificate, then take the
+#      package checksum from that verified list.
+#   3. Download the package with that checksum (get_url refuses a mismatch).
+#   4. Write device-class and registry-id, the root-only enroll secret file and
+#      the orbit drop-in that loads it, and reload systemd. All of this happens
+#      BEFORE the install: the package's postinst restarts orbit at once, and
+#      the package itself only carries Fleet's placeholder secret.
+#   5. Install with dpkg when the package is missing or the recipe changed,
+#      record the recipe, and keep orbit enabled and running.
+#
+# Setting fleetd_enabled back to false stops converging the agent; it does not
+# uninstall it (removing an agent from a host is an operator decision).
+# Variables: defaults/main.yml, "Fleet agent" section.
+# =============================================================================
+
+- name: Validate the fleetd host variables
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - ansible_facts['architecture'] in fleetd_architecture_map
+      - fleetd_registry_id is match('^[a-z0-9][a-z0-9._-]{0,62}$')
+      - fleetd_device_class is match('^[a-z][a-z0-9-]{0,31}$')
+      - fleetd_package_class is match('^[a-z][a-z0-9-]{0,31}$')
+      - fleetd_package_base_url is match('^https://[^ ]+[^/ ]$')
+      - fleetd_package_release is match('^[0-9]+[.][0-9]+[.][0-9]+([-+.][A-Za-z0-9.+-]+)?$')
+      - fleetd_package_file is match('^[A-Za-z0-9._+-]+[.]deb$')
+      - fleetd_package_netrc_file | length == 0 or fleetd_package_netrc_file is match('^/')
+      - fleetd_enroll_secret_env_file is match('^/')
+      - fleetd_orbit_dropin_path is match('^/etc/systemd/system/orbit[.]service[.]d/[^/]+[.]conf$')
+      - not (fleetd_signature_verify | bool) or (fleetd_signing_certificate | regex_findall('-----BEGIN CERTIFICATE-----') | length == 1)
+      - not (fleetd_signature_verify | bool) or ('PRIVATE KEY' not in fleetd_signing_certificate)
+      - fleetd_sha256sums_sha256 | length == 0 or fleetd_sha256sums_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      fleetd_enabled needs, per host: fleetd_registry_id (the device registry id),
+      fleetd_package_base_url (https, no trailing slash), fleetd_package_release,
+      and with fleetd_signature_verify a single public PEM certificate in
+      fleetd_signing_certificate. Only Debian-family amd64 and arm64 hosts are
+      supported.
+    quiet: true
+
+- name: Resolve the fleetd download locations
+  ansible.builtin.set_fact:
+    _fleetd_arch: "{{ fleetd_architecture_map[ansible_facts['architecture']] }}"
+    _fleetd_cache: "{{ fleetd_cache_dir }}/{{ fleetd_package_release }}"
+    _fleetd_url: "{{ fleetd_package_base_url }}/{{ fleetd_package_release }}"
+    # get_url reads credentials from the netrc file named by NETRC and sends them
+    # as Basic auth. An unset path falls back to no credentials at all.
+    _fleetd_download_env: "{{ {'NETRC': fleetd_package_netrc_file} if fleetd_package_netrc_file | length > 0 else {} }}"
+
+- name: Check the fleetd download credentials file
+  ansible.builtin.stat:
+    path: "{{ fleetd_package_netrc_file }}"
+  register: _fleetd_netrc
+  when: fleetd_package_netrc_file | length > 0
+
+- name: Require a root-only fleetd download credentials file
+  ansible.builtin.assert:
+    that:
+      - _fleetd_netrc.stat.exists
+      - _fleetd_netrc.stat.pw_name == 'root'
+      - _fleetd_netrc.stat.mode in ['0400', '0600']
+    fail_msg: >-
+      {{ fleetd_package_netrc_file }} must exist, be owned by root and have mode
+      0600 or 0400. Provision it with the site's secret delivery before enabling
+      fleetd.
+    quiet: true
+  when: fleetd_package_netrc_file | length > 0
+
+- name: Create the fleetd state and cache directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ fleetd_cache_dir }}", mode: "0700" }
+    - { path: "{{ _fleetd_cache }}", mode: "0700" }
+    - { path: "{{ fleetd_state_dir }}", mode: "0755" }
+    - { path: "{{ fleetd_enroll_secret_env_file | dirname }}", mode: "0700" }
+    - { path: "{{ fleetd_orbit_dropin_path | dirname }}", mode: "0755" }
+  loop_control:
+    label: "{{ item.path }}"
+
+# -----------------------------------------------------------------------------
+# Signed checksum list
+# -----------------------------------------------------------------------------
+- name: Download the fleetd checksum list
+  ansible.builtin.get_url:
+    url: "{{ _fleetd_url }}/SHA256SUMS"
+    dest: "{{ _fleetd_cache }}/SHA256SUMS"
+    # Fetched every run (get_url reports a change only when it differs),
+    # so a damaged or replaced cached copy never wedges the host.
+    force: true
+    checksum: "{{ ('sha256:' ~ fleetd_sha256sums_sha256) if fleetd_sha256sums_sha256 | length > 0 else omit }}"
+    owner: root
+    group: root
+    mode: "0600"
+    timeout: 60
+  environment: "{{ _fleetd_download_env }}"
+
+- name: Download the fleetd checksum list signature
+  ansible.builtin.get_url:
+    url: "{{ _fleetd_url }}/SHA256SUMS.cose.sig"
+    dest: "{{ _fleetd_cache }}/SHA256SUMS.cose.sig"
+    # Fetched every run (get_url reports a change only when it differs),
+    # so a damaged or replaced cached copy never wedges the host.
+    force: true
+    owner: root
+    group: root
+    mode: "0600"
+    timeout: 60
+  environment: "{{ _fleetd_download_env }}"
+  when: fleetd_signature_verify | bool
+
+- name: Install the Notation verifier
+  ansible.builtin.include_tasks:
+    file: fleetd-notation.yml
+  when: fleetd_signature_verify | bool
+
+- name: Verify the fleetd checksum list signature
+  ansible.builtin.command:
+    argv:
+      - "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}/notation"
+      - blob
+      - verify
+      - --policy-name
+      - "{{ fleetd_notation_policy_name }}"
+      - --signature
+      - "{{ _fleetd_cache }}/SHA256SUMS.cose.sig"
+      - "{{ _fleetd_cache }}/SHA256SUMS"
+  environment:
+    XDG_CONFIG_HOME: "{{ fleetd_notation_config_dir }}"
+    XDG_CACHE_HOME: "{{ _fleetd_cache }}"
+  register: _fleetd_signature
+  changed_when: false
+  when: fleetd_signature_verify | bool
+
+- name: Read the verified fleetd checksum list
+  ansible.builtin.slurp:
+    src: "{{ _fleetd_cache }}/SHA256SUMS"
+  register: _fleetd_sums
+
+- name: Take the package checksum from the verified list
+  ansible.builtin.set_fact:
+    _fleetd_package_sha256: >-
+      {{ (_fleetd_sums.content | b64decode).splitlines()
+         | map('trim')
+         | select('match', '^[0-9a-f]{64} [ *]' ~ (fleetd_package_file | regex_escape) ~ '$')
+         | map('split') | map('first') | list | first | default('') }}
+
+- name: Require a package entry in the verified checksum list
+  ansible.builtin.assert:
+    that:
+      - _fleetd_package_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: "SHA256SUMS for fleetd {{ fleetd_package_release }} has no entry for {{ fleetd_package_file }}."
+    quiet: true
+
+- name: Download the fleetd package
+  ansible.builtin.get_url:
+    url: "{{ _fleetd_url }}/{{ fleetd_package_file }}"
+    dest: "{{ _fleetd_cache }}/{{ fleetd_package_file }}"
+    checksum: "sha256:{{ _fleetd_package_sha256 }}"
+    owner: root
+    group: root
+    mode: "0600"
+    timeout: 300
+  environment: "{{ _fleetd_download_env }}"
+
+# -----------------------------------------------------------------------------
+# Identity and enroll secret, before the install
+# -----------------------------------------------------------------------------
+- name: Write the device class and registry id
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.value }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { dest: "{{ fleetd_device_class_file }}", value: "{{ fleetd_device_class }}" }
+    - { dest: "{{ fleetd_registry_id_file }}", value: "{{ fleetd_registry_id }}" }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Write the fleetd enroll secret file
+  ansible.builtin.copy:
+    dest: "{{ fleetd_enroll_secret_env_file }}"
+    content: "ORBIT_ENROLL_SECRET={{ fleetd_enroll_secret }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart orbit
+  when: fleetd_enroll_secret | length > 0
+
+- name: Check the fleetd enroll secret file
+  ansible.builtin.stat:
+    path: "{{ fleetd_enroll_secret_env_file }}"
+  register: _fleetd_secret_file
+
+# The value is checked with grep inside the file, so it is never read into the
+# play, a register or the log. Exit 0: one real secret line. Anything else:
+# missing, empty or still Fleet's placeholder.
+- name: Check that the fleetd enroll secret file holds a real secret
+  ansible.builtin.command:
+    argv:
+      - /bin/sh
+      - -c
+      - >-
+        test "$(grep -c '^ORBIT_ENROLL_SECRET=' "$1")" -eq 1 &&
+        grep -Eq '^ORBIT_ENROLL_SECRET=[^[:space:]]+$' "$1" &&
+        ! grep -Eqx 'ORBIT_ENROLL_SECRET=dummy' "$1"
+      - fleetd-secret-check
+      - "{{ fleetd_enroll_secret_env_file }}"
+  register: _fleetd_secret_check
+  changed_when: false
+  failed_when: false
+  when: _fleetd_secret_file.stat.exists
+
+- name: Require a root-only fleetd enroll secret before installing
+  ansible.builtin.assert:
+    that:
+      - _fleetd_secret_file.stat.exists
+      - _fleetd_secret_file.stat.pw_name == 'root'
+      - _fleetd_secret_file.stat.mode == '0600'
+      - _fleetd_secret_check.rc | default(1) == 0
+    fail_msg: >-
+      {{ fleetd_enroll_secret_env_file }} must be owned by root, mode 0600, and
+      hold exactly one ORBIT_ENROLL_SECRET=<secret> line that is not Fleet's
+      placeholder. Provision it with the site's secret delivery, or set
+      fleetd_enroll_secret from a vault.
+    quiet: true
+
+- name: Load the enroll secret file into orbit
+  ansible.builtin.copy:
+    dest: "{{ fleetd_orbit_dropin_path }}"
+    content: |
+      # Managed by the Curiosity catalog (fleetd). The package's
+      # /etc/default/orbit carries Fleet's placeholder secret; this later
+      # EnvironmentFile overrides it with the root-only site secret.
+      [Service]
+      EnvironmentFile={{ fleetd_enroll_secret_env_file }}
+    owner: root
+    group: root
+    mode: "0644"
+  # No reload here: the package's postinst runs daemon-reload before it
+  # restarts orbit, and on an installed agent the handler reloads and restarts.
+  notify: Restart orbit
+
+# -----------------------------------------------------------------------------
+# Install
+# -----------------------------------------------------------------------------
+- name: Read the installed fleetd package state
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - --show
+      - --showformat=${db:Status-Status}
+      - "{{ fleetd_package_name }}"
+  register: _fleetd_dpkg
+  changed_when: false
+  failed_when: false
+
+- name: Read the installed fleetd recipe stamp
+  ansible.builtin.slurp:
+    src: "{{ fleetd_state_dir }}/installed"
+  register: _fleetd_stamp
+  failed_when: false
+
+# The package version is only orbit's version, so a new recipe of the same
+# orbit release (new osquery pin, new flags) would look current to apt. The
+# stamp records the recipe and the exact package checksum.
+- name: Decide whether fleetd needs installing
+  ansible.builtin.set_fact:
+    _fleetd_recipe: "{{ fleetd_package_release }} {{ fleetd_package_file }} sha256:{{ _fleetd_package_sha256 }}"
+    _fleetd_needs_install: >-
+      {{ (_fleetd_dpkg.stdout | default('') | trim) != 'installed'
+         or ((_fleetd_stamp.content | default('') | b64decode | trim)
+             != (fleetd_package_release ~ ' ' ~ fleetd_package_file ~ ' sha256:' ~ _fleetd_package_sha256)) }}
+
+- name: Install the fleetd package
+  ansible.builtin.command:
+    argv:
+      - dpkg
+      - --install
+      - "{{ _fleetd_cache }}/{{ fleetd_package_file }}"
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  register: _fleetd_installed
+  changed_when: true
+  when: _fleetd_needs_install | bool
+
+- name: Record the installed fleetd recipe
+  ansible.builtin.copy:
+    dest: "{{ fleetd_state_dir }}/installed"
+    content: "{{ _fleetd_recipe }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Keep orbit enabled and running
+  ansible.builtin.systemd:
+    name: orbit.service
+    enabled: true
+    state: started
+
+- name: Remove fleetd download caches of other versions
+  ansible.builtin.find:
+    paths: "{{ fleetd_cache_dir }}"
+    file_type: directory
+    excludes: ["{{ fleetd_package_release }}"]
+  register: _fleetd_old_caches
+
+- name: Remove stale fleetd download caches
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _fleetd_old_caches.files }}"
+  loop_control:
+    label: "{{ item.path }}"
