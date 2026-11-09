@@ -2180,3 +2180,64 @@ wifi_netplan_match: "wl*"
 # Stable NetworkManager connection UUID; keep it so existing profiles are
 # replaced in place instead of duplicated.
 wifi_nm_uuid: ""
+
+# =============================================================================
+# Fleet agent (fleetd), opt-in
+# =============================================================================
+# Installs a site-built fleetd package (Fleet's orbit, osquery and Fleet
+# Desktop, built with `fleetctl package`) and enrolls it. Off by default; a site
+# enables it per host in its private inventory. See docs/configuration.md.
+fleetd_enabled: false
+# The device registry id this host is recorded under, written to
+# fleetd_registry_id_file. Required.
+fleetd_registry_id: ""
+# The device class osquery discovery queries key on (workstation, server, vm).
+fleetd_device_class: workstation
+# Which package recipe to install. The package host publishes
+# fleetd-<class>-<orbit version>-<arch>.deb per class.
+fleetd_package_class: workstation
+# Directory URL holding one directory per recipe version, each with the
+# packages, SHA256SUMS and SHA256SUMS.cose.sig. https only, no trailing slash.
+fleetd_package_base_url: ""
+# Recipe version as published by the package host, for example
+# 1.62.1-osquery5.24.0-0123456789ab. The text before the first "-" is the
+# orbit version, which the package file name carries.
+fleetd_package_version: ""
+fleetd_package_file: "fleetd-{{ fleetd_package_class }}-{{ fleetd_package_version.split('-') | first }}-{{ fleetd_architecture_map[ansible_facts['architecture']] | default('amd64') }}.deb"
+fleetd_package_name: fleet-osquery
+# Optional root-only (0600 or 0400) netrc file with read credentials for the
+# package host. The role checks its owner and mode and never reads it.
+fleetd_package_netrc_file: ""
+# The enroll secret. Prefer delivering the file below out of band (root, 0600,
+# one ORBIT_ENROLL_SECRET=<secret> line); set this only from a vault. Written
+# with no_log.
+fleetd_enroll_secret: ""
+fleetd_enroll_secret_env_file: /etc/fleetd/enroll-secret.env
+fleetd_orbit_dropin_path: /etc/systemd/system/orbit.service.d/10-enroll-secret.conf
+fleetd_device_class_file: /etc/curiosity/device-class
+fleetd_registry_id_file: /etc/curiosity/registry-id
+fleetd_state_dir: /var/lib/curiosity/fleetd
+fleetd_cache_dir: /var/cache/curiosity/fleetd
+# Verify SHA256SUMS against its detached Notation (COSE) signature before any
+# package checksum is trusted. fleetd_signing_certificate is the site's public
+# signing certificate (one PEM block, no key). Required while verifying.
+fleetd_signature_verify: true
+fleetd_signing_certificate: ""
+# Optional extra pin on SHA256SUMS itself (64 hex characters).
+fleetd_sha256sums_sha256: ""
+fleetd_notation_policy_name: fleetd
+fleetd_notation_dir: /usr/local/lib/curiosity/notation
+fleetd_notation_config_dir: /etc/curiosity/fleetd-notation
+# Notation v2.0.0-alpha.1 is the first release with `notation blob verify`.
+fleetd_notation_version: 2.0.0-alpha.1
+fleetd_notation_url: "https://github.com/notaryproject/notation/releases/download/v{{ fleetd_notation_version }}/notation_{{ fleetd_notation_version }}_linux_{{ _fleetd_arch }}.tar.gz"
+fleetd_notation_sha256:
+  amd64: 797b14dcb5d09a8cb05e8e9d6848b2e9c722dc8af01f8f0f6ddf50337caafe24
+  arm64: 648562e9344fe358feed610d6e9a5528bdf8465f3eb418921dd7db6f8467cd65
+fleetd_architecture_map:
+  x86_64: amd64
+  aarch64: arm64
+# A JSON stamp written at the end of every complete site.yml run (its
+# modification time is the last converge). On by default where fleetd is.
+workstation_converge_stamp_enabled: "{{ fleetd_enabled }}"
+workstation_converge_stamp_path: /var/lib/curiosity/converged.json

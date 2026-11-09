@@ -10,3 +10,10 @@
   roles:
     - developer_workstation
     - workstation_storage
+  post_tasks:
+    # Only a run that converged every role reaches this point.
+    - name: Stamp a completed converge
+      ansible.builtin.include_role:
+        name: developer_workstation
+        tasks_from: converge-stamp.yml
+      when: workstation_converge_stamp_enabled | default(fleetd_enabled | default(false)) | bool

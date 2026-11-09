@@ -801,6 +801,14 @@
   tags: [fonts]
   when: workstation_profile == 'desktop'
 
+- name: Include the Fleet agent (fleetd)
+  ansible.builtin.include_tasks:
+    file: fleetd.yml
+    apply:
+      tags: [fleetd]
+  tags: [fleetd]
+  when: fleetd_enabled | bool
+
 - name: Include ansible-pull timer
   ansible.builtin.include_tasks:
     file: ansible-pull-timer.yml
