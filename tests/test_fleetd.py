@@ -59,7 +59,7 @@ def test_fleetd_is_off_by_default_and_carries_no_site_values() -> None:
     for key in (
         "fleetd_registry_id",
         "fleetd_package_base_url",
-        "fleetd_package_version",
+        "fleetd_package_release",
         "fleetd_package_netrc_file",
         "fleetd_enroll_secret",
         "fleetd_signing_certificate",
@@ -160,7 +160,7 @@ def test_package_file_name_follows_the_published_layout(package_class: str, arch
     rendered = _render(
         DEFAULTS["fleetd_package_file"],
         fleetd_package_class=package_class,
-        fleetd_package_version=VERSION,
+        fleetd_package_release=VERSION,
         fleetd_architecture_map=DEFAULTS["fleetd_architecture_map"],
         ansible_facts={"architecture": arch},
     )
@@ -228,7 +228,7 @@ def test_install_decision_follows_the_recipe_stamp(installed: str, stamp: str, n
         expression,
         _fleetd_dpkg={"stdout": installed},
         _fleetd_stamp=stamp_result,
-        fleetd_package_version=VERSION,
+        fleetd_package_release=VERSION,
         fleetd_package_file="fleetd-workstation-1.62.1-amd64.deb",
         _fleetd_package_sha256="a" * 64,
     )

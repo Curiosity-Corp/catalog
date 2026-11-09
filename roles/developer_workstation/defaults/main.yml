@@ -2202,8 +2202,8 @@ fleetd_package_base_url: ""
 # Recipe version as published by the package host, for example
 # 1.62.1-osquery5.24.0-0123456789ab. The text before the first "-" is the
 # orbit version, which the package file name carries.
-fleetd_package_version: ""
-fleetd_package_file: "fleetd-{{ fleetd_package_class }}-{{ fleetd_package_version.split('-') | first }}-{{ fleetd_architecture_map[ansible_facts['architecture']] | default('amd64') }}.deb"
+fleetd_package_release: ""
+fleetd_package_file: "fleetd-{{ fleetd_package_class }}-{{ fleetd_package_release.split('-') | first }}-{{ fleetd_architecture_map[ansible_facts['architecture']] | default('amd64') }}.deb"
 fleetd_package_name: fleet-osquery
 # Optional root-only (0600 or 0400) netrc file with read credentials for the
 # package host. The role checks its owner and mode and never reads it.
@@ -2229,8 +2229,10 @@ fleetd_notation_policy_name: fleetd
 fleetd_notation_dir: /usr/local/lib/curiosity/notation
 fleetd_notation_config_dir: /etc/curiosity/fleetd-notation
 # Notation v2.0.0-alpha.1 is the first release with `notation blob verify`.
-fleetd_notation_version: 2.0.0-alpha.1
-fleetd_notation_url: "https://github.com/notaryproject/notation/releases/download/v{{ fleetd_notation_version }}/notation_{{ fleetd_notation_version }}_linux_{{ _fleetd_arch }}.tar.gz"
+# Named *_release because the update policy reserves *_version; bump the
+# release and both checksums together.
+fleetd_notation_release: 2.0.0-alpha.1
+fleetd_notation_url: "https://github.com/notaryproject/notation/releases/download/v{{ fleetd_notation_release }}/notation_{{ fleetd_notation_release }}_linux_{{ _fleetd_arch }}.tar.gz"
 fleetd_notation_sha256:
   amd64: 797b14dcb5d09a8cb05e8e9d6848b2e9c722dc8af01f8f0f6ddf50337caafe24
   arm64: 648562e9344fe358feed610d6e9a5528bdf8465f3eb418921dd7db6f8467cd65

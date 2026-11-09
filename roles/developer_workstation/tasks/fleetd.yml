@@ -31,7 +31,7 @@
       - fleetd_device_class is match('^[a-z][a-z0-9-]{0,31}$')
       - fleetd_package_class is match('^[a-z][a-z0-9-]{0,31}$')
       - fleetd_package_base_url is match('^https://[^ ]+[^/ ]$')
-      - fleetd_package_version is match('^[0-9]+[.][0-9]+[.][0-9]+([-+.][A-Za-z0-9.+-]+)?$')
+      - fleetd_package_release is match('^[0-9]+[.][0-9]+[.][0-9]+([-+.][A-Za-z0-9.+-]+)?$')
       - fleetd_package_file is match('^[A-Za-z0-9._+-]+[.]deb$')
       - fleetd_package_netrc_file | length == 0 or fleetd_package_netrc_file is match('^/')
       - fleetd_enroll_secret_env_file is match('^/')
@@ -41,7 +41,7 @@
       - fleetd_sha256sums_sha256 | length == 0 or fleetd_sha256sums_sha256 is match('^[0-9a-f]{64}$')
     fail_msg: >-
       fleetd_enabled needs, per host: fleetd_registry_id (the device registry id),
-      fleetd_package_base_url (https, no trailing slash), fleetd_package_version,
+      fleetd_package_base_url (https, no trailing slash), fleetd_package_release,
       and with fleetd_signature_verify a single public PEM certificate in
       fleetd_signing_certificate. Only Debian-family amd64 and arm64 hosts are
       supported.
@@ -50,8 +50,8 @@
 - name: Resolve the fleetd download locations
   ansible.builtin.set_fact:
     _fleetd_arch: "{{ fleetd_architecture_map[ansible_facts['architecture']] }}"
-    _fleetd_cache: "{{ fleetd_cache_dir }}/{{ fleetd_package_version }}"
-    _fleetd_url: "{{ fleetd_package_base_url }}/{{ fleetd_package_version }}"
+    _fleetd_cache: "{{ fleetd_cache_dir }}/{{ fleetd_package_release }}"
+    _fleetd_url: "{{ fleetd_package_base_url }}/{{ fleetd_package_release }}"
     # get_url reads credentials from the netrc file named by NETRC and sends them
     # as Basic auth. An unset path falls back to no credentials at all.
     _fleetd_download_env: "{{ {'NETRC': fleetd_package_netrc_file} if fleetd_package_netrc_file | length > 0 else {} }}"
@@ -130,7 +130,7 @@
 - name: Verify the fleetd checksum list signature
   ansible.builtin.command:
     argv:
-      - "{{ fleetd_notation_dir }}/{{ fleetd_notation_version }}/notation"
+      - "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}/notation"
       - blob
       - verify
       - --policy-name
@@ -162,7 +162,7 @@
   ansible.builtin.assert:
     that:
       - _fleetd_package_sha256 is match('^[0-9a-f]{64}$')
-    fail_msg: "SHA256SUMS for fleetd {{ fleetd_package_version }} has no entry for {{ fleetd_package_file }}."
+    fail_msg: "SHA256SUMS for fleetd {{ fleetd_package_release }} has no entry for {{ fleetd_package_file }}."
     quiet: true
 
 - name: Download the fleetd package
@@ -282,11 +282,11 @@
 # stamp records the recipe and the exact package checksum.
 - name: Decide whether fleetd needs installing
   ansible.builtin.set_fact:
-    _fleetd_recipe: "{{ fleetd_package_version }} {{ fleetd_package_file }} sha256:{{ _fleetd_package_sha256 }}"
+    _fleetd_recipe: "{{ fleetd_package_release }} {{ fleetd_package_file }} sha256:{{ _fleetd_package_sha256 }}"
     _fleetd_needs_install: >-
       {{ (_fleetd_dpkg.stdout | default('') | trim) != 'installed'
          or ((_fleetd_stamp.content | default('') | b64decode | trim)
-             != (fleetd_package_version ~ ' ' ~ fleetd_package_file ~ ' sha256:' ~ _fleetd_package_sha256)) }}
+             != (fleetd_package_release ~ ' ' ~ fleetd_package_file ~ ' sha256:' ~ _fleetd_package_sha256)) }}
 
 - name: Install the fleetd package
   ansible.builtin.command:
@@ -318,7 +318,7 @@
   ansible.builtin.find:
     paths: "{{ fleetd_cache_dir }}"
     file_type: directory
-    excludes: ["{{ fleetd_package_version }}"]
+    excludes: ["{{ fleetd_package_release }}"]
   register: _fleetd_old_caches
 
 - name: Remove stale fleetd download caches

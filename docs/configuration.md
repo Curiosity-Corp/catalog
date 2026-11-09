@@ -524,7 +524,7 @@ fleetd_registry_id: lab-ws-17          # the id in the site's device registry
 fleetd_device_class: workstation       # written to /etc/curiosity/device-class
 fleetd_package_class: workstation      # which recipe: fleetd-<class>-<orbit>-<arch>.deb
 fleetd_package_base_url: https://packages.lab.example.edu/fleetd
-fleetd_package_version: 1.62.1-osquery5.24.0-0123456789ab
+fleetd_package_release: 1.62.1-osquery5.24.0-0123456789ab
 fleetd_package_netrc_file: /etc/lab/fleetd-package.netrc   # optional, root 0600
 fleetd_signing_certificate: |
   -----BEGIN CERTIFICATE-----

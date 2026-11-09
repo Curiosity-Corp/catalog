@@ -11,7 +11,7 @@
 
 - name: Create the Notation install directory
   ansible.builtin.file:
-    path: "{{ fleetd_notation_dir }}/{{ fleetd_notation_version }}"
+    path: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}"
     state: directory
     owner: root
     group: root
@@ -20,7 +20,7 @@
 - name: Download the pinned Notation release
   ansible.builtin.get_url:
     url: "{{ fleetd_notation_url }}"
-    dest: "{{ fleetd_notation_dir }}/{{ fleetd_notation_version }}/notation.tar.gz"
+    dest: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}/notation.tar.gz"
     checksum: "sha256:{{ fleetd_notation_sha256[_fleetd_arch] }}"
     owner: root
     group: root
@@ -29,13 +29,13 @@
 
 - name: Unpack the Notation binary
   ansible.builtin.unarchive:
-    src: "{{ fleetd_notation_dir }}/{{ fleetd_notation_version }}/notation.tar.gz"
-    dest: "{{ fleetd_notation_dir }}/{{ fleetd_notation_version }}"
+    src: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}/notation.tar.gz"
+    dest: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}"
     remote_src: true
     include: [notation]
     owner: root
     group: root
-    creates: "{{ fleetd_notation_dir }}/{{ fleetd_notation_version }}/notation"
+    creates: "{{ fleetd_notation_dir }}/{{ fleetd_notation_release }}/notation"
 
 - name: Create the Notation trust store
   ansible.builtin.file:
