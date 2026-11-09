@@ -12,11 +12,15 @@
 #     shorter-age pass that is scoped to /tmp and keeps every package-declared
 #     exclusion;
 #   * a tmp.mount drop-in raises the tmpfs inode cap (nr_inodes), sized from
-#     RAM by default, and the running /tmp is remounted with it.
+#     RAM by default, and the running /tmp is remounted with it;
+#   * curiosity-tmp-short-age.{service,timer} age out, hourly, the contents of
+#     known leaky application folders (tmp_hygiene_short_age_paths, by default
+#     Chromium's /tmp/scoped_dir*) after a short age.
 #
-# It never deletes by name pattern and never touches systemd-private-*
-# directories of running services. When tmp_hygiene_enabled is false (or the
-# pressure sub-feature is off) the files it previously managed are removed.
+# Apart from that short-age list, it never deletes by name pattern, and it
+# never touches systemd-private-* directories of running services. When
+# tmp_hygiene_enabled is false (or a sub-feature is off) the files it
+# previously managed are removed.
 # =============================================================================
 
 - name: Apply /tmp hygiene policy
@@ -48,6 +52,18 @@
           - >-
             (tmp_hygiene_exclusions + tmp_hygiene_extra_exclusions)
             | select('search', '[.][.]') | list | length == 0
+          - tmp_hygiene_short_age_paths is sequence
+          - tmp_hygiene_short_age_paths is not string
+          - >-
+            tmp_hygiene_short_age_paths
+            | reject('match', '^/tmp/[A-Za-z0-9_.-]{3,}[^ /]*$') | list | length == 0
+          - >-
+            tmp_hygiene_short_age_paths
+            | select('search', '[.][.]') | list | length == 0
+          - tmp_hygiene_short_age is string
+          - tmp_hygiene_short_age is match('^[1-9][0-9]*(m|h|d|w)$')
+          - tmp_hygiene_short_age_interval is string
+          - tmp_hygiene_short_age_interval is match('^[1-9][0-9]*(min|m|h|d)$')
         fail_msg: >-
           tmp_hygiene_max_age and tmp_hygiene_pressure_age must be a systemd
           time span such as 3d (units m, h, d, w; the age may be empty only for
@@ -56,7 +72,11 @@
           tmp_hygiene_nr_inodes must be auto, empty or a count such as 4m,
           tmp_hygiene_pressure_interval must look like 1h, and every exclusion
           must be a tmpfiles.d 'x' or 'X' line for a path under /tmp (no spaces,
-          no '..').
+          no '..'). Every tmp_hygiene_short_age_paths entry must be a direct
+          child of /tmp whose name starts with at least three literal
+          characters (for example /tmp/scoped_dir*), tmp_hygiene_short_age must
+          be a time span such as 6h and tmp_hygiene_short_age_interval must look
+          like 1h.
 
     - name: Install /tmp age-based cleanup drop-in
       # Read by the vendor systemd-tmpfiles-clean.timer; no custom cleaner.
@@ -261,4 +281,84 @@
         - /etc/systemd/system/curiosity-tmp-pressure.service
         - "{{ tmp_hygiene_pressure_script_path }}"
         - "{{ tmp_hygiene_pressure_config_path }}"
+      notify: Reload systemd
+
+# ---- Short-age pass for leaky application folders ----
+# Chromium-based browsers leave /tmp/scoped_dir*/ extension unpack folders
+# behind (see defaults). The daily 3d age is far too slow for folders of up to
+# 120 MB created many times an hour, and a per-user /tmp quota (systemd gives
+# each user 80% of the tmpfs) is reached before the pressure threshold. This
+# pass ages only the listed folders' contents, hourly, with native tmpfiles.
+
+- name: Apply the /tmp short-age pass
+  when:
+    - tmp_hygiene_enabled | bool
+    - tmp_hygiene_short_age_paths | length > 0
+  block:
+    - name: Ensure the Curiosity configuration directory exists for the short-age pass
+      ansible.builtin.file:
+        path: /etc/curiosity
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Deliberately outside /etc/tmpfiles.d (see the template header).
+    - name: Write the /tmp short-age pass configuration
+      ansible.builtin.template:
+        src: curiosity-tmp-short-age.tmpfiles.conf.j2
+        dest: "{{ tmp_hygiene_short_age_config_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install the /tmp short-age systemd service
+      ansible.builtin.template:
+        src: curiosity-tmp-short-age.service.j2
+        dest: /etc/systemd/system/curiosity-tmp-short-age.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Install the /tmp short-age systemd timer
+      ansible.builtin.template:
+        src: curiosity-tmp-short-age.timer.j2
+        dest: /etc/systemd/system/curiosity-tmp-short-age.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart curiosity tmp-short-age timer
+
+    - name: Enable the /tmp short-age timer
+      ansible.builtin.systemd:
+        name: curiosity-tmp-short-age.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Retire the /tmp short-age pass when it is not wanted
+  when: not ((tmp_hygiene_enabled | bool) and (tmp_hygiene_short_age_paths | length > 0))
+  block:
+    - name: Check for a previously managed /tmp short-age timer
+      ansible.builtin.stat:
+        path: /etc/systemd/system/curiosity-tmp-short-age.timer
+      register: _tmp_hygiene_short_age_timer
+
+    - name: Stop and disable the /tmp short-age timer
+      ansible.builtin.systemd:
+        name: curiosity-tmp-short-age.timer
+        enabled: false
+        state: stopped
+        daemon_reload: true
+      when: _tmp_hygiene_short_age_timer.stat.exists
+
+    - name: Remove managed /tmp short-age files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/curiosity-tmp-short-age.timer
+        - /etc/systemd/system/curiosity-tmp-short-age.service
+        - "{{ tmp_hygiene_short_age_config_path }}"
       notify: Reload systemd

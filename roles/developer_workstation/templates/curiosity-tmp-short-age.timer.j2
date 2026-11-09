@@ -1,0 +1,11 @@
+# Managed by curiosity.workstation (tmp_hygiene_short_age_paths)
+[Unit]
+Description=Hourly short-age cleanup of leaky /tmp application folders
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec={{ tmp_hygiene_short_age_interval }}
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

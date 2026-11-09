@@ -1,0 +1,13 @@
+# Managed by curiosity.workstation (tmp_hygiene_short_age_paths). Do not edit.
+#
+# Short-age pass for known leaky application temp folders under /tmp, run by
+# curiosity-tmp-short-age.service. It is deliberately NOT in /etc/tmpfiles.d:
+# a glob line there would exempt the matching folders from the /tmp age rule,
+# so their emptied shells would never be removed. Here each matching folder's
+# contents are removed once all their timestamps are older than the age (and
+# no BSD lock is held on them); the empty folder then ages out with /tmp.
+#
+# Type Path Mode User Group Age
+{% for path in tmp_hygiene_short_age_paths %}
+e {{ path }} - - - {{ tmp_hygiene_short_age }}
+{% endfor %}
