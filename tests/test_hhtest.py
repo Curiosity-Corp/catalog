@@ -11,8 +11,6 @@ import subprocess
 import time
 from pathlib import Path
 
-import jinja2
-import pytest
 import yaml
 
 
@@ -80,6 +78,8 @@ def test_only_own_objects_are_written() -> None:
 def test_slice_caps_match_the_issue() -> None:
     assert DEFAULTS["hhtest_memory_max"] == "16G"
     assert DEFAULTS["hhtest_memory_high"] == "14G"
+    assert DEFAULTS["hhtest_cpu_quota"] == "1200%"
+    assert DEFAULTS["hhtest_cpu_weight"] == 20
     assert DEFAULTS["hhtest_tasks_max"] == 4096
     template = (ROLE / "templates/hhtest-slice.conf.j2").read_text()
     for line in ("MemoryMax=", "MemoryHigh=", "CPUQuota=", "CPUWeight=", "TasksMax="):
@@ -246,85 +246,8 @@ def test_every_find_pass_prunes_foreign_directories() -> None:
     assert "-delete" not in code
 
 
-# ---- CPU confinement (hypervoid/hyperharness#885) ---------------------------------
-
-
-def _render_slice(vcpus: int | None, **overrides: object) -> str:
-    """Render the real defaults expressions and the real drop-in template."""
-    env = jinja2.Environment(undefined=jinja2.StrictUndefined, trim_blocks=True)
-    context: dict = {
-        "ansible_facts": {} if vcpus is None else {"processor_vcpus": vcpus},
-        "hhtest_uid": DEFAULTS["hhtest_uid"],
-    }
-    for key in (
-        "hhtest_memory_max",
-        "hhtest_memory_high",
-        "hhtest_tasks_max",
-        "hhtest_cpu_count",
-        "hhtest_cpu_weight",
-    ):
-        context[key] = DEFAULTS[key]
-    context.update(overrides)
-    for key in ("hhtest_vcpus", "hhtest_allowed_cpus", "hhtest_cpu_quota"):
-        if key not in context:
-            context[key] = env.from_string(str(DEFAULTS[key])).render(context)
-    return env.from_string((ROLE / "templates/hhtest-slice.conf.j2").read_text()).render(
-        context
-    )
-
-
-def _directives(rendered: str) -> dict[str, str]:
-    return dict(
-        line.split("=", 1)
-        for line in rendered.splitlines()
-        if "=" in line and not line.startswith("#")
-    )
-
-
-def test_cpu_defaults_are_a_small_low_weight_range() -> None:
-    assert DEFAULTS["hhtest_cpu_count"] == 8
-    assert DEFAULTS["hhtest_cpu_weight"] == 10
-
-
-def test_28_vcpu_host_gets_the_last_eight_cores_and_a_matching_quota() -> None:
-    directives = _directives(_render_slice(28))
-    assert directives["AllowedCPUs"] == "20-27"
-    assert directives["CPUWeight"] == "10"
-    assert directives["CPUQuota"] == "800%"
-    # The pre-existing memory and task caps are kept.
-    assert directives["MemoryMax"] == "16G"
-    assert directives["MemoryHigh"] == "14G"
-    assert directives["TasksMax"] == "4096"
-
-
-@pytest.mark.parametrize("vcpus", [None, 0, 4, 8, 12])
-def test_small_or_unknown_host_gets_no_cpuset(vcpus: int | None) -> None:
-    rendered = _render_slice(vcpus)
-    assert "AllowedCPUs" not in rendered
-    assert _directives(rendered)["CPUWeight"] == "10"
-
-
-def test_cpuset_starts_just_above_the_small_host_threshold() -> None:
-    assert "AllowedCPUs" not in _render_slice(12)
-    assert _directives(_render_slice(13))["AllowedCPUs"] == "5-12"
-
-
-def test_explicit_cpu_overrides_win() -> None:
-    directives = _directives(
-        _render_slice(
-            28,
-            hhtest_allowed_cpus="26-27",
-            hhtest_cpu_weight=1,
-            hhtest_cpu_quota="200%",
-        )
-    )
-    assert directives["AllowedCPUs"] == "26-27"
-    assert directives["CPUWeight"] == "1"
-    assert directives["CPUQuota"] == "200%"
-
-
-def test_cpu_inputs_are_validated() -> None:
+def test_cpu_weight_is_low_and_validated() -> None:
+    assert DEFAULTS["hhtest_cpu_weight"] == 20
+    assert "AllowedCPUs" not in (ROLE / "templates/hhtest-slice.conf.j2").read_text()
     validate = _named(TASKS, "Validate hhtest inputs")["ansible.builtin.assert"]
-    conditions = "\n".join(str(c) for c in validate["that"])
-    for needle in ("hhtest_cpu_count", "hhtest_cpu_weight", "hhtest_allowed_cpus"):
-        assert needle in conditions
+    assert "hhtest_cpu_weight" in "\n".join(str(c) for c in validate["that"])

@@ -36,38 +36,22 @@ shared with any other account, linger setting, user slice or unit.
 | --- | --- |
 | `hhtest_uid` | `1500` |
 | `hhtest_memory_max` / `hhtest_memory_high` | `16G` / `14G` |
-| `hhtest_cpu_count` | `8` (cores reserved for the test bed) |
-| `hhtest_cpu_weight` | `10` (`CPUWeight`; systemd's default is 100) |
-| `hhtest_allowed_cpus` | the last `hhtest_cpu_count` cores (`20-27` on a 28-vcpu host); unset on hosts with `hhtest_cpu_count + 4` vcpus or fewer |
-| `hhtest_cpu_quota` | `hhtest_cpu_count * 100%` (`800%`) |
+| `hhtest_cpu_quota` | `1200%` |
+| `hhtest_cpu_weight` | `20` (`CPUWeight`; systemd's default is 100) |
 | `hhtest_tasks_max` | `4096` |
 | `hhtest_cleanup_age_days` | `3` |
 | `hhtest_tmux_release` / `hhtest_tmux_sha256` | `3.7b` / pinned |
 
-### CPU confinement
+### CPU priority
 
-The test bed is confined to a dedicated tail range of cores with a tiny CPU
-weight, so a runaway test (for example 150 busy loops pinned to one core) can
-neither starve nor, through host-wide CPU pressure (PSI), veto the
-hyperharness sessions that share the machine (hypervoid/hyperharness#885).
-The drop-in `user-<uid>.slice.d/50-hhtest-caps.conf` for a 28-vcpu host:
-
-```ini
-[Slice]
-MemoryAccounting=yes
-CPUAccounting=yes
-TasksAccounting=yes
-MemoryMax=16G
-MemoryHigh=14G
-CPUQuota=800%
-CPUWeight=10
-AllowedCPUs=20-27
-TasksMax=4096
-```
-
-`AllowedCPUs` is derived from `ansible_facts.processor_vcpus` and omitted on a
-small host, so such a host is not left with a handful of cores for its sessions.
-Override it with `hhtest_allowed_cpus` (for example `6-7`).
+`CPUWeight=20` in the `user-<uid>.slice.d/50-hhtest-caps.conf` drop-in keeps the
+test bed at low priority: when cores are contended, a runaway test (for example
+150 busy loops) gets a fifth of a normal session's share and cannot starve or
+slow the hyperharness sessions that share the machine
+(hypervoid/hyperharness#885, #888). There is no core pinning (`AllowedCPUs`):
+the kernel already schedules across P- and E-cores. The weight applies at the
+next converge (ansible-pull); check with
+`systemctl show user-1500.slice -p CPUWeight`.
 
 Run only this group with `--tags hhtest`.
 
@@ -81,6 +65,6 @@ Over the machine's private overlay only, using a listed key:
 ```bash
 id hhtest                      # only the private group
 sudo -l -U hhtest              # not allowed to run sudo
-systemctl show user-1500.slice -p MemoryMax,MemoryHigh,CPUQuotaPerSecUSec,CPUWeight,AllowedCPUs,TasksMax
+systemctl show user-1500.slice -p MemoryMax,MemoryHigh,CPUQuotaPerSecUSec,CPUWeight,TasksMax
 ssh hhtest@<host> 'tmux -L <any-name> ls'   # no sessions of other users
 ```

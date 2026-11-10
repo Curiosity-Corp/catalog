@@ -1162,27 +1162,13 @@ hhtest_authorized_keys: "{{ (hardware_profiles.get(hardware_profile, {})).get('h
 # production sessions that share the machine.
 hhtest_memory_max: 16G
 hhtest_memory_high: 14G
+hhtest_cpu_quota: 1200%
+# CPUWeight (1-10000, systemd default 100): under contention the scheduler gives
+# the test bed a fifth of a normal session's share, so a test hog can never
+# starve or slow a hyperharness session (hypervoid/hyperharness#885, #888). No
+# core pinning: the kernel already places work well across P- and E-cores.
+hhtest_cpu_weight: 20
 hhtest_tasks_max: 4096
-# CPU confinement (hypervoid/hyperharness#885): a test hog pinned to one core
-# made host-wide CPU pressure (PSI) veto every hyperharness session while 90% of
-# the CPUs sat idle. The test bed therefore gets a small DEDICATED tail range of
-# cores, a tiny weight, and a quota equal to that range:
-#   * hhtest_cpu_count   cores reserved for the test bed (the last N of the host);
-#   * hhtest_cpu_weight  CPUWeight (1-10000, systemd default 100) so any session
-#                        wins every contended core it shares with the test bed;
-#   * hhtest_allowed_cpus AllowedCPUs= cpuset, e.g. "20-27" on a 28-vcpu host.
-#                        Derived from the vcpu count; left empty (no cpuset) when
-#                        the host has N+4 vcpus or fewer, so a small host keeps
-#                        its cores for the sessions instead of being broken.
-#                        Set it explicitly (e.g. "6-7") to override the derivation.
-#   * hhtest_cpu_quota   CPUQuota, N*100%, consistent with the range.
-hhtest_cpu_count: 8
-hhtest_cpu_weight: 10
-hhtest_vcpus: "{{ ansible_facts['processor_vcpus'] | default(0) | int }}"
-hhtest_allowed_cpus: >-
-  {{ ((hhtest_vcpus | int - hhtest_cpu_count | int) | string) ~ '-' ~ ((hhtest_vcpus | int - 1) | string)
-     if hhtest_vcpus | int > hhtest_cpu_count | int + 4 else '' }}
-hhtest_cpu_quota: "{{ (hhtest_cpu_count | int * 100) | string }}%"
 # Nightly cleanup: files under ~/work and /tmp owned by the account and older
 # than this many days are removed by a timer that runs AS the account.
 hhtest_cleanup_age_days: 3
