@@ -27,6 +27,12 @@
       - hhtest_memory_max is match('^[1-9][0-9]*[KMGT]$')
       - hhtest_memory_high is match('^[1-9][0-9]*[KMGT]$')
       - hhtest_cpu_quota is match('^[1-9][0-9]*%$')
+      - hhtest_cpu_count | string is match('^[1-9][0-9]*$')
+      - hhtest_cpu_weight | string is match('^[1-9][0-9]{0,4}$')
+      - hhtest_cpu_weight | int <= 10000
+      - >-
+        hhtest_allowed_cpus | trim | length == 0
+        or hhtest_allowed_cpus | trim is match('^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$')
       - hhtest_tasks_max | string is match('^[1-9][0-9]*$')
       - hhtest_cleanup_age_days | string is match('^[1-9][0-9]*$')
       - hhtest_authorized_keys is sequence
@@ -38,7 +44,8 @@
     fail_msg: >-
       hhtest_* variables are invalid: the user must differ from dev_user, the
       uid must be 1000-59999, the home must be /home/<user>, the caps must look
-      like 16G / 1200% / 4096, and every authorized key must be one single-line
+      like 16G / 800% / 4096, the CPU weight must be 1-10000, AllowedCPUs must be
+      empty or a cpu list such as 20-27, and every authorized key must be one single-line
       public key (private keys are never accepted).
 
 - name: Read every passwd entry to find the uid owner
