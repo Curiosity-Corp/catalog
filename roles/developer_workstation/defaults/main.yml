@@ -1163,6 +1163,11 @@ hhtest_authorized_keys: "{{ (hardware_profiles.get(hardware_profile, {})).get('h
 hhtest_memory_max: 16G
 hhtest_memory_high: 14G
 hhtest_cpu_quota: 1200%
+# CPUWeight (1-10000, systemd default 100): under contention the scheduler gives
+# the test bed a fifth of a normal session's share, so a test hog can never
+# starve or slow a hyperharness session (hypervoid/hyperharness#885, #888). No
+# core pinning: the kernel already places work well across P- and E-cores.
+hhtest_cpu_weight: 20
 hhtest_tasks_max: 4096
 # Nightly cleanup: files under ~/work and /tmp owned by the account and older
 # than this many days are removed by a timer that runs AS the account.

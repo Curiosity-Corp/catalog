@@ -79,9 +79,10 @@ def test_slice_caps_match_the_issue() -> None:
     assert DEFAULTS["hhtest_memory_max"] == "16G"
     assert DEFAULTS["hhtest_memory_high"] == "14G"
     assert DEFAULTS["hhtest_cpu_quota"] == "1200%"
+    assert DEFAULTS["hhtest_cpu_weight"] == 20
     assert DEFAULTS["hhtest_tasks_max"] == 4096
     template = (ROLE / "templates/hhtest-slice.conf.j2").read_text()
-    for line in ("MemoryMax=", "MemoryHigh=", "CPUQuota=", "TasksMax="):
+    for line in ("MemoryMax=", "MemoryHigh=", "CPUQuota=", "CPUWeight=", "TasksMax="):
         assert line in template
     service = (ROLE / "templates/hhtest-cleanup.service.j2").read_text()
     assert "User={{ hhtest_user }}" in service
@@ -243,3 +244,10 @@ def test_every_find_pass_prunes_foreign_directories() -> None:
     for part in passes:
         assert '\\( -type d ! -uid "$me" -prune \\)' in part
     assert "-delete" not in code
+
+
+def test_cpu_weight_is_low_and_validated() -> None:
+    assert DEFAULTS["hhtest_cpu_weight"] == 20
+    assert "AllowedCPUs" not in (ROLE / "templates/hhtest-slice.conf.j2").read_text()
+    validate = _named(TASKS, "Validate hhtest inputs")["ansible.builtin.assert"]
+    assert "hhtest_cpu_weight" in "\n".join(str(c) for c in validate["that"])

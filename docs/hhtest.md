@@ -37,9 +37,21 @@ shared with any other account, linger setting, user slice or unit.
 | `hhtest_uid` | `1500` |
 | `hhtest_memory_max` / `hhtest_memory_high` | `16G` / `14G` |
 | `hhtest_cpu_quota` | `1200%` |
+| `hhtest_cpu_weight` | `20` (`CPUWeight`; systemd's default is 100) |
 | `hhtest_tasks_max` | `4096` |
 | `hhtest_cleanup_age_days` | `3` |
 | `hhtest_tmux_release` / `hhtest_tmux_sha256` | `3.7b` / pinned |
+
+### CPU priority
+
+`CPUWeight=20` in the `user-<uid>.slice.d/50-hhtest-caps.conf` drop-in keeps the
+test bed at low priority: when cores are contended, a runaway test (for example
+150 busy loops) gets a fifth of a normal session's share and cannot starve or
+slow the hyperharness sessions that share the machine
+(hypervoid/hyperharness#885, #888). There is no core pinning (`AllowedCPUs`):
+the kernel already schedules across P- and E-cores. The weight applies at the
+next converge (ansible-pull); check with
+`systemctl show user-1500.slice -p CPUWeight`.
 
 Run only this group with `--tags hhtest`.
 
@@ -53,6 +65,6 @@ Over the machine's private overlay only, using a listed key:
 ```bash
 id hhtest                      # only the private group
 sudo -l -U hhtest              # not allowed to run sudo
-systemctl show user-1500.slice -p MemoryMax,MemoryHigh,CPUQuotaPerSecUSec,TasksMax
+systemctl show user-1500.slice -p MemoryMax,MemoryHigh,CPUQuotaPerSecUSec,CPUWeight,TasksMax
 ssh hhtest@<host> 'tmux -L <any-name> ls'   # no sessions of other users
 ```
