@@ -1,5 +1,7 @@
 # Curiosity Workstation
 
+_Last verified: 2026-11-11 against `main` (collection 0.1.0, roles `developer_workstation` and `workstation_storage`, StreamStack v0.0.32 vendored)._
+
 > **Deliberate split.** This repository (`catalog`) is the reusable, scrubbed open-source base of Curiosity Workstation: no internal hostnames, trust anchors, inventories, credentials or secret-store paths, and it must work without Curiosity network access. Its private downstream is [`Curiosity-Corp/catalog-internal`](https://git.developerdojo.org/Curiosity-Corp/catalog-internal), which carries Curiosity Research Corporation's organization-specific operations (private workstation policy, the `agent_workstation` profile for many concurrent agent sessions per host, internal host inventories). The two repositories are kept separate on purpose and neither is a duplicate to archive. General improvements land here first and are brought into `catalog-internal` deliberately.
 
 Curiosity Workstation is a free, open-source Ansible role and collection for
@@ -14,8 +16,19 @@ access to Curiosity infrastructure.
 
 ## What it manages
 
+The collection ships two roles, both applied by
+[`playbooks/site.yml`](playbooks/site.yml):
+
+- `developer_workstation`: the workstation itself (everything listed below);
+- `workstation_storage`: an opt-in encrypted btrfs `/home` on a second drive,
+  off unless `workstation_storage_enabled` is true
+  ([docs](docs/storage.md)).
+
 The `developer_workstation` role is organized around a small number of
-profiles and independently tagged task groups:
+workstation profiles, a set of hardware profiles (`hardware_profile`:
+`generic`, `arm-thin-client`, `x86-byod-laptop`, `z590`, `deskmeet-b760`,
+`t460`) that switch hardware-specific features on, and independently tagged
+task groups:
 
 - conservative package and security updates with health checks, provenance,
   snapshots, quarantine, and rollback;
@@ -25,7 +38,11 @@ profiles and independently tagged task groups:
 - hardware-aware drivers and power-management settings;
 - optional firewall, disk-health, firmware, cleanup, and self-healing timers;
 - optional Coder, Keycloak, OpenZiti, remote streaming, custom CA, and chat
-  integrations.
+  integrations;
+- optional StreamStack call and stream studio (a vendored release of its own
+  project, see [docs/streamstack.md](docs/streamstack.md)), per-app PIA
+  tunnels, `/tmp` hygiene, the Fleet agent (fleetd) and the nightly
+  `ansible-pull` timer that keeps a machine converged.
 
 Integrations that depend on an organization's private services are disabled by
 default. The role never ships private hostnames, credentials, CA material, or
@@ -146,9 +163,12 @@ Run the same checks used by CI:
 make validate
 ```
 
-The checks cover YAML, Ansible syntax, Ansible Lint, policy regression tests,
-public-surface checks, and collection building. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a change.
+The checks cover YAML, Ansible syntax, Ansible Lint, every test under
+`tests/` (policy regressions and the public-surface contract), collection
+building and the CycloneDX SBOM. CI (`.gitlab-ci.yml`) runs the same jobs plus
+GitLab secret detection, and adds a `provenance` checksum for the collection
+and SBOM. See [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a change;
+agents also read [`AGENTS.md`](AGENTS.md).
 
 ## Community and security
 
@@ -157,9 +177,17 @@ public-surface checks, and collection building. See
 - [Security policy](SECURITY.md)
 - [Support policy](SUPPORT.md)
 - [Change log](CHANGELOG.md)
-- [Architecture](docs/architecture.md)
-- [Console tuning](docs/console-tuning.md)
+- [Architecture](docs/architecture.md) and [decision records](docs/adr/README.md)
+- [Configuration reference](docs/configuration.md)
+- [Compatibility matrix](docs/compatibility.md) and [release checklist](docs/release-checklist.md)
+- [Encrypted btrfs /home (`workstation_storage`)](docs/storage.md)
+- [StreamStack call and stream studio](docs/streamstack.md)
+- [PIA tunnel for chosen apps](docs/pia-tunnel.md)
 - [PIA VPN split tunnel and managed WiFi](docs/pia-vpn-and-wifi.md)
+- [/tmp hygiene](docs/tmp-hygiene.md)
+- [hhtest test-bed account](docs/hhtest.md)
+- [Console tuning](docs/console-tuning.md) and [T460 console](docs/t460-console.md)
+- [Adoption and evidence](docs/adoption-and-evidence.md)
 - [Roadmap](docs/roadmap.md)
 
 Please do not put passwords, tokens, private keys, internal inventories, or

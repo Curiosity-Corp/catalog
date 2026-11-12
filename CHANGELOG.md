@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- CI and `make test` run every file in `tests/` instead of two hand-kept lists that had drifted apart (`test_bitwarden_browser_extensions`, `test_chromium_removed_extensions`, `test_conditionals_are_boolean`, `test_display_integrity`, `test_include_tags_apply`, `test_openbox_session_target`, `test_tv_locate` and `test_workstation_timezone` ran in neither, and ten more ran in only one). The CI image moves from Python 3.13 to 3.15.
+- Renovate ignores the vendored StreamStack tree (`roles/developer_workstation/files/streamstack`). Its pins are owned by the StreamStack project and arrive here through `git subtree pull`, so update merge requests against the vendored copy only created drift.
+- Docs: README, `docs/architecture.md` (both roles, hardware profiles, convergence, vendored StreamStack, delivery), a decision-record index (`docs/adr/README.md`) and `AGENTS.md` describe `main` as of 2026-11-11.
+
 ### Fixed
 
 - The hhtest test bed now runs at a low CPU weight (hypervoid/hyperharness#885, #888). A test pinned 150 busy loops to one core and refused every session launch while 90% of the CPUs were idle. The `user-<uid>.slice` drop-in gains `CPUWeight=20` (`hhtest_cpu_weight`, systemd's default is 100), so test hogs lose every contended core to real sessions. No core pinning; memory, task and CPU-quota caps are unchanged.
