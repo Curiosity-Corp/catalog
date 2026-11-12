@@ -385,6 +385,17 @@ elif argv[0] == "show":
     print("PEERKEY\t%d" % (time.time() - age))
 '''
 
+def _with_this_python(body: str) -> str:
+    """Point a fake's shebang at the interpreter running the tests.
+
+    The fakes are written as `#!/usr/bin/python3`, which does not exist in the
+    `python:*-slim` CI image (Python lives in /usr/local/bin). There the kernel
+    reports ENOENT for the missing interpreter and the tunnel script says
+    "ip is not installed".
+    """
+    return body.replace("#!/usr/bin/python3\n", f"#!{sys.executable}\n", 1)
+
+
 FAKE_NOOP = '#!/bin/sh\ncat >> "$FAKE_DIR/$(basename "$0").stdin" 2>/dev/null\nexit 0\n'
 
 SERVERS = {
@@ -433,7 +444,7 @@ class Rig:
             )
         )
         for name, body in {"curl": FAKE_CURL, "ip": FAKE_IP, "wg": FAKE_WG}.items():
-            (self.bin / name).write_text(body)
+            (self.bin / name).write_text(_with_this_python(body))
         for name in ("nft", "sysctl", "ping"):
             (self.bin / name).write_text(FAKE_NOOP)
         for path in self.bin.iterdir():
@@ -1414,7 +1425,7 @@ def test_notify_user_runs_notify_send_as_the_user_with_only_the_session_variable
     tools = tmp_path / "recording-tools"
     tools.mkdir()
     (tools / "setpriv").write_text(
-        "#!/usr/bin/python3\nimport json, os, sys\n"
+        f"#!{sys.executable}\nimport json, os, sys\n"
         "open(os.environ['RECORD'], 'w').write(json.dumps({'argv': sys.argv[1:], 'env': dict(os.environ)}))\n"
     )
     (tools / "notify-send").write_text("#!/bin/sh\n")

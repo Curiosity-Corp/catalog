@@ -112,8 +112,9 @@ def test_ansible_pull_service_has_memory_high_and_no_memory_max() -> None:
 
 
 def test_this_file_runs_in_the_policy_job() -> None:
+    # The policy job runs the whole tests/ directory (or names this file).
     script = " ".join(CI["policy"]["script"])
-    assert "tests/test_update_snapshot_retention.py" in script
+    assert "pytest -q tests" in script or "tests/test_update_snapshot_retention.py" in script
 
 
 # --------------------------------------------------------------------------- #
