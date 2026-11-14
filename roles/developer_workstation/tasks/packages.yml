@@ -152,6 +152,12 @@
       - remmina-plugin-rdp
       - remmina-plugin-vnc
       - x11vnc
+      # --- Mobile device relay (iPhone/iPad over USB) ---
+      # usbmuxd: normal-mode link (pairing, lockdown, pymobiledevice3).
+      # libirecovery-common: Apple's udev rule (uaccess) for Recovery/DFU
+      # mode, so the seat user can run an in-place iOS update.
+      - usbmuxd
+      - libirecovery-common
       # --- Desktop configuration ---
       - dconf-cli
       # --- Firewall ---
