@@ -50,6 +50,26 @@ workstation_system_masked_units: []
 # convergence and then asserts absent. Used to retire credential or service
 # material that must not remain on a host (tasks/system-retirement.yml).
 workstation_removed_paths: []
+
+# User timers that run a tool from a git repository at a pinned commit
+# (tasks/user-git-timers.yml, tag user-git-timers). Each entry checks the
+# repository out root-owned under workstation_user_git_tools_root, renders the
+# user's .service/.timer with ExecStart inside that checkout, removes declared
+# legacy copies, and fails the converge when a declared service runs code from
+# anywhere else (curiosity-user-timer-drift). Empty in the public baseline;
+# repositories, users and credential-file paths belong in protected inventory.
+# Entry shape (docs/configuration.md, "User timers from pinned git checkouts"):
+#   - name: tool                        # checkout directory name
+#     user: alice
+#     repo: https://git.example.org/group/tool.git
+#     version: "<40-character commit SHA>"   # quoted
+#     credentials_file: /etc/curiosity/git-credentials/tool   # optional
+#     units:
+#       - {name: tool-sync, command: bin/tool sync, on_boot_sec: 10min, on_unit_active_sec: 30min}
+#     remove_paths: [/home/alice/.local/bin/tool-sync]
+workstation_user_git_timers: []
+workstation_user_git_tools_root: /opt/curiosity/user-git-tools
+workstation_user_timer_drift_check: /usr/local/libexec/curiosity/curiosity-user-timer-drift
 # Directory holding system unit files and *.wants links.
 workstation_system_unit_dir: /etc/systemd/system
 

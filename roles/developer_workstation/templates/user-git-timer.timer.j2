@@ -1,0 +1,21 @@
+# Managed by curiosity.workstation (tasks/user-git-timers.yml). Do not edit.
+[Unit]
+Description={{ ugt_unit.timer_description | default('Run ' ~ ugt_unit.name ~ ' periodically') }}
+
+[Timer]
+{% if ugt_unit.on_calendar is defined %}
+OnCalendar={{ ugt_unit.on_calendar }}
+{% endif %}
+{% if ugt_unit.on_boot_sec is defined %}
+OnBootSec={{ ugt_unit.on_boot_sec }}
+{% endif %}
+{% if ugt_unit.on_unit_active_sec is defined %}
+OnUnitActiveSec={{ ugt_unit.on_unit_active_sec }}
+{% endif %}
+{% if ugt_unit.randomized_delay_sec is defined %}
+RandomizedDelaySec={{ ugt_unit.randomized_delay_sec }}
+{% endif %}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

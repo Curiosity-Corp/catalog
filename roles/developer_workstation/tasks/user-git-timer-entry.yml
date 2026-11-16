@@ -1,0 +1,169 @@
+---
+# One workstation_user_git_timers entry (loop_var ugt); see user-git-timers.yml.
+
+- name: Look up the account for user git timer {{ ugt.name }}
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ ugt.user }}"
+
+# getent passwd fields: [password, uid, gid, gecos, home, shell].
+- name: Resolve paths for user git timer {{ ugt.name }}
+  ansible.builtin.set_fact:
+    _ugt_uid: "{{ getent_passwd[ugt.user][1] }}"
+    _ugt_home: "{{ getent_passwd[ugt.user][4] }}"
+    _ugt_checkout: "{{ workstation_user_git_tools_root }}/{{ ugt.name }}"
+
+- name: Check the credential file for user git timer {{ ugt.name }}
+  ansible.builtin.stat:
+    path: "{{ ugt.credentials_file }}"
+  register: _ugt_cred
+  when: ugt.credentials_file is defined
+
+- name: Require a root-only credential file for user git timer {{ ugt.name }}
+  ansible.builtin.assert:
+    that:
+      - _ugt_cred.stat.exists
+      - _ugt_cred.stat.isreg
+      - _ugt_cred.stat.pw_name == 'root'
+      - _ugt_cred.stat.mode in ['0600', '0400']
+    fail_msg: >-
+      {{ ugt.credentials_file }} must exist, be a regular file owned by root
+      with mode 0600 or 0400 (git-credential-store format). Bootstrap it from
+      the site's secret store; the role never writes it.
+  when: ugt.credentials_file is defined
+
+# The credential helper is configured through GIT_CONFIG_* (git >= 2.31), so
+# only the file's path appears in the environment; the module never sees the
+# secret and the repository URL carries none.
+- name: Check out the pinned commit for {{ ugt.name }}
+  ansible.builtin.git:
+    repo: "{{ ugt.repo }}"
+    dest: "{{ _ugt_checkout }}"
+    version: "{{ ugt.version }}"
+    force: true
+    update: true
+  environment: >-
+    {{ {'GIT_TERMINAL_PROMPT': '0'} | combine({
+         'GIT_CONFIG_COUNT': '1',
+         'GIT_CONFIG_KEY_0': 'credential.helper',
+         'GIT_CONFIG_VALUE_0': 'store --file=' ~ ugt.credentials_file
+       } if ugt.credentials_file is defined else {}) }}
+  register: _ugt_git
+
+- name: Ensure the user systemd unit directory exists for {{ ugt.name }}
+  ansible.builtin.file:
+    path: "{{ _ugt_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ ugt.user }}"
+    group: "{{ ugt.user }}"
+    mode: "0755"
+
+- name: Render the services for {{ ugt.name }}
+  ansible.builtin.template:
+    src: user-git-timer.service.j2
+    dest: "{{ _ugt_home }}/.config/systemd/user/{{ ugt_unit.name }}.service"
+    owner: "{{ ugt.user }}"
+    group: "{{ ugt.user }}"
+    mode: "0644"
+  loop: "{{ ugt.units }}"
+  loop_control:
+    loop_var: ugt_unit
+    label: "{{ ugt_unit.name }}.service"
+
+- name: Render the timers for {{ ugt.name }}
+  ansible.builtin.template:
+    src: user-git-timer.timer.j2
+    dest: "{{ _ugt_home }}/.config/systemd/user/{{ ugt_unit.name }}.timer"
+    owner: "{{ ugt.user }}"
+    group: "{{ ugt.user }}"
+    mode: "0644"
+  loop: "{{ ugt.units }}"
+  loop_control:
+    loop_var: ugt_unit
+    label: "{{ ugt_unit.name }}.timer"
+
+- name: Remove the declared legacy copies for {{ ugt.name }}
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ ugt.remove_paths | default([]) }}"
+
+- name: Fail on timer drift outside the checkout for {{ ugt.name }}
+  ansible.builtin.command:
+    argv: >-
+      {{ [workstation_user_timer_drift_check,
+          '--unit-dir', _ugt_home ~ '/.config/systemd/user',
+          '--root', _ugt_checkout]
+         + (ugt.units | map(attribute='name') | map('regex_replace', '$', '.service') | list) }}
+  changed_when: false
+
+- name: Discover the runtime directory of {{ ugt.user }}
+  ansible.builtin.stat:
+    path: "/run/user/{{ _ugt_uid }}"
+  register: _ugt_runtime_dir
+
+- name: Probe the systemd manager of {{ ugt.user }}
+  ansible.builtin.command:
+    argv: [systemctl, --user, show-environment]
+  become: true
+  become_user: "{{ ugt.user }}"
+  environment: &ugt_user_env
+    HOME: "{{ _ugt_home }}"
+    USER: "{{ ugt.user }}"
+    LOGNAME: "{{ ugt.user }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ _ugt_uid }}"
+    DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ _ugt_uid }}/bus"
+  register: _ugt_manager
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _ugt_runtime_dir.stat.exists | default(false)
+
+- name: Reload the systemd manager of {{ ugt.user }}
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: user
+  become: true
+  become_user: "{{ ugt.user }}"
+  environment: *ugt_user_env
+  when: _ugt_manager.rc | default(1) == 0
+
+# Without a running user manager (no linger, no session) the timers are
+# enabled by link so they start with the user's next manager.
+- name: Enable and start the timers for {{ ugt.name }}
+  ansible.builtin.systemd_service:
+    name: "{{ ugt_unit.name }}.timer"
+    scope: user
+    enabled: true
+    state: started
+  become: true
+  become_user: "{{ ugt.user }}"
+  environment: *ugt_user_env
+  loop: "{{ ugt.units }}"
+  loop_control:
+    loop_var: ugt_unit
+    label: "{{ ugt_unit.name }}.timer"
+  when: _ugt_manager.rc | default(1) == 0
+
+- name: Ensure timers.target.wants exists for {{ ugt.user }}
+  ansible.builtin.file:
+    path: "{{ _ugt_home }}/.config/systemd/user/timers.target.wants"
+    state: directory
+    owner: "{{ ugt.user }}"
+    group: "{{ ugt.user }}"
+    mode: "0755"
+  when: _ugt_manager.rc | default(1) != 0
+
+- name: Enable the timers by link while the manager is down for {{ ugt.name }}
+  ansible.builtin.file:
+    src: "../{{ ugt_unit.name }}.timer"
+    dest: "{{ _ugt_home }}/.config/systemd/user/timers.target.wants/{{ ugt_unit.name }}.timer"
+    state: link
+    force: true
+    owner: "{{ ugt.user }}"
+    group: "{{ ugt.user }}"
+  loop: "{{ ugt.units }}"
+  loop_control:
+    loop_var: ugt_unit
+    label: "{{ ugt_unit.name }}.timer"
+  when: _ugt_manager.rc | default(1) != 0

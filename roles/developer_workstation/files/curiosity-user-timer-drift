@@ -1,0 +1,139 @@
+#!/usr/bin/python3
+"""Managed by curiosity.workstation. Fail when a managed user timer runs code from outside its managed checkout.
+
+Usage: curiosity-user-timer-drift --unit-dir DIR --root PATH UNIT [UNIT ...]
+
+Each UNIT is a bare service name (for example m365-teams-bisync.service). The
+check reads DIR/UNIT and every DIR/UNIT.d/*.conf drop-in in lexical order,
+applying systemd's rule that an empty "ExecStart=" clears the list. A unit
+passes only when it exists, ends with at least one ExecStart, and every
+ExecStart executable resolves inside PATH (the role-managed checkout). It
+fails for a missing unit, a missing ExecStart, a relative or outside
+executable, and an executable that symlinks out of PATH.
+
+Hand-installed copies in ~/.local/bin are the case this guards: a fix merged
+in the tool's repository never reached the host, and the timer kept running a
+stale copy for months without anyone noticing. Exit 0 means every unit is
+clean. Exit 1 means drift; each finding is printed on stderr. Exit 2 means a
+usage error. The check prints unit names and paths only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shlex
+import sys
+from pathlib import Path
+
+# systemd ExecStart prefixes (systemd.service(5), "Command lines").
+_EXEC_PREFIXES = "-@:+!|"
+
+
+def _exec_lines(text: str) -> list[str | None]:
+    """Return the ExecStart values in a unit fragment, None for a reset."""
+    values: list[str | None] = []
+    section = ""
+    pending = ""
+    for raw in text.splitlines():
+        line = pending + raw.strip()
+        pending = ""
+        if line.endswith("\\"):
+            pending = line[:-1] + " "
+            continue
+        if not line or line[0] in "#;":
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            continue
+        if section != "Service" or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if key != "ExecStart":
+            continue
+        values.append(value if value else None)
+    return values
+
+
+def effective_exec_start(unit_dir: Path, unit: str) -> list[str] | None:
+    """The ExecStart list systemd would use, or None when the unit is absent."""
+    main = unit_dir / unit
+    if not main.is_file():
+        return None
+    fragments = [main]
+    drop_dir = unit_dir / f"{unit}.d"
+    if drop_dir.is_dir():
+        fragments.extend(sorted(p for p in drop_dir.glob("*.conf") if p.is_file()))
+    result: list[str] = []
+    for fragment in fragments:
+        for value in _exec_lines(fragment.read_text(encoding="utf-8")):
+            if value is None:
+                result = []
+            else:
+                result.append(value)
+    return result
+
+
+def executable_of(command: str) -> str:
+    stripped = command.lstrip(_EXEC_PREFIXES)
+    try:
+        words = shlex.split(stripped)
+    except ValueError:
+        return ""
+    return words[0] if words else ""
+
+
+def inside(path: str, root: Path) -> bool:
+    """True when path is absolute and lies under root both as written and resolved."""
+    if not os.path.isabs(path):
+        return False
+    pairs = (
+        (os.path.normpath(path), os.path.normpath(root)),
+        (os.path.realpath(path), os.path.realpath(root)),
+    )
+    return all(os.path.commonpath([candidate, base]) == base for candidate, base in pairs)
+
+
+def check(unit_dir: Path, root: Path, units: list[str]) -> list[str]:
+    findings: list[str] = []
+    for unit in units:
+        commands = effective_exec_start(unit_dir, unit)
+        if commands is None:
+            findings.append(f"{unit}: unit file {unit_dir / unit} is missing")
+            continue
+        if not commands:
+            findings.append(f"{unit}: no ExecStart")
+            continue
+        for command in commands:
+            exe = executable_of(command)
+            if not inside(exe, root):
+                findings.append(
+                    f"{unit}: ExecStart runs {exe or '<unparseable>'}, outside the managed path {root}"
+                )
+    return findings
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--unit-dir", required=True, type=Path)
+    parser.add_argument("--root", required=True, type=Path)
+    parser.add_argument("units", nargs="+")
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return 2 if exc.code else 0
+    if not args.root.is_absolute():
+        print("curiosity-user-timer-drift: --root must be absolute", file=sys.stderr)
+        return 2
+    try:
+        findings = check(args.unit_dir, args.root, args.units)
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"curiosity-user-timer-drift: cannot read units: {exc}", file=sys.stderr)
+        return 1
+    for finding in findings:
+        print(f"curiosity-user-timer-drift: {finding}", file=sys.stderr)
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,16 @@
+# Managed by curiosity.workstation (tasks/user-git-timers.yml). Do not edit:
+# ExecStart must stay inside {{ _ugt_checkout }}; curiosity-user-timer-drift
+# fails the converge when it does not.
+[Unit]
+Description={{ ugt_unit.description | default(ugt_unit.name) }}
+After=network-online.target
+
+[Service]
+Type=oneshot
+{% for key, value in (ugt_unit.environment | default({})) | dictsort %}
+Environment="{{ key }}={{ value }}"
+{% endfor %}
+ExecStart={{ _ugt_checkout }}/{{ ugt_unit.command }}
+{% if ugt_unit.timeout_start_sec is defined %}
+TimeoutStartSec={{ ugt_unit.timeout_start_sec }}
+{% endif %}
