@@ -30,7 +30,8 @@
       - item.name is match('^[a-z0-9][a-z0-9_.-]*$')
       - item.user is defined and item.user is match('^[a-z_][a-z0-9_-]*$')
       - item.repo is defined and item.repo is match('^https://[^@\s]+$')
-      - item.version is defined and item.version is match('^[0-9a-f]{40}$')
+      - item.version is defined and item.version is string
+      - item.version is match('^[0-9a-f]{40}$')
       - item.credentials_file is not defined or item.credentials_file is match('^/[^\s]+$')
       - item.units is defined and item.units is sequence and item.units is not string
       - item.units | length > 0
@@ -48,7 +49,7 @@
     fail_msg: >-
       workstation_user_git_timers entry {{ item.name | default('?') }} is
       invalid: it needs name, user, an https repo without embedded credentials,
-      version as a full 40-character commit SHA, units with bare names and a
+      version as a quoted full 40-character commit SHA, units with bare names and a
       command relative to the checkout (no leading / and no ..), at least one
       timer trigger (on_calendar, on_boot_sec or on_unit_active_sec) per unit,
       environment values without quotes, backslashes or newlines, and absolute

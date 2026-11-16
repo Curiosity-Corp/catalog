@@ -62,7 +62,7 @@ workstation_removed_paths: []
 #   - name: tool                        # checkout directory name
 #     user: alice
 #     repo: https://git.example.org/group/tool.git
-#     version: <40-character commit SHA>
+#     version: "<40-character commit SHA>"   # quoted
 #     credentials_file: /etc/curiosity/git-credentials/tool   # optional
 #     units:
 #       - {name: tool-sync, command: bin/tool sync, on_boot_sec: 10min, on_unit_active_sec: 30min}

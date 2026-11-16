@@ -604,7 +604,7 @@ workstation_user_git_timers:
   - name: tool
     user: alice
     repo: https://git.example.org/group/tool.git
-    version: 0123456789abcdef0123456789abcdef01234567
+    version: "0123456789abcdef0123456789abcdef01234567"   # quoted: a SHA can parse as a number
     credentials_file: /etc/curiosity/git-credentials/tool   # optional
     units:
       - name: tool-sync
