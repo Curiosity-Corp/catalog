@@ -181,6 +181,14 @@
     (workstation_system_masked_units | default([]) | length > 0) or
     (workstation_removed_paths | default([]) | length > 0)
 
+- name: Run declared user timers from pinned git checkouts
+  ansible.builtin.include_tasks:
+    file: user-git-timers.yml
+    apply:
+      tags: [systemd, user-git-timers]
+  tags: [systemd, user-git-timers]
+  when: workstation_user_git_timers | default([]) | length > 0
+
 - name: Initialize workstation update control plane
   ansible.builtin.include_tasks:
     file: update-foundation.yml

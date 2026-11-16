@@ -1,0 +1,87 @@
+---
+# =============================================================================
+# User timers that run a tool from a git repository at a pinned commit
+# =============================================================================
+# Some users run tools from a git repository as user systemd timers (a sync
+# job every 30 minutes, a daily keepalive). Copied by hand into ~/.local/bin,
+# those scripts drift: a fix merged in the repository never reaches the host,
+# and nothing says the timer is still running a stale copy. For each entry in
+# workstation_user_git_timers the role
+#
+#   * checks the repository out at a pinned commit SHA into a root-owned path
+#     under workstation_user_git_tools_root (the user can run it, not edit it),
+#     reading any credential from a root-only git-credential-store file named
+#     by path, so no secret reaches git, argv or the log;
+#   * renders each declared user .service/.timer with ExecStart inside that
+#     checkout and enables the timer;
+#   * removes the declared legacy copies (remove_paths);
+#   * runs curiosity-user-timer-drift, which fails the converge when any
+#     declared service's effective ExecStart (drop-ins included) points
+#     outside the checkout.
+#
+# The public default is empty; site repositories, users and credential paths
+# belong in protected inventory.
+# =============================================================================
+
+- name: Validate user git timer declarations
+  ansible.builtin.assert:
+    that:
+      - item.name is defined and item.name is string
+      - item.name is match('^[a-z0-9][a-z0-9_.-]*$')
+      - item.user is defined and item.user is match('^[a-z_][a-z0-9_-]*$')
+      - item.repo is defined and item.repo is match('^https://[^@\s]+$')
+      - item.version is defined and item.version is match('^[0-9a-f]{40}$')
+      - item.credentials_file is not defined or item.credentials_file is match('^/[^\s]+$')
+      - item.units is defined and item.units is sequence and item.units is not string
+      - item.units | length > 0
+      - item.units | rejectattr('name', 'match', '^[A-Za-z0-9_.@-]+$') | list | length == 0
+      - item.units | rejectattr('command', 'defined') | list | length == 0
+      - item.units | map(attribute='command', default='') | select('match', '^(/|\s|$)') | list | length == 0
+      - item.units | map(attribute='command', default='') | select('search', '(^|/)\.\.(/|\s|$)') | list | length == 0
+      - >-
+        item.units | rejectattr('on_calendar', 'defined') | rejectattr('on_boot_sec', 'defined')
+        | rejectattr('on_unit_active_sec', 'defined') | list | length == 0
+      - >-
+        item.units | map(attribute='environment', default={}) | map('dict2items') | flatten
+        | map(attribute='value') | map('string') | select('search', '["\n\\\\]') | list | length == 0
+      - item.remove_paths | default([]) | reject('match', '^/[^\s]+$') | list | length == 0
+    fail_msg: >-
+      workstation_user_git_timers entry {{ item.name | default('?') }} is
+      invalid: it needs name, user, an https repo without embedded credentials,
+      version as a full 40-character commit SHA, units with bare names and a
+      command relative to the checkout (no leading / and no ..), at least one
+      timer trigger (on_calendar, on_boot_sec or on_unit_active_sec) per unit,
+      environment values without quotes, backslashes or newlines, and absolute
+      remove_paths.
+  loop: "{{ workstation_user_git_timers }}"
+  loop_control:
+    label: "{{ item.name | default('?') }}"
+
+- name: Require unique user git timer names
+  ansible.builtin.assert:
+    that:
+      - workstation_user_git_timers | map(attribute='name') | unique | length == workstation_user_git_timers | length
+    fail_msg: workstation_user_git_timers entry names must be unique.
+
+- name: Ensure the managed user git tools root exists
+  ansible.builtin.file:
+    path: "{{ workstation_user_git_tools_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the user timer drift check
+  ansible.builtin.copy:
+    src: curiosity-user-timer-drift
+    dest: "{{ workstation_user_timer_drift_check }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Converge each user git timer entry
+  ansible.builtin.include_tasks: user-git-timer-entry.yml
+  loop: "{{ workstation_user_git_timers }}"
+  loop_control:
+    loop_var: ugt
+    label: "{{ ugt.name }}"

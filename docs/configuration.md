@@ -588,6 +588,41 @@ again by an installer or helper. The default is empty so unrelated workstations
 are unchanged; keep organization-specific unit names in protected inventory
 rather than in this public collection.
 
+## User timers from pinned git checkouts
+
+`workstation_user_git_timers` (tag `user-git-timers`) is for tools that a user runs from a git repository as user systemd timers. When such scripts are copied into `~/.local/bin` by hand, a fix merged in the repository never reaches the host, and the timer keeps running the stale copy without anyone noticing. Every entry in the list is applied on each converge.
+
+The role:
+
+1. Checks the repository out at `version`, which must be a full 40-character commit SHA. A branch or tag would move under the host. The checkout goes to `workstation_user_git_tools_root/<name>` (`/opt/curiosity/user-git-tools` by default). It is owned by root, so the user can run it but not edit it.
+2. Renders `<unit>.service` and `<unit>.timer` for each unit in the user's `~/.config/systemd/user`. `ExecStart` is the checkout path plus `command`, which is relative to the checkout and may not start with `/` or contain `..`. Then it enables and starts the timer. If the user's manager is down, it links the timer into `timers.target.wants` instead.
+3. Removes each `remove_paths` entry, for example the old `~/.local/bin` copies.
+4. Runs `curiosity-user-timer-drift` (installed at `workstation_user_timer_drift_check`). The check fails the converge when any declared service's effective `ExecStart` points outside the checkout. Drop-ins count, symlinks are resolved, and a missing unit also fails. An environment-only drop-in, such as a `PATH` override, is allowed.
+
+```yaml
+workstation_user_git_timers:
+  - name: tool
+    user: alice
+    repo: https://git.example.org/group/tool.git
+    version: 0123456789abcdef0123456789abcdef01234567
+    credentials_file: /etc/curiosity/git-credentials/tool   # optional
+    units:
+      - name: tool-sync
+        description: Tool sync
+        command: bin/tool sync
+        on_boot_sec: 10min           # or on_calendar
+        on_unit_active_sec: 30min
+        environment: {PATH: "/home/alice/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"}
+    remove_paths:
+      - /home/alice/.local/bin/tool-sync
+```
+
+**Private repositories.** Set `credentials_file` to the path of a git-credential-store file that is owned by root with mode `0600` or `0400`. Bootstrap that file from your secret manager; the role checks it but never writes it. Git reads the file through `GIT_CONFIG_*` environment variables, so the secret never appears in git, argv or the Ansible log. A `repo` URL that embeds credentials is rejected.
+
+**Running the check by hand or in CI:** `curiosity-user-timer-drift --unit-dir ~/.config/systemd/user --root /opt/curiosity/user-git-tools/tool tool-sync.service`. Exit codes: 0 clean, 1 drift (each finding is printed on stderr), 2 usage error.
+
+The default is empty. Keep repositories, users and credential paths in protected inventory, not in this public collection.
+
 ## Retired system services and removed paths
 
 `workstation_system_masked_units` (bare system unit names with a type suffix,
