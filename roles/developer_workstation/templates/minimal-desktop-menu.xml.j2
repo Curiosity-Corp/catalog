@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Managed by Curiosity-Corp/catalog (developer_workstation, minimal-desktop-openbox.yml). -->
 
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
 
@@ -15,6 +16,15 @@
   <item label="App Launcher">
     <action name="Execute"><command>rofi -show drun -show-icons</command></action>
   </item>
+{% if jellyfin_desktop_enabled | default(false) | bool and ansible_architecture | default('') == 'x86_64' %}
+  <separator label="Media" />
+  <item label="Jellyfin Desktop">
+    <action name="Execute"><command>flatpak run {{ jellyfin_desktop_flatpak_id }}</command></action>
+  </item>
+  <item label="Jellyfin (web)">
+    <action name="Execute"><command>xdg-open {{ jellyfin_web_url }}</command></action>
+  </item>
+{% endif %}
 </menu>
 
 <menu id="system-menu" label="System">

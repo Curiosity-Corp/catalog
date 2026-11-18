@@ -206,6 +206,31 @@
     - ansible_architecture == 'x86_64'
     - workstation_update_install_allowed | default(true)
 
+- name: Include Jellyfin desktop app
+  ansible.builtin.include_tasks:
+    file: jellyfin-desktop.yml
+    apply:
+      tags: [media, jellyfin]
+  tags: [media, jellyfin]
+  when:
+    - workstation_profile == 'desktop'
+    - jellyfin_desktop_enabled | default(false) | bool
+    - ansible_architecture == 'x86_64'
+    - workstation_update_install_allowed | default(true)
+
+# The web entry exists only where Jellyfin is enabled. The Flatpak itself is
+# left installed when the flag is turned off, like the other opt-in apps
+# (`flatpak uninstall --system org.jellyfin.JellyfinDesktop` removes it).
+- name: Remove the Jellyfin (web) menu entry when Jellyfin is not enabled
+  ansible.builtin.file:
+    path: "{{ jellyfin_web_desktop_entry }}"
+    state: absent
+  tags: [media, jellyfin]
+  when: >-
+    not (jellyfin_desktop_enabled | default(false) | bool
+         and workstation_profile == 'desktop'
+         and ansible_architecture == 'x86_64')
+
 - name: Include WeeChat TUI chat client
   ansible.builtin.include_tasks:
     file: weechat.yml
