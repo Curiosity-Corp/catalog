@@ -181,6 +181,28 @@ slack_desktop_enabled: false
 slack_desktop_snap_channel: latest/stable
 slack_desktop_snap_id: JUJH91Ved74jd4ZgJCpzMBtYbPOzTlsD
 
+# Flathub, the system Flatpak remote of every opt-in Flatpak app
+# (tasks/flatpak.yml). Flatpak itself is installed only when such an app is
+# enabled; the baseline has no Flatpak.
+workstation_flatpak_flathub_remote: flathub
+workstation_flatpak_flathub_url: https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# Install Jellyfin Desktop (Flathub org.jellyfin.JellyfinDesktop, developer
+# Jellyfin, verified) system-wide on x86_64 desktop workstations, plus a
+# "Jellyfin (web)" menu entry that opens jellyfin_web_url with xdg-open
+# (tasks/jellyfin-desktop.yml, Curiosity-Corp/catalog#157). Off by default; a
+# host or an internal overlay turns it on and sets jellyfin_web_url (the
+# server's address is site configuration, so it has no public default; the
+# run fails while it is empty). The ref and origin are asserted, so an app of
+# the same id from another remote is refused; updates come from
+# `flatpak update` in system-updates.yml. No browser policy or profile is
+# written.
+jellyfin_desktop_enabled: false
+jellyfin_desktop_flatpak_id: org.jellyfin.JellyfinDesktop
+jellyfin_desktop_flatpak_ref: app/org.jellyfin.JellyfinDesktop/x86_64/stable
+jellyfin_web_url: ""
+jellyfin_web_desktop_entry: /usr/local/share/applications/curiosity-jellyfin-web.desktop
+
 # Force-install the Bitwarden browser extension into the Chromium-family
 # browsers, the way the Firefox policy already does for Firefox
 # (collaboration.yml). One managed-policy file per browser is written only when
@@ -293,6 +315,7 @@ workstation_application_contracts:
   claude: {installer: claude-native, verification: official-installer, scope: user, enabled_when: claude_native_enabled, healthcheck: [.local/bin/claude, --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
   slack_desktop: {installer: snap-store, verification: snap-assertions, enabled_when: slack_desktop_enabled, healthcheck: [/usr/local/sbin/curiosity-slack-desktop-check]}
+  jellyfin_desktop: {installer: flathub, verification: flatpak-gpg-ref-origin, enabled_when: jellyfin_desktop_enabled, healthcheck: [/usr/local/sbin/curiosity-jellyfin-desktop-check]}
 
 # Dynamic includes are entered only when their include task carries the
 # selected tag. These tags cover the managed update transaction and its

@@ -944,6 +944,29 @@ their own workspaces; the role never touches Slack data or sign-in. Setting the
 flag back to false leaves an installed snap in place (remove it with
 `snap remove slack`).
 
+Jellyfin Desktop is opt-in, and it is the first Flatpak app. With
+`jellyfin_desktop_enabled: true` on a desktop profile (x86_64 only), the role
+runs `tasks/flatpak.yml`, which installs the `flatpak` package and adds the
+Flathub remote (`workstation_flatpak_flathub_url`, GPG-signed) at system level,
+then installs `org.jellyfin.JellyfinDesktop` system-wide and fails the run
+unless `flatpak info --system` reports the ref in `jellyfin_desktop_flatpak_ref`
+from origin `flathub`. Flatpak is never installed for the baseline; the next
+Flatpak app includes `tasks/flatpak.yml` from its own task file the same way.
+Set `jellyfin_web_url` next to the flag (it has no public default and the run
+fails while it is empty): `/usr/local/share/applications/curiosity-jellyfin-web.desktop`
+("Jellyfin (web)") opens it with `xdg-open` in the user's default browser. No
+browser policy or profile is written. The Flatpak exports "Jellyfin Desktop" in
+`/var/lib/flatpak/exports/share/applications`, which the `flatpak` package adds
+to `XDG_DATA_DIRS` for login shells (`/etc/profile.d/flatpak.sh`, the pinned-VT
+`startx` sessions) and LightDM sessions (`/etc/X11/Xsession.d/20flatpak`) from
+the next login; the Openbox Applications menu lists both entries. Updates come
+from `flatpak update -y --noninteractive --system`, run nightly beside
+`snap refresh` wherever Flatpak is installed. The post-update healthcheck is
+`/usr/local/sbin/curiosity-jellyfin-desktop-check` (application contract
+`jellyfin_desktop`). Setting the flag back to false removes the web entry and
+the menu items and leaves the Flatpak in place (remove it with
+`flatpak uninstall --system org.jellyfin.JellyfinDesktop`).
+
 The branded FocusPass screen-lock package is an optional local-PAM integration.
 It is installed only when all three variables below are supplied for a
 desktop or thin-client profile with the minimal desktop enabled:
