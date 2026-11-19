@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `workstation_storage_maintenance_timers_enabled` (default `true`) in the workstation_storage role. When it is `false`, each pull stops and disables `hh-btrfs-scrub.timer` and `fstrim.timer` instead of starting them again, for a data volume held read-only, such as dm313red's crypthome while its RAM is mapped and fenced (FocusApiary/infrastructure#928, Curiosity-Corp/catalog-internal#16).
+
 ### Fixed
 
 - The hhtest test bed now runs at a low CPU weight (hypervoid/hyperharness#885, #888). A test pinned 150 busy loops to one core and refused every session launch while 90% of the CPUs were idle. The `user-<uid>.slice` drop-in gains `CPUWeight=20` (`hhtest_cpu_weight`, systemd's default is 100), so test hogs lose every contended core to real sessions. No core pinning; memory, task and CPU-quota caps are unchanged.
