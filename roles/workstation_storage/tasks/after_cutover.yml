@@ -63,11 +63,14 @@
     mode: "0644"
   notify: Reload systemd for storage units
 
-- name: Enable the monthly scrub and the weekly trim
+# workstation_storage_maintenance_timers_enabled: false holds both timers off,
+# for a volume quarantined read-only (dm313red bad-RAM hold,
+# Curiosity-Corp/catalog-internal#16).
+- name: Set the monthly scrub and the weekly trim
   ansible.builtin.systemd:
     name: "{{ item }}"
-    enabled: true
-    state: started
+    enabled: "{{ workstation_storage_maintenance_timers_enabled | bool }}"
+    state: "{{ 'started' if workstation_storage_maintenance_timers_enabled | bool else 'stopped' }}"
     daemon_reload: true
   loop:
     - hh-btrfs-scrub.timer

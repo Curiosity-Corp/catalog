@@ -26,6 +26,9 @@ workstation_storage_users: []
 # chezmoi are the recovery path (see docs/storage.md). Only the monthly scrub
 # and the weekly fstrim run.
 workstation_storage_soak_days: 14
+# false stops and disables the monthly scrub and the weekly fstrim, for a data
+# volume held read-only (for example while its host's RAM is under test).
+workstation_storage_maintenance_timers_enabled: true
 
 # Destructive: partition, encrypt and format a blank device. Needs the device,
 # a root-only passphrase file and a device without any signature.

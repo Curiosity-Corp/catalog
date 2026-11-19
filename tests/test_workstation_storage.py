@@ -45,6 +45,16 @@ def test_live_files_and_timers_only_after_the_cutover_marker() -> None:
     assert "hh-btrfs-scrub.timer" in AFTER_TEXT and "fstrim.timer" in AFTER_TEXT
 
 
+def test_maintenance_timers_can_be_held_off_for_a_quarantined_volume() -> None:
+    # dm313red bad-RAM hold (Curiosity-Corp/catalog-internal#16): a volume held read-only must not be scrubbed or
+    # trimmed, and the nightly pull must not start the timers again.
+    assert DEFAULTS["workstation_storage_maintenance_timers_enabled"] is True
+    task = next(t for t in yaml.safe_load(AFTER_TEXT) if "hh-btrfs-scrub.timer" in t.get("loop", []))
+    unit = task["ansible.builtin.systemd"]
+    assert unit["enabled"] == "{{ workstation_storage_maintenance_timers_enabled | bool }}"
+    assert unit["state"] == "{{ 'started' if workstation_storage_maintenance_timers_enabled | bool else 'stopped' }}"
+
+
 def test_scripts_are_valid_bash() -> None:
     assert len(SCRIPTS) >= 7
     for script in SCRIPTS:
@@ -80,7 +90,7 @@ def test_no_snapshot_schedule_or_backup_ships() -> None:
         assert "restic init" not in text and "restic check" not in text
         assert "enable --now hh-btrbk" not in text and "hh-backup.timer hh-btrfs" not in text
     assert not any(k.startswith(("workstation_storage_backup", "workstation_storage_retention", "workstation_storage_snapshot")) for k in DEFAULTS)
-    enabled = AFTER_TEXT[AFTER_TEXT.index("Enable the monthly scrub and the weekly trim"):]
+    enabled = AFTER_TEXT[AFTER_TEXT.index("Set the monthly scrub and the weekly trim"):]
     assert "hh-btrbk" not in enabled and "hh-backup" not in enabled
 
 
