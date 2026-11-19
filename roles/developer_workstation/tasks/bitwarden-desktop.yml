@@ -33,6 +33,12 @@
 # architectures (see managed-updates.yml).
 # =============================================================================
 
+# Asset names: up to 2026.10.x the official build is `Bitwarden-<v>-amd64.deb`
+# (beside `commercial-…`). From desktop-v2026.11.0 Bitwarden publishes two
+# builds: `bit-Bitwarden-<v>-amd64.deb` (its own licensed build, the successor
+# of the unprefixed asset) and `oss-Bitwarden-<v>-amd64.deb` (GPL-only). Both
+# are package `bitwarden` with the same files. The role installs the official
+# build under either name and never the oss- or commercial- flavour.
 - name: Resolve the current Bitwarden desktop release and amd64 package
   ansible.builtin.set_fact:
     _bitwarden_desktop_version: "{{ latest_github_releases.bitwarden_desktop.tag_name | regex_replace('^desktop-v', '') }}"
@@ -40,7 +46,7 @@
       {{
         latest_github_releases.bitwarden_desktop.assets
         | selectattr('name', 'match',
-            '^Bitwarden-' ~ (latest_github_releases.bitwarden_desktop.tag_name | regex_replace('^desktop-v', '') | regex_escape)
+            '^(bit-)?Bitwarden-' ~ (latest_github_releases.bitwarden_desktop.tag_name | regex_replace('^desktop-v', '') | regex_escape)
             ~ '-amd64[.]deb$')
         | first
         | default({})

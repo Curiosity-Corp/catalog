@@ -152,6 +152,30 @@ def test_amd64_deb_is_chosen_over_every_other_desktop_artifact() -> None:
     assert _select_asset(release)["name"] == "Bitwarden-2026.9.1-amd64.deb"
 
 
+def test_official_bit_deb_is_chosen_from_the_2026_11_asset_names() -> None:
+    # desktop-v2026.11.0 renamed the debs to bit-/oss- (FocusApiary/infrastructure#928:
+    # every workstation's ansible-pull failed the digest assert on 2026-11-19).
+    assets = [
+        "oss-Bitwarden-2026.11.0-amd64.deb",
+        "bit-Bitwarden-2026.11.0-amd64.deb",
+        "bit-Bitwarden-2026.11.0-x86_64.rpm",
+        "oss-Bitwarden-2026.11.0-x86_64.AppImage",
+    ]
+    assert _select_asset(_release("desktop-v2026.11.0", assets=assets))["name"] == "bit-Bitwarden-2026.11.0-amd64.deb"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "oss-Bitwarden-2026.11.0-amd64.deb",
+        "commercial-Bitwarden-2026.11.0-amd64.deb",
+        "xbit-Bitwarden-2026.11.0-amd64.deb",
+    ],
+)
+def test_other_deb_flavours_are_never_selected(name) -> None:
+    assert _select_asset(_release("desktop-v2026.11.0", assets=[name])) == {}
+
+
 def test_deb_for_another_version_or_architecture_is_not_selected() -> None:
     other = [
         "Bitwarden-2026.9.0-amd64.deb",
