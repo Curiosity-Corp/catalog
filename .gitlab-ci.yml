@@ -108,6 +108,46 @@ policy:
       tests/test_streamstack.py tests/test_streamstack_low_latency.py tests/test_streamstack_ai_deps.py tests/test_hhtest.py tests/test_workstation_storage.py tests/test_cpu_thermal_guard.py
       tests/test_ziti_health.py tests/test_no_conflict_markers.py tests/test_update_snapshot_retention.py
       tests/test_mouse_debounce.py tests/test_fleetd.py tests/test_user_git_timers.py
+      tests/test_python_research.py
+
+# catalog#36: install the Python research profile for real, in this throwaway
+# container. Applies the role's own science-venv.yml with
+# examples/python-research.yml into a temp venv (twice, the second run must be
+# a no-op), runs a sample analysis, registers the notebook kernel and runs the
+# documented uv project workflow. 3.14 is Ubuntu 26.04's python3, the
+# interpreter the role uses; 3.15 is the newest CPython, the next distro's.
+research-profile:
+  extends: .python_setup
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.14", "3.15"]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - .gitlab-ci.yml
+        - requirements.yml
+        - roles/developer_workstation/defaults/main.yml
+        - roles/developer_workstation/tasks/science-tools.yml
+        - roles/developer_workstation/tasks/science-venv.yml
+        - examples/python-research.yml
+        - docs/python-research-profile.md
+        - scripts/validate_python_research.py
+        - tests/research_profile/**/*
+        - tests/test_python_research.py
+    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE =~ /^(schedule|web|api)$/
+  script:
+    - python -m pip install uv
+    - python scripts/validate_python_research.py --work .research-profile --report research-profile-report.md
+  artifacts:
+    when: always
+    name: "research-profile-py${PYTHON_VERSION}-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - research-profile-report.md
+      - .research-profile/sample.png
+    expire_in: 30 days
 
 collection:
   extends: .python_setup

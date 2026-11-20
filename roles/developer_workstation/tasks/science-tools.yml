@@ -2,78 +2,20 @@
 # =============================================================================
 # Scientific Python & Data Science Tools
 # =============================================================================
-# Installs a broad scientific stack into a dedicated virtual environment at
-# /opt/science-venv so tools are available from:
+# Installs the scientific stack (science_python_packages) into a dedicated
+# virtual environment, science_python_venv (default /opt/science-venv), so the
+# tools are available from:
 # - terminal workflows (venv bin is on PATH via /etc/profile.d)
 # - notebooks (JupyterLab kernel registered as "Python 3 (Science)")
 #
 # This avoids PEP 668 --break-system-packages, which can corrupt system Python
 # and caused OOM crashes when compiling C extensions on constrained machines.
+# See docs/python-research-profile.md for the variables and the small profile.
 # =============================================================================
 
-# A venv built on a Python minor the distro has since replaced (3.13 -> 3.14 on
-# Ubuntu 26.04) keeps bin/activate, but its site-packages and pip are invisible
-# to the new interpreter, so a creates: guard never rebuilt it and every pip
-# task failed. Probe the venv instead; a missing venv fails the probe too.
-- name: Probe /opt/science-venv for a usable interpreter and pip
-  ansible.builtin.command:
-    argv:
-      - /opt/science-venv/bin/python
-      - -c
-      - import pip
-  register: _science_venv_probe
-  changed_when: false
-  failed_when: false
-
-- name: Create or rebuild /opt/science-venv virtual environment
-  ansible.builtin.command:
-    argv:
-      - python3
-      - -m
-      - venv
-      - --clear
-      - /opt/science-venv
-  # The declared packages below are reinstalled into the rebuilt venv.
-  when: _science_venv_probe.rc != 0
-  changed_when: true
-
-- name: Install/upgrade scientific Python packages into venv  # noqa: args package-latest
-  ansible.builtin.pip:
-    name:
-      # --- Core data science ---
-      - numpy
-      - scipy
-      - pandas
-      - matplotlib
-      - sympy
-      - scikit-learn
-      - seaborn
-      # --- Common utilities ---
-      - requests
-      - httpx
-      - pytest
-      - boto3
-      - openpyxl
-      - Pillow
-      # --- Jupyter interactivity ---
-      - ipykernel
-      - ipywidgets
-      - ipympl
-      - plotly
-      # --- Physics simulation ---
-      - vpython
-      - pymunk
-      - pybullet
-      # --- 3D visualization ---
-      - pyvista
-      - trame
-      - k3d
-      # --- Domain-specific ---
-      - h5py
-      - qutip
-      - astropy
-    virtualenv: /opt/science-venv
-    state: latest
+- name: Build the science venv and install the declared packages
+  ansible.builtin.include_tasks:
+    file: science-venv.yml
 
 - name: Add science-venv bin to PATH for all interactive shells
   ansible.builtin.copy:
@@ -81,65 +23,47 @@
     mode: "0644"
     content: |
       # Added by developer-workstation role — science-tools
-      if [ -d /opt/science-venv/bin ]; then
-        export PATH="/opt/science-venv/bin:$PATH"
+      if [ -d {{ science_python_venv }}/bin ]; then
+        export PATH="{{ science_python_venv }}/bin:$PATH"
       fi
 
 - name: Symlink jupyter into /usr/local/bin for non-login shells
   ansible.builtin.file:
-    src: /opt/science-venv/bin/jupyter
+    src: "{{ science_python_venv }}/bin/jupyter"
     dest: /usr/local/bin/jupyter
     state: link
     force: true
 
 - name: Symlink ipython into /usr/local/bin for non-login shells
   ansible.builtin.file:
-    src: /opt/science-venv/bin/ipython
+    src: "{{ science_python_venv }}/bin/ipython"
     dest: /usr/local/bin/ipython
     state: link
     force: true
 
 - name: Register venv Python as a Jupyter kernel
   ansible.builtin.command:
-    cmd: >-
-      /opt/science-venv/bin/python -m ipykernel install
-      --name science
-      --display-name "Python 3 (Science)"
-      --prefix /usr/local
-    creates: /usr/local/share/jupyter/kernels/science/kernel.json
-
-# --- Periodic upgrade of key packages ---
-# Runs on every ansible-pull to keep core packages current beyond the declared
-# list. This catches transitive dependencies and new additions to the
-# scientific ecosystem.
-- name: Upgrade all pip packages in science-venv (periodic)  # noqa: package-latest
-  ansible.builtin.pip:
-    name:
-      # Core data-science stack — upgrade all declared packages
-      - numpy
-      - scipy
-      - pandas
-      - matplotlib
-      - sympy
-      - scikit-learn
-      - seaborn
-      - requests
-      - httpx
-      - pytest
-      - boto3
-      - Pillow
+    argv:
+      - "{{ science_python_venv }}/bin/python"
+      - -m
       - ipykernel
-      - ipywidgets
-      - ipympl
-      - plotly
-      - h5py
-    virtualenv: /opt/science-venv
-    state: latest
+      - install
+      - --name
+      - science
+      - --display-name
+      - Python 3 (Science)
+      - --prefix
+      - /usr/local
+    creates: /usr/local/share/jupyter/kernels/science/kernel.json
 
 # --- Check for outdated packages (non-blocking diagnostic) ---
 - name: Show outdated pip packages in science-venv
   ansible.builtin.command:
-    cmd: /opt/science-venv/bin/pip list --outdated --format=columns
+    argv:
+      - "{{ science_python_venv }}/bin/pip"
+      - list
+      - --outdated
+      - --format=columns
   register: pip_outdated
   changed_when: false
   failed_when: false
@@ -147,6 +71,6 @@
 - name: Report outdated pip packages
   ansible.builtin.debug:
     msg: |
-      Outdated pip packages in /opt/science-venv:
+      Outdated pip packages in {{ science_python_venv }}:
       {{ pip_outdated.stdout_lines | default([]) | join('\n') }}
-  when: pip_outdated.stdout_lines | length > 1
+  when: pip_outdated.stdout_lines | default([]) | length > 1

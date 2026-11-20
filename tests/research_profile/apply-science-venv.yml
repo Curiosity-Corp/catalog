@@ -1,0 +1,26 @@
+---
+# Applies the role's own science venv tasks (roles/developer_workstation/tasks/
+# science-venv.yml) on the local machine. scripts/validate_python_research.py
+# runs it with -e @examples/python-research.yml and science_python_venv pointed
+# at a throwaway directory; it needs no root and touches no system path.
+- name: Build the science venv with the role's own tasks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # The pip module runs in the interpreter that runs Ansible, which already
+    # has the packaging library it needs to compare versions.
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Refuse the default path so a validation run never writes /opt
+      ansible.builtin.assert:
+        that:
+          - science_python_venv is defined
+          - science_python_venv != '/opt/science-venv'
+        fail_msg: Pass -e science_python_venv=<throwaway directory>.
+        quiet: true
+
+    - name: Apply science-venv.yml from the developer_workstation role
+      ansible.builtin.include_role:
+        name: developer_workstation
+        tasks_from: science-venv.yml

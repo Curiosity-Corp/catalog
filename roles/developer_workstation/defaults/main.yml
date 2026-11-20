@@ -450,6 +450,65 @@ workstation_update_non_removable_paths:
 catalog_integrity_mode: warn
 catalog_signing_key_fingerprint: ""
 
+# Scientific Python (tasks/science-tools.yml and science-venv.yml, tags science
+# and data-science); see docs/python-research-profile.md. The packages go into
+# science_python_venv from PyPI at "latest" on every run: nothing here is a
+# release pin, and the channel is PyPI or the index named in
+# science_python_pip_extra_args. The interpreter is the distribution's python3.
+# A researcher who wants a small baseline overrides science_python_packages with
+# a short list that keeps ipykernel (examples/python-research.yml).
+science_python_venv: /opt/science-venv
+science_python_packages:
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - sympy
+  - scikit-learn
+  - seaborn
+  - requests
+  - httpx
+  - pytest
+  - boto3
+  - openpyxl
+  - Pillow
+  - ipykernel
+  - ipywidgets
+  - ipympl
+  - plotly
+  - vpython
+  - pymunk
+  - pybullet
+  - pyvista
+  - trame
+  - k3d
+  - h5py
+  - qutip
+  - astropy
+# The subset every later run upgrades again so its transitive dependencies
+# stay current too.
+science_python_upgrade_packages:
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - sympy
+  - scikit-learn
+  - seaborn
+  - requests
+  - httpx
+  - pytest
+  - boto3
+  - Pillow
+  - ipykernel
+  - ipywidgets
+  - ipympl
+  - plotly
+  - h5py
+# Extra pip arguments, for example a lab mirror and a constraints file:
+#   --index-url https://pypi.example.edu/simple --constraint /etc/lab/constraints.txt
+science_python_pip_extra_args: ""
+
 # Interpreter used to rebuild pipx virtualenvs whose base Python was removed
 # (distro upgrade or a home copied from another host).
 pipx_repair_python: /usr/bin/python3

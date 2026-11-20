@@ -40,6 +40,8 @@ build_ignore:
   - __pycache__
   - .mypy_cache
   - .ci-venv
+  - .research-profile
+  - research-profile-report.md
   - docs/evidence
   - tests
   - scripts
