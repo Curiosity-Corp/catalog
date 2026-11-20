@@ -1,0 +1,84 @@
+---
+# =============================================================================
+# Scientific Python virtual environment
+# =============================================================================
+# Builds science_python_venv (default /opt/science-venv) with the distribution's
+# python3 and installs science_python_packages into it from PyPI, or the index
+# named in science_python_pip_extra_args. Nothing here needs root beyond write
+# access to the venv path, so CI applies this file unchanged to a throwaway
+# directory (the research-profile job, docs/python-research-profile.md).
+# science-tools.yml adds the system-wide PATH, links and notebook kernel.
+# =============================================================================
+
+# The kernel registration and the jupyter/ipython links in science-tools.yml
+# need ipykernel, so refuse a list without it before any venv is touched.
+- name: Validate the scientific Python package list
+  ansible.builtin.assert:
+    that:
+      - science_python_venv is string
+      - science_python_venv is match('/')
+      - science_python_packages is sequence
+      - science_python_packages is not string
+      - science_python_packages is not mapping
+      - science_python_packages | length > 0
+      - >-
+        science_python_packages | map('string')
+        | map('regex_replace', '^([A-Za-z0-9._-]+).*$', '\\1')
+        | map('lower') | map('regex_replace', '[_.]+', '-')
+        | select('equalto', 'ipykernel') | list | length > 0
+      - science_python_upgrade_packages is sequence
+      - science_python_upgrade_packages is not string
+      - science_python_upgrade_packages is not mapping
+      - science_python_pip_extra_args is string
+    fail_msg: >-
+      science_python_packages must be a non-empty list of pip requirements that
+      includes ipykernel (the "Python 3 (Science)" kernel and the jupyter and
+      ipython links depend on it); science_python_upgrade_packages must be a
+      list, science_python_pip_extra_args a string and science_python_venv an
+      absolute path. Requirement specifiers such as 'numpy>=2' are allowed.
+    quiet: true
+
+# A venv built on a Python minor the distro has since replaced (3.13 -> 3.14 on
+# Ubuntu 26.04) keeps bin/activate, but its site-packages and pip are invisible
+# to the new interpreter, so a creates: guard never rebuilt it and every pip
+# task failed. Probe the venv instead; a missing venv fails the probe too.
+- name: Probe the science venv for a usable interpreter and pip
+  ansible.builtin.command:
+    argv:
+      - "{{ science_python_venv }}/bin/python"
+      - -c
+      - import pip
+  register: _science_venv_probe
+  changed_when: false
+  failed_when: false
+
+- name: Create or rebuild the science venv
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -m
+      - venv
+      - --clear
+      - "{{ science_python_venv }}"
+  # The declared packages below are reinstalled into the rebuilt venv.
+  when: _science_venv_probe.rc != 0
+  changed_when: true
+
+- name: Install/upgrade scientific Python packages into venv  # noqa: package-latest
+  ansible.builtin.pip:
+    name: "{{ science_python_packages }}"
+    extra_args: "{{ science_python_pip_extra_args | default(omit, true) }}"
+    virtualenv: "{{ science_python_venv }}"
+    state: latest
+
+# --- Periodic upgrade of key packages ---
+# Runs on every ansible-pull to keep core packages current beyond the declared
+# list. This catches transitive dependencies and new additions to the
+# scientific ecosystem.
+- name: Upgrade all pip packages in science-venv (periodic)  # noqa: package-latest
+  ansible.builtin.pip:
+    name: "{{ science_python_upgrade_packages }}"
+    extra_args: "{{ science_python_pip_extra_args | default(omit, true) }}"
+    virtualenv: "{{ science_python_venv }}"
+    state: latest
+  when: science_python_upgrade_packages | length > 0

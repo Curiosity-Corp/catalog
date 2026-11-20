@@ -368,7 +368,7 @@ def main() -> None:
             '      - -m\n      - pip\n      - install',
             "Ensure the user pipx binary directory exists",
         ),
-        "tasks/science-tools.yml": ("state: latest",),
+        "tasks/science-venv.yml": ("state: latest",),
         "tasks/hardware-pipx.yml": ("state: latest",),
         "tasks/languages.yml": (
             "https://go.dev/dl/?mode=json",
