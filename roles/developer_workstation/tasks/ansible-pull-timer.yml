@@ -5,14 +5,123 @@
 # Sets up periodic ansible-pull runs for ongoing workstation updates.
 # Variables come from defaults/main.yml:
 #   ansible_pull_repo, ansible_pull_branch, ansible_pull_playbook,
-#   ansible_pull_interval, ansible_pull_dir, workstation_ansible_pull_memory_high
+#   ansible_pull_interval, ansible_pull_dir, workstation_ansible_pull_memory_high,
+#   ansible_pull_poll_enabled, ansible_pull_poll_schedule, ansible_pull_state_dir
+#
+# ansible-pull.timer is the full converge (02:00 and after boot). The poll
+# (ansible-pull-poll.timer, catalog#159) starts the same ansible-pull.service
+# as soon as the catalog branch has moved past the commit of the last
+# successful run, so a merge does not wait up to a day for its hosts.
 # =============================================================================
+
+- name: Validate the ansible-pull poll settings
+  ansible.builtin.assert:
+    that:
+      - ansible_pull_poll_schedule | default('') | trim | length > 0
+      - ansible_pull_state_dir | default('') is match('^/')
+    fail_msg: >-
+      ansible_pull_poll_schedule must be a systemd OnCalendar value and
+      ansible_pull_state_dir an absolute path when ansible_pull_poll_enabled
+      is true.
+    quiet: true
+  when: ansible_pull_poll_enabled | bool
 
 - name: Create ansible-pull wrapper
   ansible.builtin.copy:
     content: |
       #!/usr/bin/env bash
+      # Managed by curiosity developer_workstation (tasks/ansible-pull-timer.yml).
+      #
+      #   curiosity-ansible-pull              converge now (ansible-pull.service:
+      #                                       the 02:00 timer, boot, a manual
+      #                                       start, the poll below)
+      #   curiosity-ansible-pull --if-behind  start ansible-pull.service only when
+      #                                       the catalog branch has moved past
+      #                                       the commit of the last successful
+      #                                       run (ansible-pull-poll.service)
       set -euo pipefail
+
+      if_behind=false
+      case "${1:-}" in
+        "") ;;
+        --if-behind) if_behind=true ;;
+        *) echo "usage: curiosity-ansible-pull [--if-behind]" >&2; exit 2 ;;
+      esac
+
+      state_dir={{ ansible_pull_state_dir | quote }}
+      # Commit of the last run that finished successfully.
+      applied="$state_dir/applied-commit"
+      # Commit the poll last started a run for. The poll starts a run once per
+      # commit; when that run fails, the next commit or the 02:00 run retries,
+      # so a broken commit cannot restart a full converge every poll.
+      poll_started="$state_dir/poll-started-commit"
+
+      if $if_behind; then
+        state=$(systemctl show -P ActiveState ansible-pull.service)
+        if [[ $state == activating || $state == active || $state == deactivating ]] ||
+           ! flock -n /var/lock/ansible-pull.lock true; then
+          echo "curiosity-ansible-pull: a run is in progress; it applies the newest commit itself"
+          exit 0
+        fi
+        if [[ ! -d "{{ ansible_pull_dir }}/.git" ]]; then
+          echo "curiosity-ansible-pull: no catalog checkout at {{ ansible_pull_dir }} yet; starting the first run"
+          systemctl start --no-block ansible-pull.service
+          exit 0
+        fi
+        # A reviewed local checkout (local changes, or commits the branch does
+        # not contain) is applied by the full run only, never by the poll.
+        if [[ -n "$(git -C "{{ ansible_pull_dir }}" status --porcelain)" ]]; then
+          echo "curiosity-ansible-pull: {{ ansible_pull_dir }} has local changes; the 02:00 run applies it, the poll does not"
+          exit 0
+        fi
+        if ! heads=$(git -C "{{ ansible_pull_dir }}" ls-remote --exit-code origin "refs/heads/{{ ansible_pull_branch }}"); then
+          echo "curiosity-ansible-pull: cannot read {{ ansible_pull_branch }} from the catalog remote" >&2
+          exit 1
+        fi
+        remote=${heads%%[[:space:]]*}
+        last=none
+        if [[ -r $applied ]]; then
+          last=$(<"$applied")
+        fi
+        if [[ $remote == "$last" ]]; then
+          echo "curiosity-ansible-pull: {{ ansible_pull_branch }} is at $remote, already applied"
+          exit 0
+        fi
+        started=none
+        if [[ -r $poll_started ]]; then
+          started=$(<"$poll_started")
+        fi
+        if [[ $remote == "$started" ]]; then
+          echo "curiosity-ansible-pull: {{ ansible_pull_branch }} is at $remote; the run the poll started for it did not succeed, so the 02:00 run retries it"
+          exit 0
+        fi
+        if ! git -C "{{ ansible_pull_dir }}" fetch --quiet origin "{{ ansible_pull_branch }}"; then
+          echo "curiosity-ansible-pull: cannot fetch {{ ansible_pull_branch }} from the catalog remote" >&2
+          exit 1
+        fi
+        if ! git -C "{{ ansible_pull_dir }}" merge-base --is-ancestor HEAD "$remote"; then
+          echo "curiosity-ansible-pull: {{ ansible_pull_dir }} holds commits {{ ansible_pull_branch }} does not contain; the 02:00 run applies it, the poll does not"
+          exit 0
+        fi
+        # The update ring: canary converges at once, later rings wait until
+        # the commit has been on the branch for the ring's observation window.
+        min_age={{ workstation_update_ring_min_age_seconds[workstation_update_ring] | int }}
+        committed=$(git -C "{{ ansible_pull_dir }}" log -1 --format=%ct "$remote")
+        age=$(( $(date +%s) - committed ))
+        if (( age < min_age )); then
+          echo "curiosity-ansible-pull: ring {{ workstation_update_ring }} waits until $remote is ${min_age}s old (it is ${age}s)"
+          exit 0
+        fi
+        echo "curiosity-ansible-pull: {{ ansible_pull_branch }} is at $remote, last applied $last; starting ansible-pull.service"
+        if ! systemctl start --no-block ansible-pull.service; then
+          echo "curiosity-ansible-pull: ansible-pull.service did not start; the next poll tries again" >&2
+          exit 1
+        fi
+        mkdir -p "$state_dir"
+        echo "$remote" >"$poll_started.tmp"
+        mv -f "$poll_started.tmp" "$poll_started"
+        exit 0
+      fi
 
       extra_args=()
       if [[ -n "{{ ansible_pull_extra_vars }}" ]]; then
@@ -57,7 +166,7 @@
           "${extra_args[@]}"
       fi
 
-      exec /usr/bin/ansible-pull \
+      /usr/bin/ansible-pull \
         -U {{ ansible_pull_repo }} \
         -C {{ ansible_pull_branch }} \
         -d {{ ansible_pull_dir }} \
@@ -68,6 +177,13 @@
         -e workstation_profile={{ workstation_profile }} \
         -e hardware_profile={{ hardware_profile }} \
         "${extra_args[@]}"
+
+      # Reached only when the run succeeded (set -e): the poll compares the
+      # branch with this commit.
+      mkdir -p "$state_dir"
+      git -C "{{ ansible_pull_dir }}" rev-parse HEAD >"$applied.tmp"
+      mv -f "$applied.tmp" "$applied"
+      echo "curiosity-ansible-pull: applied $(<"$applied")"
     dest: /usr/local/sbin/curiosity-ansible-pull
     mode: "0755"
 
@@ -120,3 +236,75 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Create ansible-pull poll service unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Start ansible-pull when the catalog branch has moved
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      Environment=HOME=/root
+      ExecStart=/usr/local/sbin/curiosity-ansible-pull --if-behind
+      Nice=10
+      TimeoutStartSec=10min
+      StandardOutput=journal
+      StandardError=journal
+    dest: /etc/systemd/system/ansible-pull-poll.service
+    mode: '0644'
+  notify: Reload systemd
+  when: ansible_pull_poll_enabled | bool
+
+- name: Create ansible-pull poll timer
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Poll the catalog branch for a merged change
+
+      [Timer]
+      OnCalendar={{ ansible_pull_poll_schedule }}
+      RandomizedDelaySec=60
+      AccuracySec=1min
+
+      [Install]
+      WantedBy=timers.target
+    dest: /etc/systemd/system/ansible-pull-poll.timer
+    mode: '0644'
+  notify: Reload systemd
+  when: ansible_pull_poll_enabled | bool
+
+- name: Enable ansible-pull poll timer
+  ansible.builtin.systemd:
+    name: ansible-pull-poll.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: ansible_pull_poll_enabled | bool
+
+- name: Check for a retired ansible-pull poll timer
+  ansible.builtin.stat:
+    path: /etc/systemd/system/ansible-pull-poll.timer
+  register: _ansible_pull_poll_timer_unit
+  when: not (ansible_pull_poll_enabled | bool)
+
+- name: Stop and disable the retired ansible-pull poll timer
+  ansible.builtin.systemd:
+    name: ansible-pull-poll.timer
+    enabled: false
+    state: stopped
+  when:
+    - not (ansible_pull_poll_enabled | bool)
+    - _ansible_pull_poll_timer_unit.stat.exists
+
+- name: Remove the retired ansible-pull poll units
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - ansible-pull-poll.timer
+    - ansible-pull-poll.service
+  notify: Reload systemd
+  when: not (ansible_pull_poll_enabled | bool)

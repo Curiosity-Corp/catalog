@@ -852,6 +852,17 @@ ansible_pull_verify_commit: "{{ catalog_integrity_mode == 'enforce' }}"
 # the rest of the host; there is deliberately no MemoryMax, so a run is never
 # OOM-killed by its own cgroup. Any systemd size value, or "infinity".
 workstation_ansible_pull_memory_high: 8G
+# Poll (catalog#159): ansible-pull-poll.timer runs
+# `curiosity-ansible-pull --if-behind` on this schedule. It compares the
+# branch head (one git ls-remote) with the commit of the last successful run
+# and starts ansible-pull.service when the branch has moved, so a merge reaches
+# the host within one poll instead of at the next 02:00 run. Rings other than
+# canary wait until the commit is workstation_update_ring_min_age_seconds old.
+# false stops the timer and removes its units; the 02:00 run stays.
+ansible_pull_poll_enabled: true
+ansible_pull_poll_schedule: "*:0/15"
+# Holds applied-commit (the last successful run) and poll-started-commit.
+ansible_pull_state_dir: /var/lib/curiosity/ansible-pull
 authd_archive_distribution: "{{ ansible_distribution_release }}"
 authd_archive_key_fingerprint: "155D766F2E771AED"
 authd_archive_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x{{ authd_archive_key_fingerprint }}"
