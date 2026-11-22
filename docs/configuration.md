@@ -831,9 +831,9 @@ never blocks a login. Disabling the option removes the helper and its hooks.
 ```yaml
 minimal_desktop_display_setup_enabled: true
 minimal_desktop_display_layout:
-  - {output: DP-2, mode: 3840x2160, rate: 60, pos: 0x0, primary: true}
-  - {output: DP-3, mode: 3840x2160, rate: 60, pos: 3840x0}
-  - {output: HDMI-2, mode: auto, pos: 0x2160}
+  - {output: DP-2, mode: 3840x2160, rate: 60, pos: "0x0", primary: true}
+  - {output: DP-3, mode: 3840x2160, rate: 60, pos: "3840x0"}
+  - {output: HDMI-2, mode: auto, pos: "0x2160"}
 minimal_desktop_touch_outputs:
   - {device: "PIXCIR Inc. PIXC65 Touch", output: HDMI-2}
 ```
@@ -845,7 +845,8 @@ call: the declared mode at the listed rate nearest the declared `rate` (a mode
 the output does not list falls back to `--auto` with a warning), the declared
 position, and `primary`. Declared outputs that are not connected are turned
 off; outputs the layout does not name are left alone. Broadcast RGB goes to the
-primary. With an empty layout, or none of its outputs connected, the
+primary. Quote positions (`pos: "0x2160"`): YAML reads a bare `0x2160` as a hex
+number, which the role refuses. With an empty layout, or none of its outputs connected, the
 single-output logic above runs unchanged. A layout cannot be combined with a
 `display_guard` pin, which drives one output only; a host whose hardware
 profile pins a guard it does not use sets `minimal_desktop_display_guard: {}`
