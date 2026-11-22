@@ -1060,6 +1060,34 @@ and downloads) above the limit instead of letting it press on the rest of the
 host. There is deliberately no `MemoryMax=`, so the pull's own cgroup never
 OOM-kills it. Use any systemd size value, or `infinity` to remove the limit.
 
+### Converging within one poll of a merge
+
+`ansible-pull.timer` is the full converge: 02:00 (plus the ring's randomized
+delay) and five minutes after boot. `ansible-pull-poll.timer` (catalog#159)
+runs `curiosity-ansible-pull --if-behind` every `ansible_pull_poll_schedule`.
+It reads the branch head with one `git ls-remote` and compares it with
+`<ansible_pull_state_dir>/applied-commit`, the commit of the last run that
+finished successfully. When the branch has moved it starts
+`ansible-pull.service` itself, so a polled run has the same lock,
+`MemoryHigh=` and `OnSuccess=` chain as the nightly one.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ansible_pull_poll_enabled` | `true` | `false` stops the poll timer and removes its units; the 02:00 run stays. |
+| `ansible_pull_poll_schedule` | `*:0/15` | `OnCalendar=` of the poll. A poll with nothing new is one `git ls-remote`. |
+| `ansible_pull_state_dir` | `/var/lib/curiosity/ansible-pull` | Holds `applied-commit` and `poll-started-commit`. |
+
+The poll does nothing while a run is in progress or holds
+`/var/lock/ansible-pull.lock`. It starts one run per commit
+(`poll-started-commit`): when that run fails, the next commit or the 02:00 run
+retries, so a broken commit never restarts a full converge every poll. A
+reviewed local checkout (local changes, or commits the branch does not
+contain) is left to the 02:00 run. The update ring holds: `canary` converges
+at once, `early` and `general` wait until the commit is
+`workstation_update_ring_min_age_seconds` old. An unreadable remote or a failed
+fetch fails `ansible-pull-poll.service`, so it shows in `systemctl --failed`
+and the journal instead of passing silently.
+
 ## Console tuning
 
 `console_tuning_enabled` (default `false`) opts a large or mixed-size-display
