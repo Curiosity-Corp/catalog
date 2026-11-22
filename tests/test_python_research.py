@@ -207,6 +207,21 @@ def test_guide_lists_the_example_packages() -> None:
         assert package.lower() in GUIDE.lower(), package
 
 
+def test_example_constraints_file_parses_and_the_guide_links_it() -> None:
+    from packaging.requirements import Requirement
+
+    path = ROOT / "examples/python-research-constraints.txt"
+    lines = [line.strip() for line in path.read_text().splitlines()]
+    requirements = [Requirement(line) for line in lines if line and not line.startswith("#")]
+    assert requirements, "the example has no requirement lines"
+    for requirement in requirements:
+        # Ranges, not a freeze: an exact pin belongs in a lab's own copy.
+        assert not any(spec.operator in ("==", "===") for spec in requirement.specifier), str(requirement)
+        assert requirement.name in DEFAULTS["science_python_packages"], requirement.name
+    assert "](../examples/python-research-constraints.txt)" in GUIDE
+    assert 'science_python_pip_extra_args: "--constraint /etc/lab/constraints.txt"' in path.read_text()
+
+
 def test_guide_shows_the_project_commands_the_ci_job_runs() -> None:
     validator = _validator()
     for command in validator.PROJECT_COMMANDS:

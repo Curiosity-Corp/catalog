@@ -77,6 +77,12 @@ constraints file and name it.
 science_python_pip_extra_args: "--constraint /etc/lab/constraints.txt"
 ```
 
+[`examples/python-research-constraints.txt`](../examples/python-research-constraints.txt)
+is a starting point: commented, synthetic ranges (hold a major release, stay in
+a minor series, exclude one bad release, limit by Python version). A
+constraints file only limits versions of packages already in
+`science_python_packages`; it never adds one.
+
 To hold versions for one study, give the study its own environment (next
 section).
 

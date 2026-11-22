@@ -1,0 +1,25 @@
+# Example lab constraints file for the Python research profile (catalog#127).
+#
+# Copy to /etc/lab/constraints.txt on the lab's hosts (or anywhere root can
+# read) and point the role at it:
+#
+#   science_python_pip_extra_args: "--constraint /etc/lab/constraints.txt"
+#
+# pip reads a constraints file as limits, not as an install list: a line here
+# changes only which version of an already-listed package is installed, so the
+# package list (science_python_packages) stays version-free.
+#
+# These lines are synthetic ranges that show the forms, not a real freeze.
+# Replace them with the ranges your lab has validated.
+
+# Hold a major release while studies built on it are still running.
+numpy>=2.0,<3
+
+# Stay within a validated minor series.
+pandas~=2.2.0
+
+# Exclude one release known to break a lab workflow.
+matplotlib>=3.8,!=3.9.1
+
+# Hold a package only on the Python versions where its wheels exist.
+scipy>=1.13; python_version >= "3.12"
