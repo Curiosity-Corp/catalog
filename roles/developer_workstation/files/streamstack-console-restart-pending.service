@@ -1,0 +1,14 @@
+# Managed by the curiosity workstation role (streamstack task group).
+# Restarts the StreamStack Console once no call is using it, after an
+# ansible-pull run replaced the StreamStack package during a call (catalog#137).
+# Started by its timer, which curiosity-streamstack-console-restart starts when
+# it leaves the marker; nothing runs while there is no marker.
+[Unit]
+Description=Restart the StreamStack Console once the call is over
+ConditionPathExists=%t/streamstack/console-restart-pending
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/curiosity-streamstack-console-restart --pending
+# 3: a call may still be on; the timer asks again.
+SuccessExitStatus=3
