@@ -655,3 +655,112 @@ def test_lightdm_takes_display_manager_from_gdm3() -> None:
     enable = names.index("Enable and start LightDM")
     assert names.index(select["name"]) < names.index("Set LightDM as default display manager")
     assert names.index("Point display-manager.service at LightDM") < enable
+
+
+def _task_enabled(task: dict, **variables) -> bool:
+    """Evaluate include conditions across the supported profile combinations."""
+    conditions = task.get("when", [])
+    if isinstance(conditions, str):
+        conditions = [conditions]
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    env.filters["bool"] = bool
+    return all(bool(env.compile_expression(condition)(**variables)) for condition in conditions)
+
+
+def test_graphical_desktop_defaults_to_lightdm_openbox() -> None:
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    assert defaults["minimal_desktop_enabled"] is True
+    packages = _named(_tasks("minimal-desktop-packages.yml"), "Install minimal desktop packages")
+    assert {"lightdm", "openbox", "xserver-xorg", "xinit", "dbus-x11"} <= set(
+        packages["ansible.builtin.apt"]["name"]
+    )
+
+
+@pytest.mark.parametrize("profile", ["desktop", "thin-client", "byod-kiosk", "workspace"])
+@pytest.mark.parametrize("minimal_enabled", [False, True])
+@pytest.mark.parametrize("display_enabled", [False, True])
+def test_all_graphical_profiles_route_to_openbox(
+    profile: str, minimal_enabled: bool, display_enabled: bool
+) -> None:
+    includes = _includes(_tasks("main.yml"))
+    graphical = profile in {"thin-client", "byod-kiosk"} or (
+        profile == "desktop" and (minimal_enabled or display_enabled)
+    )
+    variables = {
+        "workstation_profile": profile,
+        "minimal_desktop_enabled": minimal_enabled,
+        "display_config_enabled": display_enabled,
+    }
+    assert _task_enabled(includes["minimal-desktop.yml"], **variables) is graphical
+    assert _task_enabled(includes["lightweight-desktop-policy.yml"], **variables) is graphical
+    assert _task_enabled(includes["display-config.yml"], **variables) is (
+        profile == "desktop" and display_enabled
+    )
+
+
+def test_legacy_display_flag_adds_vnc_after_openbox_without_configuring_gnome() -> None:
+    main = _tasks("main.yml")
+    includes = _includes(main)
+    assert main.index(includes["minimal-desktop.yml"]) < main.index(includes["display-config.yml"])
+    display = _tasks("display-config.yml")
+    copies = [task["ansible.builtin.copy"] for task in display if "ansible.builtin.copy" in task]
+    assert any(item["dest"] == "/etc/systemd/system/x11vnc.service" for item in copies)
+    assert not any(item["dest"].startswith(("/etc/gdm", "/etc/dconf/")) for item in copies)
+    serialized = yaml.safe_dump(display)
+    assert "org/gnome/" not in serialized
+    assert "dconf update" not in serialized
+
+
+def test_minimal_desktop_dependencies_do_not_pull_in_another_desktop() -> None:
+    forbidden = {"gdm", "gdm3", "gnome", "gnome-core", "gnome-shell", "gnome-session",
+                 "gnome-session-bin", "ubuntu-desktop", "ubuntu-desktop-minimal"}
+    for task in _tasks("minimal-desktop-packages.yml"):
+        apt = task.get("ansible.builtin.apt")
+        if apt is None or apt.get("state", "present") == "absent":
+            continue
+        assert apt["install_recommends"] is False, task["name"]
+        names = apt["name"]
+        names = [names] if isinstance(names, str) else names
+        assert not forbidden.intersection(names), task["name"]
+    slick = _named(_tasks("minimal-desktop-lightdm.yml"), "Install the slick greeter")
+    assert slick["ansible.builtin.apt"]["install_recommends"] is False
+
+
+def test_lightdm_default_file_matches_selected_service_and_session() -> None:
+    tasks = _tasks("minimal-desktop-lightdm.yml")
+    defaults = [task["ansible.builtin.copy"] for task in tasks
+                if task.get("ansible.builtin.copy", {}).get("dest") == "/etc/X11/default-display-manager"]
+    assert len(defaults) == 1
+    assert defaults[0]["content"] == "/usr/sbin/lightdm\n"
+    assert "user-session=openbox" in _named(tasks, "Openbox session")["ansible.builtin.copy"]["content"]
+
+
+def test_graphical_package_pin_blocks_desktops_and_preserves_shared_helpers() -> None:
+    tasks = _tasks("lightweight-desktop-policy.yml")
+    pins = [task["ansible.builtin.copy"] for task in tasks
+            if task.get("ansible.builtin.copy", {}).get("dest") ==
+            "/etc/apt/preferences.d/curiosity-lightweight-desktop"]
+    assert len(pins) == 1
+    pin = pins[0]
+    assert pin["owner"] == "root" and pin["group"] == "root"
+    assert pin["mode"] == "0644"
+    fields = dict(line.split(":", 1) for line in pin["content"].splitlines()
+                  if line and not line.startswith("#"))
+    assert set(fields["Package"].split()) == {
+        "gdm3", "gnome-shell", "gnome-shell-common", "gnome-shell-ubuntu-extensions",
+        "gnome-session", "gnome-session-bin", "gnome-session-common", "ubuntu-session",
+        "ubuntu-desktop", "ubuntu-desktop-minimal", "ubuntu-gnome-desktop", "gnome-core", "gnome",
+    }
+    assert fields["Pin"].strip() == "version *"
+    assert fields["Pin-Priority"].strip() == "-1"
+    assert not {"gnome-keyring", "network-manager-gnome"}.intersection(fields["Package"].split())
+
+
+def test_graphical_package_pin_precedes_package_changes() -> None:
+    tasks = _tasks("main.yml")
+    policy = _includes(tasks)["lightweight-desktop-policy.yml"]
+    index = tasks.index(policy)
+    assert index < tasks.index(_includes(tasks)["minimal-desktop.yml"])
+    for position, task in enumerate(tasks):
+        if "ansible.builtin.apt" in task:
+            assert index < position
