@@ -1,0 +1,15 @@
+# Places where the name OKTO is deliberately kept (hypervoid/atlas#107, design D8 on hypervoid/atlas#94).
+# Each entry: path, count (matching lines), reason, remove_by (YYYY-MM-DD; omitted for history).
+# Pattern: rg -n -P '(?i)(?<![a-z])okto(?!pod|ber)'. Staff-facing text must not appear here.
+entries:
+  - path: CHANGELOG.md
+    count: 1
+    reason: "history"
+  - path: docs/pia-vpn-and-wifi.md
+    count: 1
+    reason: "References to the GitLab project path mrh/okto and its issues (okto#N shorthand). The project path is renamed by the lead, never here; these references follow it."
+    remove_by: "2026-12-31"
+  - path: roles/workstation_storage/files/hh-storage-cutover-fast
+    count: 1
+    reason: "Comment naming the okto CLI cache directories as a live writer; the CLI keeps its name until the okto binary is retired."
+    remove_by: "2026-12-31"
