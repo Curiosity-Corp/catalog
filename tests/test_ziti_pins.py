@@ -352,16 +352,25 @@ PLAYBOOK = """---
 """
 
 
-def _ziti_includes() -> list[dict]:
+ZITI_CHILDREN = {"ziti.yml": "ZITI", "ziti-health.yml": "HEALTH", "ziti-split-dns.yml": "SPLITDNS"}
+INCLUDE = "ansible.builtin.include_tasks"
+
+
+def _ziti_stanza() -> list[dict]:
+    """Every `ziti`-tagged task of main.yml, in order: the includes and the tasks their conditions read."""
     return [t for t in _load(ROLE / "tasks/main.yml") if "ziti" in (t.get("tags") or [])]
 
 
-def test_main_includes_both_ziti_task_files_and_applies_the_tags() -> None:
-    includes = {t["ansible.builtin.include_tasks"]["file"]: t for t in _ziti_includes()}
-    assert set(includes) == {"ziti.yml", "ziti-split-dns.yml"}
+def _ziti_includes() -> dict[str, dict]:
+    return {t[INCLUDE]["file"]: t for t in _ziti_stanza() if INCLUDE in t}
+
+
+def test_main_includes_every_ziti_task_file_and_applies_the_tags() -> None:
+    includes = _ziti_includes()
+    assert set(includes) == set(ZITI_CHILDREN)
     for task in includes.values():
-        assert task["ansible.builtin.include_tasks"]["apply"]["tags"] == task["tags"]
-    assert "ziti" in includes["ziti.yml"]["tags"]
+        assert task[INCLUDE]["apply"]["tags"] == task["tags"]
+        assert "ziti" in task["tags"]
     assert {"ziti", "dns"} <= set(includes["ziti-split-dns.yml"]["tags"])
 
 
@@ -369,20 +378,27 @@ def _harness(tmp_path: Path, *, apply_tags: bool) -> Path:
     """A role whose main.yml is the real ziti include stanza and whose children are stubs."""
     tasks = tmp_path / "roles/developer_workstation/tasks"
     tasks.mkdir(parents=True)
-    includes = _ziti_includes()
+    stanza = _ziti_stanza()
     if not apply_tags:
-        for task in includes:
-            del task["ansible.builtin.include_tasks"]["apply"]
-    (tasks / "main.yml").write_text(yaml.safe_dump(includes))
-    (tasks / "ziti.yml").write_text(STUB_CHILD.format(marker="ZITI"))
-    (tasks / "ziti-split-dns.yml").write_text(STUB_CHILD.format(marker="SPLITDNS"))
+        for task in stanza:
+            if INCLUDE in task:
+                del task[INCLUDE]["apply"]
+    (tasks / "main.yml").write_text(yaml.safe_dump(stanza))
+    for child, marker in ZITI_CHILDREN.items():
+        (tasks / child).write_text(STUB_CHILD.format(marker=marker))
     (tmp_path / "site.yml").write_text(PLAYBOOK)
     return tmp_path
 
 
 def _playbook(tmp_path: Path, *tags: str) -> str:
     assert shutil.which("ansible-playbook"), "ansible-playbook must be installed to prove tag selection"
-    extra = {"workstation_profile": "thin-client", "ziti_enabled": True, "ziti_intercept_domains": ["svc.example.test"]}
+    extra = {
+        "workstation_profile": "thin-client",
+        "ziti_enabled": True,
+        "ziti_health_check_enabled": True,
+        "ziti_service_name": "ziti-edge-tunnel.service",
+        "ziti_intercept_domains": ["svc.example.test"],
+    }
     env = {
         **os.environ,
         "ANSIBLE_ROLES_PATH": str(tmp_path / "roles"),
@@ -407,14 +423,15 @@ def _playbook(tmp_path: Path, *tags: str) -> str:
 
 def test_tags_ziti_runs_the_child_tasks(tmp_path: Path) -> None:
     out = _playbook(_harness(tmp_path, apply_tags=True), "ziti")
-    assert "CHILD-RAN-ZITI" in out
-    assert "CHILD-RAN-SPLITDNS" in out
+    for marker in ZITI_CHILDREN.values():
+        assert f"CHILD-RAN-{marker}" in out
 
 
 def test_tags_dns_runs_only_the_split_dns_child(tmp_path: Path) -> None:
     out = _playbook(_harness(tmp_path, apply_tags=True), "dns")
     assert "CHILD-RAN-SPLITDNS" in out
     assert "CHILD-RAN-ZITI" not in out
+    assert "CHILD-RAN-HEALTH" not in out
 
 
 def test_an_unrelated_tag_runs_neither_child(tmp_path: Path) -> None:
@@ -430,7 +447,7 @@ def test_the_harness_detects_the_old_silent_no_op(tmp_path: Path) -> None:
 
 def test_every_ziti_child_task_is_reachable_through_the_ziti_tag() -> None:
     # A task-level tag that does not include `ziti` would hide it from `--tags ziti`.
-    for name in ("ziti.yml", "ziti-split-dns.yml"):
+    for name in ZITI_CHILDREN:
         for task in _load(ROLE / "tasks" / name):
             tags = task.get("tags")
             assert tags is None or "ziti" in tags or "always" in tags, f"{name}: {task['name']}"
