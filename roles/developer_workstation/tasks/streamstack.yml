@@ -531,6 +531,27 @@
     group: root
     mode: "0644"
 
+# Package replacements restart the Console only when no call is on (catalog#137):
+# the helper asks StreamStack's own call detection and, during a call, leaves a
+# marker in the session's runtime dir and arms the timer, which restarts the
+# Console once the call is over.
+- name: Install the call-safe StreamStack Console restart
+  ansible.builtin.copy:
+    src: curiosity-streamstack-console-restart
+    dest: /usr/local/sbin/curiosity-streamstack-console-restart
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the deferred StreamStack Console restart user units
+  ansible.builtin.copy:
+    src: "curiosity-streamstack-console-restart.{{ item }}"
+    dest: "/etc/systemd/user/curiosity-streamstack-console-restart.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+
 - name: Ensure the global user graphical-session.target.wants directory exists for the Console
   ansible.builtin.file:
     path: /etc/systemd/user/graphical-session.target.wants
@@ -625,15 +646,19 @@
 # The user manager of each Console account starts the Console now, so the
 # program camera and StreamStack Mic exist without a new login. The unit only
 # runs where its ConditionUser matches. A Console from an older StreamStack is
-# restarted once, when this run replaced the package. A user without a running
-# manager (not logged in, no linger) picks the unit up at the next login.
+# restarted once, when this run replaced the package, and never under a live
+# call (catalog#137): restarting it freezes StreamStack Camera and drops
+# StreamStack Mic in Teams, Zoom or Meet. The helper restarts at once when no
+# call app holds the camera or the microphone; otherwise it defers (exit 3) and
+# its user timer restarts the Console once the call is over. A user without a
+# running manager (not logged in, no linger) picks the unit up at the next login.
 - name: Check which Console accounts have a running user manager
   ansible.builtin.stat:
     path: "/run/user/{{ getent_passwd[item][1] }}/bus"
   loop: "{{ streamstack_console_users | select('in', getent_passwd.keys()) | list }}"
   register: _streamstack_console_managers
 
-- name: Reload the user units and start the StreamStack Console
+- name: Start the StreamStack Console, restarting it after a package replacement unless a call is on
   ansible.builtin.command:
     argv:
       - runuser
@@ -642,15 +667,25 @@
       - --
       - env
       - "XDG_RUNTIME_DIR=/run/user/{{ getent_passwd[item.item][1] }}"
-      - systemctl
-      - --user
+      - /usr/local/sbin/curiosity-streamstack-console-restart
       - "{{ 'restart' if _streamstack_package_replaced is changed else 'start' }}"
-      - streamstack-console.service
   loop: "{{ _streamstack_console_managers.results }}"
   loop_control:
     label: "{{ item.item }}"
   when: item.stat.exists | default(false)
-  changed_when: true
+  register: _streamstack_console_restart
+  changed_when: _streamstack_console_restart.stdout is search('^(started|restarted|deferred):', multiline=True)
+  failed_when: _streamstack_console_restart.rc not in [0, 3]
+
+- name: Report a StreamStack Console restart deferred by a live call
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.item }}: {{ item.stdout_lines | select('match', '^deferred:') | first }}.
+      The new StreamStack runs once the call is over, or at the next login
+      (journalctl --user -t curiosity-streamstack-console-restart).
+  loop: "{{ _streamstack_console_restart.results | default([]) | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 3) | list }}"
+  loop_control:
+    label: "{{ item.item.item }}"
 
 # The lights service and the Stream Deck service are installed for every desktop
 # user and keep running across an upgrade, so after this run replaced the package
@@ -662,7 +697,7 @@
 # touch only HID devices (Litra lights, Stream Deck) and ask the Console for
 # actions, never /dev/video42, /dev/video43 or the audio graph, so a restart is
 # safe in a call. Not restarted here, because they own the camera loopback or the
-# audio graph: streamstack-console (restarted above), streamstack-audio-chain,
+# audio graph: streamstack-console (restarted above, call-safe), streamstack-audio-chain,
 # streamstack-auto, streamstack-canon, streamstack-camera-publish.
 - name: Check which desktop users have a running user manager
   ansible.builtin.stat:
