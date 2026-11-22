@@ -1,0 +1,6 @@
+# Managed by curiosity.workstation (tasks/system-tuning.yml). Do not edit.
+# Compressed swap in RAM, used before the disk swap file (priority -1).
+[zram0]
+zram-size = {{ zram_swap_size_expression }}
+compression-algorithm = {{ zram_swap_algorithm }}
+swap-priority = {{ zram_swap_priority }}

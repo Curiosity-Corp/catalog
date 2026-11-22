@@ -63,17 +63,64 @@
     state: present
 
 # =============================================================================
-# VM Swappiness
+# zram swap (opt-in: zram_swap_enabled)
 # =============================================================================
-# Lower swappiness keeps more in RAM instead of aggressively filling swap
-# while RAM still has room. Default 10 is good for workstations.
+# A compressed swap device in RAM, used before the swap file. Nothing is moved
+# or stopped while the device holds pages: a new size waits for the next boot.
+# Disabled leaves any existing zram set-up alone.
 # =============================================================================
 
-- name: Set vm.swappiness
-  ansible.builtin.copy:
-    content: |
-      # Managed by Ansible — developer-workstation role
-      vm.swappiness={{ vm_swappiness }}
+- name: Configure zram swap
+  when: zram_swap_enabled | bool
+  block:
+    - name: Install the zram generator
+      ansible.builtin.apt:
+        name: systemd-zram-generator
+        state: present
+
+    - name: Write the zram generator config
+      ansible.builtin.template:
+        src: zram-generator.conf.j2
+        dest: /etc/systemd/zram-generator.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Read the active swap devices
+      ansible.builtin.command:
+        argv: [swapon, "--show=NAME", --noheadings]
+      register: _zram_swaps
+      changed_when: false
+      check_mode: false
+
+    - name: Start zram swap now (adds a swap device; nothing is moved or stopped)
+      ansible.builtin.systemd_service:
+        name: dev-zram0.swap
+        state: started
+        daemon_reload: true
+      when: "'/dev/zram0' not in _zram_swaps.stdout_lines"
+      # In check mode the generator config was not written, so the unit is absent.
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Converge the zram device size
+      ansible.builtin.script:
+        cmd: "curiosity-zram-converge {{ zram_swap_size_expression | quote }}"
+        executable: /usr/bin/python3
+      register: _zram_converge
+      changed_when: _zram_converge.stdout is search('^resized')
+      when: not ansible_check_mode
+
+# =============================================================================
+# VM Swappiness and swap readahead
+# =============================================================================
+# Lower swappiness keeps more in RAM instead of aggressively filling swap
+# while RAM still has room: 10 with only a disk swap file. With zram, 100
+# (compressed RAM is cheap to swap to) and page-cluster 0 (no readahead).
+# =============================================================================
+
+- name: Set vm.swappiness and vm.page-cluster
+  ansible.builtin.template:
+    src: workstation-tuning-sysctl.conf.j2
     dest: /etc/sysctl.d/99-workstation-tuning.conf
     owner: root
     group: root

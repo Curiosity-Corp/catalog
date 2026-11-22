@@ -1,0 +1,5 @@
+# Managed by Ansible — developer-workstation role
+vm.swappiness={{ vm_swappiness }}
+{% if vm_page_cluster | string | length > 0 %}
+vm.page-cluster={{ vm_page_cluster }}
+{% endif %}

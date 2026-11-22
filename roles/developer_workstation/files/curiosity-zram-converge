@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Converge /dev/zram0 to the size zram-generator.conf asks for, moving no page.
+
+Installing systemd-zram-generator can bring the device up at the package's
+default size before the role's config is in place, and a changed size
+expression only applies when the device is set up again. This helper compares
+the device's disksize with the expression evaluated the way zram-generator
+does (`ram` is MemTotal in MiB) and recreates the device only while nothing is
+swapped to it. A device that holds pages keeps its size until the next boot.
+
+Usage: curiosity-zram-converge EXPRESSION
+
+Prints one line: "absent", "unchanged <n>MiB", "busy: ..." or
+"resized <a>MiB -> <b>MiB". Exit 0 on those, 2 on a bad expression or an
+unreadable /proc/meminfo, 1 when a systemctl or swapon call fails.
+
+CURIOSITY_ZRAM_PROC and CURIOSITY_ZRAM_SYS_BLOCK point at other /proc and
+/sys/block trees (tests).
+"""
+
+from __future__ import annotations
+
+import ast
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+DEVICE = "zram0"
+SWAP_UNIT = "dev-zram0.swap"
+SETUP_UNIT = "systemd-zram-setup@zram0.service"
+MIB = 1024 * 1024
+
+_ALLOWED_NODES = (
+    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name, ast.Constant, ast.Load,
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.USub,
+)
+_NAMES = {"ram", "min", "max"}
+
+
+class ConvergeError(Exception):
+    """A failure the caller reports as one line."""
+
+
+def evaluate(expression: str, ram_mib: int) -> int:
+    """The zram size in MiB for a zram-generator `zram-size` expression."""
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"cannot parse zram-size expression {expression!r}: {exc.msg}") from exc
+    for node in ast.walk(tree):
+        if not isinstance(node, _ALLOWED_NODES):
+            raise ValueError(f"unsupported zram-size expression {expression!r}: {type(node).__name__}")
+        if isinstance(node, ast.Name) and node.id not in _NAMES:
+            raise ValueError(f"unknown name {node.id!r} in zram-size expression {expression!r}")
+        if isinstance(node, ast.Constant) and (isinstance(node.value, bool) or not isinstance(node.value, (int, float))):
+            raise ValueError(f"non-numeric constant in zram-size expression {expression!r}")
+        if isinstance(node, ast.Call) and not (isinstance(node.func, ast.Name) and node.func.id in ("min", "max")):
+            raise ValueError(f"only min() and max() may be called in zram-size expression {expression!r}")
+    try:
+        value = eval(  # noqa: S307 - the tree is restricted to arithmetic on ram, min and max above
+            compile(tree, "zram-size", "eval"), {"__builtins__": {}}, {"ram": ram_mib, "min": min, "max": max}
+        )
+    except (ArithmeticError, TypeError) as exc:
+        raise ValueError(f"cannot evaluate zram-size expression {expression!r}: {exc}") from exc
+    if int(value) <= 0:
+        raise ValueError(f"zram-size expression {expression!r} gives {value} MiB for {ram_mib} MiB of RAM")
+    return int(value)
+
+
+def mem_total_mib(proc: Path) -> int:
+    meminfo = proc / "meminfo"
+    try:
+        for line in meminfo.read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError) as exc:
+        raise ValueError(f"cannot read MemTotal from {meminfo}: {exc}") from exc
+    raise ValueError(f"no MemTotal line in {meminfo}")
+
+
+def run(*argv: str) -> str:
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise ConvergeError(f"cannot run {argv[0]}: {exc}") from exc
+    if result.returncode != 0:
+        raise ConvergeError(f"{' '.join(argv)} exited {result.returncode}: {result.stderr.strip()}")
+    return result.stdout
+
+
+def swap_used_bytes(device: str) -> int:
+    for line in run("swapon", "--show=NAME,USED", "--bytes", "--noheadings").splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == device:
+            return int(fields[1])
+    return 0
+
+
+def converge(expression: str, proc: Path, sys_block: Path) -> str:
+    disksize = sys_block / DEVICE / "disksize"
+    if not disksize.exists():
+        return "absent"
+    want = evaluate(expression, mem_total_mib(proc))
+    have = int(disksize.read_text().strip()) // MIB
+    if have == want:
+        return f"unchanged {have}MiB"
+    used = swap_used_bytes(f"/dev/{DEVICE}")
+    if used > 0:
+        return f"busy: {have}MiB holds {used} bytes; {want}MiB applies at the next boot"
+    run("systemctl", "daemon-reload")
+    run("systemctl", "stop", SWAP_UNIT, SETUP_UNIT)
+    # The unit's own reset can leave the device configured ("comp_algorithm:
+    # Device or resource busy" when the setup unit starts again).
+    if int(disksize.read_text().strip()) != 0:
+        (sys_block / DEVICE / "reset").write_text("1\n")
+    run("systemctl", "reset-failed", SETUP_UNIT)
+    run("systemctl", "start", SWAP_UNIT)
+    return f"resized {have}MiB -> {int(disksize.read_text().strip()) // MIB}MiB"
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print("usage: curiosity-zram-converge EXPRESSION", file=sys.stderr)
+        return 2
+    proc = Path(os.environ.get("CURIOSITY_ZRAM_PROC", "/proc"))
+    sys_block = Path(os.environ.get("CURIOSITY_ZRAM_SYS_BLOCK", "/sys/block"))
+    try:
+        print(converge(argv[0], proc, sys_block))
+    except ValueError as exc:
+        print(f"curiosity-zram-converge: {exc}", file=sys.stderr)
+        return 2
+    except (ConvergeError, OSError) as exc:
+        print(f"curiosity-zram-converge: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
