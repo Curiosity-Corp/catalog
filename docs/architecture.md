@@ -25,7 +25,7 @@ to Curiosity infrastructure.
 ## Profiles
 
 - `desktop`: full workstation baseline, scientific tooling, updates, and
-  optional GUI integrations;
+  the standard LightDM/Openbox desktop (with optional VNC mirroring);
 - `workspace`: container-safe tooling and optional Coder credential helpers;
 - `thin-client`: small browser/access appliance for a remote workspace;
 - `byod-kiosk`: locked-down browser appliance for a shared or borrowed device.

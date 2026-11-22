@@ -19,7 +19,7 @@ profiles and independently tagged task groups:
   snapshots, quarantine, and rollback;
 - developer, scientific Python, data-science, CLI, container, Kubernetes, and
   infrastructure tooling;
-- desktop, lightweight desktop, thin-client, and kiosk workstation profiles;
+- desktop, thin-client, and kiosk profiles using LightDM and Openbox;
 - hardware-aware drivers and power-management settings;
 - optional firewall, disk-health, firmware, cleanup, and self-healing timers;
 - optional Coder, Keycloak, OpenZiti, remote streaming, custom CA, and chat
@@ -70,7 +70,9 @@ ansible-playbook \
 For a first pass, use a disposable VM and select only a tagged task group,
 such as `--tags updates` or `--tags packages`. The role's default desktop
 profile still installs a substantial workstation baseline; set the profile and
-feature variables explicitly for a smaller machine.
+feature variables explicitly for a smaller machine. All managed graphical
+sessions use LightDM and Openbox. To keep a `desktop` profile headless, set
+both `minimal_desktop_enabled: false` and `display_config_enabled: false`.
 
 ## Collection usage
 
@@ -103,6 +105,8 @@ The most important variables are:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `workstation_profile` | `desktop` | `desktop`, `workspace`, `thin-client`, or `byod-kiosk` |
+| `minimal_desktop_enabled` | `true` | Use LightDM and Openbox for desktop profiles; workspace profiles stay headless |
+| `display_config_enabled` | `false` | Enable optional x11vnc mirroring of the LightDM/Openbox desktop |
 | `dev_user` / `dev_user_home` | `curiosity` / `/home/curiosity` | Account that owns user-scoped tools |
 | `apt_upgrade_enabled` | `true` | Enable safe APT maintenance |
 | `coder_cli_enabled` | `false` | Opt into a configured Coder deployment |
