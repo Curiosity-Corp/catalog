@@ -91,6 +91,17 @@ quickstarts:
   script:
     - python -m pytest -q tests/test_quickstarts.py tests/test_restricted_network.py
 
+# Stand-in evidence for decision record 0004 (resumable downloads, catalog#133).
+# The full python image ships curl; the slim one does not, and the shared
+# runner is non-root, so it cannot apt-get it.
+resume-standin:
+  image: python:3.13
+  stage: test
+  script:
+    - python -m venv .ci-venv
+    - .ci-venv/bin/python -m pip install pytest
+    - .ci-venv/bin/python -m pytest -q tests/test_resumable_download_standin.py
+
 # Governance, security-process and identity documents stay true and current.
 governance:
   extends: .python_setup
