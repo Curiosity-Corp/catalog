@@ -1,6 +1,18 @@
 #!/bin/sh
-# Pick one output, drive it at its best mode, and make it primary.
+# Light the declared display layout, or else pick one output, drive it at its
+# best mode and make it primary; then map declared touch panels to their output.
 # Managed by Ansible.
+#
+# Declared layout: /etc/curiosity/display-layout (override with
+# CURIOSITY_DISPLAY_LAYOUT), one output per line:
+#   <output> <WxH|auto> <rate|-> <XxY|-> <1|0 primary>
+# When at least one declared output is connected, one xrandr call sets every
+# connected declared output (its mode at the rate listed nearest the declared
+# one, or --auto; its position; primary) and turns declared outputs that are
+# not connected off. Outputs the layout does not name are left as they are. A
+# declared mode the output does not list falls back to --auto with a warning.
+# With no layout file, or none of its outputs connected, the single-output
+# logic below runs unchanged.
 #
 # Preferences come from /etc/curiosity/display-outputs (override with
 # CURIOSITY_DISPLAY_OUTPUTS): one xrandr output name per line, blank lines and
@@ -59,117 +71,215 @@ if [ -z "$connected" ]; then
     exit 0
 fi
 
-target=
-found_preferred=0
-if [ -r "$config" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-        name=$(printf '%s\n' "${line%%#*}" | tr -d '[:space:]')
-        [ -n "$name" ] || continue
-        case "$name" in
-            *[!A-Za-z0-9_.:-]*)
-                warn "ignoring invalid output name in $config: $name"
-                continue
-                ;;
-        esac
-        if printf '%s\n' "$connected" | grep -qx -- "$name"; then
-            target=$name
-            found_preferred=1
-            break
-        fi
-    done <"$config"
-elif [ -e "$config" ]; then
-    warn "cannot read $config; using the first connected output"
-fi
-
-if [ -z "$target" ]; then
-    target=$(printf '%s\n' "$connected" | head -n 1)
-fi
-
-# Optional pin (/etc/curiosity/display-guard.conf, written by the role): when the
-# chosen output is the pinned one, apply exactly the pinned mode and never a
-# lower one. A display that has just woken may list too few modes for a moment,
-# so re-probe a few times; if the pinned mode still is not there, leave a
-# working display alone rather than fall back to another resolution.
-guard_conf=${CURIOSITY_DISPLAY_GUARD_CONF:-/etc/curiosity/display-guard.conf}
-pinned=
-if [ -r "$guard_conf" ]; then
-    conf_get() { sed -n "s/^$1=//p" "$guard_conf" | head -n 1 | tr -d '[:space:]'; }
-    pin_output=$(conf_get output)
-    pin_mode=$(conf_get mode)
-    pin_rate=$(conf_get rate)
-    if [ "$pin_output" = "$target" ] && [ -n "$pin_mode" ] && [ -n "$pin_rate" ]; then
-        attempt=0
-        while :; do
-            pinned=$(printf '%s\n' "$records" | awk -v out="$target" -v mode="$pin_mode" -v rate="$pin_rate" '
-                $1 == "M" && $2 == out && ($3 "x" $4) == mode && ($5 + 0) == (rate + 0) { print mode, $5; exit }')
-            [ -n "$pinned" ] && break
-            attempt=$((attempt + 1))
-            [ "$attempt" -gt 3 ] && break
-            xrandr >/dev/null 2>&1
-            sleep "${CURIOSITY_DISPLAY_RETRY_SLEEP:-2}"
-            query=$(xrandr --query 2>&1) || break
-            records=$(to_records "$query")
-        done
-        if [ -z "$pinned" ]; then
-            if printf '%s\n' "$query" | grep -q '\*'; then
-                warn "pinned mode $pin_mode@$pin_rate is not listed for $target; leaving the display unchanged"
-                exit 0
-            fi
-            warn "pinned mode $pin_mode@$pin_rate is not listed for $target and nothing is active; using the best mode"
-        fi
-    fi
-fi
-best=$(printf '%s\n' "$records" | awk -v out="$target" '
-    $1 == "P" && $2 == out && !pref_height {
-        pref_width = $3
-        pref_height = $4
-    }
-    $1 == "M" && $2 == out {
+# ---- Declared layout -------------------------------------------------------
+# The plan is computed in awk from the mode records and the layout file: "A"
+# lines are xrandr arguments (output names, modes and positions are validated,
+# so none holds a space), "T" names the output that gets Broadcast RGB (the
+# declared primary, else the first connected declared output), "W" a warning.
+layout_config=${CURIOSITY_DISPLAY_LAYOUT:-/etc/curiosity/display-layout}
+layout_plan() {
+    {
+        printf '%s\n' "$records"
+        sed -e 's/#.*//' -e '/^[[:space:]]*$/d' -e 's/^/L /' "$layout_config"
+    } | awk '
+    $1 == "C" { connected[$2] = 1; next }
+    $1 == "M" { modes[$2 " " $3 "x" $4] = modes[$2 " " $3 "x" $4] " " $5; next }
+    $1 == "L" {
+        if (NF != 6 || $2 !~ /^[A-Za-z0-9_.:-]+$/ || ($3 != "auto" && $3 !~ /^[0-9]+x[0-9]+$/) ||
+            ($4 != "-" && $4 !~ /^[0-9]+(\.[0-9]+)?$/) || ($5 != "-" && $5 !~ /^[0-9]+x[0-9]+$/) ||
+            ($6 != "0" && $6 != "1")) {
+            line = $0
+            sub(/^L /, "", line)
+            print "W ignoring invalid layout line: " line
+            next
+        }
         n++
-        width[n] = $3
-        height[n] = $4
-        rate[n] = $5
+        out[n] = $2; mode[n] = $3; rate[n] = $4; pos[n] = $5; primary[n] = $6
     }
     END {
+        for (i = 1; i <= n; i++) if (out[i] in connected) lit++
+        if (!lit) exit
         for (i = 1; i <= n; i++) {
-            # Same aspect as the preferred mode, within 1% (1366x768 ~ 16:9).
-            if (pref_height) {
-                skew = width[i] * pref_height - height[i] * pref_width
-                if (skew < 0) skew = -skew
-                if (skew > 0.01 * height[i] * pref_width) continue
+            print "A --output"
+            print "A " out[i]
+            if (!(out[i] in connected)) { print "A --off"; continue }
+            if (first == "") first = out[i]
+            listed = modes[out[i] " " mode[i]]
+            if (mode[i] == "auto") {
+                print "A --auto"
+            } else if (listed == "") {
+                print "W " out[i] " does not list " mode[i] "; using its preferred mode"
+                print "A --auto"
+            } else {
+                print "A --mode"
+                print "A " mode[i]
+                if (rate[i] != "-") {
+                    count = split(listed, rates, " ")
+                    best = ""
+                    for (r = 1; r <= count; r++) {
+                        diff = rates[r] - rate[i]
+                        if (diff < 0) diff = -diff
+                        if (best == "" || diff < best_diff) { best = rates[r]; best_diff = diff }
+                    }
+                    if (best_diff > 0.5) print "W " out[i] " lists no " mode[i] " rate near " rate[i] "; using " best
+                    print "A --rate"
+                    print "A " best
+                }
             }
-            area = width[i] * height[i]
-            if (area > best_area || (area == best_area && rate[i] + 0 > best_rate + 0)) {
-                best_area = area
-                best_width = width[i]
-                best_height = height[i]
-                best_rate = rate[i]
-            }
+            if (pos[i] != "-") { print "A --pos"; print "A " pos[i] }
+            if (primary[i] == "1") { print "A --primary"; chosen = out[i] }
         }
-        if (best_area > 0) print best_width "x" best_height, best_rate
-    }')
+        print "T " (chosen != "" ? chosen : first)
+    }'
+}
 
-if [ -n "$pinned" ]; then
-    best=$pinned
-fi
-if [ -n "$best" ]; then
-    mode=${best% *}
-    rate=${best#* }
-    set -- --output "$target" --mode "$mode" --rate "$rate" --primary
-else
-    warn "no usable mode listed for $target; using its preferred mode"
-    set -- --output "$target" --auto --primary
-fi
-
-if [ "$found_preferred" -eq 1 ]; then
-    for other in $connected; do
-        [ "$other" = "$target" ] || set -- "$@" --output "$other" --off
+layout_applied=0
+if [ -r "$layout_config" ]; then
+    plan=$(layout_plan)
+    printf '%s\n' "$plan" | sed -n 's/^W //p' | while IFS= read -r message; do
+        warn "$message"
     done
+    layout_args=$(printf '%s\n' "$plan" | sed -n 's/^A //p')
+    if [ -n "$layout_args" ]; then
+        layout_applied=1
+        target=$(printf '%s\n' "$plan" | sed -n 's/^T //p')
+        saved_ifs=$IFS
+        IFS='
+'
+        set -f
+        # shellcheck disable=SC2086
+        set -- $layout_args
+        set +f
+        IFS=$saved_ifs
+        if ! result=$(xrandr "$@" 2>&1); then
+            warn "xrandr failed for the declared layout: $result"
+        fi
+    fi
+elif [ -e "$layout_config" ]; then
+    warn "cannot read $layout_config; using the single-output logic"
 fi
 
-if ! result=$(xrandr "$@" 2>&1); then
-    warn "xrandr failed for $target: $result"
-    exit 0
+# ---- Single output (no layout, or none of its outputs connected) ----------
+# Returns non-zero when it left the display unchanged, so Broadcast RGB is not
+# touched either.
+apply_single_output() {
+    target=
+    found_preferred=0
+    if [ -r "$config" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            name=$(printf '%s\n' "${line%%#*}" | tr -d '[:space:]')
+            [ -n "$name" ] || continue
+            case "$name" in
+                *[!A-Za-z0-9_.:-]*)
+                    warn "ignoring invalid output name in $config: $name"
+                    continue
+                    ;;
+            esac
+            if printf '%s\n' "$connected" | grep -qx -- "$name"; then
+                target=$name
+                found_preferred=1
+                break
+            fi
+        done <"$config"
+    elif [ -e "$config" ]; then
+        warn "cannot read $config; using the first connected output"
+    fi
+
+    if [ -z "$target" ]; then
+        target=$(printf '%s\n' "$connected" | head -n 1)
+    fi
+
+    # Optional pin (/etc/curiosity/display-guard.conf, written by the role): when the
+    # chosen output is the pinned one, apply exactly the pinned mode and never a
+    # lower one. A display that has just woken may list too few modes for a moment,
+    # so re-probe a few times; if the pinned mode still is not there, leave a
+    # working display alone rather than fall back to another resolution.
+    guard_conf=${CURIOSITY_DISPLAY_GUARD_CONF:-/etc/curiosity/display-guard.conf}
+    pinned=
+    if [ -r "$guard_conf" ]; then
+        conf_get() { sed -n "s/^$1=//p" "$guard_conf" | head -n 1 | tr -d '[:space:]'; }
+        pin_output=$(conf_get output)
+        pin_mode=$(conf_get mode)
+        pin_rate=$(conf_get rate)
+        if [ "$pin_output" = "$target" ] && [ -n "$pin_mode" ] && [ -n "$pin_rate" ]; then
+            attempt=0
+            while :; do
+                pinned=$(printf '%s\n' "$records" | awk -v out="$target" -v mode="$pin_mode" -v rate="$pin_rate" '
+                    $1 == "M" && $2 == out && ($3 "x" $4) == mode && ($5 + 0) == (rate + 0) { print mode, $5; exit }')
+                [ -n "$pinned" ] && break
+                attempt=$((attempt + 1))
+                [ "$attempt" -gt 3 ] && break
+                xrandr >/dev/null 2>&1
+                sleep "${CURIOSITY_DISPLAY_RETRY_SLEEP:-2}"
+                query=$(xrandr --query 2>&1) || break
+                records=$(to_records "$query")
+            done
+            if [ -z "$pinned" ]; then
+                if printf '%s\n' "$query" | grep -q '\*'; then
+                    warn "pinned mode $pin_mode@$pin_rate is not listed for $target; leaving the display unchanged"
+                    return 1
+                fi
+                warn "pinned mode $pin_mode@$pin_rate is not listed for $target and nothing is active; using the best mode"
+            fi
+        fi
+    fi
+    best=$(printf '%s\n' "$records" | awk -v out="$target" '
+        $1 == "P" && $2 == out && !pref_height {
+            pref_width = $3
+            pref_height = $4
+        }
+        $1 == "M" && $2 == out {
+            n++
+            width[n] = $3
+            height[n] = $4
+            rate[n] = $5
+        }
+        END {
+            for (i = 1; i <= n; i++) {
+                # Same aspect as the preferred mode, within 1% (1366x768 ~ 16:9).
+                if (pref_height) {
+                    skew = width[i] * pref_height - height[i] * pref_width
+                    if (skew < 0) skew = -skew
+                    if (skew > 0.01 * height[i] * pref_width) continue
+                }
+                area = width[i] * height[i]
+                if (area > best_area || (area == best_area && rate[i] + 0 > best_rate + 0)) {
+                    best_area = area
+                    best_width = width[i]
+                    best_height = height[i]
+                    best_rate = rate[i]
+                }
+            }
+            if (best_area > 0) print best_width "x" best_height, best_rate
+        }')
+
+    if [ -n "$pinned" ]; then
+        best=$pinned
+    fi
+    if [ -n "$best" ]; then
+        mode=${best% *}
+        rate=${best#* }
+        set -- --output "$target" --mode "$mode" --rate "$rate" --primary
+    else
+        warn "no usable mode listed for $target; using its preferred mode"
+        set -- --output "$target" --auto --primary
+    fi
+
+    if [ "$found_preferred" -eq 1 ]; then
+        for other in $connected; do
+            [ "$other" = "$target" ] || set -- "$@" --output "$other" --off
+        done
+    fi
+
+    if ! result=$(xrandr "$@" 2>&1); then
+        warn "xrandr failed for $target: $result"
+        return 1
+    fi
+}
+
+apply_broadcast=1
+if [ "$layout_applied" -eq 0 ]; then
+    apply_single_output || apply_broadcast=0
 fi
 
 # Optional output range. /etc/curiosity/display-broadcast-rgb (override with
@@ -179,7 +289,9 @@ fi
 # property is only set when the file exists and the output has it. A failure is
 # reported and never stops the login.
 broadcast_config=${CURIOSITY_DISPLAY_BROADCAST_RGB:-/etc/curiosity/display-broadcast-rgb}
-if [ -r "$broadcast_config" ]; then
+if [ "$apply_broadcast" -eq 0 ]; then
+    :
+elif [ -r "$broadcast_config" ]; then
     broadcast_value=$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$broadcast_config" | head -n 1)
     case "$broadcast_value" in
         "" | Automatic | Full | "Limited 16:235") ;;
@@ -207,3 +319,56 @@ if [ -r "$broadcast_config" ]; then
 elif [ -e "$broadcast_config" ]; then
     warn "cannot read $broadcast_config; leaving Broadcast RGB alone"
 fi
+
+# ---- Touch panels ----------------------------------------------------------
+# /etc/curiosity/touch-outputs (override with CURIOSITY_TOUCH_OUTPUTS): one
+# "<output> <device name>" per line. Every X pointer whose name is exactly the
+# device name and that reports absolute axes (a touch screen, not the relative
+# mouse interface some panels also expose) is mapped to that output with
+# xinput map-to-output, so a touch lands on the screen that was touched. The
+# name is matched, never the X device id, which changes with every plug.
+# Mapping waits until the output is lit; a missing device is not an error.
+touch_config=${CURIOSITY_TOUCH_OUTPUTS:-/etc/curiosity/touch-outputs}
+if [ -r "$touch_config" ] && grep -q '[^[:space:]]' "$touch_config"; then
+    if ! command -v xinput >/dev/null 2>&1; then
+        warn "xinput is not installed; touch panels are not mapped"
+    elif ! devices=$(xinput list 2>&1); then
+        warn "cannot list input devices: $devices"
+    elif ! query=$(xrandr --query 2>&1); then
+        warn "cannot query the display for touch mapping: $query"
+    else
+        # "<id> <name>" for each slave pointer; xinput pads the name and ends it
+        # with a tab before "id=".
+        pointers=$(printf '%s\n' "$devices" | awk -F '\t' '
+            $3 ~ /slave +pointer/ && $2 ~ /^id=[0-9]+$/ {
+                name = $1
+                sub(/^.*↳[[:space:]]*/, "", name)
+                sub(/[[:space:]]+$/, "", name)
+                id = $2
+                sub(/^id=/, "", id)
+                print id, name
+            }')
+        active=$(printf '%s\n' "$query" | awk '
+            $2 == "connected" && ($3 ~ /^[0-9]+x[0-9]+\+/ || ($3 == "primary" && $4 ~ /^[0-9]+x[0-9]+\+/)) { print $1 }')
+        while IFS= read -r line || [ -n "$line" ]; do
+            line=${line%%#*}
+            output=$(printf '%s\n' "$line" | awk '{ print $1 }')
+            device=$(printf '%s\n' "$line" | sed -e 's/^[[:space:]]*[^[:space:]]*[[:space:]]*//' -e 's/[[:space:]]*$//')
+            [ -n "$output" ] || continue
+            if [ -z "$device" ]; then
+                warn "ignoring touch line without a device name in $touch_config: $output"
+                continue
+            fi
+            printf '%s\n' "$active" | grep -qx -- "$output" || continue
+            printf '%s\n' "$pointers" | awk -v name="$device" '{ id = $1; sub(/^[0-9]+ /, ""); if ($0 == name) print id }' |
+                while IFS= read -r id; do
+                    xinput list --long "$id" 2>/dev/null | grep -q 'Mode: absolute' || continue
+                    if ! result=$(xinput map-to-output "$id" "$output" 2>&1); then
+                        warn "cannot map $device (id $id) to $output: $result"
+                    fi
+                done
+        done <"$touch_config"
+    fi
+fi
+
+exit 0
