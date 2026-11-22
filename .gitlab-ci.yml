@@ -2,7 +2,11 @@
 include:
   - template: Jobs/Secret-Detection.gitlab-ci.yml
 
-image: python:3.13-slim
+# Docker Official Images through AWS ECR Public's anonymous mirror of the Docker
+# Library (catalog#97). Docker Hub's anonymous pull limit returned 429 to the
+# shared runners, and a job only passed when its node already had the image.
+# Same images and tags, no credentials, and Renovate still tracks the tag.
+image: public.ecr.aws/docker/library/python:3.13-slim
 
 stages:
   - validate
@@ -119,7 +123,7 @@ policy:
 research-profile:
   extends: .python_setup
   stage: test
-  image: python:${PYTHON_VERSION}-slim
+  image: public.ecr.aws/docker/library/python:${PYTHON_VERSION}-slim
   parallel:
     matrix:
       - PYTHON_VERSION: ["3.14", "3.15"]
