@@ -826,6 +826,47 @@ when a listed output matched. LightDM runs it as `display-setup-script`, and the
 Openbox autostart runs it for startx sessions. It reports problems on stderr but
 never blocks a login. Disabling the option removes the helper and its hooks.
 
+### Declared display layout and touch panels
+
+```yaml
+minimal_desktop_display_setup_enabled: true
+minimal_desktop_display_layout:
+  - {output: DP-2, mode: 3840x2160, rate: 60, pos: 0x0, primary: true}
+  - {output: DP-3, mode: 3840x2160, rate: 60, pos: 3840x0}
+  - {output: HDMI-2, mode: auto, pos: 0x2160}
+minimal_desktop_touch_outputs:
+  - {device: "PIXCIR Inc. PIXC65 Touch", output: HDMI-2}
+```
+
+A host with more than one screen declares the whole layout. It is written to
+`/etc/curiosity/display-layout`, and when any declared output is connected
+`curiosity-display-setup` lights every connected declared output in one xrandr
+call: the declared mode at the listed rate nearest the declared `rate` (a mode
+the output does not list falls back to `--auto` with a warning), the declared
+position, and `primary`. Declared outputs that are not connected are turned
+off; outputs the layout does not name are left alone. Broadcast RGB goes to the
+primary. With an empty layout, or none of its outputs connected, the
+single-output logic above runs unchanged. A layout cannot be combined with a
+`display_guard` pin, which drives one output only; a host whose hardware
+profile pins a guard it does not use sets `minimal_desktop_display_guard: {}`
+in its host values, and the role then stops, disables and removes the guard.
+
+`minimal_desktop_touch_outputs` maps each touch panel to its screen with
+`xinput map-to-output`, by the exact xinput device name (the X device id
+changes with every plug). Only pointers with absolute axes are mapped, so the
+relative mouse interface some panels also expose keeps working normally, and a
+panel is mapped only while its output is lit. The role installs `xinput` for it.
+
+When either list is set the role also installs `curiosity-display-hotplug`,
+which the Openbox autostart starts once per X display. Openbox has no RandR
+policy of its own, so a monitor that asserts hot-plug after X started (dm313red's
+second monitor stayed dark for a whole boot, Curiosity-Corp/catalog-internal#24)
+or a touch panel plugged in later used to stay unlit or unmapped until the next
+login. The watcher compares the DRM connector status files and the presence of
+the declared touch devices every two seconds, and once a change has held for
+one more interval it runs the helper again. Its own modesets do not change
+connector status, so it cannot loop; it exits with the X server.
+
 ### Panel layouts
 
 | Variable | Default | Effect |

@@ -58,6 +58,14 @@ if command -v curiosity-display-setup >/dev/null 2>&1; then
     curiosity-display-setup || echo "curiosity-display-setup failed; keeping the current display layout." >&2
 fi
 
+# Re-apply that layout when a screen or a declared touch panel is plugged in
+# later (installed only when the host declares a layout or touch panels). It
+# replaces a watcher an earlier run of this script left on this DISPLAY and
+# exits with the X server.
+if command -v curiosity-display-hotplug >/dev/null 2>&1; then
+    curiosity-display-hotplug &
+fi
+
 # Wallpaper: feh records the last choice in ~/.fehbg (solid dark fallback)
 if [ -x "$HOME/.fehbg" ]; then
     "$HOME/.fehbg" &

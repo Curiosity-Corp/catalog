@@ -1076,6 +1076,19 @@ minimal_desktop_pinned_vt_sessions: []
 # made primary. Other outputs are turned off only when a listed output matched.
 minimal_desktop_display_setup_enabled: false
 minimal_desktop_display_outputs: []
+# Declared multi-output layout (needs minimal_desktop_display_setup_enabled).
+# Each item: {output, mode: WxH or auto (default auto), rate (optional, the
+# nearest listed rate is used), pos: XxY (optional), primary: true|false}.
+# When any declared output is connected, the helper lights every connected
+# declared output with one xrandr call and turns declared outputs that are not
+# connected off; undeclared outputs are left alone. An empty list keeps the
+# single-output behaviour above. Cannot be combined with a display_guard pin.
+# A watcher in the Openbox session re-applies it when a screen is plugged in.
+minimal_desktop_display_layout: []
+# Touch panels mapped to an output by exact xinput device name (never by id):
+# [{device: "PIXCIR Inc. PIXC65 Touch", output: HDMI-2}]. Only pointers with
+# absolute axes are mapped; the watcher re-maps a panel plugged in later.
+minimal_desktop_touch_outputs: []
 # minimal_desktop_display_broadcast_rgb (derived from the hardware profile
 # further down) sets the output's xrandr `Broadcast RGB` property: Full,
 # Limited 16:235 or Automatic; empty leaves the driver's choice.

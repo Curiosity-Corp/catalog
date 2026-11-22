@@ -29,6 +29,31 @@
       minimal_desktop_display_broadcast_rgb must be empty, Full,
       Limited 16:235 or Automatic.
 
+- name: Validate the declared display layout and touch panels
+  ansible.builtin.assert:
+    that:
+      - minimal_desktop_display_layout is sequence
+      - minimal_desktop_display_layout is not string
+      - minimal_desktop_display_layout | select('mapping') | list | length == minimal_desktop_display_layout | length
+      - minimal_desktop_display_layout | map(attribute='output', default='') | map('string') | select('match', '^[A-Za-z0-9_.:-]+$') | list | length == minimal_desktop_display_layout | length
+      - minimal_desktop_display_layout | map(attribute='output') | unique | list | length == minimal_desktop_display_layout | length
+      - minimal_desktop_display_layout | map(attribute='mode', default='auto') | map('string') | select('match', '^(auto|[0-9]+x[0-9]+)$') | list | length == minimal_desktop_display_layout | length
+      - minimal_desktop_display_layout | map(attribute='rate', default='') | map('string') | select('match', '^([0-9]+(\.[0-9]+)?)?$') | list | length == minimal_desktop_display_layout | length
+      - minimal_desktop_display_layout | map(attribute='pos', default='') | map('string') | select('match', '^([0-9]+x[0-9]+)?$') | list | length == minimal_desktop_display_layout | length
+      - minimal_desktop_display_layout | selectattr('primary', 'defined') | selectattr('primary') | list | length <= 1
+      - minimal_desktop_display_layout | length == 0 or minimal_desktop_display_guard | length == 0
+      - minimal_desktop_touch_outputs is sequence
+      - minimal_desktop_touch_outputs is not string
+      - minimal_desktop_touch_outputs | select('mapping') | list | length == minimal_desktop_touch_outputs | length
+      - minimal_desktop_touch_outputs | map(attribute='output', default='') | map('string') | select('match', '^[A-Za-z0-9_.:-]+$') | list | length == minimal_desktop_touch_outputs | length
+      - minimal_desktop_touch_outputs | map(attribute='device', default='') | map('string') | select('match', '^[^#\n]*[^#\s][^#\n]*$') | list | length == minimal_desktop_touch_outputs | length
+    fail_msg: >-
+      minimal_desktop_display_layout lists {output, mode (WxH or auto), rate,
+      pos (XxY), primary} with unique xrandr output names and at most one
+      primary, and cannot be combined with a display_guard pin (the guard
+      drives one output only). minimal_desktop_touch_outputs lists {device,
+      output}: the exact xinput device name (no '#') and an xrandr output name.
+
 - name: Ensure the Curiosity configuration directory exists
   ansible.builtin.file:
     path: /etc/curiosity
@@ -62,6 +87,85 @@
       {{ output }}
       {% endfor %}
   when: minimal_desktop_display_setup_enabled | bool
+
+# The helper applies this layout before its single-output logic, which only
+# runs when no declared output is connected. The file is removed when the
+# layout is empty, so the helper's old behaviour returns.
+- name: Record the declared display layout
+  ansible.builtin.copy:
+    dest: /etc/curiosity/display-layout
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible. One output per line:
+      # <output> <WxH|auto> <rate|-> <XxY|-> <primary 1|0>
+      {% for item in minimal_desktop_display_layout %}
+      {{ item.output }} {{ item.mode | default('auto') }} {{ item.rate | default('-', true) }} {{ item.pos | default('-', true) }} {{ '1' if item.primary | default(false) | bool else '0' }}
+      {% endfor %}
+  when:
+    - minimal_desktop_display_setup_enabled | bool
+    - minimal_desktop_display_layout | length > 0
+
+- name: Remove the declared display layout when it is empty
+  ansible.builtin.file:
+    path: /etc/curiosity/display-layout
+    state: absent
+  when:
+    - minimal_desktop_display_setup_enabled | bool
+    - minimal_desktop_display_layout | length == 0
+
+- name: Install xinput for touch panel mapping
+  ansible.builtin.apt:
+    name: xinput
+    state: present
+  when:
+    - minimal_desktop_display_setup_enabled | bool
+    - minimal_desktop_touch_outputs | length > 0
+
+# Matched by exact device name each time the helper runs, never by X id.
+- name: Record the touch panel outputs
+  ansible.builtin.copy:
+    dest: /etc/curiosity/touch-outputs
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible. "<xrandr output> <exact xinput device name>"
+      {% for item in minimal_desktop_touch_outputs %}
+      {{ item.output }} {{ item.device }}
+      {% endfor %}
+  when:
+    - minimal_desktop_display_setup_enabled | bool
+    - minimal_desktop_touch_outputs | length > 0
+
+- name: Remove the touch panel outputs when none are declared
+  ansible.builtin.file:
+    path: /etc/curiosity/touch-outputs
+    state: absent
+  when:
+    - minimal_desktop_display_setup_enabled | bool
+    - minimal_desktop_touch_outputs | length == 0
+
+# The Openbox autostart starts the watcher only when it is installed: hosts
+# that declare neither a layout nor touch panels (and the guard host, whose
+# guard handles hot-plug) keep their behaviour.
+- name: Install the display hot-plug watcher
+  ansible.builtin.copy:
+    src: minimal-desktop/curiosity-display-hotplug
+    dest: /usr/local/bin/curiosity-display-hotplug
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - minimal_desktop_display_setup_enabled | bool
+    - (minimal_desktop_display_layout | length > 0) or (minimal_desktop_touch_outputs | length > 0)
+
+- name: Remove the display hot-plug watcher when nothing is declared
+  ansible.builtin.file:
+    path: /usr/local/bin/curiosity-display-hotplug
+    state: absent
+  when: not ((minimal_desktop_display_setup_enabled | bool) and ((minimal_desktop_display_layout | length > 0) or (minimal_desktop_touch_outputs | length > 0)))
 
 # The helper sets the xrandr "Broadcast RGB" property only when this file
 # exists, so an empty setting removes it and leaves the driver's choice.
@@ -252,6 +356,26 @@
     daemon_reload: true
   when: minimal_desktop_display_guard_enabled | bool
 
+# A host that leaves the guard (its profile's pin no longer applies, as on
+# dm313red, which shares deskmeet-b760 with the 8K TV host but has no DP-4)
+# must lose the running service too: removing only its files left it watching
+# a missing output and re-probing the displays every few seconds
+# (Curiosity-Corp/catalog-internal#24).
+- name: Look up the installed display guard service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/curiosity-display-guard.service
+  register: _display_guard_unit
+  when: not (minimal_desktop_display_guard_enabled | bool)
+
+- name: Stop and disable the display guard when it is not configured
+  ansible.builtin.systemd:
+    name: curiosity-display-guard.service
+    state: stopped
+    enabled: false
+  when:
+    - not (minimal_desktop_display_guard_enabled | bool)
+    - _display_guard_unit.stat.exists | default(false)
+
 - name: Remove the display guard when it is not configured
   ansible.builtin.file:
     path: "{{ item }}"
@@ -260,7 +384,13 @@
     - /etc/udev/rules.d/89-curiosity-display-guard.rules
     - /usr/lib/systemd/system-sleep/curiosity-display-guard
     - /etc/curiosity/display-guard.conf
+    - /etc/systemd/system/curiosity-display-guard.service
+    - /etc/systemd/system/curiosity-display-guard@.service
+    - /usr/local/sbin/curiosity-display-guard
   when: not (minimal_desktop_display_guard_enabled | bool)
+  notify:
+    - Reload systemd
+    - Reload udev rules
 
 # Files installed by hand at the same paths are left alone: only files carrying
 # this role's marker are removed.
@@ -273,6 +403,8 @@
       - curiosity-display-setup
       - display-outputs
       - display-broadcast-rgb
+      - display-layout
+      - touch-outputs
     contains: 'Managed by Ansible'
   register: _display_setup_managed_files
   when: not (minimal_desktop_display_setup_enabled | bool)
