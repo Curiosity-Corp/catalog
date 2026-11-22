@@ -429,6 +429,17 @@
   tags: [coder, workspace, git]
   when: workstation_profile == 'workspace'
 
+# A user whose home is already a chezmoi target owns their shell and tmux
+# files there, whether or not catalog drives it (catalog#151): the shell
+# fallback and the hyper-workspace tmux block would otherwise rewrite them on
+# every run and leave them different from the user's source.
+- name: Detect an existing chezmoi source for dev_user
+  ansible.builtin.stat:
+    path: "{{ dev_user_home }}/.local/share/chezmoi/.git"
+    get_checksum: false
+  register: _dev_user_chezmoi_source
+  tags: [always]
+
 - name: Include hyper-workspace helpers
   ansible.builtin.include_tasks:
     file: hyper-workspace.yml
@@ -553,6 +564,7 @@
   when:
     - workstation_profile != 'thin-client'
     - user_dotfiles_repo | default('') | length == 0
+    - not (_dev_user_chezmoi_source.stat.exists | default(false))
 
 - name: Include chezmoi dotfiles bootstrap
   ansible.builtin.include_tasks:

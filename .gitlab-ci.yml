@@ -263,7 +263,7 @@ policy:
       tests/test_user_systemd_policy.py tests/test_system_retirement.py tests/test_pipx_repair.py
       tests/test_science_venv_repair.py tests/test_m365_cli_entrypoints.py tests/test_troubleshooting.py tests/test_glossary.py
       tests/test_sunshine_asset_selection.py tests/test_update_rollback_symlinks.py
-      tests/test_healthcheck_disabled_apps.py tests/test_litra_cli.py
+      tests/test_healthcheck_disabled_apps.py tests/test_litra_cli.py tests/test_user_dotfiles.py
       tests/test_minimal_desktop_panel.py tests/test_bitwarden_desktop.py tests/test_slack_desktop.py tests/test_jellyfin_desktop.py tests/test_media_folder.py
       tests/test_deskmeet_8k_display.py tests/test_display_guard.py tests/test_display_layout.py tests/test_samsung_tv_cli.py
       tests/test_pro_mimic.py tests/test_firewall_posture.py tests/test_power_policy.py
