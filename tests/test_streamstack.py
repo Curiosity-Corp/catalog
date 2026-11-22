@@ -480,6 +480,7 @@ def _console_restart_module():
     loader = importlib.machinery.SourceFileLoader("console_restart", str(CONSOLE_RESTART))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module  # dataclasses resolve annotations through the module's sys.modules entry
     loader.exec_module(module)
     return module
 
@@ -601,7 +602,7 @@ def _run_console_restart(tmp_path: Path, mode: str, source_outputs: list[dict]) 
     calls = tmp_path / "systemctl.calls"
     (tmp_path / "source-outputs.json").write_text(json.dumps(source_outputs))
     (bin_dir / "pactl").write_text(f'#!/bin/sh\ncat {tmp_path / "source-outputs.json"}\n')
-    (bin_dir / "systemctl").write_text(f'#!/bin/sh\necho "$*" >> {calls}\nexit 0\n')
+    (bin_dir / "systemctl").write_text(f'#!/bin/sh\n[ "$1" = --user ] || exit 64\nshift\necho "$*" >> {calls}\nexit 0\n')
     (bin_dir / "wmctrl").write_text("#!/bin/sh\nexit 1\n")
     for stub in bin_dir.iterdir():
         stub.chmod(0o755)
