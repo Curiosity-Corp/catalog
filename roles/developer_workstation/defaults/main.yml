@@ -701,7 +701,22 @@ weechat_teams_client_id: ""
 # System tuning (swap, swappiness, earlyoom OOM protection)
 system_tuning_enabled: true
 swap_size_gb: 16
-vm_swappiness: 10
+# zram swap: a compressed swap device in RAM (systemd-zram-generator), used
+# before the swap file (its priority is higher than the file's -1). Opt-in;
+# false leaves any zram set up by other means untouched. Size is a
+# zram-generator expression over `ram` (MemTotal in MiB) with min/max and
+# + - * /; the result is in MiB.
+zram_swap_enabled: false
+zram_swap_size_expression: "min(ram / 2, 32768)"
+zram_swap_algorithm: zstd
+zram_swap_priority: 100
+# With swap compressed in RAM, anonymous pages are as cheap to reclaim as page
+# cache, so 100 weighs them equally; 10 keeps a disk swap file mostly idle.
+vm_swappiness: "{{ 100 if zram_swap_enabled | bool else 10 }}"
+# vm.page-cluster: swap-in readahead of 2^n pages. zram has no seek cost, and
+# readahead only decompresses pages nobody asked for, so 0 with zram. Empty
+# leaves the kernel default (3) and writes no line.
+vm_page_cluster: "{{ 0 if zram_swap_enabled | bool else '' }}"
 
 # Entra ID SSO — SUNSET, replaced by Keycloak SSO
 entra_id_enabled: false

@@ -1024,6 +1024,36 @@ containers and on workspace/kiosk profiles. See
 verification (`curiosity-console-status`), and the documented-only kernel
 command-line option.
 
+## Swap, zram and earlyoom
+
+With `system_tuning_enabled` (default `true`, desktop profile) the role keeps
+a `/swap.img` file of `swap_size_gb` (16), writes
+`/etc/sysctl.d/99-workstation-tuning.conf` and runs `earlyoom`.
+
+`zram_swap_enabled` (default `false`) adds a compressed swap device in RAM
+through `systemd-zram-generator`, used before the swap file. It is started
+at once; when the running device has another size it is recreated only while
+it holds no pages (`files/curiosity-zram-converge`), otherwise the new size
+applies at the next boot. `false` never removes a zram device set up by
+other means.
+
+| Variable | Default |
+| --- | --- |
+| `zram_swap_enabled` | `false` |
+| `zram_swap_size_expression` | `min(ram / 2, 32768)` (zram-generator expression; `ram` is MemTotal in MiB; result in MiB) |
+| `zram_swap_algorithm` | `zstd` |
+| `zram_swap_priority` | `100` (the swap file is `-1`) |
+| `vm_swappiness` | `100` with zram, else `10` |
+| `vm_page_cluster` | `0` with zram (no swap-in readahead), else empty (kernel default, no line written) |
+| `earlyoom_mem_percent` / `earlyoom_swap_percent` | `5` / `50`; a pair like `8,4` sets the SIGTERM and SIGKILL levels |
+| `earlyoom_prefer_regex` / `earlyoom_avoid_regex` | empty (no `--prefer` / `--avoid`) |
+
+earlyoom acts only when both available memory and free swap are below their
+levels. A host with many long-running sessions sets the prefer/avoid regexes
+so a browser is killed before a session. Per-app memory caps for Brave come
+from the PIA tunnel app definition (`pia_tunnel_app_definitions`, scope
+`MemoryHigh`/`MemoryMax`).
+
 ## /tmp hygiene
 
 `tmp_hygiene_enabled` (default `false`, because it deletes files) gives `/tmp`
