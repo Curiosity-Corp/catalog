@@ -944,6 +944,53 @@ their own workspaces; the role never touches Slack data or sign-in. Setting the
 flag back to false leaves an installed snap in place (remove it with
 `snap remove slack`).
 
+Jellyfin Desktop is opt-in, and it is the first Flatpak app. With
+`jellyfin_desktop_enabled: true` on a desktop profile (x86_64 only), the role
+runs `tasks/flatpak.yml`, which installs the `flatpak` package and adds the
+Flathub remote (`workstation_flatpak_flathub_url`, GPG-signed) at system level,
+then installs `org.jellyfin.JellyfinDesktop` system-wide and fails the run
+unless `flatpak info --system` reports the ref in `jellyfin_desktop_flatpak_ref`
+from origin `flathub`. Flatpak is never installed for the baseline; the next
+Flatpak app includes `tasks/flatpak.yml` from its own task file the same way.
+Set `jellyfin_web_url` next to the flag (it has no public default and the run
+fails while it is empty): `/usr/local/share/applications/curiosity-jellyfin-web.desktop`
+("Jellyfin (web)") opens it with `xdg-open` in the user's default browser. No
+browser policy or profile is written. The Flatpak exports "Jellyfin Desktop" in
+`/var/lib/flatpak/exports/share/applications`, which the `flatpak` package adds
+to `XDG_DATA_DIRS` for login shells (`/etc/profile.d/flatpak.sh`, the pinned-VT
+`startx` sessions) and LightDM sessions (`/etc/X11/Xsession.d/20flatpak`) from
+the next login; the Openbox Applications menu lists both entries. Updates come
+from `flatpak update -y --noninteractive --system`, run nightly beside
+`snap refresh` wherever Flatpak is installed. The post-update healthcheck is
+`/usr/local/sbin/curiosity-jellyfin-desktop-check` (application contract
+`jellyfin_desktop`). Setting the flag back to false removes the web entry and
+the menu items and leaves the Flatpak in place (remove it with
+`flatpak uninstall --system org.jellyfin.JellyfinDesktop`).
+
+The Media folder (`media_folder_enabled`, default `false`; Curiosity-Corp/catalog#158)
+puts the media server entries in one folder named `media_folder_name` ("Media"),
+like the Media folder on a phone's home screen. It holds only Jellyfin Desktop
+(when `jellyfin_desktop_enabled` is on) and one launcher per entry of
+`media_folder_web_entries`: Watch, Request, Books and Music, the names of the
+media server's viewer guide. Each launcher is
+`/usr/local/share/applications/curiosity-media-<id>.desktop` and opens its
+address with `xdg-open` in the user's default browser; no browser policy or
+profile is written. The default addresses are `https://<id>.` plus
+`media_folder_web_domain`, which is site configuration with no public default:
+set it next to the flag (the run fails while an address is not a full http(s)
+URL), or replace `media_folder_web_entries` with literal `url` values. On the
+minimal desktop the folder is a "Media" submenu of the Openbox Applications
+menu, read at Openbox's next start or "Reconfigure Openbox" (the role never
+touches a running session); rofi lists the launchers too. Where GNOME Shell is
+installed the folder is also a GNOME app-grid folder, written as the system dconf
+default `/etc/dconf/db/local.d/50-curiosity-media-folder`, which a user's own
+layout overrides. `/usr/local/sbin/curiosity-media-folder-check` reads the
+folder back (the launcher files, each desktop user's submenu and the dconf
+folder); `--probe` also asks each address for its HTTP status and prints only
+the host a redirect goes to. Every desktop run converges: launchers that are no
+longer declared are removed, and turning the flag off removes the launchers, the
+dconf folder and the helper.
+
 The branded FocusPass screen-lock package is an optional local-PAM integration.
 It is installed only when all three variables below are supplied for a
 desktop or thin-client profile with the minimal desktop enabled:

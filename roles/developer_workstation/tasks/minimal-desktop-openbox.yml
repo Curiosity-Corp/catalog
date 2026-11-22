@@ -25,9 +25,12 @@
     regexp: '<doubleClickTime>[0-9]+</doubleClickTime>'
     replace: "<doubleClickTime>{{ minimal_desktop_double_click_ms }}</doubleClickTime>"
 
+# A template so opt-in apps add their entries (Jellyfin, jellyfin-desktop.yml;
+# the Media submenu, media-folder.yml). Openbox reads it at its next start or
+# "Reconfigure Openbox"; the role does not touch a running session.
 - name: Deploy Openbox menu.xml
-  ansible.builtin.copy:
-    src: minimal-desktop/menu.xml
+  ansible.builtin.template:
+    src: minimal-desktop-menu.xml.j2
     dest: "{{ dw_user.home }}/.config/openbox/menu.xml"
     owner: "{{ dw_user.name }}"
     group: "{{ dw_user.name }}"

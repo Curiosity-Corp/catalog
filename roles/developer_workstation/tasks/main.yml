@@ -536,6 +536,16 @@
         (minimal_desktop_enabled | default(false))
       )
 
+# Runs on every desktop: with media_folder_enabled off it removes what an
+# earlier run placed.
+- name: Include the Media folder (media server launchers)
+  ansible.builtin.include_tasks:
+    file: media-folder.yml
+    apply:
+      tags: [media, media-folder]
+  tags: [media, media-folder]
+  when: workstation_profile == 'desktop'
+
 - name: Include keyboard layout enforcement (US physical keyboards)
   ansible.builtin.include_tasks:
     file: keyboard.yml

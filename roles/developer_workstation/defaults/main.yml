@@ -181,6 +181,57 @@ slack_desktop_enabled: false
 slack_desktop_snap_channel: latest/stable
 slack_desktop_snap_id: JUJH91Ved74jd4ZgJCpzMBtYbPOzTlsD
 
+# Flathub, the system Flatpak remote of every opt-in Flatpak app
+# (tasks/flatpak.yml). Flatpak itself is installed only when such an app is
+# enabled; the baseline has no Flatpak.
+workstation_flatpak_flathub_remote: flathub
+workstation_flatpak_flathub_url: https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# Install Jellyfin Desktop (Flathub org.jellyfin.JellyfinDesktop, developer
+# Jellyfin, verified) system-wide on x86_64 desktop workstations, plus a
+# "Jellyfin (web)" menu entry that opens jellyfin_web_url with xdg-open
+# (tasks/jellyfin-desktop.yml, Curiosity-Corp/catalog#157). Off by default; a
+# host or an internal overlay turns it on and sets jellyfin_web_url (the
+# server's address is site configuration, so it has no public default; the
+# run fails while it is empty). The ref and origin are asserted, so an app of
+# the same id from another remote is refused; updates come from
+# `flatpak update` in system-updates.yml. No browser policy or profile is
+# written.
+jellyfin_desktop_enabled: false
+jellyfin_desktop_flatpak_id: org.jellyfin.JellyfinDesktop
+jellyfin_desktop_flatpak_ref: app/org.jellyfin.JellyfinDesktop/x86_64/stable
+jellyfin_web_url: ""
+jellyfin_web_desktop_entry: /usr/local/share/applications/curiosity-jellyfin-web.desktop
+
+# One "Media" folder in the desktop's app list that holds only the media
+# server entries (tasks/media-folder.yml, Curiosity-Corp/catalog#158): Jellyfin
+# Desktop when jellyfin_desktop_enabled is on, plus one launcher per entry of
+# media_folder_web_entries that opens its address with xdg-open in the user's
+# default browser. On the minimal desktop the folder is a "Media" submenu of
+# the Openbox Applications menu; where GNOME Shell is installed it is also a
+# GNOME app-grid folder (a system dconf default the user can still change).
+# No browser policy or profile is written. Off by default.
+media_folder_enabled: false
+media_folder_name: Media
+# Site domain of the media server's web apps: example.org gives
+# https://watch.example.org and so on. Site configuration, so it has no public
+# default; while it is empty the entry addresses are invalid and the run fails.
+# An overlay may instead replace media_folder_web_entries with literal URLs.
+media_folder_web_domain: ""
+# Names follow the media server's viewer guide; ids name the launcher files
+# (curiosity-media-<id>.desktop in media_folder_desktop_dir).
+media_folder_web_entries:
+  - {id: watch, name: Watch, comment: Watch films and shows (Jellyfin), icon: video-x-generic, url: "https://watch.{{ media_folder_web_domain }}"}
+  - {id: request, name: Request, comment: Ask for a film or show (Seerr), icon: system-search, url: "https://request.{{ media_folder_web_domain }}"}
+  - {id: books, name: Books, comment: Audiobooks and podcasts (Audiobookshelf), icon: audio-x-generic, url: "https://books.{{ media_folder_web_domain }}"}
+  - {id: music, name: Music, comment: Music (Navidrome), icon: audio-x-generic, url: "https://music.{{ media_folder_web_domain }}"}
+media_folder_desktop_dir: /usr/local/share/applications
+media_folder_flatpak_exports: /var/lib/flatpak/exports/share/applications
+media_folder_gnome_shell: /usr/bin/gnome-shell
+media_folder_dconf_profile: /etc/dconf/profile/user
+media_folder_dconf_file: /etc/dconf/db/local.d/50-curiosity-media-folder
+media_folder_check_helper: /usr/local/sbin/curiosity-media-folder-check
+
 # Force-install the Bitwarden browser extension into the Chromium-family
 # browsers, the way the Firefox policy already does for Firefox
 # (collaboration.yml). One managed-policy file per browser is written only when
@@ -293,6 +344,7 @@ workstation_application_contracts:
   claude: {installer: claude-native, verification: official-installer, scope: user, enabled_when: claude_native_enabled, healthcheck: [.local/bin/claude, --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
   slack_desktop: {installer: snap-store, verification: snap-assertions, enabled_when: slack_desktop_enabled, healthcheck: [/usr/local/sbin/curiosity-slack-desktop-check]}
+  jellyfin_desktop: {installer: flathub, verification: flatpak-gpg-ref-origin, enabled_when: jellyfin_desktop_enabled, healthcheck: [/usr/local/sbin/curiosity-jellyfin-desktop-check]}
 
 # Dynamic includes are entered only when their include task carries the
 # selected tag. These tags cover the managed update transaction and its

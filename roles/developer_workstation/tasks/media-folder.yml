@@ -1,0 +1,279 @@
+---
+# =============================================================================
+# Media folder: the media server launchers in one folder
+# =============================================================================
+# Curiosity-Corp/catalog#158 (CEO, 2026-11-22: "Add a media folder to both
+# deskmeets"). The phone's home screen has a "Media" folder with the media
+# server apps; a desktop with media_folder_enabled gets the same: one folder
+# named media_folder_name that holds only
+#   - Jellyfin Desktop (the Flatpak of jellyfin-desktop.yml), when
+#     jellyfin_desktop_enabled is on, and
+#   - one launcher per media_folder_web_entries entry,
+#     media_folder_desktop_dir/curiosity-media-<id>.desktop, which opens the
+#     entry's address with xdg-open in the user's default browser.
+#
+# Where it shows:
+#   - Minimal desktop (Openbox): a submenu of the Applications menu
+#     (templates/minimal-desktop-menu.xml.j2). rofi lists the launchers too.
+#   - GNOME Shell, where installed: an app-grid folder, written as a system
+#     dconf default (media_folder_dconf_file) that a user's own layout overrides.
+#
+# No browser policy or profile is written, and no running session is touched.
+# Every desktop run converges: with the flag off, the desired set is empty and
+# the launchers, the dconf folder and the helper are removed.
+# media_folder_check_helper reads the folder back (--probe also asks each
+# address for its HTTP status).
+# =============================================================================
+
+- name: Decide the Media folder entries
+  ansible.builtin.set_fact:
+    _media_folder_on: "{{ media_folder_enabled | default(false) | bool }}"
+    _media_folder_jellyfin: >-
+      {{ media_folder_enabled | default(false) | bool
+         and jellyfin_desktop_enabled | default(false) | bool
+         and ansible_architecture | default('') == 'x86_64' }}
+    _media_folder_web: "{{ media_folder_web_entries if (media_folder_enabled | default(false) | bool) else [] }}"
+
+- name: Require a valid id, name and address for each Media entry
+  ansible.builtin.assert:
+    that:
+      - item.id is string
+      - item.id is match('^[a-z0-9][a-z0-9-]*$')
+      - item.name is string
+      - item.name is match('^[A-Za-z0-9][A-Za-z0-9 ()._-]*$')
+      - item.url is string
+      - item.url is match('^https?://[A-Za-z0-9-]+([.][A-Za-z0-9-]+)+(:[0-9]{1,5})?(/[A-Za-z0-9._~/?#=&+:-]*)?$')
+    fail_msg: >-
+      Media entry {{ item.id | default('?') }} needs an id of lower-case letters,
+      digits and dashes, a plain name, and an http(s) address with a full host
+      name (got '{{ item.url | default('') }}'). Set media_folder_web_domain
+      next to media_folder_enabled, or give each entry a literal url.
+  loop: "{{ _media_folder_web }}"
+  loop_control:
+    label: "{{ item.id | default('?') }}"
+
+- name: Require at least one Media entry and unique ids
+  ansible.builtin.assert:
+    that:
+      - (_media_folder_web | length) + (1 if _media_folder_jellyfin | bool else 0) > 0
+      - _media_folder_web | map(attribute='id') | unique | list | length == _media_folder_web | length
+    fail_msg: media_folder_enabled is on but media_folder_web_entries is empty or repeats an id.
+  when: _media_folder_on | bool
+
+- name: Name the Media folder applications
+  ansible.builtin.set_fact:
+    _media_folder_launchers: >-
+      {{ _media_folder_web | map(attribute='id')
+         | map('regex_replace', '^(.*)$', 'curiosity-media-\\1.desktop') | list }}
+    _media_folder_apps: >-
+      {{ ([jellyfin_desktop_flatpak_id ~ '.desktop'] if _media_folder_jellyfin | bool else [])
+         + (_media_folder_web | map(attribute='id')
+            | map('regex_replace', '^(.*)$', 'curiosity-media-\\1.desktop') | list) }}
+
+- name: Create the local application directory
+  ansible.builtin.file:
+    path: "{{ media_folder_desktop_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: _media_folder_on | bool
+
+- name: Install the Media launchers
+  ansible.builtin.copy:
+    dest: "{{ media_folder_desktop_dir }}/curiosity-media-{{ item.id }}.desktop"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Curiosity-Corp/catalog (developer_workstation, media-folder.yml).
+      [Desktop Entry]
+      Type=Application
+      Name={{ item.name }}
+      Comment={{ item.comment | default(item.name) }}
+      Exec=xdg-open {{ item.url }}
+      Icon={{ item.icon | default('applications-multimedia') }}
+      Terminal=false
+      Categories=AudioVideo;X-Curiosity-Media;
+  loop: "{{ _media_folder_web }}"
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Find Media launchers on the host
+  ansible.builtin.find:
+    paths: "{{ media_folder_desktop_dir }}"
+    patterns: curiosity-media-*.desktop
+  register: _media_folder_found
+
+- name: Remove Media launchers that are no longer declared
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ _media_folder_found.files | default([]) | map(attribute='path')
+       | reject('in', _media_folder_launchers | map('regex_replace', '^', media_folder_desktop_dir ~ '/') | list)
+       | list }}
+
+- name: Check for GNOME Shell
+  ansible.builtin.stat:
+    path: "{{ media_folder_gnome_shell }}"
+  register: _media_folder_gnome_shell
+
+# Same profile as display-config.yml: the user's own database first, then the
+# system defaults in /etc/dconf/db/local.d.
+- name: Declare the dconf profile for the GNOME Media folder
+  ansible.builtin.copy:
+    dest: "{{ media_folder_dconf_profile }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      user-db:user
+      system-db:local
+  when:
+    - _media_folder_on | bool
+    - _media_folder_gnome_shell.stat.exists
+
+- name: Ensure the dconf local database directory exists
+  ansible.builtin.file:
+    path: "{{ media_folder_dconf_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - _media_folder_on | bool
+    - _media_folder_gnome_shell.stat.exists
+
+# folder-children keeps GNOME's own default folders and adds this one.
+- name: Declare the GNOME app-grid Media folder
+  ansible.builtin.copy:
+    dest: "{{ media_folder_dconf_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Curiosity-Corp/catalog (developer_workstation, media-folder.yml).
+      [org/gnome/desktop/app-folders]
+      folder-children=['Utilities', 'YaST', 'Pardus', 'CuriosityMedia']
+
+      [org/gnome/desktop/app-folders/folders/CuriosityMedia]
+      name='{{ media_folder_name }}'
+      apps={{ _media_folder_apps | to_json | replace('"', "'") }}
+  register: _media_folder_dconf_written
+  when:
+    - _media_folder_on | bool
+    - _media_folder_gnome_shell.stat.exists
+
+- name: Remove the GNOME app-grid Media folder when it is not declared
+  ansible.builtin.file:
+    path: "{{ media_folder_dconf_file }}"
+    state: absent
+  register: _media_folder_dconf_removed
+  when: not (_media_folder_on | bool and _media_folder_gnome_shell.stat.exists)
+
+- name: Compile the dconf database  # noqa: no-handler
+  ansible.builtin.command: dconf update
+  changed_when: true
+  when: (_media_folder_dconf_written is changed) or (_media_folder_dconf_removed is changed)
+
+- name: Install the Media folder read-back helper
+  ansible.builtin.copy:
+    dest: "{{ media_folder_check_helper }}"
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by Curiosity-Corp/catalog (developer_workstation, media-folder.yml).
+      # Reads the Media folder back: every launcher file, the Openbox submenu of
+      # each desktop user and, where GNOME Shell is installed, the dconf folder.
+      # --probe also asks each web address for its HTTP status (2xx or 3xx
+      # passes) and prints only the host a redirect goes to.
+      set -eu
+      probe=0
+      case "${1:-}" in
+        --probe) probe=1 ;;
+        "") ;;
+        *) echo "usage: $0 [--probe]" >&2; exit 2 ;;
+      esac
+      fail() { echo "media folder: $*" >&2; exit 1; }
+      entries='{% if _media_folder_jellyfin | bool %}Jellyfin Desktop|{{ media_folder_flatpak_exports }}/{{ jellyfin_desktop_flatpak_id }}.desktop|
+      {% endif %}{% for entry in _media_folder_web %}{{ entry.name }}|{{ media_folder_desktop_dir }}/curiosity-media-{{ entry.id }}.desktop|{{ entry.url }}
+      {% endfor %}'
+      menus='{% if minimal_desktop_enabled | default(false) | bool %}{% for user in dev_users | default([]) %}{{ user.home }}/.config/openbox/menu.xml {% endfor %}{% endif %}'
+      dconf_file='{{ media_folder_dconf_file if _media_folder_gnome_shell.stat.exists else "" }}'
+      count=0
+      lines=
+      bad=0
+      while IFS='|' read -r name path url; do
+        [ -n "$name" ] || continue
+        [ -f "$path" ] || fail "$path missing"
+        line="  $name: $path"
+        if [ -n "$url" ]; then
+          line="$line -> $url"
+          if [ "$probe" = 1 ]; then
+            out=$(curl -sS -o /dev/null --max-time 15 -w '%{http_code} %{redirect_url}' "$url" 2>/dev/null) || out="000 "
+            code=${out%% *}
+            redirect=${out#* }
+            rest=${redirect#*://}
+            host=${rest%%/*}
+            case "$code" in
+              2??) line="$line (HTTP $code)" ;;
+              3??) line="$line (HTTP $code to ${host:-?})" ;;
+              *) line="$line (HTTP $code)"; bad=1 ;;
+            esac
+          fi
+        fi
+        count=$((count + 1))
+        lines="$lines$line
+      "
+      done <<EOF
+      $entries
+      EOF
+      for menu in $menus; do
+        grep -q 'id="media-menu" label="{{ media_folder_name }}"' "$menu" 2>/dev/null || fail "$menu has no {{ media_folder_name }} submenu"
+      done
+      if [ -n "$dconf_file" ]; then
+        grep -q "name='{{ media_folder_name }}'" "$dconf_file" 2>/dev/null || fail "$dconf_file has no {{ media_folder_name }} folder"
+      fi
+      echo "media folder {{ media_folder_name }}: $count entries"
+      printf '%s' "$lines"
+      for menu in $menus; do echo "  openbox submenu: $menu"; done
+      [ -z "$dconf_file" ] || echo "  gnome app folder: $dconf_file"
+      [ "$bad" = 0 ] || fail "an address did not answer with 2xx or 3xx"
+  when: _media_folder_on | bool
+
+- name: Remove the Media folder read-back helper when the folder is not declared
+  ansible.builtin.file:
+    path: "{{ media_folder_check_helper }}"
+    state: absent
+  when: not (_media_folder_on | bool)
+
+# main.yml includes this file after minimal-desktop.yml (the Openbox menus)
+# and after the update transaction (the Jellyfin Flatpak), so the folder is
+# whole by now. A gap warns instead of stopping the rest of the converge.
+- name: Read the Media folder back
+  ansible.builtin.command:
+    argv: ["{{ media_folder_check_helper }}"]
+  register: _media_folder_check
+  changed_when: false
+  failed_when: false
+  when:
+    - _media_folder_on | bool
+    - not ansible_check_mode
+
+- name: Report the Media folder read-back
+  ansible.builtin.debug:
+    msg: "{{ (_media_folder_check.stdout_lines | default([])) + (_media_folder_check.stderr_lines | default([])) }}"
+  when:
+    - _media_folder_on | bool
+    - not ansible_check_mode
+
+- name: Warn when the Media folder is incomplete
+  ansible.builtin.debug:
+    msg: "WARNING: {{ _media_folder_check.stderr | default('') | trim }}"
+  when:
+    - _media_folder_on | bool
+    - not ansible_check_mode
+    - _media_folder_check.rc | default(0) != 0

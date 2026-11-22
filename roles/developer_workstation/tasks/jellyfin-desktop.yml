@@ -1,0 +1,161 @@
+---
+# =============================================================================
+# Jellyfin Desktop (Flathub) and the "Jellyfin (web)" menu entry
+# =============================================================================
+# Jellyfin ships its Linux desktop client through Flathub as
+# org.jellyfin.JellyfinDesktop (developer Jellyfin, Flathub-verified via
+# jellyfin.org). The upstream .deb cannot install on Ubuntu 26.04 (it depends
+# on libcec6), there is no snap, and the AppImage is a prerelease
+# (Curiosity-Corp/catalog#157).
+#
+# flatpak.yml installs Flatpak and the GPG-signed Flathub remote; this file
+# installs the app system-wide and refuses an install whose ref is not
+# jellyfin_desktop_flatpak_ref or whose origin is not the Flathub remote, so an
+# app of the same id from another remote is never accepted.
+#
+# Menu entries:
+#   /var/lib/flatpak/exports/share/applications/org.jellyfin.JellyfinDesktop.desktop
+#       "Jellyfin Desktop", exported by the Flatpak.
+#   /usr/local/share/applications/curiosity-jellyfin-web.desktop
+#       "Jellyfin (web)": xdg-open of jellyfin_web_url in the user's default
+#       browser. jellyfin_web_url is site configuration (an internal overlay
+#       sets it). No browser policy or profile is written; name resolution is
+#       the host's own (for example its Ziti tunnel).
+# Both appear in the rofi launcher (XDG_DATA_DIRS) and in the Openbox
+# Applications menu (templates/minimal-desktop-menu.xml.j2).
+#
+# The healthcheck helper is installed only here, so the post-update
+# healthcheck runs only where Jellyfin was installed (update-health.yml, the
+# jellyfin_desktop application contract). The include is x86_64 only, matching
+# jellyfin_desktop_flatpak_ref (see managed-updates.yml).
+# =============================================================================
+
+- name: Require a Jellyfin web address
+  ansible.builtin.assert:
+    that:
+      - jellyfin_web_url is string
+      - jellyfin_web_url is match('^https?://[^\\s/]+[^\\s]*$')
+    fail_msg: >-
+      jellyfin_desktop_enabled is true but jellyfin_web_url
+      ('{{ jellyfin_web_url }}') is not an http(s) URL. Set it next to the flag.
+
+- name: Install Flatpak and the Flathub remote for Jellyfin Desktop
+  ansible.builtin.include_tasks:
+    file: flatpak.yml
+    apply:
+      tags: [jellyfin]
+
+- name: Install Jellyfin Desktop from Flathub
+  community.general.flatpak:
+    name: "{{ jellyfin_desktop_flatpak_id }}"
+    remote: "{{ workstation_flatpak_flathub_remote }}"
+    method: system
+    state: present
+
+# Read-only, so it also runs in check mode.
+- name: Read the installed Jellyfin Desktop ref and origin
+  ansible.builtin.command:
+    argv:
+      - flatpak
+      - info
+      - --system
+      - "{{ item }}"
+      - "{{ jellyfin_desktop_flatpak_id }}"
+  loop:
+    - --show-ref
+    - --show-origin
+  register: _jellyfin_desktop_info
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Require the installed Jellyfin Desktop to be the Flathub app
+  ansible.builtin.assert:
+    that:
+      - _jellyfin_desktop_info.results | map(attribute='rc') | list == [0, 0]
+      - (_jellyfin_desktop_info.results[0].stdout | trim) == jellyfin_desktop_flatpak_ref
+      - (_jellyfin_desktop_info.results[1].stdout | trim) == workstation_flatpak_flathub_remote
+    fail_msg: >-
+      The installed {{ jellyfin_desktop_flatpak_id }} is not
+      {{ jellyfin_desktop_flatpak_ref }} from {{ workstation_flatpak_flathub_remote }}
+      (ref '{{ _jellyfin_desktop_info.results[0].stdout | default('') | trim }}',
+      origin '{{ _jellyfin_desktop_info.results[1].stdout | default('') | trim }}').
+      Remove it with `flatpak uninstall --system {{ jellyfin_desktop_flatpak_id }}`
+      and run the role again.
+  when: not ansible_check_mode
+
+- name: Create the local application directory
+  ansible.builtin.file:
+    path: /usr/local/share/applications
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the Jellyfin (web) menu entry
+  ansible.builtin.copy:
+    dest: "{{ jellyfin_web_desktop_entry }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Curiosity-Corp/catalog (developer_workstation, jellyfin-desktop.yml).
+      [Desktop Entry]
+      Type=Application
+      Name=Jellyfin (web)
+      Comment=Open the Jellyfin media server in the default browser
+      Exec=xdg-open {{ jellyfin_web_url }}
+      Icon={{ jellyfin_desktop_flatpak_id }}
+      Terminal=false
+      Categories=AudioVideo;Video;Player;
+
+- name: Install the Jellyfin Desktop healthcheck helper
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/curiosity-jellyfin-desktop-check
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by Curiosity-Corp/catalog (developer_workstation, jellyfin-desktop.yml).
+      # Post-update healthcheck of Jellyfin Desktop: installed system-wide, the
+      # Flathub ref and origin, both menu entries present, and the Flatpak
+      # exports dir on the session's XDG_DATA_DIRS. Prints one line.
+      set -eu
+      app={{ jellyfin_desktop_flatpak_id }}
+      want_ref={{ jellyfin_desktop_flatpak_ref }}
+      want_origin={{ workstation_flatpak_flathub_remote }}
+      info=$(flatpak info --system "$app" 2>/dev/null) || {
+        echo "jellyfin desktop: flatpak info --system $app failed" >&2
+        exit 1
+      }
+      ref=$(flatpak info --system --show-ref "$app" 2>/dev/null) || ref=
+      [ "$ref" = "$want_ref" ] || {
+        echo "jellyfin desktop: unexpected ref '$ref' (want $want_ref)" >&2
+        exit 1
+      }
+      origin=$(flatpak info --system --show-origin "$app" 2>/dev/null) || origin=
+      [ "$origin" = "$want_origin" ] || {
+        echo "jellyfin desktop: unexpected origin '$origin' (want $want_origin)" >&2
+        exit 1
+      }
+      for path in \
+        /var/lib/flatpak/exports/share/applications/$app.desktop \
+        {{ jellyfin_web_desktop_entry }} \
+        /etc/profile.d/flatpak.sh \
+        /etc/X11/Xsession.d/20flatpak; do
+        [ -e "$path" ] || {
+          echo "jellyfin desktop: $path missing" >&2
+          exit 1
+        }
+      done
+      version=$(printf '%s\n' "$info" | sed -n 's/^ *Version: *//p' | head -n 1)
+      echo "jellyfin desktop ${version:-unknown} ($ref from $origin)"
+
+- name: Run the Jellyfin Desktop healthcheck
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/curiosity-jellyfin-desktop-check
+  register: _jellyfin_desktop_health
+  changed_when: false
+  when: not ansible_check_mode

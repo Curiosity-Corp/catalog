@@ -34,3 +34,37 @@
   when:
     - apt_upgrade_enabled | default(true)
     - _snap_installed.stat.exists
+
+# Flatpak is present only where an opt-in Flatpak app installed it
+# (flatpak.yml). Only the system installation is updated; it is the only one
+# the role manages. Like `snap refresh`, a failed update (a Flathub outage)
+# does not fail the pull and roll back the whole update transaction: it is
+# reported as a WARNING, the installed apps keep running, and the next pull
+# retries. A broken app still fails its post-update healthcheck.
+- name: Check whether Flatpak is installed
+  ansible.builtin.stat:
+    path: /usr/bin/flatpak
+  register: _flatpak_installed
+  when: apt_upgrade_enabled | default(true)
+
+- name: Update system Flatpak apps and runtimes
+  ansible.builtin.command:
+    argv: [flatpak, update, -y, --noninteractive, --system]
+  register: _flatpak_update
+  changed_when: >-
+    _flatpak_update.rc == 0
+    and (_flatpak_update.stdout | default('')) is not search('Nothing to do')
+  failed_when: false
+  when:
+    - apt_upgrade_enabled | default(true)
+    - _flatpak_installed.stat.exists | default(false)
+
+- name: Warn when the Flatpak update failed
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: flatpak update --system exited {{ _flatpak_update.rc }}; the
+      installed apps are unchanged and the next pull retries.
+      {{ (_flatpak_update.stderr | default('')) | trim | truncate(400) }}
+  when:
+    - _flatpak_update.rc is defined
+    - _flatpak_update.rc != 0

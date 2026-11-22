@@ -1,0 +1,39 @@
+---
+# =============================================================================
+# Flatpak runtime and the Flathub system remote (shared by every Flatpak app)
+# =============================================================================
+# Flatpak is not part of the baseline. This file is included only from the
+# task file of an opt-in Flatpak app (today jellyfin-desktop.yml), so a host
+# gets the `flatpak` package and the Flathub remote only when one of those
+# apps is enabled. The next Flatpak app includes this file the same way
+# instead of copying it.
+#
+# Everything is system-wide (`method: system`, /var/lib/flatpak): one copy of
+# each app for every managed user, updated by root. Flathub's remote is
+# GPG-signed; the .flatpakrepo carries its public key, and flatpak verifies
+# every commit it pulls against it.
+#
+# The Ubuntu `flatpak` package ships /etc/profile.d/flatpak.sh (login shells,
+# so the getty+startx pinned-VT sessions) and /etc/X11/Xsession.d/20flatpak
+# (LightDM sessions). Both put /var/lib/flatpak/exports/share on XDG_DATA_DIRS,
+# so the menu entries a Flatpak app exports appear in the rofi launcher and
+# for xdg-open from the next login.
+#
+# Updates: `flatpak update --system` runs beside `snap refresh` in
+# system-updates.yml, guarded on /usr/bin/flatpak, so it covers every app
+# installed through this file.
+# =============================================================================
+
+- name: Install Flatpak
+  ansible.builtin.apt:
+    name: flatpak
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Add the Flathub remote at system level
+  community.general.flatpak_remote:
+    name: "{{ workstation_flatpak_flathub_remote }}"
+    flatpakrepo_url: "{{ workstation_flatpak_flathub_url }}"
+    method: system
+    state: present
