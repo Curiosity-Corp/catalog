@@ -16,7 +16,21 @@
   <item label="App Launcher">
     <action name="Execute"><command>rofi -show drun -show-icons</command></action>
   </item>
-{% if jellyfin_desktop_enabled | default(false) | bool and ansible_architecture | default('') == 'x86_64' %}
+{% set _jellyfin_menu = jellyfin_desktop_enabled | default(false) | bool and ansible_architecture | default('') == 'x86_64' %}
+{% if media_folder_enabled | default(false) | bool %}
+  <menu id="media-menu" label="{{ media_folder_name | e }}">
+{% if _jellyfin_menu %}
+    <item label="Jellyfin Desktop">
+      <action name="Execute"><command>flatpak run {{ jellyfin_desktop_flatpak_id }}</command></action>
+    </item>
+{% endif %}
+{% for entry in media_folder_web_entries %}
+    <item label="{{ entry.name | e }}">
+      <action name="Execute"><command>xdg-open {{ entry.url | e }}</command></action>
+    </item>
+{% endfor %}
+  </menu>
+{% elif _jellyfin_menu %}
   <separator label="Media" />
   <item label="Jellyfin Desktop">
     <action name="Execute"><command>flatpak run {{ jellyfin_desktop_flatpak_id }}</command></action>

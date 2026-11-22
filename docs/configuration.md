@@ -967,6 +967,30 @@ from `flatpak update -y --noninteractive --system`, run nightly beside
 the menu items and leaves the Flatpak in place (remove it with
 `flatpak uninstall --system org.jellyfin.JellyfinDesktop`).
 
+The Media folder (`media_folder_enabled`, default `false`; Curiosity-Corp/catalog#158)
+puts the media server entries in one folder named `media_folder_name` ("Media"),
+like the Media folder on a phone's home screen. It holds only Jellyfin Desktop
+(when `jellyfin_desktop_enabled` is on) and one launcher per entry of
+`media_folder_web_entries`: Watch, Request, Books and Music, the names of the
+media server's viewer guide. Each launcher is
+`/usr/local/share/applications/curiosity-media-<id>.desktop` and opens its
+address with `xdg-open` in the user's default browser; no browser policy or
+profile is written. The default addresses are `https://<id>.` plus
+`media_folder_web_domain`, which is site configuration with no public default:
+set it next to the flag (the run fails while an address is not a full http(s)
+URL), or replace `media_folder_web_entries` with literal `url` values. On the
+minimal desktop the folder is a "Media" submenu of the Openbox Applications
+menu, read at Openbox's next start or "Reconfigure Openbox" (the role never
+touches a running session); rofi lists the launchers too. Where GNOME Shell is
+installed the folder is also a GNOME app-grid folder, written as the system dconf
+default `/etc/dconf/db/local.d/50-curiosity-media-folder`, which a user's own
+layout overrides. `/usr/local/sbin/curiosity-media-folder-check` reads the
+folder back (the launcher files, each desktop user's submenu and the dconf
+folder); `--probe` also asks each address for its HTTP status and prints only
+the host a redirect goes to. Every desktop run converges: launchers that are no
+longer declared are removed, and turning the flag off removes the launchers, the
+dconf folder and the helper.
+
 The branded FocusPass screen-lock package is an optional local-PAM integration.
 It is installed only when all three variables below are supplied for a
 desktop or thin-client profile with the minimal desktop enabled:

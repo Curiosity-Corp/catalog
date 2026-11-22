@@ -203,6 +203,35 @@ jellyfin_desktop_flatpak_ref: app/org.jellyfin.JellyfinDesktop/x86_64/stable
 jellyfin_web_url: ""
 jellyfin_web_desktop_entry: /usr/local/share/applications/curiosity-jellyfin-web.desktop
 
+# One "Media" folder in the desktop's app list that holds only the media
+# server entries (tasks/media-folder.yml, Curiosity-Corp/catalog#158): Jellyfin
+# Desktop when jellyfin_desktop_enabled is on, plus one launcher per entry of
+# media_folder_web_entries that opens its address with xdg-open in the user's
+# default browser. On the minimal desktop the folder is a "Media" submenu of
+# the Openbox Applications menu; where GNOME Shell is installed it is also a
+# GNOME app-grid folder (a system dconf default the user can still change).
+# No browser policy or profile is written. Off by default.
+media_folder_enabled: false
+media_folder_name: Media
+# Site domain of the media server's web apps: example.org gives
+# https://watch.example.org and so on. Site configuration, so it has no public
+# default; while it is empty the entry addresses are invalid and the run fails.
+# An overlay may instead replace media_folder_web_entries with literal URLs.
+media_folder_web_domain: ""
+# Names follow the media server's viewer guide; ids name the launcher files
+# (curiosity-media-<id>.desktop in media_folder_desktop_dir).
+media_folder_web_entries:
+  - {id: watch, name: Watch, comment: Watch films and shows (Jellyfin), icon: video-x-generic, url: "https://watch.{{ media_folder_web_domain }}"}
+  - {id: request, name: Request, comment: Ask for a film or show (Seerr), icon: system-search, url: "https://request.{{ media_folder_web_domain }}"}
+  - {id: books, name: Books, comment: Audiobooks and podcasts (Audiobookshelf), icon: audio-x-generic, url: "https://books.{{ media_folder_web_domain }}"}
+  - {id: music, name: Music, comment: Music (Navidrome), icon: audio-x-generic, url: "https://music.{{ media_folder_web_domain }}"}
+media_folder_desktop_dir: /usr/local/share/applications
+media_folder_flatpak_exports: /var/lib/flatpak/exports/share/applications
+media_folder_gnome_shell: /usr/bin/gnome-shell
+media_folder_dconf_profile: /etc/dconf/profile/user
+media_folder_dconf_file: /etc/dconf/db/local.d/50-curiosity-media-folder
+media_folder_check_helper: /usr/local/sbin/curiosity-media-folder-check
+
 # Force-install the Bitwarden browser extension into the Chromium-family
 # browsers, the way the Firefox policy already does for Firefox
 # (collaboration.yml). One managed-policy file per browser is written only when
