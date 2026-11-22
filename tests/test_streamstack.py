@@ -466,3 +466,208 @@ def test_boot_still_reloads_an_idle_module_so_the_options_apply(tmp_path: Path) 
     # Boot (the oneshot unit, no flag) is not a live desk; this is the only path that unloads the module.
     _out, calls = _run_loopback(tmp_path, [], live_name="Canon EOS 50D")
     assert calls[:2] == ["modprobe -r v4l2loopback", "modprobe v4l2loopback"]
+
+
+# --- catalog#137: the Console restart after a package replacement never drops a live call ---------------------------
+
+CONSOLE_RESTART = ROLE / "files/curiosity-streamstack-console-restart"
+
+
+def _console_restart_module():
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader("console_restart", str(CONSOLE_RESTART))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module  # dataclasses resolve annotations through the module's sys.modules entry
+    loader.exec_module(module)
+    return module
+
+
+class _FakeSystemctl:
+    """`systemctl --user` for one session: records every call, answers is-active from `console_running`."""
+
+    def __init__(self, console_running: bool = True) -> None:
+        self.console_running = console_running
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str) -> subprocess.CompletedProcess:
+        self.calls.append(args)
+        if args[0] == "is-active":
+            return subprocess.CompletedProcess(args, 0 if self.console_running else 3, "", "")
+        if args[0] in ("start", "restart") and args[-1] == "streamstack-console.service":
+            self.console_running = True
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def verbs(self, unit: str) -> list[str]:
+        return [c[0] for c in self.calls if c[-1] == unit and c[0] != "is-active"]
+
+
+def _restarter(tmp_path: Path, looks: list, console_running: bool = True):
+    module = _console_restart_module()
+    systemctl, said, answers = _FakeSystemctl(console_running), [], iter(looks)
+    restarter = module.Restarter(
+        look=lambda: next(answers), systemctl=systemctl, marker=tmp_path / "streamstack/console-restart-pending",
+        say=said.append, sleep=lambda _s: None, recheck_s=0,
+    )
+    return module, restarter, systemctl, said
+
+
+def test_an_idle_console_is_restarted_at_once_after_a_package_replacement(tmp_path: Path) -> None:
+    module = _console_restart_module()
+    idle = module.Look(False)
+    module, restarter, systemctl, said = _restarter(tmp_path, [idle, idle])
+    assert restarter.restart() == module.DONE
+    assert systemctl.verbs(module.CONSOLE) == ["restart"]
+    assert said[-1].startswith("restarted:")
+    assert not (tmp_path / "streamstack/console-restart-pending").exists()
+    assert systemctl.verbs(module.TIMER) == ["stop"]  # nothing left armed
+
+
+def test_a_live_call_defers_the_restart_and_marks_it_pending(tmp_path: Path) -> None:
+    module = _console_restart_module()
+    call = module.Look(True, "Google Meet in Brave has the camera and the microphone open")
+    module, restarter, systemctl, said = _restarter(tmp_path, [call])
+    assert restarter.restart() == module.DEFERRED == 3
+    assert "restart" not in systemctl.verbs(module.CONSOLE)  # the call keeps its camera and microphone
+    assert systemctl.verbs(module.TIMER) == ["start"]
+    marker = tmp_path / "streamstack/console-restart-pending"
+    assert "Google Meet in Brave" in marker.read_text()
+    assert said[-1].startswith("deferred: Google Meet in Brave")
+
+
+def test_one_quiet_look_is_not_the_end_of_a_call(tmp_path: Path) -> None:
+    # A browser closes one capture stream and opens the next: idle must be seen twice before anything restarts.
+    module = _console_restart_module()
+    module, restarter, systemctl, _said = _restarter(tmp_path, [module.Look(False), module.Look(True, "Teams has the camera open")])
+    assert restarter.restart() == module.DEFERRED
+    assert "restart" not in systemctl.verbs(module.CONSOLE)
+
+
+def test_an_unknown_call_state_defers_like_a_call(tmp_path: Path) -> None:
+    module = _console_restart_module()
+    unknown = module.Look(True, "the audio server does not say whether a call app is capturing the microphone")
+    module, restarter, systemctl, said = _restarter(tmp_path, [unknown])
+    assert restarter.restart() == module.DEFERRED
+    assert "restart" not in systemctl.verbs(module.CONSOLE)
+    assert "audio server" in said[-1]
+
+
+def test_the_pending_restart_waits_out_the_call_then_runs_once(tmp_path: Path) -> None:
+    module = _console_restart_module()
+    call, idle = module.Look(True, "Zoom has the microphone open"), module.Look(False)
+    module, restarter, systemctl, said = _restarter(tmp_path, [call, call, idle, idle])
+    assert restarter.restart() == module.DEFERRED
+    assert restarter.pending() == module.DONE  # timer run during the call: still waiting
+    assert said[-1].startswith("waiting: Zoom")
+    assert "restart" not in systemctl.verbs(module.CONSOLE)
+    assert restarter.pending() == module.DONE  # the call is over
+    assert systemctl.verbs(module.CONSOLE) == ["restart"]
+    assert said[-1].startswith("restarted:") and "the call is over" in said[-1]
+    assert not (tmp_path / "streamstack/console-restart-pending").exists()
+    assert systemctl.verbs(module.TIMER) == ["start", "stop"]
+    assert restarter.pending() == module.DONE  # a late timer run finds nothing to do and restarts nothing
+    assert systemctl.verbs(module.CONSOLE) == ["restart"]
+
+
+def test_a_stopped_console_is_started_not_restarted_and_a_pending_restart_on_it_is_dropped(tmp_path: Path) -> None:
+    module = _console_restart_module()
+    module, restarter, systemctl, said = _restarter(tmp_path, [], console_running=False)
+    assert restarter.restart() == module.DONE  # no call can depend on a Console that is not running
+    assert systemctl.verbs(module.CONSOLE) == ["start"]
+    module, restarter, systemctl, said = _restarter(tmp_path, [], console_running=False)
+    (tmp_path / "streamstack").mkdir(exist_ok=True)
+    (tmp_path / "streamstack/console-restart-pending").write_text("2026-11-22T10:00:00-0500 Teams\n")
+    assert restarter.pending() == module.DONE
+    assert systemctl.verbs(module.CONSOLE) == []  # someone stopped it: leave it stopped
+    assert said[-1].startswith("dropped:")
+
+
+def test_start_mode_never_restarts_a_running_console(tmp_path: Path) -> None:
+    module = _console_restart_module()
+    module, restarter, systemctl, said = _restarter(tmp_path, [])
+    assert restarter.start() == module.DONE
+    assert systemctl.verbs(module.CONSOLE) == []
+    assert said == ["running: streamstack-console.service is already running"]
+
+
+def _run_console_restart(tmp_path: Path, mode: str, source_outputs: list[dict]) -> tuple[int, str, list[str]]:
+    """Run the installed helper against the vendored StreamStack's real call detection, with stub pactl and systemctl."""
+    import json
+
+    bin_dir, runtime = tmp_path / "bin", tmp_path / "run"
+    bin_dir.mkdir(exist_ok=True)
+    runtime.mkdir(exist_ok=True)
+    calls = tmp_path / "systemctl.calls"
+    (tmp_path / "source-outputs.json").write_text(json.dumps(source_outputs))
+    (bin_dir / "pactl").write_text(f'#!/bin/sh\ncat {tmp_path / "source-outputs.json"}\n')
+    (bin_dir / "systemctl").write_text(f'#!/bin/sh\n[ "$1" = --user ] || exit 64\nshift\necho "$*" >> {calls}\nexit 0\n')
+    (bin_dir / "wmctrl").write_text("#!/bin/sh\nexit 1\n")
+    for stub in bin_dir.iterdir():
+        stub.chmod(0o755)
+    env_file = tmp_path / "streamstack.env"
+    env_file.write_text(_env())
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", HOME=str(tmp_path), XDG_RUNTIME_DIR=str(runtime),
+               XDG_CONFIG_HOME=str(tmp_path / "config"), STREAMSTACK_ENV_FILE=str(env_file),
+               STREAMSTACK_LIB=str(APP / "src"), CURIOSITY_STREAMSTACK_CONSOLE_RESTART_RECHECK_S="0")
+    env.pop("PYTHONPATH", None)
+    done = subprocess.run([sys.executable, "-I", str(CONSOLE_RESTART), mode], capture_output=True, text=True,
+                          env=env, check=False, timeout=60)
+    return done.returncode, done.stdout + done.stderr, calls.read_text().splitlines() if calls.exists() else []
+
+
+def test_the_helper_restarts_an_idle_console_using_streamstack_call_detection(tmp_path: Path) -> None:
+    # OBS capturing audio is not a call (StreamStack counts only call apps).
+    obs = {"properties": {"application.process.binary": "obs", "application.name": "OBS"}, "corked": False, "mute": False}
+    code, out, calls = _run_console_restart(tmp_path, "restart", [obs])
+    assert code == 0, out
+    assert out.startswith("restarted:"), out
+    assert "restart streamstack-console.service" in calls
+    assert not (tmp_path / "run/streamstack/console-restart-pending").exists()
+
+
+def test_the_helper_defers_while_a_meet_tab_in_brave_captures_the_microphone(tmp_path: Path) -> None:
+    # streamstack#204: Brave is a Meet browser on the desks; StreamStack's call detection counts it.
+    brave = {"properties": {"application.process.binary": "brave", "application.name": "Brave",
+                            "application.process.id": "4242"}, "corked": False, "mute": False}
+    code, out, calls = _run_console_restart(tmp_path, "restart", [brave])
+    assert code == 3, out
+    assert out.startswith("deferred:") and "Brave" in out, out
+    assert "restart streamstack-console.service" not in calls
+    assert "start curiosity-streamstack-console-restart.timer" in calls
+    assert (tmp_path / "run/streamstack/console-restart-pending").is_file()
+    # The call ends: the timer's run restarts the Console once and disarms itself.
+    code, out, calls = _run_console_restart(tmp_path, "--pending", [])
+    assert code == 0, out
+    assert out.startswith("restarted:"), out
+    assert calls.count("restart streamstack-console.service") == 1
+    assert calls[-1] == "stop curiosity-streamstack-console-restart.timer"
+    assert not (tmp_path / "run/streamstack/console-restart-pending").exists()
+
+
+def test_the_role_restarts_the_console_only_through_the_call_safe_helper() -> None:
+    task = _task("Start the StreamStack Console, restarting it after a package replacement unless a call is on")
+    argv = task["ansible.builtin.command"]["argv"]
+    assert argv[:3] == ["runuser", "-u", "{{ item.item }}"]
+    assert any(a.startswith("XDG_RUNTIME_DIR=/run/user/") for a in argv)  # the marker and the timer live in the session
+    assert argv[-2] == "/usr/local/sbin/curiosity-streamstack-console-restart"
+    assert argv[-1] == "{{ 'restart' if _streamstack_package_replaced is changed else 'start' }}"
+    assert task["failed_when"] == "_streamstack_console_restart.rc not in [0, 3]"  # 3 = deferred by a call, not a failure
+    assert "deferred" in task["changed_when"]
+    # no task restarts the Console behind the helper's back
+    for t in TASKS:
+        cmd = t.get("ansible.builtin.command", {})
+        words = cmd.get("argv", []) if isinstance(cmd, dict) else []
+        if "streamstack-console.service" in words:
+            assert "restart" not in " ".join(words), t["name"]
+    report = _task("Report a StreamStack Console restart deferred by a live call")
+    assert "equalto', 3" in report["loop"]
+    install = _task("Install the call-safe StreamStack Console restart")["ansible.builtin.copy"]
+    assert install["dest"] == argv[-2] and install["mode"] == "0755"
+    units = _task("Install the deferred StreamStack Console restart user units")
+    assert units["loop"] == ["service", "timer"]
+    service = (ROLE / "files/curiosity-streamstack-console-restart.service").read_text()
+    assert f"ExecStart={argv[-2]} --pending" in service
+    timer = (ROLE / "files/curiosity-streamstack-console-restart.timer").read_text()
+    assert "OnUnitInactiveSec=" in timer and "[Install]" not in timer  # armed only by a deferral, never at login

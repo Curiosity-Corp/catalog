@@ -1,0 +1,203 @@
+#!/usr/bin/python3 -I
+"""Managed by curiosity.workstation. Restart the StreamStack Console only when no call is on (catalog#137).
+
+The Console hosts the native video engine, the only writer of StreamStack Camera, and the voice chain behind
+StreamStack Mic. ansible-pull replaces the StreamStack package unattended, and restarting the Console then would freeze
+the camera and drop the microphone of a live Teams, Zoom or Meet call. This helper runs as the Console account:
+
+    curiosity-streamstack-console-restart start      start the Console if it is not running (never restarts it)
+    curiosity-streamstack-console-restart restart    restart it now when no call is on; otherwise mark the restart
+                                                     pending, arm the user timer and exit 3 (deferred)
+    curiosity-streamstack-console-restart --pending  the timer's run: restart once the call is over, then disarm
+
+"A call is on" is StreamStack's own definition (streamstack.callstate, the same one Pre-flight, the echo check and
+camera-publish use): a known call app (Teams, Zoom, Slack, Webex, Edge, Chrome, Chromium, Firefox, Brave, ...) holds
+the program or raw camera open (read from /proc, never by opening the device) or has a microphone capture stream
+(pactl source-outputs). When the audio server or /proc cannot be read, the answer is unknown and the restart waits
+too. Idle must be seen twice, a browser's stream-reopen gap apart, before anything restarts.
+
+The marker lives in $XDG_RUNTIME_DIR, so it ends with the session: the next login starts the new Console anyway.
+Every decision goes to the journal (tag curiosity-streamstack-console-restart) and to stdout, whose first word is
+the outcome: started, running, restarted, deferred, waiting, dropped or idle.
+
+Environment (overridable for tests):
+  STREAMSTACK_LIB                              the installed package root  (/usr/local/lib/streamstack)
+  CURIOSITY_STREAMSTACK_CONSOLE_RESTART_RECHECK_S  seconds between the two idle looks  (4)
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+CONSOLE = "streamstack-console.service"
+TIMER = "curiosity-streamstack-console-restart.timer"
+TAG = "curiosity-streamstack-console-restart"
+DONE, FAILED, USAGE, DEFERRED = 0, 1, 2, 3  # exit codes; 3 = a call is on, the restart is pending (not a failure)
+RECHECK_S = float(os.environ.get("CURIOSITY_STREAMSTACK_CONSOLE_RESTART_RECHECK_S", "4"))
+
+
+@dataclass(frozen=True)
+class Look:
+    """One answer to "is a call on?". `busy` is True for a call and for "cannot tell"; `reason` says which."""
+
+    busy: bool
+    reason: str = ""
+
+
+def look_with_streamstack() -> Look:
+    """Ask the installed StreamStack, once, through its public call-state primitive."""
+    sys.path.insert(0, os.environ.get("STREAMSTACK_LIB", "/usr/local/lib/streamstack"))
+    try:
+        from streamstack import callstate, config
+    except ImportError as exc:
+        return Look(True, f"cannot load StreamStack's call detection ({exc})")
+    found = callstate.gather(config.load_settings())
+    if not found.audio_ok:
+        return Look(True, "the audio server does not say whether a call app is capturing the microphone")
+    if not found.video_ok:
+        return Look(True, "/proc cannot be read to see which apps hold the camera")
+    # The one-look reading `callstate.current_call` gives, on the evidence already gathered (it would gather again).
+    snap = callstate.CallDetector(settle_s=0.0, leave_s=0.0).update(found.apps, None, now=0.0)
+    return Look(snap.active, snap.reason or (f"{snap.service} call" if snap.active else ""))
+
+
+def run_systemctl(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, check=False, timeout=60)
+
+
+def journal(message: str) -> None:
+    print(message, flush=True)
+    try:
+        import syslog
+
+        syslog.openlog(TAG)
+        syslog.syslog(syslog.LOG_NOTICE, message)
+    except OSError as exc:  # no journal socket (a container): stdout still carries it
+        print(f"{TAG}: journal unavailable: {exc}", file=sys.stderr)
+
+
+def marker_path() -> Path:
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        raise SystemExit(f"{TAG}: XDG_RUNTIME_DIR is not set; run me as the Console account's user session")
+    return Path(runtime) / "streamstack/console-restart-pending"
+
+
+class Restarter:
+    """The decisions, with every effect injected so the tests drive them without a session."""
+
+    def __init__(
+        self,
+        *,
+        look: Callable[[], Look],
+        systemctl: Callable[..., subprocess.CompletedProcess[str]],
+        marker: Path,
+        say: Callable[[str], None],
+        sleep: Callable[[float], object] = time.sleep,
+        recheck_s: float = RECHECK_S,
+    ) -> None:
+        self.look, self.systemctl, self.marker, self.say = look, systemctl, marker, say
+        self.sleep, self.recheck_s = sleep, recheck_s
+
+    # -- the three modes ---------------------------------------------------------------------------------------------
+
+    def start(self) -> int:
+        self._daemon_reload()
+        if self._console_active():
+            self.say(f"running: {CONSOLE} is already running")
+            return DONE
+        return self._act("start", f"started: {CONSOLE} was not running")
+
+    def restart(self) -> int:
+        self._daemon_reload()
+        if not self._console_active():
+            self._clear()
+            return self._act("start", f"started: {CONSOLE} was not running, so no call depended on it")
+        busy = self._busy()
+        if busy:
+            self.marker.parent.mkdir(parents=True, exist_ok=True)
+            self.marker.write_text(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {busy}\n")
+            armed = self.systemctl("start", TIMER)
+            if armed.returncode != 0:
+                self.say(f"deferred: {busy}; {TIMER} did not start ({armed.stderr.strip()}), the next login or "
+                         f"catalog run applies the new Console")
+            else:
+                self.say(f"deferred: {busy}; {CONSOLE} restarts once the call is over ({TIMER})")
+            return DEFERRED
+        return self._restart_now(f"restarted: {CONSOLE}, no call is on")
+
+    def pending(self) -> int:
+        if not self.marker.exists():
+            self._disarm()
+            self.say("idle: no Console restart is pending")
+            return DONE
+        if not self._console_active():
+            self._clear()
+            self._disarm()
+            self.say(f"dropped: {CONSOLE} is not running; its next start runs the new StreamStack")
+            return DONE
+        busy = self._busy()
+        if busy:
+            self.say(f"waiting: {busy}")
+            return DONE
+        since = self.marker.read_text().split(" ", 1)[0]
+        return self._restart_now(f"restarted: {CONSOLE}, the call is over (pending since {since})")
+
+    # -- helpers ------------------------------------------------------------------------------------------------------
+
+    def _busy(self) -> str:
+        """Why not to restart now, empty when idle was seen twice, `recheck_s` apart."""
+        first = self.look()
+        if first.busy:
+            return first.reason or "a call may be on"
+        self.sleep(self.recheck_s)  # a browser drops and reopens its streams; one quiet look is not the end of a call
+        second = self.look()
+        return (second.reason or "a call may be on") if second.busy else ""
+
+    def _restart_now(self, line: str) -> int:
+        code = self._act("restart", line)
+        if code == DONE:
+            self._clear()
+            self._disarm()
+        return code
+
+    def _act(self, verb: str, line: str) -> int:
+        done = self.systemctl(verb, CONSOLE)
+        if done.returncode != 0:
+            self.say(f"failed: systemctl --user {verb} {CONSOLE}: {(done.stderr or done.stdout).strip()}")
+            return FAILED
+        self.say(line)
+        return DONE
+
+    def _console_active(self) -> bool:
+        return self.systemctl("is-active", "--quiet", CONSOLE).returncode == 0
+
+    def _daemon_reload(self) -> None:
+        reload = self.systemctl("daemon-reload")  # this run may have changed the Console or timer unit
+        if reload.returncode != 0:
+            self.say(f"note: systemctl --user daemon-reload failed: {reload.stderr.strip()}")
+
+    def _disarm(self) -> None:
+        self.systemctl("stop", TIMER)
+
+    def _clear(self) -> None:
+        self.marker.unlink(missing_ok=True)
+
+
+def main(argv: list[str]) -> int:
+    modes = {"start": Restarter.start, "restart": Restarter.restart, "--pending": Restarter.pending}
+    if len(argv) != 1 or argv[0] not in modes:
+        print(f"usage: {TAG} start|restart|--pending", file=sys.stderr)
+        return USAGE
+    restarter = Restarter(look=look_with_streamstack, systemctl=run_systemctl, marker=marker_path(), say=journal)
+    return modes[argv[0]](restarter)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

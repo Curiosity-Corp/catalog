@@ -1,0 +1,11 @@
+# Managed by the curiosity workstation role (streamstack task group).
+# Armed by curiosity-streamstack-console-restart when it defers a Console restart
+# because a call is on, and stopped by it once the restart is done (catalog#137).
+# Not enabled at login: a new session starts the new Console by itself.
+[Unit]
+Description=Check each minute whether the deferred StreamStack Console restart can run
+
+[Timer]
+OnActiveSec=1min
+OnUnitInactiveSec=1min
+AccuracySec=10s

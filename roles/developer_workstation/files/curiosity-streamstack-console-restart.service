@@ -1,0 +1,13 @@
+# Managed by the curiosity workstation role (streamstack task group).
+# The pending half of a call-safe Console restart (catalog#137): a catalog run that
+# replaced StreamStack during a call left $XDG_RUNTIME_DIR/streamstack/console-restart-pending
+# and started the timer. Each run restarts streamstack-console.service once no call
+# app holds the camera or the microphone, then removes the marker and stops the timer.
+[Unit]
+Description=Restart the StreamStack Console once the call is over (deferred upgrade)
+After=streamstack-console.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/curiosity-streamstack-console-restart --pending
+NoNewPrivileges=true
