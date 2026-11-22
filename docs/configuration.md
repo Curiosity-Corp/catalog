@@ -1246,6 +1246,28 @@ at once, `early` and `general` wait until the commit is
 fetch fails `ansible-pull-poll.service`, so it shows in `systemctl --failed`
 and the journal instead of passing silently.
 
+### Pulling a private catalog
+
+A failed fetch now fails the full run too (catalog#116): the wrapper never
+re-applies the old checkout silently, so a host whose credential broke shows in
+`systemctl --failed` instead of drifting for days. Set
+`ansible_pull_force_on_update_failure: true` on a host that must keep running
+its known-good checkout while the remote is unreachable.
+
+For a private `ansible_pull_repo`, the site's bootstrap writes the deploy
+credential from its secret manager into a root-only git-credential-store file
+and sets `ansible_pull_credentials_file` to its path. The role only checks
+that the file exists, is owned by root and has mode `0600` or `0400`; it never
+reads, writes or logs it. The wrapper clears every inherited credential helper
+for the catalog URL and reads the file through a helper that answers only
+`get`, so a 401 can no longer erase the line the way a host-wide `store`
+helper did. A URL with embedded credentials is refused.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ansible_pull_credentials_file` | `""` | Root-only credential-store file for a private catalog; empty uses git's own configuration. |
+| `ansible_pull_force_on_update_failure` | `false` | `true` runs the existing checkout when the fetch fails, instead of failing the run. |
+
 ## Console tuning
 
 `console_tuning_enabled` (default `false`) opts a large or mixed-size-display

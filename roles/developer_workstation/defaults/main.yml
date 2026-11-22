@@ -845,7 +845,15 @@ ansible_pull_extra_vars: ""
 # Some managed hosts carry a reviewed local compatibility commit while the
 # public catalog catches up. Those hosts may still run that known-good checkout
 # when ansible-pull cannot update it; leave this disabled by default.
+# Otherwise a failed fetch fails the run (catalog#116): it never re-applies the
+# old checkout silently.
 ansible_pull_force_on_update_failure: false
+# A private ansible_pull_repo: path of a root-only (0600/0400)
+# git-credential-store file that the site's bootstrap writes from its secret
+# manager. The wrapper reads it through a get-only helper scoped to the repo
+# URL, so a 401 can never erase it. The role checks it, never reads or writes
+# it. Empty: git's own configuration (a public repository needs none).
+ansible_pull_credentials_file: ""
 ansible_pull_verify_commit: "{{ catalog_integrity_mode == 'enforce' }}"
 # Soft memory limit for ansible-pull.service. Above it the kernel reclaims the
 # run's page cache (update snapshots, downloads) instead of letting it press on

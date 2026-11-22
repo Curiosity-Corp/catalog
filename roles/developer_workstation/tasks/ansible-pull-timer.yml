@@ -26,6 +26,36 @@
     quiet: true
   when: ansible_pull_poll_enabled | bool
 
+- name: Validate the ansible-pull credential settings
+  ansible.builtin.assert:
+    that:
+      - ansible_pull_repo is not match('^[A-Za-z][A-Za-z0-9+.-]*://[^/]*@')
+      - ansible_pull_credentials_file | default('') == '' or ansible_pull_credentials_file is match('^/')
+    fail_msg: >-
+      ansible_pull_repo must not embed credentials; put them in the root-only
+      file named by ansible_pull_credentials_file (an absolute path).
+    quiet: true
+
+- name: Check the ansible-pull credential file
+  ansible.builtin.stat:
+    path: "{{ ansible_pull_credentials_file }}"
+    get_checksum: false
+  register: _ansible_pull_credentials
+  when: ansible_pull_credentials_file | default('') | length > 0
+
+- name: Require a root-only ansible-pull credential file
+  ansible.builtin.assert:
+    that:
+      - _ansible_pull_credentials.stat.exists
+      - _ansible_pull_credentials.stat.uid == 0
+      - _ansible_pull_credentials.stat.mode in ['0600', '0400']
+    fail_msg: >-
+      {{ ansible_pull_credentials_file }} must exist, be owned by root and have
+      mode 0600 or 0400. The site bootstrap writes it from the secret manager;
+      this role never reads or writes it.
+    quiet: true
+  when: ansible_pull_credentials_file | default('') | length > 0
+
 - name: Create ansible-pull wrapper
   ansible.builtin.copy:
     content: |
@@ -55,6 +85,29 @@
       # commit; when that run fails, the next commit or the 02:00 run retries,
       # so a broken commit cannot restart a full converge every poll.
       poll_started="$state_dir/poll-started-commit"
+
+      # A private catalog: the deploy credential sits in a root-only
+      # git-credential-store file that the site's bootstrap writes from its
+      # secret manager (catalog#116). The empty helper clears every helper
+      # inherited from root's git config: a host-wide "store" erases its line
+      # on any 401, transient or not, after which every pull ran anonymously
+      # and applied the stale checkout for good. The helper below answers
+      # only "get", so nothing can erase or copy the file, and it is scoped to
+      # the catalog URL. Nothing secret reaches argv or the journal.
+      cred={{ ansible_pull_credentials_file | quote }}
+      if [[ -n $cred ]]; then
+        if [[ ! -r $cred ]]; then
+          echo "curiosity-ansible-pull: credential file $cred is missing or unreadable; the site bootstrap writes it" >&2
+          exit 1
+        fi
+        export GIT_CONFIG_COUNT=3
+        export GIT_CONFIG_KEY_0="credential.{{ ansible_pull_repo }}.helper"
+        export GIT_CONFIG_VALUE_0=
+        export GIT_CONFIG_KEY_1="credential.{{ ansible_pull_repo }}.helper"
+        export GIT_CONFIG_VALUE_1="!f() { if [ \"\$1\" = get ]; then git credential-store --file=\"$cred\" get; fi; }; f"
+        export GIT_CONFIG_KEY_2="credential.{{ ansible_pull_repo }}.useHttpPath"
+        export GIT_CONFIG_VALUE_2=true
+      fi
 
       if $if_behind; then
         state=$(systemctl show -P ActiveState ansible-pull.service)
@@ -144,6 +197,15 @@
            [[ -n "$(git -C "{{ ansible_pull_dir }}" status --porcelain)" ]]; then
           local_only=true
         elif ! git -C "{{ ansible_pull_dir }}" fetch --quiet origin "{{ ansible_pull_branch }}"; then
+          # Never re-apply the old checkout silently (catalog#116): a failed
+          # fetch fails the run, so it shows in systemctl --failed and the
+          # journal. ansible_pull_force_on_update_failure opts a host into
+          # running its known-good checkout instead.
+          if [[ "{{ ansible_pull_force_on_update_failure | bool }}" != "True" ]]; then
+            echo "curiosity-ansible-pull: cannot fetch {{ ansible_pull_branch }} from the catalog remote; not re-applying the checkout at $(git -C "{{ ansible_pull_dir }}" rev-parse --short HEAD)" >&2
+            exit 1
+          fi
+          echo "curiosity-ansible-pull: cannot fetch {{ ansible_pull_branch }}; ansible_pull_force_on_update_failure runs the checkout as it is" >&2
           local_only=true
         elif ! git -C "{{ ansible_pull_dir }}" merge-base --is-ancestor \
              "$(git -C "{{ ansible_pull_dir }}" rev-parse HEAD)" \

@@ -97,6 +97,7 @@ def test_this_file_runs_in_the_policy_job() -> None:
 STUB_GIT = r"""#!/usr/bin/env bash
 # Stub git: answers from files in $STUB, logs every call.
 echo "git $*" >>"$STUB/calls"
+[[ -n ${GIT_CONFIG_COUNT:-} ]] && env | grep "^GIT_CONFIG_" | sort >"$STUB/git_env"
 [[ $1 == -C ]] && shift 2
 case $1 in
   status) cat "$STUB/dirty" 2>/dev/null; exit 0 ;;
@@ -107,6 +108,7 @@ case $1 in
   fetch) exit "$(cat "$STUB/fetch_rc" 2>/dev/null || echo 0)" ;;
   merge-base) exit "$(cat "$STUB/ancestor_rc" 2>/dev/null || echo 0)" ;;
   log) cat "$STUB/commit_time" ;;
+  credential-store) exit 0 ;;
   rev-parse)
     case $2 in
       HEAD) cat "$STUB/head" ;;
@@ -122,6 +124,10 @@ case $1 in
   show) cat "$STUB/active_state" 2>/dev/null || echo inactive ;;
   start) exit "$(cat "$STUB/start_rc" 2>/dev/null || echo 0)" ;;
 esac
+"""
+
+STUB_ANSIBLE_PLAYBOOK = r"""#!/usr/bin/env bash
+echo "ansible-playbook $*" >>"$STUB/calls"
 """
 
 STUB_FLOCK = r"""#!/usr/bin/env bash
@@ -140,7 +146,7 @@ def _bool(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _render(tmp_path: Path, ring: str) -> Path:
+def _render(tmp_path: Path, ring: str, **overrides: object) -> Path:
     env = jinja2.Environment(undefined=jinja2.StrictUndefined, keep_trailing_newline=True)
     env.filters["bool"] = _bool
     env.filters["quote"] = lambda v: shlex.quote(str(v))
@@ -158,9 +164,13 @@ def _render(tmp_path: Path, ring: str) -> Path:
         "hardware_profile": "generic",
         "workstation_update_ring": ring,
         "workstation_update_ring_min_age_seconds": DEFAULTS["workstation_update_ring_min_age_seconds"],
+        "ansible_pull_credentials_file": DEFAULTS["ansible_pull_credentials_file"],
+        "ansible_pull_force_on_update_failure": DEFAULTS["ansible_pull_force_on_update_failure"],
+        **overrides,
     }
     text = env.from_string(_content("Create ansible-pull wrapper")).render(**variables)
     text = text.replace("/usr/bin/ansible-pull", str(tmp_path / "bin/ansible-pull"))
+    text = text.replace("/usr/bin/ansible-playbook", str(tmp_path / "bin/ansible-playbook"))
     script = tmp_path / "curiosity-ansible-pull"
     script.write_text(text)
     script.chmod(0o755)
@@ -176,6 +186,7 @@ def host(tmp_path: Path):
         "systemctl": STUB_SYSTEMCTL,
         "flock": STUB_FLOCK,
         "ansible-pull": STUB_ANSIBLE_PULL,
+        "ansible-playbook": STUB_ANSIBLE_PLAYBOOK,
     }.items():
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
@@ -189,8 +200,8 @@ def host(tmp_path: Path):
     return tmp_path
 
 
-def _run(host: Path, *args: str, ring: str = "canary") -> subprocess.CompletedProcess:
-    script = _render(host, ring)
+def _run(host: Path, *args: str, ring: str = "canary", **overrides: object) -> subprocess.CompletedProcess:
+    script = _render(host, ring, **overrides)
     env = dict(os.environ, STUB=str(host / "stub"), PATH=f"{host / 'bin'}:{os.environ['PATH']}")
     return subprocess.run([str(script), *args], env=env, capture_output=True, text=True, check=False)
 
@@ -323,3 +334,93 @@ def test_unknown_argument_is_refused(host: Path) -> None:
     result = _run(host, "--now")
     assert result.returncode == 2
     assert "usage" in result.stderr
+
+
+# --------------------------------------------------------------------------- #
+# catalog#116: authenticated pulls, and no silent stale re-apply
+# --------------------------------------------------------------------------- #
+
+
+def test_credential_defaults_keep_a_public_repo_working() -> None:
+    assert DEFAULTS["ansible_pull_credentials_file"] == ""
+    assert DEFAULTS["ansible_pull_force_on_update_failure"] is False
+
+
+def test_credentials_are_checked_but_never_read_by_the_role() -> None:
+    validate = _task("Validate the ansible-pull credential settings")["ansible.builtin.assert"]["that"]
+    assert any("://[^/]*@" in rule for rule in validate)
+    require = _task("Require a root-only ansible-pull credential file")
+    assert "_ansible_pull_credentials.stat.uid == 0" in require["ansible.builtin.assert"]["that"]
+    stat = _task("Check the ansible-pull credential file")["ansible.builtin.stat"]
+    assert stat["get_checksum"] is False
+    names = [t.get("name", "") for t in TASKS]
+    assert names.index("Require a root-only ansible-pull credential file") < names.index("Create ansible-pull wrapper")
+    for task in TASKS:
+        assert "ansible.builtin.slurp" not in task
+        copy = task.get("ansible.builtin.copy", {})
+        assert copy.get("dest") != "{{ ansible_pull_credentials_file }}"
+
+
+def test_failed_fetch_never_reapplies_the_old_checkout(host: Path) -> None:
+    (host / "stub/fetch_rc").write_text("128\n")
+    result = _run(host)
+    assert result.returncode == 1
+    assert "not re-applying the checkout" in result.stderr
+    assert not any(c.startswith(("ansible-pull ", "ansible-playbook ")) for c in _calls(host))
+
+
+def test_force_on_update_failure_runs_the_known_checkout(host: Path) -> None:
+    (host / "stub/fetch_rc").write_text("128\n")
+    result = _run(host, ansible_pull_force_on_update_failure=True)
+    assert result.returncode == 0, result.stderr
+    assert any(c.startswith("ansible-playbook ") for c in _calls(host))
+    assert not any(c.startswith("ansible-pull ") for c in _calls(host))
+
+
+@pytest.mark.parametrize("args", [(), ("--if-behind",)])
+def test_missing_credential_file_fails_before_git(host: Path, args: tuple[str, ...]) -> None:
+    result = _run(host, *args, ansible_pull_credentials_file=str(host / "absent"))
+    assert result.returncode == 1
+    assert "is missing or unreadable" in result.stderr
+    assert not any(c.startswith("git ") for c in _calls(host))
+
+
+def _git_env(host: Path) -> dict[str, str]:
+    lines = (host / "stub/git_env").read_text().splitlines()
+    return dict(line.split("=", 1) for line in lines)
+
+
+def test_credential_helper_is_scoped_and_replaces_inherited_helpers(host: Path) -> None:
+    cred = host / "pull-credentials"
+    cred.write_text("")
+    cred.chmod(0o600)
+    result = _run(host, "--if-behind", ansible_pull_credentials_file=str(cred))
+    assert result.returncode == 0, result.stderr
+    env = _git_env(host)
+    url = "https://example.invalid/catalog.git"
+    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert env["GIT_CONFIG_KEY_0"] == env["GIT_CONFIG_KEY_1"] == f"credential.{url}.helper"
+    assert env["GIT_CONFIG_VALUE_0"] == ""
+    assert env["GIT_CONFIG_KEY_2"] == f"credential.{url}.useHttpPath"
+    assert str(cred) in env["GIT_CONFIG_VALUE_1"]
+    # Nothing secret on any git command line.
+    assert not any(str(cred) in c for c in _calls(host))
+
+
+@pytest.mark.parametrize("operation", ["get", "store", "erase"])
+def test_credential_helper_answers_only_get(host: Path, operation: str) -> None:
+    cred = host / "pull-credentials"
+    cred.write_text("")
+    cred.chmod(0o600)
+    assert _run(host, "--if-behind", ansible_pull_credentials_file=str(cred)).returncode == 0
+    helper = _git_env(host)["GIT_CONFIG_VALUE_1"]
+    assert helper.startswith("!")
+    (host / "stub/calls").write_text("")
+    # How git runs a "!" helper: the rest as a shell snippet, the operation appended.
+    env = dict(os.environ, STUB=str(host / "stub"), PATH=f"{host / 'bin'}:{os.environ['PATH']}")
+    subprocess.run(["sh", "-c", helper[1:] + ' "$@"', "helper", operation], env=env, check=True, input="")
+    calls = _calls(host)
+    if operation == "get":
+        assert calls == [f"git credential-store --file={cred} get"]
+    else:
+        assert calls == []
