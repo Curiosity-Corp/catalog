@@ -161,6 +161,7 @@ public-surface checks, and collection building. See
 - [Console tuning](docs/console-tuning.md)
 - [PIA VPN split tunnel and managed WiFi](docs/pia-vpn-and-wifi.md)
 - [Python research profile](docs/python-research-profile.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Roadmap](docs/roadmap.md)
 
 Please do not put passwords, tokens, private keys, internal inventories, or
