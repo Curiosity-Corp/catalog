@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(show_default("x", &value("null")), "`null`");
         assert_eq!(show_default("x", &value("[a, b]")), "`[\"a\", \"b\"]`");
         assert_eq!(show_default("x", &value("\"a\\nb\"")), "multi-line text");
-        let long = format!("[{}]", vec!["item"; 20].join(", "));
+        let long = format!("[{}]", ["item"; 20].join(", "));
         assert_eq!(show_default("x", &value(&long)), "list, 20 items");
         let template = format!("\"{{{{ {} }}}}\"", "a".repeat(70));
         assert_eq!(show_default("x", &value(&template)), "template expression");
@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn long_descriptions_keep_whole_sentences() {
         let sentence = "This sentence is exactly fifty characters long ok.";
-        let text = vec![sentence; 10].join(" ");
+        let text = [sentence; 10].join(" ");
         let summary = summarize(&text);
         assert!(summary.ends_with(". (...)"), "{summary}");
         assert!(summary.chars().count() <= MAX_DESCRIPTION + 6);

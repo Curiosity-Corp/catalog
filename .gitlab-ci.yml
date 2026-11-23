@@ -277,11 +277,11 @@ tools:
     - rustup component add rustfmt clippy
     - cargo --version && cargo clippy --version
     - cd tools
-    - cargo clippy --all-targets -- -D warnings
-    - cargo test
-    - cargo run --quiet -- reference --root .. --output ../reference.generated.md
+    - cargo test --locked
+    - cargo run --locked --quiet -- reference --root .. --output ../reference.generated.md
+    - cargo clippy --locked --all-targets -- -D warnings
     - cargo fmt --all --check || { cargo fmt --all && git diff -- . > ../tools-fmt.patch; exit 1; }
-    - cargo run --quiet -- reference --root .. --check
+    - cargo run --locked --quiet -- reference --root .. --check
   artifacts:
     when: always
     name: "catalog-tools-${CI_COMMIT_SHORT_SHA}"
