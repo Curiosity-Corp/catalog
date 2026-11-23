@@ -440,6 +440,20 @@
     - ansible_architecture == 'x86_64'
     - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
 
+- name: Include monitor sleep (console blank kernel argument)
+  ansible.builtin.include_tasks:
+    file: monitor-sleep.yml
+    apply:
+      tags: [grub, boot, console, display, monitor-sleep]
+  tags: [grub, boot, console, display, monitor-sleep]
+  # Same machine-level scope as console video. Always included on these hosts so
+  # a profile that stops setting monitor_off_minutes has its drop-in removed.
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_system == 'Linux'
+    - ansible_architecture == 'x86_64'
+    - ansible_virtualization_type | default('') not in ['docker', 'podman', 'lxc', 'lxd', 'container', 'systemd-nspawn', 'openvz']
+
 - name: Include console video (kernel video= argument for a native-mode console)
   ansible.builtin.include_tasks:
     file: console-video.yml
@@ -726,6 +740,18 @@
   when:
     - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
     - wifi_ssid | length > 0
+
+- name: Include the pointer speed for named mice
+  ansible.builtin.include_tasks:
+    file: pointer-accel.yml
+    apply:
+      tags: [hardware, pointer-accel]
+  tags: [hardware, pointer-accel]
+  # Always included on desktop hosts so a profile that drops its products has
+  # the InputClass removed.
+  when:
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+    - ansible_system == 'Linux'
 
 - name: Configure the Logitech G604 button profile
   ansible.builtin.include_tasks:

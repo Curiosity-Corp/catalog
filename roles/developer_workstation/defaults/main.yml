@@ -1291,7 +1291,11 @@ pro_mimic_motd_news_enabled: false
 # compositor_enabled (boolean, default true: false keeps picom from starting in
 # the Openbox session; see minimal_desktop_compositor_enabled) and
 # pointer_accel_speed (number from -1 to 1, default unset: libinput `Accel Speed`
-# applied to the Logitech G604; see logitech_g604_accel_speed) and
+# applied to the Logitech G604; see logitech_g604_accel_speed),
+# pointer_accel_products (list of Xorg product names, default empty: further mice
+# that get the same pointer_accel_speed; see pointer_accel_products),
+# monitor_off_minutes (integer 0-1440, default 0 = off: blank the console and put
+# the monitors to sleep after that many idle minutes; see monitor_sleep_minutes) and
 # mouse_debounce_ms (integer 0-1000, default 0 = off: debounce a chattering
 # mouse button; see developer_workstation_mouse_debounce_ms, with the optional
 # mouse_debounce_buttons and mouse_debounce_devices).
@@ -1497,6 +1501,15 @@ retired_modprobe_options:
 console_video: "{{ (hardware_profiles.get(hardware_profile, {})).get('console_video', '') }}"
 console_video_dropin_path: /etc/default/grub.d/92-curiosity-console-video.cfg
 
+# Monitor sleep (tasks/monitor-sleep.yml and minimal-desktop-locking-user.yml),
+# from the hardware profile's optional `monitor_off_minutes` (default 0: no
+# change). A positive value N blanks an idle text console after N minutes
+# (consoleblank=N*60 through a GRUB drop-in) and has XScreenSaver put the
+# monitors in DPMS standby, suspend and off after N idle minutes, so every host on
+# a profile sleeps its screens at the same time.
+monitor_sleep_minutes: "{{ (hardware_profiles.get(hardware_profile, {})).get('monitor_off_minutes', 0) | int }}"
+monitor_sleep_console_dropin_path: /etc/default/grub.d/93-curiosity-console-blank.cfg
+
 # Whether the Openbox session starts the picom compositor, from the hardware
 # profile's optional `compositor_enabled` (default true, so every other machine
 # is unchanged). false makes tasks/minimal-desktop-picom.yml leave the marker
@@ -1509,6 +1522,11 @@ minimal_desktop_compositor_enabled: "{{ (hardware_profiles.get(hardware_profile,
 # leaves the device alone. curiosity-g604 applies it with xinput each time the
 # mouse appears on the X display (requires logitech_g604_enabled).
 logitech_g604_accel_speed: "{{ (hardware_profiles.get(hardware_profile, {})).get('pointer_accel_speed', '') }}"
+# Other mice that get the same pointer_accel_speed (tasks/pointer-accel.yml),
+# from the hardware profile's optional `pointer_accel_products` (default empty):
+# Xorg product names as `xinput list` shows them.
+pointer_accel_products: "{{ (hardware_profiles.get(hardware_profile, {})).get('pointer_accel_products', []) }}"
+pointer_accel_conf_path: /etc/X11/xorg.conf.d/40-curiosity-pointer-accel.conf
 
 # Desktop scale of the minimal desktop, from the hardware profile's
 # `display_scale`: a number from 1 to 4 in steps of 0.25 (1, 1.25, 1.5, ...),
@@ -1959,6 +1977,10 @@ hardware_profiles:
       - bluez-tools
       # Firmware blobs (Intel BT/WiFi, Arc GPU GuC/HuC, etc.)
       - linux-firmware
+      # Motherboard RGB (Gigabyte RGB Fusion 2, ITE 048d:5702 on the B760M
+      # GAMING PLUS): OpenRGB and its udev rules give the console user hidraw
+      # access; there is no kernel driver for it (Curiosity-Corp/catalog-internal#26).
+      - openrgb
       # Intel Arc A380 VA-API diagnostics (the iHD driver itself comes from
       # tasks/browser-video-decode.yml: intel_media_non_free below)
       - intel-gpu-tools
@@ -2011,6 +2033,11 @@ hardware_profiles:
     mouse_debounce_ms: 80
     # Lock after 60 idle minutes instead of the 10 minute default.
     idle_lock_minutes: 60
+    # ... and turn the monitors off at the same moment: XScreenSaver DPMS
+    # standby/suspend/off and the text console's consoleblank, the same 60
+    # minutes on every host of this profile (CEO order 2026-11-22,
+    # Curiosity-Corp/catalog-internal#26 "we want the monitor to turn off").
+    monitor_off_minutes: 60
     # Samsung 8K TV, two DP -> HDMI 2.1 cables from the Arc A380 (2026-10-27):
     # - Primary: A380 DP-4 (kernel card2-DP-4) at 7680x4320@60 with DSC
     #   (10 bpp compressed, RGB 4:4:4, 12 bpc uncompressed, no dithering) and
@@ -2093,6 +2120,11 @@ hardware_profiles:
       DP-3: 3840x2160
     # libinput pointer speed for the G604 (confirmed by the CEO on the 8K TV).
     pointer_accel_speed: 0.6
+    # The same speed for the Kensington Pro Fit Ergo (047d:805b, the third
+    # host's mouse), so every desk of this profile moves the same
+    # (Curiosity-Corp/catalog-internal#26).
+    pointer_accel_products:
+      - "MG Pro Fit Ergo Keyboard & Mouse"
     pipx_packages:
       - streamdeck-linux-gui
     # Rule names must sort before 73-seat-late so uaccess ACLs are applied;

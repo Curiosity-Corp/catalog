@@ -1,0 +1,117 @@
+---
+# =============================================================================
+# Monitor sleep: turn the screens off after the profile's idle period
+# =============================================================================
+# Included from main.yml on x86_64 desktop/thin-client/byod-kiosk Linux hosts
+# outside containers. Acts on monitor_sleep_minutes (from the hardware profile's
+# optional monitor_off_minutes; 0, the default, changes nothing).
+#
+# Two halves, one value, so every host on a profile sleeps its screens the same:
+#   - the text console: a GRUB drop-in APPENDS consoleblank=<seconds> to
+#     GRUB_CMDLINE_LINUX_DEFAULT, so an idle VT blanks and the monitor goes to
+#     power save (fbcon blanks through the DRM driver, which drops DPMS);
+#   - the X session: tasks/minimal-desktop-locking-user.yml writes XScreenSaver's
+#     dpmsStandby/dpmsSuspend/dpmsOff from the same value.
+# With 0 the drop-in is removed and GRUB regenerated. GRUB is regenerated only
+# when the drop-in changed; /etc/default/grub itself is never modified. The
+# kernel reads the argument at the next boot. Rollback by hand:
+#   sudo rm /etc/default/grub.d/93-curiosity-console-blank.cfg && sudo update-grub
+# =============================================================================
+
+- name: Validate the monitor sleep period
+  ansible.builtin.assert:
+    that:
+      - monitor_sleep_minutes | string is match('^[0-9]{1,4}\\Z')
+      - monitor_sleep_minutes | int <= 1440
+    fail_msg: >-
+      The hardware profile's monitor_off_minutes must be a whole number of
+      minutes from 0 (off) to 1440; got {{ monitor_sleep_minutes | to_json }}.
+
+- name: Check for the GRUB defaults file
+  ansible.builtin.stat:
+    path: /etc/default/grub
+  register: _monitor_sleep_grub_defaults
+
+- name: Manage the console blank GRUB drop-in
+  when:
+    - monitor_sleep_minutes | int > 0
+    - _monitor_sleep_grub_defaults.stat.exists
+  block:
+    - name: Ensure the GRUB defaults drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/default/grub.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the console blank GRUB drop-in
+      ansible.builtin.copy:
+        dest: "{{ monitor_sleep_console_dropin_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (curiosity catalog): blank an idle text console, and put
+          # its monitor to sleep, after {{ monitor_sleep_minutes | int }} minutes (hardware profile monitor_off_minutes).
+          # Appends to whatever earlier GRUB files set; never replaces GRUB_CMDLINE_LINUX_DEFAULT.
+          GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:+$GRUB_CMDLINE_LINUX_DEFAULT }consoleblank={{ (monitor_sleep_minutes | int) * 60 }}"
+      register: _monitor_sleep_installed
+
+- name: Remove the console blank GRUB drop-in when monitor sleep is off
+  ansible.builtin.file:
+    path: "{{ monitor_sleep_console_dropin_path }}"
+    state: absent
+  when: monitor_sleep_minutes | int == 0
+  register: _monitor_sleep_removed
+
+- name: Regenerate GRUB after the console blank drop-in changed
+  when: (_monitor_sleep_installed is changed) or (_monitor_sleep_removed is changed)
+  block:
+    - name: Locate update-grub
+      ansible.builtin.stat:
+        path: /usr/sbin/update-grub
+      register: _monitor_sleep_update_grub
+
+    - name: Locate grub-mkconfig
+      ansible.builtin.stat:
+        path: /usr/sbin/grub-mkconfig
+      register: _monitor_sleep_mkconfig
+
+    - name: Regenerate the GRUB configuration with update-grub
+      ansible.builtin.command: /usr/sbin/update-grub
+      changed_when: true
+      when: _monitor_sleep_update_grub.stat.exists | default(false)
+
+    - name: Regenerate the GRUB configuration with grub-mkconfig
+      ansible.builtin.command: /usr/sbin/grub-mkconfig -o /boot/grub/grub.cfg
+      changed_when: true
+      when:
+        - not (_monitor_sleep_update_grub.stat.exists | default(false))
+        - _monitor_sleep_mkconfig.stat.exists | default(false)
+
+    - name: Note that no GRUB regeneration tool is installed
+      ansible.builtin.debug:
+        msg: >-
+          Neither update-grub nor grub-mkconfig is installed; the console blank
+          change takes effect the next time the GRUB configuration is generated.
+      when:
+        - not (_monitor_sleep_update_grub.stat.exists | default(false))
+        - not (_monitor_sleep_mkconfig.stat.exists | default(false))
+
+    - name: Check the generated GRUB configuration
+      ansible.builtin.stat:
+        path: /boot/grub/grub.cfg
+      register: _monitor_sleep_cfg
+      when:
+        - (_monitor_sleep_update_grub.stat.exists | default(false)) or (_monitor_sleep_mkconfig.stat.exists | default(false))
+        - not ansible_check_mode
+
+    - name: Verify /boot/grub/grub.cfg exists after regeneration
+      ansible.builtin.assert:
+        that:
+          - _monitor_sleep_cfg.stat.exists
+        fail_msg: /boot/grub/grub.cfg is missing after regenerating the GRUB configuration.
+      when:
+        - (_monitor_sleep_update_grub.stat.exists | default(false)) or (_monitor_sleep_mkconfig.stat.exists | default(false))
+        - not ansible_check_mode

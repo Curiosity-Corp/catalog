@@ -142,6 +142,22 @@ time the mouse appears on the X display (a replugged mouse gets it again),
 so it needs `logitech_g604`. Unset leaves the pointer speed alone.
 `deskmeet-b760` sets `0.6`, which suits the 8K desktop at 2.25x.
 
+`pointer_accel_products` (a list of Xorg product names as `xinput list` shows
+them, default empty) gives further mice the same `pointer_accel_speed`: one
+libinput `InputClass` per name in
+`/etc/X11/xorg.conf.d/40-curiosity-pointer-accel.conf`, read when X starts.
+An empty list or no speed removes the file. `deskmeet-b760` lists the
+Kensington Pro Fit Ergo (`MG Pro Fit Ergo Keyboard & Mouse`), so a desk of that
+profile moves the same with either mouse.
+
+`monitor_off_minutes` (whole minutes, `0` to `1440`, default `0` = off;
+derived `monitor_sleep_minutes`) turns the screens off after that idle time:
+XScreenSaver gets `dpmsStandby`, `dpmsSuspend` and `dpmsOff` at that value, and
+a GRUB drop-in (`/etc/default/grub.d/93-curiosity-console-blank.cfg`) appends
+`consoleblank=<seconds>` so an idle text console blanks too (next boot). `0`
+removes the drop-in and leaves XScreenSaver's DPMS alone. `deskmeet-b760` sets
+`60`, the same as its lock.
+
 ### Samsung TV remote control
 
 A profile that sets `samsung_tv_cli: true` (`deskmeet-b760`; derived variable

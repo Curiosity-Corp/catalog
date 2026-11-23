@@ -1,0 +1,65 @@
+---
+# =============================================================================
+# Pointer speed for named mice (hardware profile pointer_accel_products)
+# =============================================================================
+# The hardware profile's pointer_accel_speed is the libinput Accel Speed the
+# owner chose (on deskmeet-b760, for the Logitech G604, applied by
+# curiosity-g604). pointer_accel_products names further mice that get the same
+# speed, so a desk with another mouse moves the same: one Xorg InputClass per
+# product (MatchIsPointer, MatchProduct, libinput, AccelSpeed). An empty list or
+# an empty speed removes the file. X reads it at its next start.
+# =============================================================================
+
+- name: Validate the pointer speed and the product names
+  ansible.builtin.assert:
+    that:
+      - pointer_accel_products is sequence and pointer_accel_products is not string
+      - pointer_accel_products | select('string') | list | length == pointer_accel_products | length
+      - pointer_accel_products | select('match', '^[A-Za-z0-9 &._()+:/-]{1,80}\\Z') | list | length == pointer_accel_products | length
+      - logitech_g604_accel_speed | string is match('^$|^-?(0|1)([.][0-9]+)?$')
+      - logitech_g604_accel_speed | string == '' or (logitech_g604_accel_speed | float >= -1 and logitech_g604_accel_speed | float <= 1)
+    fail_msg: >-
+      pointer_accel_products must be a list of product names (letters, digits,
+      spaces and & . _ ( ) + : / -, at most 80 characters, no quotes), and
+      pointer_accel_speed a number from -1 to 1; got
+      {{ pointer_accel_products | to_json }} and {{ logitech_g604_accel_speed | to_json }}.
+
+- name: Ensure the Xorg configuration directory exists
+  ansible.builtin.file:
+    path: "{{ pointer_accel_conf_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - pointer_accel_products | length > 0
+    - logitech_g604_accel_speed | string | length > 0
+
+- name: Install the pointer speed InputClass
+  ansible.builtin.copy:
+    dest: "{{ pointer_accel_conf_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (curiosity catalog): hardware profile pointer_accel_products
+      # get the profile's pointer_accel_speed, the same libinput speed as the G604.
+      {% for product in pointer_accel_products %}
+
+      Section "InputClass"
+          Identifier "curiosity pointer speed {{ loop.index }}"
+          MatchIsPointer "on"
+          MatchProduct "{{ product }}"
+          Driver "libinput"
+          Option "AccelSpeed" "{{ logitech_g604_accel_speed }}"
+      EndSection
+      {% endfor %}
+  when:
+    - pointer_accel_products | length > 0
+    - logitech_g604_accel_speed | string | length > 0
+
+- name: Remove the pointer speed InputClass when no product or speed is set
+  ansible.builtin.file:
+    path: "{{ pointer_accel_conf_path }}"
+    state: absent
+  when: (pointer_accel_products | length == 0) or (logitech_g604_accel_speed | string | length == 0)
