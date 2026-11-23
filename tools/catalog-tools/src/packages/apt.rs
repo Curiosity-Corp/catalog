@@ -9,6 +9,9 @@ use std::sync::LazyLock;
 use anyhow::{Context, Result, bail};
 use regex::Regex;
 
+static INSTALLED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^Inst (\S+)").expect("valid regex"));
+
 static SELECTING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"Note, selecting '([^']+)' instead of '([^']+)'").expect("valid regex")
 });
@@ -83,13 +86,51 @@ pub fn parse_policy(output: &str) -> BTreeMap<String, Option<String>> {
     found
 }
 
-/// From a successful `apt-get --simulate install NAME`: the package apt
-/// installs for NAME (another one when NAME is virtual or transitional).
-pub fn parse_selected(output: &str, name: &str) -> String {
-    SELECTING
-        .captures_iter(output)
+/// From `apt-cache showpkg NAME`: the packages that provide NAME.
+pub fn parse_reverse_provides(output: &str) -> Vec<String> {
+    let mut providers = Vec::new();
+    let mut inside = false;
+    for line in output.lines() {
+        if line.starts_with("Reverse Provides:") {
+            inside = true;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if line.ends_with(':') && !line.starts_with(char::is_whitespace) {
+            break;
+        }
+        if let Some(package) = line.split_whitespace().next()
+            && !providers.iter().any(|known| known == package)
+        {
+            providers.push(package.to_owned());
+        }
+    }
+    providers
+}
+
+/// The package apt picks for the virtual NAME: the one its note names (older
+/// apt), else the provider a simulated install brings in, else the only one.
+pub fn choose_provider(simulation: &str, name: &str, providers: &[String]) -> Option<String> {
+    if let Some(captures) = SELECTING
+        .captures_iter(simulation)
         .find(|captures| &captures[2] == name)
-        .map_or_else(|| name.to_owned(), |captures| captures[1].to_owned())
+    {
+        return Some(captures[1].to_owned());
+    }
+    let installed: Vec<&str> = INSTALLED
+        .captures_iter(simulation)
+        .filter_map(|captures| captures.get(1).map(|found| found.as_str()))
+        .collect();
+    let brought_in = providers
+        .iter()
+        .find(|provider| installed.contains(&provider.as_str()));
+    let only = match providers {
+        [only] => Some(only),
+        _ => None,
+    };
+    brought_in.or(only).cloned()
 }
 
 /// apt with its lists and caches in a private directory.
@@ -162,7 +203,8 @@ impl Apt {
         Ok(parse_policy(&String::from_utf8_lossy(&output.stdout)))
     }
 
-    /// The package apt would install for NAME, or `None` when it cannot.
+    /// What apt would install for NAME, which has no candidate of its own:
+    /// `None` when apt cannot install it, else the providing package.
     pub fn installs(&self, name: &str) -> Result<Option<String>> {
         let output = self.run(
             "apt-get",
@@ -171,10 +213,19 @@ impl Apt {
         if !output.status.success() {
             return Ok(None);
         }
-        // apt 2.x writes the "Note, selecting ..." line to stderr, older apt to stdout.
-        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
-        Ok(Some(parse_selected(&text, name)))
+        // apt 2.x writes its "Note, selecting ..." line to stderr, older apt to stdout.
+        let mut simulation = String::from_utf8_lossy(&output.stdout).into_owned();
+        simulation.push_str(&String::from_utf8_lossy(&output.stderr));
+        let showpkg = self.run("apt-cache", &["showpkg", name])?;
+        let providers = parse_reverse_provides(&String::from_utf8_lossy(&showpkg.stdout));
+        match choose_provider(&simulation, name, &providers) {
+            Some(provider) => Ok(Some(provider)),
+            None => bail!(
+                "apt would install {name}, which has no candidate, but names no provider \
+                 (reverse provides: {providers:?}); apt said: {}",
+                tail(simulation.as_bytes())
+            ),
+        }
     }
 }
 
@@ -241,10 +292,39 @@ jq:
     }
 
     #[test]
-    fn selected_package_for_a_virtual_name() {
-        let output = "NOTE: This is only a simulation!\nNote, selecting 'libfuse2t64' instead of 'libfuse2'\nInst libfuse2t64 (2.9.9-8.1build1 Ubuntu:24.04/noble [amd64])\n";
-        assert_eq!(parse_selected(output, "libfuse2"), "libfuse2t64");
-        assert_eq!(parse_selected("Inst jq (1.7)\n", "jq"), "jq");
+    fn provider_of_a_virtual_name() {
+        let names = |list: &[&str]| {
+            list.iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let note = "NOTE: This is only a simulation!\nNote, selecting 'libfuse2t64' instead of 'libfuse2'\nInst libfuse2t64 (2.9.9-8.1build1 Ubuntu:24.04/noble [amd64])\n";
+        assert_eq!(
+            choose_provider(note, "libfuse2", &[]).as_deref(),
+            Some("libfuse2t64")
+        );
+        let apt3 = "Installing:\n  bind9-dnsutils\n\nInst libjson-c5 (0.18)\nInst bind9-dnsutils (1:9.20.15-1 Debian:13/trixie [amd64])\n";
+        assert_eq!(
+            choose_provider(apt3, "dnsutils", &names(&["bind9-dnsutils"])).as_deref(),
+            Some("bind9-dnsutils")
+        );
+        let two = names(&["p7zip-full-a", "7zip"]);
+        assert_eq!(
+            choose_provider("Inst 7zip (24.09)\n", "p7zip-full", &two).as_deref(),
+            Some("7zip")
+        );
+        assert_eq!(
+            choose_provider("", "x", &names(&["only"])).as_deref(),
+            Some("only")
+        );
+        assert_eq!(choose_provider("", "x", &two), None);
+    }
+
+    #[test]
+    fn reverse_provides() {
+        let output = "Package: dnsutils\nVersions: \n\nReverse Depends: \n  bind9-host,dnsutils\nDependencies: \nProvides: \nReverse Provides: \nbind9-dnsutils 1:9.20.15-1 (= )\nbind9-dnsutils 1:9.20.11-4 (= )\n";
+        assert_eq!(parse_reverse_provides(output), ["bind9-dnsutils"]);
+        assert!(parse_reverse_provides("Package: jq\nReverse Provides: \n").is_empty());
     }
 
     #[test]
