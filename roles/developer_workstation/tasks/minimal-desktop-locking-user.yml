@@ -46,3 +46,11 @@
       lockTimeout: 0:00:00
       mode: blank
       splash: False
+      {% if monitor_sleep_minutes | int > 0 %}
+      {% set _off = '%d:%02d:00' | format((monitor_sleep_minutes | int) // 60, (monitor_sleep_minutes | int) % 60) %}
+      dpmsEnabled: True
+      dpmsQuickOff: False
+      dpmsStandby: {{ _off }}
+      dpmsSuspend: {{ _off }}
+      dpmsOff: {{ _off }}
+      {% endif %}
