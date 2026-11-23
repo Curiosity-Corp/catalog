@@ -14,13 +14,14 @@ use crate::yaml;
 /// The `workstation_profile` values, in the order the reference lists them.
 pub const PROFILE_NAMES: [&str; 4] = ["desktop", "workspace", "thin-client", "byod-kiosk"];
 
-static TAG_VARIABLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$").expect("valid regex")
-});
+static TAG_VARIABLE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$").expect("valid regex"));
 /// `VAR in [...]`, optionally through filters (`VAR | string in [...]`).
 static ASSERT_IN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)(?:\s*\|\s*[A-Za-z_]+(?:\([^)]*\))?)*\s+in\s+(\[.*\])\s*$")
-        .expect("valid regex")
+    Regex::new(
+        r"^\s*([A-Za-z_][A-Za-z0-9_]*)(?:\s*\|\s*[A-Za-z_]+(?:\([^)]*\))?)*\s+in\s+(\[.*\])\s*$",
+    )
+    .expect("valid regex")
 });
 
 /// Where a tag is used.
@@ -95,9 +96,17 @@ fn visit<'a>(
             conditions: conditions.to_vec(),
         });
         let mut tags = inherited_tags.to_vec();
-        tags.extend(yaml::as_list(task.get("tags")).into_iter().map(yaml::display));
+        tags.extend(
+            yaml::as_list(task.get("tags"))
+                .into_iter()
+                .map(yaml::display),
+        );
         let mut when = conditions.to_vec();
-        when.extend(yaml::as_list(task.get("when")).into_iter().map(yaml::display));
+        when.extend(
+            yaml::as_list(task.get("when"))
+                .into_iter()
+                .map(yaml::display),
+        );
         for key in ["block", "rescue", "always"] {
             visit(task.get(key), &tags, &when, out);
         }
@@ -120,7 +129,11 @@ pub fn resolve_tags(raw: &[String], defaults: &Defaults) -> Result<Vec<String>> 
                 let Some(variable) = defaults.get(&captures[1]) else {
                     bail!("tag expression {item:?} names a variable that has no default");
                 };
-                tags.extend(yaml::as_list(Some(&variable.value)).into_iter().map(yaml::display));
+                tags.extend(
+                    yaml::as_list(Some(&variable.value))
+                        .into_iter()
+                        .map(yaml::display),
+                );
             }
             None => tags.push(item.clone()),
         }
@@ -135,7 +148,8 @@ fn profiles_named(conditions: &[String]) -> BTreeSet<&'static str> {
         .filter(|condition| condition.contains("workstation_profile"))
         .flat_map(|condition| {
             PROFILE_NAMES.into_iter().filter(move |name| {
-                condition.contains(&format!("'{name}'")) || condition.contains(&format!("\"{name}\""))
+                condition.contains(&format!("'{name}'"))
+                    || condition.contains(&format!("\"{name}\""))
             })
         })
         .collect()
@@ -155,12 +169,18 @@ pub fn collect_tags(files: &[TaskFile], defaults: &Defaults) -> Result<BTreeMap<
                 .with_context(|| format!("tasks/{}", file.name))?
                 .into_iter()
                 .collect();
-            effective.extend(resolve_tags(&own, defaults).with_context(|| format!("tasks/{}", file.name))?);
+            effective.extend(
+                resolve_tags(&own, defaults).with_context(|| format!("tasks/{}", file.name))?,
+            );
             if effective.is_empty() {
                 continue;
             }
             let mut when = visit.conditions.clone();
-            when.extend(yaml::as_list(visit.task.get("when")).into_iter().map(yaml::display));
+            when.extend(
+                yaml::as_list(visit.task.get("when"))
+                    .into_iter()
+                    .map(yaml::display),
+            );
             let profiles = profiles_named(&when);
             for tag in effective {
                 let entry = tags.entry(tag).or_default();
@@ -174,7 +194,10 @@ pub fn collect_tags(files: &[TaskFile], defaults: &Defaults) -> Result<BTreeMap<
 }
 
 /// Valid values that `assert` tasks state as `VAR in [...]`, first statement wins.
-pub fn collect_asserted_values(files: &[TaskFile], defaults: &Defaults) -> HashMap<String, Vec<Value>> {
+pub fn collect_asserted_values(
+    files: &[TaskFile],
+    defaults: &Defaults,
+) -> HashMap<String, Vec<Value>> {
     let mut found: HashMap<String, Vec<Value>> = HashMap::new();
     for file in files {
         for visit in walk(file) {
@@ -274,7 +297,10 @@ mod tests {
 
     #[test]
     fn unknown_tag_variable_is_an_error() {
-        let files = [file("x.yml", "- name: X\n  tags: '{{ missing }}'\n  ansible.builtin.debug: {}\n")];
+        let files = [file(
+            "x.yml",
+            "- name: X\n  tags: '{{ missing }}'\n  ansible.builtin.debug: {}\n",
+        )];
         let error = collect_tags(&files, &defaults()).unwrap_err();
         assert!(format!("{error:#}").contains("missing"), "{error:#}");
     }

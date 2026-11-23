@@ -39,7 +39,9 @@ impl Defaults {
     }
 
     pub fn get(&self, name: &str) -> Option<&Variable> {
-        self.index.get(name).map(|&position| &self.variables[position])
+        self.index
+            .get(name)
+            .map(|&position| &self.variables[position])
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -103,7 +105,9 @@ pub fn parse(text: &str, origin: &str) -> Result<Defaults> {
     let mut defaults = Defaults::default();
     for ((name, lines), (_, value)) in comments.into_iter().zip(values) {
         let description = lines.join(" ").trim().to_owned();
-        defaults.index.insert(name.clone(), defaults.variables.len());
+        defaults
+            .index
+            .insert(name.clone(), defaults.variables.len());
         defaults.variables.push(Variable {
             name,
             value,
