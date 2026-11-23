@@ -111,6 +111,10 @@ pub fn classify(
             continue;
         }
         match installs(name)? {
+            Some(package) if package == *name => bail!(
+                "{image}: apt has no candidate for {name} yet would install it without naming a \
+                 replacement; the probe does not understand this apt's output"
+            ),
             Some(package) => {
                 provided_by.insert(name.clone(), package);
             }
@@ -315,6 +319,28 @@ mod tests {
         assert_eq!(result.candidates["git"], "2.43");
         assert_eq!(result.provided_by["libfuse2"], "libfuse2t64");
         assert_eq!(result.missing, ["tokei"]);
+    }
+
+    #[test]
+    fn a_provider_without_a_name_is_an_error() {
+        let release = apt::OsRelease {
+            id: "debian".into(),
+            version: "13".into(),
+            codename: "trixie".into(),
+        };
+        let error = classify(
+            "debian:13",
+            &release,
+            "amd64",
+            &names(&["dnsutils"]),
+            &BTreeMap::new(),
+            |name| Ok(Some(name.to_owned())),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("without naming a replacement"),
+            "{error}"
+        );
     }
 
     #[test]

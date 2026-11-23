@@ -171,10 +171,10 @@ impl Apt {
         if !output.status.success() {
             return Ok(None);
         }
-        Ok(Some(parse_selected(
-            &String::from_utf8_lossy(&output.stdout),
-            name,
-        )))
+        // apt 2.x writes the "Note, selecting ..." line to stderr, older apt to stdout.
+        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        Ok(Some(parse_selected(&text, name)))
     }
 }
 
