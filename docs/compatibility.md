@@ -19,6 +19,11 @@ every optional upstream tool publishes every architecture. A failed optional
 asset assertion should be reported with the upstream release URL and target
 architecture.
 
+Which of the role's apt packages each platform's archives provide is probed in
+CI and recorded with its date in
+[platform-differences.md](platform-differences.md). On 2026-11-23 only Ubuntu
+26.04 provided every package that does not come from a vendor repository.
+
 The matrix is intentionally conservative. “Syntax-check passed” means the
 playbook parsed; it does not mean a real package, firmware device, display
 server, identity provider, or tunnel was exercised.

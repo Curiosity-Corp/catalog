@@ -286,6 +286,7 @@ tools:
     - cargo clippy --locked --all-targets -- -D warnings
     - cargo fmt --all --check || { cargo fmt --all && git diff -- . > ../tools-fmt.patch; exit 1; }
     - cargo run --locked --quiet -- reference --root .. --check
+    - cargo run --locked --quiet -- packages check --root ..
     # A static binary for the platform-packages jobs, which run in plain distro
     # images without a Rust toolchain.
     - rustup target add x86_64-unknown-linux-musl
