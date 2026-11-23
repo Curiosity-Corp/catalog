@@ -259,6 +259,38 @@ research-profile:
       - .research-profile/sample.png
     expire_in: 30 days
 
+# catalog#160: the Rust tool crate (tools/README.md, docs/adr/0001-rust-tool-crate.md).
+# Lints and tests the crate, then fails when docs/reference.md is out of date
+# with the role defaults, tasks or docs/reference-annotations.yml. Whatever the
+# outcome, the job keeps the generated reference, the lockfile and, when
+# formatting is off, a rustfmt patch as artifacts, so a fix never needs a local
+# toolchain. Cargo's home and build folder stay inside the checkout because the
+# shared runner pods run as a non-root user.
+tools:
+  stage: validate
+  image: rust:1-bookworm
+  variables:
+    CARGO_HOME: "${CI_PROJECT_DIR}/.cargo-home"
+    CARGO_TARGET_DIR: "${CI_PROJECT_DIR}/tools/target"
+    CARGO_TERM_COLOR: always
+  script:
+    - rustup component add rustfmt clippy
+    - cargo --version && cargo clippy --version
+    - cd tools
+    - cargo clippy --all-targets -- -D warnings
+    - cargo test
+    - cargo run --quiet -- reference --root .. --output ../reference.generated.md
+    - cargo fmt --all --check || { cargo fmt --all && git diff -- . > ../tools-fmt.patch; exit 1; }
+    - cargo run --quiet -- reference --root .. --check
+  artifacts:
+    when: always
+    name: "catalog-tools-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - reference.generated.md
+      - tools-fmt.patch
+      - tools/Cargo.lock
+    expire_in: 7 days
+
 collection:
   extends: .python_setup
   stage: package
