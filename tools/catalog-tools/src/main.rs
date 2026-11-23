@@ -193,7 +193,11 @@ fn run_packages(command: PackagesCommand) -> Result<ExitCode> {
             let date = date.unwrap_or_else(packages::date::today);
             let evidence = packages::assemble(&date, &names, results)?;
             write_file(&output, &packages::to_json(&evidence)?)?;
-            println!("wrote {} ({} platforms)", output.display(), evidence.results.len());
+            println!(
+                "wrote {} ({} platforms)",
+                output.display(),
+                evidence.results.len()
+            );
             Ok(ExitCode::SUCCESS)
         }
         PackagesCommand::Check { root, file } => {
@@ -225,7 +229,10 @@ fn run_packages(command: PackagesCommand) -> Result<ExitCode> {
 }
 
 fn write_file(path: &Path, text: &str) -> Result<()> {
-    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("cannot create {}", parent.display()))?;
     }

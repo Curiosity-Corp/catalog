@@ -32,11 +32,20 @@ pub fn parse_os_release(text: &str) -> OsRelease {
         let unquoted = value
             .strip_prefix('"')
             .and_then(|rest| rest.strip_suffix('"'))
-            .or_else(|| value.strip_prefix('\'').and_then(|rest| rest.strip_suffix('\'')))
+            .or_else(|| {
+                value
+                    .strip_prefix('\'')
+                    .and_then(|rest| rest.strip_suffix('\''))
+            })
             .unwrap_or(value);
         fields.insert(key.trim(), unquoted.to_owned());
     }
-    let field = |key: &str| fields.get(key).cloned().unwrap_or_else(|| "unknown".to_owned());
+    let field = |key: &str| {
+        fields
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_owned())
+    };
     OsRelease {
         id: field("ID"),
         version: field("VERSION_ID"),
@@ -66,7 +75,8 @@ pub fn parse_policy(output: &str) -> BTreeMap<String, Option<String>> {
         };
         if let Some(candidate) = line.trim().strip_prefix("Candidate:") {
             let candidate = candidate.trim();
-            let value = (candidate != "(none)" && !candidate.is_empty()).then(|| candidate.to_owned());
+            let value =
+                (candidate != "(none)" && !candidate.is_empty()).then(|| candidate.to_owned());
             found.insert(name.clone(), value);
         }
     }
@@ -92,7 +102,8 @@ impl Apt {
     pub fn new(directory: &Path) -> Result<Self> {
         for sub in ["lists/partial", "cache/archives/partial"] {
             let path = directory.join(sub);
-            std::fs::create_dir_all(&path).with_context(|| format!("cannot create {}", path.display()))?;
+            std::fs::create_dir_all(&path)
+                .with_context(|| format!("cannot create {}", path.display()))?;
         }
         Ok(Self {
             directory: directory.to_path_buf(),
@@ -160,7 +171,10 @@ impl Apt {
         if !output.status.success() {
             return Ok(None);
         }
-        Ok(Some(parse_selected(&String::from_utf8_lossy(&output.stdout), name)))
+        Ok(Some(parse_selected(
+            &String::from_utf8_lossy(&output.stdout),
+            name,
+        )))
     }
 }
 
@@ -240,7 +254,11 @@ jq:
         assert!(directory.path().join("lists/partial").is_dir());
         assert!(directory.path().join("cache/archives/partial").is_dir());
         let options = apt.options();
-        assert!(options.iter().any(|option| option.starts_with("Dir::State::Lists=")));
+        assert!(
+            options
+                .iter()
+                .any(|option| option.starts_with("Dir::State::Lists="))
+        );
         assert!(options.contains(&"Debug::NoLocking=1".to_owned()));
     }
 }

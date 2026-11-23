@@ -78,7 +78,10 @@ pub fn role_packages(root: &Path) -> Result<Vec<String>> {
         }
         let module = task.get("ansible.builtin.apt").or_else(|| task.get("apt"));
         let Some(names) = module.and_then(|module| module.get("name")) else {
-            bail!("{}: task {INSTALL_TASK:?} has no apt name list", path.display());
+            bail!(
+                "{}: task {INSTALL_TASK:?} has no apt name list",
+                path.display()
+            );
         };
         return Ok(yaml::as_list(Some(names))
             .into_iter()
@@ -129,7 +132,12 @@ pub fn classify(
 }
 
 /// Probe the system this runs on.
-pub fn probe(image: &str, packages: &[String], apt_dir: &Path, update: bool) -> Result<PlatformResult> {
+pub fn probe(
+    image: &str,
+    packages: &[String],
+    apt_dir: &Path,
+    update: bool,
+) -> Result<PlatformResult> {
     let apt = apt::Apt::new(apt_dir)?;
     if update {
         apt.update()?;
@@ -137,7 +145,9 @@ pub fn probe(image: &str, packages: &[String], apt_dir: &Path, update: bool) -> 
     let release = apt::parse_os_release(&yaml::read(Path::new("/etc/os-release"))?);
     let architecture = apt::dpkg_architecture()?;
     let policy = apt.policy(packages)?;
-    classify(image, &release, &architecture, packages, &policy, |name| apt.installs(name))
+    classify(image, &release, &architecture, packages, &policy, |name| {
+        apt.installs(name)
+    })
 }
 
 /// Problems with one platform result against the package list.
@@ -154,7 +164,10 @@ fn result_problems(result: &PlatformResult, packages: &BTreeSet<&str>) -> Vec<St
             problems.push(format!("{}: {name} is listed twice", result.image));
         }
         if !packages.contains(name.as_str()) {
-            problems.push(format!("{}: {name} is not in the role's package list", result.image));
+            problems.push(format!(
+                "{}: {name} is not in the role's package list",
+                result.image
+            ));
         }
     }
     let unanswered: Vec<&str> = packages.difference(&seen).copied().collect();
@@ -187,7 +200,10 @@ pub fn assemble(date: &str, packages: &[String], results: Vec<PlatformResult>) -
     };
     let problems = check(&evidence, packages);
     if !problems.is_empty() {
-        bail!("the probe results are incomplete:\n  {}", problems.join("\n  "));
+        bail!(
+            "the probe results are incomplete:\n  {}",
+            problems.join("\n  ")
+        );
     }
     Ok(evidence)
 }
@@ -205,8 +221,16 @@ pub fn check(evidence: &Evidence, packages: &[String]) -> Vec<String> {
         let removed: Vec<&str> = recorded.difference(&current).copied().collect();
         problems.push(format!(
             "the role's package list changed since the probe (new: {}; gone: {}); probe again",
-            if added.is_empty() { "none".to_owned() } else { added.join(", ") },
-            if removed.is_empty() { "none".to_owned() } else { removed.join(", ") },
+            if added.is_empty() {
+                "none".to_owned()
+            } else {
+                added.join(", ")
+            },
+            if removed.is_empty() {
+                "none".to_owned()
+            } else {
+                removed.join(", ")
+            },
         ));
         return problems;
     }
@@ -246,7 +270,8 @@ pub fn newest_evidence(root: &Path) -> Result<PathBuf> {
 
 /// Read a JSON file into `T`.
 pub fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    serde_json::from_str(&yaml::read(path)?).with_context(|| format!("{}: not a valid file of this kind", path.display()))
+    serde_json::from_str(&yaml::read(path)?)
+        .with_context(|| format!("{}: not a valid file of this kind", path.display()))
 }
 
 /// Pretty JSON with a final newline.
@@ -305,7 +330,11 @@ mod tests {
 
         let mut twice = evidence.clone();
         twice.results.push(sample());
-        assert!(check(&twice, &packages).iter().any(|problem| problem.contains("probed twice")));
+        assert!(
+            check(&twice, &packages)
+                .iter()
+                .any(|problem| problem.contains("probed twice"))
+        );
 
         let mut partial = sample();
         partial.missing.clear();
@@ -357,7 +386,11 @@ mod tests {
         let evidence = directory.path().join(EVIDENCE_DIR);
         std::fs::create_dir_all(&evidence).unwrap();
         assert!(newest_evidence(directory.path()).is_err());
-        for name in ["platform-packages-2026-11-04.json", "platform-packages-2026-11-23.json", "other.json"] {
+        for name in [
+            "platform-packages-2026-11-04.json",
+            "platform-packages-2026-11-23.json",
+            "other.json",
+        ] {
             std::fs::write(evidence.join(name), "{}").unwrap();
         }
         let newest = newest_evidence(directory.path()).unwrap();

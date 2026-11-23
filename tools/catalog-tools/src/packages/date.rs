@@ -41,10 +41,9 @@ fn is_leap(year: i64) -> bool {
 pub fn validate(date: &str) -> Result<()> {
     let parts: Vec<&str> = date.split('-').collect();
     let well_formed = parts.len() == 3
-        && [4, 2, 2]
-            .iter()
-            .zip(&parts)
-            .all(|(width, part)| part.len() == *width && part.bytes().all(|byte| byte.is_ascii_digit()));
+        && [4, 2, 2].iter().zip(&parts).all(|(width, part)| {
+            part.len() == *width && part.bytes().all(|byte| byte.is_ascii_digit())
+        });
     if !well_formed {
         bail!("date {date:?} is not YYYY-MM-DD");
     }
@@ -84,7 +83,15 @@ mod tests {
     fn validation() {
         validate("2026-11-23").unwrap();
         validate("2024-02-29").unwrap();
-        for bad in ["2025-02-29", "2026-13-01", "2026-11-31", "26-11-23", "2026-1-23", "", "abcd-ef-gh"] {
+        for bad in [
+            "2025-02-29",
+            "2026-13-01",
+            "2026-11-31",
+            "26-11-23",
+            "2026-1-23",
+            "",
+            "abcd-ef-gh",
+        ] {
             assert!(validate(bad).is_err(), "{bad} should be rejected");
         }
     }
