@@ -72,6 +72,7 @@
       CURIOSITY_G604_FORWARD_KEYCODE={{ logitech_g604_forward_keycode | int }}
       CURIOSITY_G604_MIC_KEYCODE={{ logitech_g604_mic_keycode | int }}
       CURIOSITY_G604_ZONE_KEYCODE={{ logitech_g604_zone_keycode | int }}
+      CURIOSITY_G604_ZONE_COMMAND='{{ logitech_g604_zone_command }}'
       CURIOSITY_G604_SCREENSHOT_KEYCODE={{ logitech_g604_screenshot_keycode | int }}
       CURIOSITY_G604_SCREENSHOT_COMMAND='{{ logitech_g604_screenshot_command }}'
 
@@ -111,44 +112,46 @@
     mode: "0755"
 
 # The top two buttons are DPI up/down inside the mouse and send nothing to the
-# computer until the onboard profile reassigns them. libratbag (ratbagd)
-# writes that profile; the settings live in the mouse, so this only runs when a
-# G604 is attached and only writes a button that differs.
-- name: Reassign the G604 top and back buttons to F13/F14/KEY_4/KEY_5/KEY_6 in the onboard profile
+# computer until the onboard profile reassigns them. The G604's first two
+# onboard slots appear to libratbag as profiles 0 and 1. Keep both identical so
+# switching profiles cannot change pointer speed or button behavior.
+- name: Keep both G604 onboard profiles identical
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
       dev=$(ratbagctl list | awk '/Logitech G604/ { sub(":", "", $1); print $1; exit }')
       [ -n "$dev" ] || { echo "no G604 attached"; exit 0; }
       changed=
-      # Button macros only make sense where the launcher consumes them (an
-      # X11 Openbox session); elsewhere the thumb buttons would type digits.
-      if [ "{{ logitech_g604_onboard_buttons | bool | lower }}" = true ]; then
-        for pair in "9 KEY_F13" "10 KEY_F14" "5 KEY_6" "3 KEY_4" "4 KEY_5"; do
-          set -- $pair
-          current=$(ratbagctl "$dev" profile 0 button "$1" get)
-          if [[ "$current" != *"$2'" ]]; then
-            ratbagctl "$dev" profile 0 button "$1" action set macro "$2"
+      for profile in 0 1; do
+        # Button macros only make sense where the launcher consumes them (an
+        # X11 Openbox session); elsewhere the thumb buttons would type digits.
+        if [ "{{ logitech_g604_onboard_buttons | bool | lower }}" = true ]; then
+          for pair in "3 KEY_4" "4 KEY_5" "5 KEY_6" "6 KEY_3" "7 KEY_2" "8 KEY_1" "9 KEY_F13" "10 KEY_F14"; do
+            set -- $pair
+            current=$(ratbagctl "$dev" profile "$profile" button "$1" get)
+            if [[ "$current" != *"$2'" ]]; then
+              ratbagctl "$dev" profile "$profile" button "$1" action set macro "$2"
+              changed=yes
+            fi
+          done
+        fi
+        # Select the requested DPI separately in each onboard profile. The
+        # explicit profile target works even when another profile is active.
+        want={{ logitech_g604_dpi | int }}
+        idx=$(ratbagctl "$dev" profile "$profile" get | awk -v dpi="${want}dpi" '$2 == dpi || $2 == dpi":" || $3 == dpi { sub(":", "", $1); print $1; exit }')
+        if [ -n "$idx" ]; then
+          active=$(ratbagctl "$dev" profile "$profile" resolution active get)
+          default=$(ratbagctl "$dev" profile "$profile" resolution default get)
+          if [ "$active" != "$idx" ]; then
+            ratbagctl "$dev" profile "$profile" resolution active set "$idx"
             changed=yes
           fi
-        done
-      fi
-      # Pointer speed: make the onboard resolution the one with this DPI.
-      want={{ logitech_g604_dpi | int }}
-      idx=$(ratbagctl "$dev" profile 0 get | awk -v dpi="${want}dpi" '$2 == dpi || $2 == dpi":" || $3 == dpi { sub(":", "", $1); print $1; exit }')
-      # The mouse can report another (disabled) profile as active, in which
-      # case resolution changes in profile 0 do nothing: activate profile 0.
-      if ! ratbagctl "$dev" info | grep -q "^Profile 0: (active)"; then
-        ratbagctl "$dev" profile active set 0
-        changed=yes
-      fi
-      if [ -n "$idx" ]; then
-        if ! ratbagctl "$dev" profile 0 resolution "$idx" get | grep -q "(active) (default)"; then
-          ratbagctl "$dev" profile 0 resolution active set "$idx"
-          ratbagctl "$dev" profile 0 resolution default set "$idx"
-          changed=yes
+          if [ "$default" != "$idx" ]; then
+            ratbagctl "$dev" profile "$profile" resolution default set "$idx"
+            changed=yes
+          fi
         fi
-      fi
+      done
       [ -z "$changed" ] || echo CHANGED
     executable: /bin/bash
   register: _g604_onboard

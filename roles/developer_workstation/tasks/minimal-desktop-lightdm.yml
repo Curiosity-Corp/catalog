@@ -28,6 +28,7 @@
     name: slick-greeter
     state: present
     update_cache: false
+    install_recommends: false
   when: minimal_desktop_greeter == 'slick'
 
 - name: Configure LightDM GTK greeter (dark, minimal, no animations)
@@ -176,6 +177,12 @@
       autologin-session=openbox
   when: minimal_desktop_autologin | default(true)
 
+- name: Remove stale auto-login when password login is selected
+  ansible.builtin.file:
+    path: /etc/lightdm/lightdm.conf.d/50-autologin.conf
+    state: absent
+  when: not (minimal_desktop_autologin | default(true) | bool)
+
 # On a server install the desktop package set pulls gdm3 in as a recommend
 # (gnome-shell, gnome-session-bin), and gdm3's postinst claims the shared
 # display-manager selection. `dpkg-reconfigure lightdm` alone then keeps gdm3,
@@ -194,6 +201,14 @@
   environment:
     DEBIAN_FRONTEND: noninteractive
   changed_when: true
+
+- name: Record LightDM as the default X display manager
+  ansible.builtin.copy:
+    dest: /etc/X11/default-display-manager
+    owner: root
+    group: root
+    mode: "0644"
+    content: "/usr/sbin/lightdm\n"
 
 - name: Point display-manager.service at LightDM
   ansible.builtin.file:

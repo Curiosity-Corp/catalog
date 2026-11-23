@@ -2,12 +2,10 @@
 # =============================================================================
 # Minimal Desktop (Openbox + LightDM + Firefox)
 # =============================================================================
-# Lightweight GUI environment for machines that only need a browser and
-# terminal. Replaces GNOME/GDM with Openbox/LightDM, picom compositor,
-# tint2 panel, dunst notifications, and rofi launcher.
-#
-# Enable with: -e minimal_desktop_enabled=true
-# Mutually exclusive with display_config_enabled (GDM/GNOME).
+# Standard GUI environment: Openbox/LightDM, picom compositor, tint2 panel,
+# dunst notifications, and rofi launcher. Desktop profiles enable it by default;
+# thin-client and kiosk profiles always use this stack. Workspace stays headless.
+# display_config_enabled adds optional x11vnc mirroring to the desktop profile.
 # =============================================================================
 
 - name: Install minimal desktop packages
@@ -70,6 +68,15 @@
     owner: root
     group: root
     mode: "0755"
+  tags: [minimal-desktop, tint2]
+
+- name: Install the restartable tint2 user service
+  ansible.builtin.copy:
+    src: minimal-desktop/tint2@.service
+    dest: /etc/systemd/user/tint2@.service
+    owner: root
+    group: root
+    mode: "0644"
   tags: [minimal-desktop, tint2]
 
 - name: Render the display scale X resources

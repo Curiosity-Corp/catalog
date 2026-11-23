@@ -56,25 +56,18 @@ fi
 # Compositor
 picom --config ~/.config/picom/picom.conf &
 
-# Panel. Re-running this script in a live session must replace the panel, not
-# stack a second one. Only this user's tint2 on this DISPLAY is stopped, so a
-# panel belonging to another account or another X server is never touched. The
-# layout (bottom or top) is deployed per user to ~/.config/tint2/tint2rc.
-display_tint2_pids() {
-    for pid in $(pgrep -u "$(id -u)" -x tint2 2>/dev/null || true); do
-        [ -r "${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ" ] || continue
-        process_display=$(tr '\000' '\n' <"${FOCUSPASS_PROC_ROOT:-/proc}/$pid/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)
-        [ "$process_display" = "${DISPLAY:-}" ] && printf '%s\n' "$pid"
-    done
-}
-
-previous_panel_pids=$(display_tint2_pids)
-if [ -n "$previous_panel_pids" ]; then
-    # shellcheck disable=SC2086
-    kill $previous_panel_pids 2>/dev/null || true
-    sleep 0.5
+# Panel. A display-specific user service keeps it alive if tint2 exits. The
+# service instance name is the X display number (for example tint2@1.service
+# for DISPLAY=:1), so separate X sessions keep separate panels.
+panel_display=${DISPLAY#*:}
+panel_display=${panel_display%%.*}
+if [ -n "$panel_display" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload
+    systemctl --user restart "tint2@${panel_display}.service" \
+        || echo "Could not start the tint2 panel service for DISPLAY=${DISPLAY:-unknown}." >&2
+else
+    tint2 -c "$HOME/.config/tint2/tint2rc" &
 fi
-tint2 -c "$HOME/.config/tint2/tint2rc" &
 
 # Notifications
 dunst &

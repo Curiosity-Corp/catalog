@@ -68,7 +68,7 @@ there) and then starts `solaar --window=hide` (even if the config cannot be read
 source of the pointer speed. It changes nothing while Solaar has no G604 entry
 yet, and only edits the file while Solaar is not running.
 
-The lower right thumb button (keycode 13) toggles the microphone (`logitech_g604_mic_keycode`) and the button that sends KEY_5 (keycode 14) toggles the focused window between its place and the middle zone (`logitech_g604_zone_keycode`, `openbox-zone toggle`).
+The lower right thumb button (keycode 13) toggles the microphone (`logitech_g604_mic_keycode`). By default, KEY_5 (keycode 14) toggles the focused window between its place and the middle zone (`openbox-zone toggle browser`). Set `logitech_g604_zone_command` in host-local variables to customize it; for example, `openbox-zone maximize-under-pointer` toggles maximize/restore on the application window under the pointer.
 Rollback: remove the `curiosity-g604` line from `~/.config/openbox/autostart`
 and `pkill -f curiosity-g604; pkill xbindkeys`.
 
@@ -326,11 +326,19 @@ unless you intentionally want to disable VT switching. The role checks that
 the graphical account has a usable password hash before enabling automatic
 locking and never changes account passwords.
 
-For the `desktop` profile, this Openbox setup is opt-in:
+The `desktop` profile uses LightDM and Openbox by default. To keep that
+profile headless, disable both GUI options:
 
 ```yaml
-minimal_desktop_enabled: true
+minimal_desktop_enabled: false
+display_config_enabled: false
 ```
+
+`display_config_enabled: true` adds optional x11vnc mirroring of the physical
+LightDM/Openbox display and enables this desktop even if
+`minimal_desktop_enabled` is false. It preserves the configured account
+login, locking and monitor layout. The `workspace` profile remains headless
+regardless of these options.
 
 The `thin-client` profile includes the minimal desktop automatically. The
 `byod-kiosk` profile is deliberately separate: it replaces the normal Openbox

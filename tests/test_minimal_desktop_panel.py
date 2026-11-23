@@ -33,7 +33,8 @@ TINT2_17_OPTIONS = frozenset(
     clock_tooltip_timezone clock_uwheel_command
     disable_transparency
     execp execp_command execp_dwheel_command execp_font execp_font_color
-    execp_has_icon execp_interval execp_lclick_command execp_padding
+    execp_has_icon execp_icon_h execp_icon_w execp_interval execp_lclick_command
+    execp_mclick_command execp_padding
     execp_rclick_command execp_tooltip execp_uwheel_command
     font_shadow
     launcher_background_id launcher_icon_size launcher_icon_theme
@@ -130,8 +131,9 @@ def test_only_tint2_17_options_are_used(path: Path) -> None:
 def test_layout_shapes() -> None:
     bottom = dict(_options(LAYOUT_DIR / "bottom.tint2rc"))
     top = dict(_options(LAYOUT_DIR / "top.tint2rc"))
-    assert bottom["panel_items"] == "TSC" and bottom["panel_size"] == "100% 32"
+    assert bottom["panel_items"] == "ETSC" and bottom["panel_size"] == "100% 32"
     assert bottom["panel_position"].startswith("bottom")
+    assert bottom["execp_command"] == "streamstack status --icon"
     assert top["panel_items"] == "LTSEC" and top["panel_size"] == "100% 36"
     assert top["panel_position"].startswith("top")
     assert top["execp_command"] == "/usr/local/bin/tint2-volume-status"
@@ -211,6 +213,19 @@ def test_volume_helper_is_installed_root_owned_and_executable() -> None:
     assert subprocess.run(["sh", "-n", str(helper)], capture_output=True).returncode == 0
     top = dict(_options(LAYOUT_DIR / "top.tint2rc"))
     assert top["execp_command"] == install["dest"]
+
+
+def test_restartable_tint2_user_service_is_installed() -> None:
+    install = _named(_tasks("minimal-desktop.yml"), "Install the restartable tint2 user service")[
+        "ansible.builtin.copy"
+    ]
+    assert install["src"] == "minimal-desktop/tint2@.service"
+    assert install["dest"] == "/etc/systemd/user/tint2@.service"
+    assert (install["owner"], install["group"], install["mode"]) == ("root", "root", "0644")
+    unit = (FILES / "tint2@.service").read_text()
+    assert "Environment=DISPLAY=:%i" in unit
+    assert "ExecStart=/usr/bin/tint2 -c %h/.config/tint2/tint2rc" in unit
+    assert "Restart=always" in unit
 
 
 def _run_volume_helper(pactl_mute: str, pactl_volume: str) -> str:
@@ -315,6 +330,7 @@ def _run_autostart(*, live_panel_display: str | None) -> tuple[subprocess.Comple
                 )
             stubs = {
                 "pgrep": '#!/bin/sh\ncase "$*" in\n  *tint2*) echo "$HARNESS_PANEL_PID" ;;\n  *) exit 1 ;;\nesac\n',
+                "systemctl": '#!/bin/sh\nprintf "systemctl %s\\n" "$*" >>"$HARNESS_LOG"\n',
                 "tint2": '#!/bin/sh\nprintf "tint2 %s\\n" "$*" >>"$HARNESS_LOG"\n',
             }
             for name in (
@@ -356,18 +372,11 @@ def _run_autostart(*, live_panel_display: str | None) -> tuple[subprocess.Comple
             previous_panel.wait()
 
 
-def test_autostart_launches_tint2_with_the_deployed_config() -> None:
-    result, log, _ = _run_autostart(live_panel_display=None)
+def test_autostart_starts_the_supervised_tint2_service_for_this_display() -> None:
+    result, log, alive = _run_autostart(live_panel_display=":other")
     assert result.returncode == 0, result.stderr
-    assert any(line.startswith("tint2 -c ") and line.endswith("/home/.config/tint2/tint2rc") for line in log), log
-
-
-def test_autostart_replaces_the_panel_on_this_display_only() -> None:
-    same_display, _, alive = _run_autostart(live_panel_display=":test")
-    assert same_display.returncode == 0, same_display.stderr
-    assert alive is False
-    other_display, _, alive = _run_autostart(live_panel_display=":other")
-    assert other_display.returncode == 0, other_display.stderr
+    assert "systemctl --user daemon-reload" in log, log
+    assert "systemctl --user restart tint2@test.service" in log, log
     assert alive is True
 
 
