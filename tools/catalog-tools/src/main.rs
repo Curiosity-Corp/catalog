@@ -8,7 +8,11 @@ use catalog_tools::{find_root, reference};
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "catalog-tools", version, about = "Tools for the curiosity.workstation collection")]
+#[command(
+    name = "catalog-tools",
+    version,
+    about = "Tools for the curiosity.workstation collection"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -53,7 +57,10 @@ fn run_reference(args: &ReferenceArgs) -> Result<ExitCode> {
         Some(root) => root.clone(),
         None => find_root(&std::env::current_dir().context("cannot read the current directory")?)?,
     };
-    let output = args.output.clone().unwrap_or_else(|| root.join(reference::OUTPUT));
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| root.join(reference::OUTPUT));
     let text = reference::generate(&root)?;
     if args.check {
         let committed = if output.is_file() {

@@ -144,7 +144,10 @@ mod tests {
 
     #[test]
     fn json_uses_python_spacing() {
-        assert_eq!(json(&value("[a, 1, 2.5, true, null]")), r#"["a", 1, 2.5, true, null]"#);
+        assert_eq!(
+            json(&value("[a, 1, 2.5, true, null]")),
+            r#"["a", 1, 2.5, true, null]"#
+        );
         assert_eq!(json(&value("{a: 1}")), r#"{"a": 1}"#);
         assert_eq!(json(&value("1.0")), "1.0");
         assert_eq!(json(&value("'café'")), "\"café\"");

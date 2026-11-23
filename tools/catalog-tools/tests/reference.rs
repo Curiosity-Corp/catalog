@@ -80,9 +80,17 @@ fn checkout() -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write(root, "galaxy.yml", "namespace: curiosity\n");
-    write(root, "roles/developer_workstation/defaults/main.yml", DEFAULTS);
+    write(
+        root,
+        "roles/developer_workstation/defaults/main.yml",
+        DEFAULTS,
+    );
     write(root, "roles/developer_workstation/tasks/main.yml", TASKS);
-    write(root, "roles/workstation_storage/defaults/main.yml", STORAGE_DEFAULTS);
+    write(
+        root,
+        "roles/workstation_storage/defaults/main.yml",
+        STORAGE_DEFAULTS,
+    );
     write(root, "roles/not_a_role/README.md", "no defaults\n");
     write(root, reference::ANNOTATIONS, ANNOTATIONS);
     directory
@@ -95,11 +103,28 @@ fn generates_the_reference() {
 
     // Variables, in file order, with types, defaults and classification.
     assert!(text.contains("| `feature_mode` | string | `\"fast\"` | `\"fast\"`, `\"safe\"` | experimental |  | Picks the speed. |"), "{text}");
-    assert!(text.contains("| `wifi_psk` | string | (redacted) |  | supported | secret | Wi-Fi network key. |"), "{text}");
-    assert!(text.contains("| `hardware_profiles` | dict | mapping, 1 key |"), "{text}");
-    assert!(text.contains("| `hardware_profile` | string | `\"\"` | `\"laptop-a\"` |"), "{text}");
-    assert!(text.contains("| `build_marker` | `developer_workstation` | internal |"), "{text}");
-    assert!(text.contains("| `feature_mode` | `developer_workstation` | experimental |"), "{text}");
+    assert!(
+        text.contains(
+            "| `wifi_psk` | string | (redacted) |  | supported | secret | Wi-Fi network key. |"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("| `hardware_profiles` | dict | mapping, 1 key |"),
+        "{text}"
+    );
+    assert!(
+        text.contains("| `hardware_profile` | string | `\"\"` | `\"laptop-a\"` |"),
+        "{text}"
+    );
+    assert!(
+        text.contains("| `build_marker` | `developer_workstation` | internal |"),
+        "{text}"
+    );
+    assert!(
+        text.contains("| `feature_mode` | `developer_workstation` | experimental |"),
+        "{text}"
+    );
     let developer = text.find("### Role `developer_workstation`").unwrap();
     let storage = text.find("### Role `workstation_storage`").unwrap();
     assert!(developer < storage);
@@ -108,15 +133,24 @@ fn generates_the_reference() {
     // The hardware profile's values are never copied, only its setting names.
     assert!(!text.contains("AAAA-not-copied"));
     assert!(!text.contains("correct-horse"));
-    assert!(text.contains("| `laptop-a` | Small laptop \\| with a pipe | `ssh_key`, `swap` |"), "{text}");
+    assert!(
+        text.contains("| `laptop-a` | Small laptop \\| with a pipe | `ssh_key`, `swap` |"),
+        "{text}"
+    );
 
     // Profiles: described by the defaults comment, then by the annotations.
     assert!(text.contains("  - `desktop`: Full workstation."), "{text}");
     assert!(text.contains("  - `byod-kiosk`: Kiosk browser."), "{text}");
 
     // Tags: block inheritance, variable-resolved tags and profile gating.
-    assert!(text.contains("| `desktop` | supported | 2 | `main.yml` | `desktop` | Desktop pieces. |"), "{text}");
-    assert!(text.contains("| `updates` | supported | 1 | `main.yml` |  |  |"), "{text}");
+    assert!(
+        text.contains("| `desktop` | supported | 2 | `main.yml` | `desktop` | Desktop pieces. |"),
+        "{text}"
+    );
+    assert!(
+        text.contains("| `updates` | supported | 1 | `main.yml` |  |  |"),
+        "{text}"
+    );
     assert!(text.contains("| `always` | supported | 2 |"), "{text}");
     assert!(text.contains("This role defines no tags"), "{text}");
     assert!(text.ends_with("|\n"));
@@ -130,22 +164,38 @@ fn check_reports_a_stale_reference() {
     assert!(reference::first_difference(&text, &text).is_none());
 
     let defaults = root.join("roles/developer_workstation/defaults/main.yml");
-    fs::write(&defaults, DEFAULTS.replace("feature_mode: fast", "feature_mode: safe")).unwrap();
+    fs::write(
+        &defaults,
+        DEFAULTS.replace("feature_mode: fast", "feature_mode: safe"),
+    )
+    .unwrap();
     let changed = reference::generate(root).unwrap();
     let difference = reference::first_difference(&text, &changed).unwrap();
     assert!(difference.contains("feature_mode"), "{difference}");
-    assert!(reference::first_difference("", &changed).unwrap().contains("line 1"));
+    assert!(
+        reference::first_difference("", &changed)
+            .unwrap()
+            .contains("line 1")
+    );
 }
 
 #[test]
 fn stale_annotations_fail_the_build() {
     let directory = checkout();
     let root = directory.path();
-    write(root, reference::ANNOTATIONS, "variables:\n  gone_variable: {stability: internal}\n");
+    write(
+        root,
+        reference::ANNOTATIONS,
+        "variables:\n  gone_variable: {stability: internal}\n",
+    );
     let error = reference::generate(root).unwrap_err();
     assert!(error.to_string().contains("gone_variable"), "{error}");
 
-    write(root, reference::ANNOTATIONS, "tags:\n  gone-tag: {description: x}\n");
+    write(
+        root,
+        reference::ANNOTATIONS,
+        "tags:\n  gone-tag: {description: x}\n",
+    );
     let error = reference::generate(root).unwrap_err();
     assert!(error.to_string().contains("gone-tag"), "{error}");
 }

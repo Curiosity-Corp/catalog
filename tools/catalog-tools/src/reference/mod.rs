@@ -52,8 +52,8 @@ pub fn load_roles(roles_dir: &Path) -> Result<Vec<Role>> {
                 &defaults_path.display().to_string(),
             )?;
             let files = tasks::load_task_files(&directory)?;
-            let tags = tasks::collect_tags(&files, &defaults)
-                .with_context(|| format!("role {name}"))?;
+            let tags =
+                tasks::collect_tags(&files, &defaults).with_context(|| format!("role {name}"))?;
             let asserted = tasks::collect_asserted_values(&files, &defaults);
             Ok(Role {
                 name,
@@ -73,7 +73,10 @@ pub fn generate(root: &Path) -> Result<String> {
         &crate::yaml::read(&annotations_path)?,
         &annotations_path.display().to_string(),
     )?;
-    let variables: BTreeSet<&str> = roles.iter().flat_map(|role| role.defaults.names()).collect();
+    let variables: BTreeSet<&str> = roles
+        .iter()
+        .flat_map(|role| role.defaults.names())
+        .collect();
     let tags: BTreeSet<&str> = roles
         .iter()
         .flat_map(|role| role.tags.keys().map(String::as_str))
@@ -94,7 +97,11 @@ pub fn first_difference(committed: &str, generated: &str) -> Option<String> {
         .zip(&new)
         .position(|(a, b)| a != b)
         .unwrap_or(old.len().min(new.len()));
-    let show = |lines: &[&str]| lines.get(line).map_or("(end of file)".to_owned(), |text| (*text).to_owned());
+    let show = |lines: &[&str]| {
+        lines
+            .get(line)
+            .map_or("(end of file)".to_owned(), |text| (*text).to_owned())
+    };
     Some(format!(
         "first difference at line {}\n  committed: {}\n  generated: {}\n(committed {} lines, generated {} lines)",
         line + 1,

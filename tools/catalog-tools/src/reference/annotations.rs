@@ -52,7 +52,10 @@ pub const SAFETY: [(&str, &str); 7] = [
         "supply-chain",
         "Downloads and installs software from a configured location. Pin it with the matching checksum or fingerprint.",
     ),
-    ("account", "Creates, changes or grants access to user accounts."),
+    (
+        "account",
+        "Creates, changes or grants access to user accounts.",
+    ),
 ];
 
 /// A variable named like a credential is a credential.
@@ -173,7 +176,10 @@ fn check_stability(where_: &str, stability: Option<&String>) -> Result<()> {
     };
     if stability_rank(word) == STABILITY.len() {
         let known: Vec<&str> = STABILITY.iter().map(|(name, _)| *name).collect();
-        bail!("{where_}: unknown stability {word:?} (use one of {})", known.join(", "));
+        bail!(
+            "{where_}: unknown stability {word:?} (use one of {})",
+            known.join(", ")
+        );
     }
     Ok(())
 }
@@ -182,7 +188,10 @@ fn check_safety(where_: &str, flags: &[String]) -> Result<()> {
     for flag in flags {
         if safety_rank(flag) == SAFETY.len() {
             let known: Vec<&str> = SAFETY.iter().map(|(name, _)| *name).collect();
-            bail!("{where_}: unknown safety flag {flag:?} (use one of {})", known.join(", "));
+            bail!(
+                "{where_}: unknown safety flag {flag:?} (use one of {})",
+                known.join(", ")
+            );
         }
     }
     Ok(())
@@ -201,7 +210,8 @@ impl Annotations {
         let mut patterns = Vec::new();
         for rule in raw.patterns {
             let where_ = format!("{origin}: pattern {}", rule.pattern);
-            let regex = Regex::new(&rule.pattern).with_context(|| format!("{where_}: bad regular expression"))?;
+            let regex = Regex::new(&rule.pattern)
+                .with_context(|| format!("{where_}: bad regular expression"))?;
             let safety = rule.safety.map(OneOrMany::into_vec).unwrap_or_default();
             check_stability(&where_, rule.stability.as_ref())?;
             check_safety(&where_, &safety)?;
@@ -243,7 +253,9 @@ impl Annotations {
     pub fn check_names(&self, variables: &BTreeSet<&str>, tags: &BTreeSet<&str>) -> Result<()> {
         for name in self.variables.keys() {
             if !variables.contains(name.as_str()) {
-                bail!("annotations: variable {name:?} is not defined in any role defaults; remove or rename it");
+                bail!(
+                    "annotations: variable {name:?} is not defined in any role defaults; remove or rename it"
+                );
             }
         }
         for tag in self.tags.keys() {
@@ -337,26 +349,39 @@ profile_notes:
 
     #[test]
     fn unknown_words_are_rejected() {
-        let error = Annotations::parse("variables:\n  x: {stability: beta}\n", "a.yml").unwrap_err();
+        let error =
+            Annotations::parse("variables:\n  x: {stability: beta}\n", "a.yml").unwrap_err();
         assert!(error.to_string().contains("unknown stability"), "{error}");
         let error = Annotations::parse("variables:\n  x: {safety: scary}\n", "a.yml").unwrap_err();
         assert!(error.to_string().contains("unknown safety flag"), "{error}");
         let error = Annotations::parse("tags:\n  x: {safety: boot}\n", "a.yml").unwrap_err();
         assert!(format!("{error:#}").contains("safety"), "{error:#}");
         let error = Annotations::parse("patterns:\n  - match: '('\n", "a.yml").unwrap_err();
-        assert!(error.to_string().contains("bad regular expression"), "{error}");
+        assert!(
+            error.to_string().contains("bad regular expression"),
+            "{error}"
+        );
     }
 
     #[test]
     fn stale_names_are_rejected() {
         let annotations = Annotations::parse(TEXT, "test").unwrap();
         let variables = BTreeSet::from(["wifi_psk", "build_path", "mode"]);
-        assert!(annotations.check_names(&variables, &BTreeSet::from(["kiosk"])).is_ok());
+        assert!(
+            annotations
+                .check_names(&variables, &BTreeSet::from(["kiosk"]))
+                .is_ok()
+        );
         let error = annotations
-            .check_names(&BTreeSet::from(["wifi_psk", "mode"]), &BTreeSet::from(["kiosk"]))
+            .check_names(
+                &BTreeSet::from(["wifi_psk", "mode"]),
+                &BTreeSet::from(["kiosk"]),
+            )
             .unwrap_err();
         assert!(error.to_string().contains("build_path"), "{error}");
-        let error = annotations.check_names(&variables, &BTreeSet::new()).unwrap_err();
+        let error = annotations
+            .check_names(&variables, &BTreeSet::new())
+            .unwrap_err();
         assert!(error.to_string().contains("kiosk"), "{error}");
     }
 }
