@@ -1007,6 +1007,12 @@ taskbar, system tray and clock. `top` is a 36px bar at the top with a launcher
 multi-desktop task list, the tray, a PulseAudio volume item and the clock. The
 volume item runs `/usr/local/bin/tint2-volume-status`, installed by the role,
 and needs `pactl` (installed as `pulseaudio-utils`; PipeWire-pulse works too).
+Both layouts end with the same "Screens off" button, which runs
+`/usr/local/bin/screens-off` (installed by the role). It turns every monitor of
+the display off through DPMS; it is not suspend, and any key or mouse move
+wakes them. When DPMS is enabled (XScreenSaver's `dpmsEnabled` from
+`monitor_off_minutes`) its timeouts are left alone; when it is disabled, the
+helper sets them to 0 and switches it on, so no automatic blanking is added.
 Any other value fails the run before a config is written. The layouts are
 `roles/developer_workstation/files/minimal-desktop/tint2/<layout>.tint2rc`; each
 background block must be defined before an id refers to it, because tint2 17

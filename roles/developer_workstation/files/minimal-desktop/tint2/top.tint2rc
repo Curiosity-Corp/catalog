@@ -2,7 +2,7 @@
 # are overwritten on the next run.
 #
 # Layout "top": 36px top bar with launcher, multi-desktop task list, system
-# tray, PulseAudio volume executor and clock. Select it with
+# tray, PulseAudio volume executor, clock and a "Screens off" button. Select it with
 # minimal_desktop_tint2_layout or a per-user tint2_layout. Every *_background_id
 # below refers to a background block that is defined EARLIER in this file;
 # tint2 17 crashes on an undefined id.
@@ -25,8 +25,9 @@ border_sides = TBLR
 background_color = #4b4f58 100
 border_color = #4b4f58 100
 
-# Panel: launcher, task list, notification area, volume and clock.
-panel_items = LTSEC
+# Panel: launcher, task list, notification area, volume, clock and the
+# screens-off button.
+panel_items = LTSECP
 panel_size = 100% 36
 panel_margin = 0 0
 panel_padding = 5 3 5
@@ -108,3 +109,15 @@ execp_lclick_command = pavucontrol
 execp_rclick_command = pactl set-sink-mute @DEFAULT_SINK@ toggle
 execp_uwheel_command = pactl set-sink-volume @DEFAULT_SINK@ +5%
 execp_dwheel_command = pactl set-sink-volume @DEFAULT_SINK@ -5%
+
+# Button: turns every monitor off (DPMS, not suspend); any key or mouse move
+# wakes them (catalog#161).
+button = new
+button_text = Screens off
+button_tooltip = Turn all monitors off. Any key or mouse move wakes them.
+button_font = sans 9
+button_font_color = #e8eaed 100
+button_padding = 8 0
+button_background_id = 0
+button_centered = 1
+button_lclick_command = /usr/local/bin/screens-off
