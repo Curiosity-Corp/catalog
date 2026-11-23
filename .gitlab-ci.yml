@@ -286,6 +286,11 @@ tools:
     - cargo clippy --locked --all-targets -- -D warnings
     - cargo fmt --all --check || { cargo fmt --all && git diff -- . > ../tools-fmt.patch; exit 1; }
     - cargo run --locked --quiet -- reference --root .. --check
+    # A static binary for the platform-packages jobs, which run in plain distro
+    # images without a Rust toolchain.
+    - rustup target add x86_64-unknown-linux-musl
+    - cargo build --locked --release --target x86_64-unknown-linux-musl
+    - cp "${CARGO_TARGET_DIR}/x86_64-unknown-linux-musl/release/catalog-tools" ../catalog-tools
   artifacts:
     when: always
     name: "catalog-tools-${CI_COMMIT_SHORT_SHA}"
@@ -293,7 +298,51 @@ tools:
       - reference.generated.md
       - tools-fmt.patch
       - tools/Cargo.lock
+      - catalog-tools
     expire_in: 7 days
+
+# Which of the developer_workstation role's apt packages each supported
+# platform's archive provides (#14, #15). The probe asks apt inside the stock
+# image, with apt's lists in a private directory, so it needs no root.
+platform-packages:
+  stage: test
+  image: $IMAGE
+  needs:
+    - job: tools
+      artifacts: true
+  parallel:
+    matrix:
+      - IMAGE:
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - ubuntu:26.04
+          - debian:12
+          - debian:13
+  script:
+    - mkdir -p platform-packages
+    - ./catalog-tools packages probe --root . --image "$IMAGE" --apt-dir "${CI_PROJECT_DIR}/.apt-probe" --output "platform-packages/$(echo "$IMAGE" | tr ':.' '--').json"
+  artifacts:
+    paths:
+      - platform-packages/
+    expire_in: 7 days
+
+# The dated evidence file (docs/platform-differences.md says how to refresh it).
+platform-evidence:
+  stage: test
+  image: debian:13-slim
+  needs:
+    - job: tools
+      artifacts: true
+    - job: platform-packages
+      artifacts: true
+  script:
+    - mkdir -p evidence
+    - ./catalog-tools packages assemble --root . --output "evidence/platform-packages-$(date -u +%F).json" platform-packages/*.json
+    - ./catalog-tools packages check --root . evidence/platform-packages-*.json
+  artifacts:
+    paths:
+      - evidence/
+    expire_in: 30 days
 
 collection:
   extends: .python_setup

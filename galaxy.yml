@@ -52,3 +52,7 @@ build_ignore:
   - tools
   - reference.generated.md
   - tools-fmt.patch
+  - catalog-tools
+  - platform-packages
+  - evidence
+  - .apt-probe
