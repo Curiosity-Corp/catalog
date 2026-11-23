@@ -60,15 +60,19 @@
     fail_msg: media_folder_enabled is on but media_folder_web_entries is empty or repeats an id.
   when: _media_folder_on | bool
 
+# No regex back-references here: under ansible-core 2.20 a '\1' in the
+# replacement stayed literal, so every launcher was named
+# 'curiosity-media-\1.desktop' and the removal task below deleted them all
+# (catalog#158).
 - name: Name the Media folder applications
   ansible.builtin.set_fact:
     _media_folder_launchers: >-
       {{ _media_folder_web | map(attribute='id')
-         | map('regex_replace', '^(.*)$', 'curiosity-media-\\1.desktop') | list }}
+         | map('regex_replace', '^', 'curiosity-media-') | map('regex_replace', '$', '.desktop') | list }}
     _media_folder_apps: >-
       {{ ([jellyfin_desktop_flatpak_id ~ '.desktop'] if _media_folder_jellyfin | bool else [])
          + (_media_folder_web | map(attribute='id')
-            | map('regex_replace', '^(.*)$', 'curiosity-media-\\1.desktop') | list) }}
+            | map('regex_replace', '^', 'curiosity-media-') | map('regex_replace', '$', '.desktop') | list) }}
 
 - name: Create the local application directory
   ansible.builtin.file:
