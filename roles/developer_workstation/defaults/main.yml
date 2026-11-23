@@ -561,8 +561,8 @@ custom_ca_bundle_path: /etc/ssl/certs/ca-certificates.crt
 workspace_gitlab_host: gitlab.com
 workspace_gitlab_external_auth_provider: gitlab
 
-# Display configuration (GDM auto-login, x11vnc, dconf no-lock)
-# Enable on iGPU passthrough VMs that need physical display + VNC
+# Optional x11vnc mirroring of the LightDM/Openbox physical display.
+# Enabling this also enables the Openbox desktop for the desktop profile.
 display_config_enabled: false
 
 # Lenovo T460 raw-console support. The status command is a harmless diagnostic
@@ -681,10 +681,10 @@ tmp_hygiene_tmpfiles_path: /etc/tmpfiles.d/00-curiosity-tmp.conf
 tmp_hygiene_pressure_script_path: /usr/local/sbin/curiosity-tmp-pressure
 tmp_hygiene_pressure_config_path: /etc/curiosity/tmp-pressure-tmpfiles.conf
 
-# Minimal desktop (Openbox + LightDM + Firefox)
-# Lightweight GUI for machines that only need a browser and terminal.
-# Mutually exclusive with display_config_enabled (GDM/GNOME).
-minimal_desktop_enabled: false
+# Standard graphical desktop (Openbox + LightDM + Firefox).
+# Desktop profiles use this by default; workspace profiles remain headless.
+# For a headless desktop profile, disable this and display_config_enabled.
+minimal_desktop_enabled: true
 minimal_desktop_autologin: true
 minimal_desktop_firefox_tweaks: true
 # Derived from the hardware profile's optional `idle_lock_minutes` (default 10).
@@ -938,6 +938,9 @@ logitech_g604_onboard_buttons: true
 logitech_g604_dpi: 3200
 logitech_g604_mic_keycode: 13
 logitech_g604_zone_keycode: 14
+# KEY_5 action; hosts with dual monitors can override this to
+# `openbox-zone maximize-under-pointer`.
+logitech_g604_zone_command: openbox-zone toggle browser
 # Thumb button 2 (keycode 11): interactive screenshot with flameshot.
 logitech_g604_screenshot_keycode: 11
 logitech_g604_screenshot_command: flameshot gui

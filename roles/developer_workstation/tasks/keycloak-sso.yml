@@ -3,7 +3,7 @@
 # Keycloak SSO via authd + authd-oidc broker
 # =============================================================================
 # Enables Keycloak OIDC login on Ubuntu workstations.
-# Users sign in at GDM with their Keycloak email using device code flow.
+# Users sign in at LightDM with their Keycloak email using device code flow.
 # Replaces the sunset Entra ID (authd-msentraid) setup.
 # =============================================================================
 

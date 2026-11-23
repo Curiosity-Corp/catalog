@@ -11,6 +11,10 @@
       - obconf
       - lightdm
       - lightdm-gtk-greeter
+      # Explicit X11/session dependencies; recommendations are disabled below.
+      - xserver-xorg
+      - xinit
+      - dbus-x11
       # Compositor
       - picom
       # Panel and launcher
@@ -49,6 +53,7 @@
       - libnss3-tools
     state: present
     update_cache: true
+    install_recommends: false
 
 # Six-zone window snapping (Super+Alt+1..6 in the managed rc.xml). System-wide
 # so every managed Openbox user gets the same binding target.
@@ -72,6 +77,7 @@
       - lxpolkit
     state: present
     update_cache: false
+    install_recommends: false
   when: workstation_profile != 'byod-kiosk'
 
 - name: Install the Ubuntu greeter wallpaper asset
@@ -79,6 +85,7 @@
     name: ubuntu-wallpapers
     state: present
     update_cache: false
+    install_recommends: false
   when: ansible_distribution == 'Ubuntu'
 
 - name: Install PAM-aware locking tools for standard Openbox sessions
@@ -88,6 +95,7 @@
       - vlock
     state: present
     update_cache: false
+    install_recommends: false
   when: workstation_profile != 'byod-kiosk'
 
 - name: Remove the single-prompt i3lock and its xss-lock launcher
@@ -106,6 +114,7 @@
       - blueman
     state: present
     update_cache: false
+    install_recommends: false
   when: workstation_profile != 'byod-kiosk'
 
 - name: Remove Light Locker from the LightDM/Openbox session
