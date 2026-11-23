@@ -49,3 +49,6 @@ build_ignore:
   - "*.tar.gz"
   - collection.cdx.json
   - .venv
+  - tools
+  - reference.generated.md
+  - tools-fmt.patch

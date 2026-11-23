@@ -1,0 +1,22 @@
+# Cargo workspace for the catalog's tools (catalog#160, docs/adr/0001-rust-tool-crate.md).
+# Build and test only through CI (the `tools` job); see tools/README.md.
+[workspace]
+resolver = "3"
+members = ["catalog-tools"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
