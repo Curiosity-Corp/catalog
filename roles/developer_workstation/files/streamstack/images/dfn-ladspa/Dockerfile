@@ -54,5 +54,5 @@ FROM harbor.focuscell.org/dockerhub-proxy/curlimages/curl:8.12.1
 LABEL org.opencontainers.image.title="streamstack-dfn-ladspa" \
       org.opencontainers.image.description="DeepFilterNet LADSPA plugin 0.5.6, build revision 1" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0" \
-      org.opencontainers.image.source="https://git.developerdojo.org/Curiosity-Corp/streamstack"
+      org.opencontainers.image.source="https://git.developerdojo.org/ViperDynamics/streamstack"
 COPY --from=build /opt/dfn-ladspa /opt/dfn-ladspa

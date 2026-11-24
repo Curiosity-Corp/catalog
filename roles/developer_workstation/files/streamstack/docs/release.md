@@ -60,7 +60,7 @@ than `0.0.8`, so installing a `0.0.x` release over one of them needs `--force` (
    GitLab to list a pipeline for the tag and exits non-zero, naming the fix, if none appears. A push event can be
    lost: v0.0.30 started no pipeline and nobody noticed until it was started by hand through the API (#190; v0.0.29
    and the same CI config started one at once, so the cause was GitLab, not the repo). If the gate fails, start the
-   pipeline with `glab api -X POST "projects/Curiosity-Corp%2Fstreamstack/pipeline?ref=vX.Y.Z"`.
+   pipeline with `glab api -X POST "projects/ViperDynamics%2Fstreamstack/pipeline?ref=vX.Y.Z"`.
 6. Watch the tag pipeline (`glab ci view`). On success the release is on the Releases page and
    `scripts/install-release.sh X.Y.Z` installs it.
 
