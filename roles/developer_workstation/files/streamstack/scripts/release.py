@@ -321,7 +321,7 @@ def tag_commands(version: str) -> list[str]:
     ]
 
 
-DEFAULT_PROJECT = "Curiosity-Corp/streamstack"
+DEFAULT_PROJECT = "ViperDynamics/streamstack"
 PIPELINE_WAIT_S = 300.0  # how long a pushed tag may take to show a pipeline
 PIPELINE_POLL_S = 10.0
 

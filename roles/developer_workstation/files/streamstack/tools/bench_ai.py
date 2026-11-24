@@ -987,7 +987,7 @@ def build_report(
 ) -> dict[str, Any]:
     return {
         "schema": 1,
-        "issue": "Curiosity-Corp/streamstack#22",
+        "issue": "ViperDynamics/streamstack#22",
         "generated": when.isoformat(timespec="seconds"),
         "synthetic": bool(opts.synthetic),
         "kind": run_kind(opts),
