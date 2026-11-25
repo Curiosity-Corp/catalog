@@ -56,9 +56,11 @@ pretend otherwise:
 - **Resumable downloads.** An interrupted download starts again on the next run;
   `get_url` has no resume. A fix means choosing a download tool for the large
   artifacts and testing it against a real interruption.
-- **A tested interrupted-update recovery.** The health check rolls back a
-  failed update, but killing a run half way and re-running has not been
-  tested. After an interrupted run, re-run the same tags and read the
+- **Interrupted-update recovery for every installer.** Killing a run half way
+  and re-running is tested for the snapshot and CLI-archive install path only;
+  [architecture.md](architecture.md#interrupted-update) says what state an
+  interrupted run leaves and what the test does not cover. After an
+  interrupted run, re-run the same tags and read the
   [maintenance summary](maintenance-summary.md).
 - **A fully offline mode for release discovery.** Tracked in
   [the roadmap](roadmap.md).
