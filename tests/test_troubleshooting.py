@@ -107,11 +107,14 @@ def test_readme_links_the_page() -> None:
 
 
 def test_quickstarts_index_links_the_page() -> None:
-    # docs/quickstarts/ arrives with Draft !166; from the commit that adds its
-    # index, the index must link this page.
     index = QUICKSTARTS / "README.md"
-    if index.exists():
-        assert "](../troubleshooting.md)" in index.read_text()
+    assert "](../troubleshooting.md)" in index.read_text()
+
+
+def test_quickstarts_index_links_resolve() -> None:
+    index = QUICKSTARTS / "README.md"
+    for target in re.findall(r"\]\(([^)\s]+)\)", index.read_text()):
+        assert (index.parent / target.partition("#")[0]).resolve().exists(), target
 
 
 def test_this_file_runs_in_the_policy_job() -> None:

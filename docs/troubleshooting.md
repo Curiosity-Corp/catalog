@@ -63,7 +63,7 @@ wrong type (a single string instead of a list, a relative venv path).
 before any venv is touched, so nothing on the machine changed. See the
 [Python research profile](python-research-profile.md).
 
-## Invalid time zone
+## Invalid locale or keyboard value (time zone)
 
 ```text
 workstation_timezone=<value> is not an IANA zone in /usr/share/zoneinfo (for example America/New_York).
