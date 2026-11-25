@@ -33,3 +33,4 @@ Routine fixes and documentation changes do not need one.
 | --- | --- | --- |
 | [0001](0001-public-and-internal-repositories.md) | Keep a public base and a private downstream | accepted |
 | [0002](0002-optional-integrations-default-off.md) | Integrations that need private services default to off | accepted |
+| [0003](0003-opt-in-assistive-technology-packages.md) | Opt-in assistive technology packages | proposed |
