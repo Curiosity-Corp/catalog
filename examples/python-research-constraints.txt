@@ -1,0 +1,29 @@
+# Example pip constraints file for the Python research profile.
+#
+# SYNTHETIC: these ranges show the format; they are not a tested or
+# recommended freeze. Replace them with the ranges your lab has agreed on.
+#
+# A constraints file never installs anything by itself. It only limits the
+# version pip may choose for a package that science_python_packages (or one of
+# its dependencies) already asks for. Copy it to the machine, for example to
+# /etc/lab/constraints.txt, and name it in your variables file:
+#
+#   science_python_pip_extra_args: "--constraint /etc/lab/constraints.txt"
+#
+# One requirement per line in the usual pip syntax. Prefer ranges to exact
+# pins, so security and bug-fix releases still arrive on every run.
+
+# Stay on one major version; take any minor or patch release inside it.
+numpy>=2.1,<3
+
+# Compatible release: 1.14 or any later 1.x.
+scipy~=1.14
+
+# A floor and a ceiling, skipping one release the lab found broken.
+pandas>=2.2,!=2.2.1,<3
+
+# Only a floor: anything from this release on.
+matplotlib>=3.9
+
+# Hold one package below its next major version until notebooks are updated.
+scikit-learn>=1.5,<2

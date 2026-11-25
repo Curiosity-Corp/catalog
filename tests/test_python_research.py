@@ -207,6 +207,26 @@ def test_guide_lists_the_example_packages() -> None:
         assert package.lower() in GUIDE.lower(), package
 
 
+CONSTRAINTS = ROOT / "examples/python-research-constraints.txt"
+
+
+def test_constraints_example_parses_holds_ranges_and_is_linked() -> None:
+    from packaging.requirements import Requirement
+
+    lines = [line.strip() for line in CONSTRAINTS.read_text().splitlines()]
+    requirements = [Requirement(line) for line in lines if line and not line.startswith("#")]
+    assert requirements, "the constraints example has no requirement lines"
+    listed = {package.lower() for package in EXAMPLE["science_python_packages"]}
+    for req in requirements:
+        assert req.specifier, f"{req.name}: a constraint needs a version range"
+        assert not any(spec.operator in ("==", "===") for spec in req.specifier), f"{req.name}: use a range, not a freeze"
+        assert req.name.lower() in listed, f"{req.name} is not in examples/python-research.yml"
+    assert "](../examples/python-research-constraints.txt)" in GUIDE
+    pip_line = 'science_python_pip_extra_args: "--constraint /etc/lab/constraints.txt"'
+    assert pip_line in GUIDE
+    assert pip_line in CONSTRAINTS.read_text()
+
+
 def test_guide_shows_the_project_commands_the_ci_job_runs() -> None:
     validator = _validator()
     for command in validator.PROJECT_COMMANDS:
