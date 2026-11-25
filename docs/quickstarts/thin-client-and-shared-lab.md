@@ -13,7 +13,7 @@ your own.
 
 ## Security boundary between the access appliance and the remote VM
 
-```text
+```plaintext
  person --> [ thin client / kiosk ] ==network==> [ remote research VM ]
             browser, ssh, sshfs                  compilers, Python, data,
             no research data                     notebooks, results

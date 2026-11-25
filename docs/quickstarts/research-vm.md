@@ -101,7 +101,7 @@ On a fresh Ubuntu 24.04 image the first run, in this order:
 Record your own versions in a run log like this, so the next researcher can
 compare. This repository keeps such records under `docs/evidence/`.
 
-```text
+```plaintext
 Date:                 YYYY-MM-DD
 Image:                Ubuntu 24.04 cloud image build <id>
 VM:                   <vCPUs>, <RAM>, <disk>

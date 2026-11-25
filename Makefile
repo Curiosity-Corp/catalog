@@ -1,4 +1,4 @@
-.PHONY: validate syntax lint yaml test research-profile collection sbom
+.PHONY: validate syntax lint yaml test research-profile accessibility-summary collection sbom
 
 PYTHON ?= python3
 ANSIBLE_ROLES_PATH ?= roles
@@ -22,8 +22,8 @@ governance:
 quickstarts:
 	$(PYTHON) -m pytest -q tests/test_quickstarts.py tests/test_restricted_network.py
 
-research-profile:
-	$(PYTHON) -m pytest -q tests/test_python_research.py tests/test_accessibility_defaults.py tests/test_update_summary.py
+accessibility-summary:
+	$(PYTHON) -m pytest -q tests/test_accessibility_defaults.py tests/test_update_summary.py
 
 test:
 	$(PYTHON) tests/test_update_policy.py
