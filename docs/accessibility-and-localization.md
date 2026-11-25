@@ -28,6 +28,29 @@ keyboard_variant: nodeadkeys
 keyboard_options: "compose:ralt"
 ```
 
+### Common layouts
+
+Copy one row into your variables file. `""` means leave the value empty. Every
+row is applied by the test suite with the role's own validation and template,
+so the values below are known to pass. Keep `keyboard_model: pc105` unless your
+keyboard is a different model.
+
+| Keyboard | `keyboard_layout` | `keyboard_variant` | `keyboard_options` |
+| --- | --- | --- | --- |
+| US English (the default) | `us` | `""` | `""` |
+| UK English with a Compose key on right Alt | `gb` | `""` | `compose:ralt` |
+| French AZERTY | `fr` | `""` | `""` |
+| Spanish | `es` | `""` | `""` |
+| German without dead keys, Compose on right Alt | `de` | `nodeadkeys` | `compose:ralt` |
+| US Dvorak | `us` | `dvorak` | `""` |
+| US International (accents with dead keys) | `us` | `intl` | `""` |
+| US and Russian, Alt+Shift switches | `us,ru` | `,` | `grp:alt_shift_toggle` |
+
+With several layouts, give one variant per layout separated by commas: `,`
+means "no variant" for both `us` and `ru`, and `,phonetic` would choose the
+phonetic Russian layout. Quote `keyboard_options` in YAML when it contains a
+colon, as in the example above.
+
 Apply with `--tags keyboard`. Values are checked before anything is written:
 a layout that is not a lower-case code, or a value with a quote or other shell
 character in it, stops the run with a message that names the value.
@@ -86,9 +109,9 @@ will not overwrite it, because it only writes the files named here.
 ## Checked by
 
 `tests/test_accessibility_defaults.py` renders and applies the role's own task
-text with synthetic values, into a temporary directory instead of `/etc`: a
-German keyboard with a variant, a two-layout keyboard, quotes and upper-case
-refused, locales accepted and refused, and the display scale at 1 (low
+text with synthetic values, into a temporary directory instead of `/etc`:
+every row of the common-layouts table (read from this page, so the table and the
+test cannot drift), quotes and upper-case refused, locales accepted and refused, and the display scale at 1 (low
 resolution, file untouched), 1.5, 2.25 and 4 (rendered) and at 0.5, 1.1, 5 and a
 word (refused). It also checks which profiles force a keyboard and that the
 defaults leave other profiles alone. No physical display is involved, so the

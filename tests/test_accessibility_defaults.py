@@ -116,7 +116,15 @@ KEYBOARD_CASES = {
     "kiosk_default": ({"keyboard_manage": True, "keyboard_layout": "us", "keyboard_model": "pc105", "keyboard_variant": "", "keyboard_options": ""}, 'XKBLAYOUT="us"'),
     "german": ({"keyboard_manage": True, "keyboard_layout": "de", "keyboard_model": "pc105", "keyboard_variant": "nodeadkeys", "keyboard_options": "compose:ralt"}, 'XKBLAYOUT="de"'),
     "two_layouts": ({"keyboard_manage": True, "keyboard_layout": "us,ru", "keyboard_model": "pc105", "keyboard_variant": ",", "keyboard_options": "grp:alt_shift_toggle"}, 'XKBLAYOUT="us,ru"'),
+    # Rows of the "Common layouts" table in docs/accessibility-and-localization.md;
+    # test_common_layouts_table_matches_keyboard_cases keeps the two in step.
+    "uk_compose": ({"keyboard_manage": True, "keyboard_layout": "gb", "keyboard_model": "pc105", "keyboard_variant": "", "keyboard_options": "compose:ralt"}, 'XKBLAYOUT="gb"'),
+    "french": ({"keyboard_manage": True, "keyboard_layout": "fr", "keyboard_model": "pc105", "keyboard_variant": "", "keyboard_options": ""}, 'XKBLAYOUT="fr"'),
+    "spanish": ({"keyboard_manage": True, "keyboard_layout": "es", "keyboard_model": "pc105", "keyboard_variant": "", "keyboard_options": ""}, 'XKBLAYOUT="es"'),
+    "us_dvorak": ({"keyboard_manage": True, "keyboard_layout": "us", "keyboard_model": "pc105", "keyboard_variant": "dvorak", "keyboard_options": ""}, 'XKBVARIANT="dvorak"'),
+    "us_international": ({"keyboard_manage": True, "keyboard_layout": "us", "keyboard_model": "pc105", "keyboard_variant": "intl", "keyboard_options": ""}, 'XKBVARIANT="intl"'),
 }
+ACCESSIBILITY_DOC = ROOT / "docs/accessibility-and-localization.md"
 KEYBOARD_REJECTED = {
     "uppercase": {"keyboard_manage": True, "keyboard_layout": "US", "keyboard_model": "pc105", "keyboard_variant": "", "keyboard_options": ""},
     "injection": {"keyboard_manage": True, "keyboard_layout": "de\"; touch /tmp/x; \"", "keyboard_model": "pc105", "keyboard_variant": "", "keyboard_options": ""},
@@ -151,9 +159,11 @@ def test_keyboard_and_locale_scenarios(tmp_path: Path) -> None:
     result = run_playbook(tmp_path / "kl.yml", plays)
     assert result.returncode == 0, result.stdout + result.stderr
 
-    for name, (_, needle) in KEYBOARD_CASES.items():
+    for name, (variables, needle) in KEYBOARD_CASES.items():
         text = (out / f"k_{name}.keyboard").read_text()
         assert needle in text, name
+        for var, key in (("keyboard_layout", "XKBLAYOUT"), ("keyboard_variant", "XKBVARIANT"), ("keyboard_options", "XKBOPTIONS")):
+            assert f'{key}="{variables[var]}"' in text, (name, key)
         assert not (out / f"k_{name}.rejected").exists()
     german = (out / "k_german.keyboard").read_text()
     assert 'XKBVARIANT="nodeadkeys"' in german and 'XKBOPTIONS="compose:ralt"' in german
@@ -170,6 +180,35 @@ def test_keyboard_and_locale_scenarios(tmp_path: Path) -> None:
         assert (out / f"l_{name}.rejected").exists(), name
         assert not (out / f"l_{name}.locale").exists(), name
     assert not (out / "l_unmanaged.rejected").exists()
+
+
+def common_layout_rows() -> list[tuple[str, str, str]]:
+    """The (layout, variant, options) rows of the doc's "Common layouts" table."""
+    lines = ACCESSIBILITY_DOC.read_text().splitlines()
+    start = lines.index("### Common layouts")
+    header = next(i for i in range(start, len(lines)) if lines[i].startswith("| Keyboard |"))
+    rows = []
+    for line in lines[header + 2:]:
+        if not line.startswith("|"):
+            break
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        assert len(cells) == 4, line
+        values = []
+        for cell in cells[1:]:
+            assert cell.startswith("`") and cell.endswith("`"), f"value not in backticks: {line}"
+            value = cell.strip("`")
+            values.append("" if value == '""' else value)
+        rows.append(tuple(values))
+    return rows
+
+
+def test_common_layouts_table_matches_keyboard_cases() -> None:
+    rows = common_layout_rows()
+    assert len(rows) >= 6
+    assert len(set(rows)) == len(rows), "duplicate row in the common layouts table"
+    tested = {(v["keyboard_layout"], v["keyboard_variant"], v["keyboard_options"]) for v, _ in KEYBOARD_CASES.values()}
+    untested = [row for row in rows if row not in tested]
+    assert not untested, f"documented layouts missing from KEYBOARD_CASES: {untested}"
 
 
 # --- display scale: high-DPI and low-resolution paths, executed ---------------
