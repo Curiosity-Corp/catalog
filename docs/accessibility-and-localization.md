@@ -106,6 +106,13 @@ keys and other assistive input are not installed or configured by the role.
 Install what the person needs and keep it in their own configuration; the role
 will not overwrite it, because it only writes the files named here.
 
+A proposal to install these on request, an opt-in `accessibility_packages`
+list (default empty) with the packages it would accept on each supported
+distribution and what the role must never overwrite, is
+[decision record 0003](decisions/0003-opt-in-assistive-technology-packages.md).
+It is only proposed: no review by a person who uses assistive technology has
+happened yet, and the variable does not exist until it is accepted.
+
 ## Checked by
 
 `tests/test_accessibility_defaults.py` renders and applies the role's own task
