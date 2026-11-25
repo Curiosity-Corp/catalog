@@ -11,6 +11,9 @@ they land.
 | Variables to set for your lab | [Configuration](../configuration.md) | none |
 | A run that failed with a message | [Troubleshooting](../troubleshooting.md) | none |
 
+A word you do not know (profile, ring, tag, manifest, snapshot, quarantine,
+hardware profile) is defined in the [glossary](../glossary.md).
+
 Try every guide on a disposable VM first: the role changes packages, services,
 users, firewall rules and system files, and a syntax check proves only that the
 playbook parses.
