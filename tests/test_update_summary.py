@@ -183,6 +183,54 @@ def test_text_format_is_stable_and_short() -> None:
     assert len(text.splitlines()) < 30
 
 
+def test_normal_run_reports_elapsed_time_in_json_and_text() -> None:
+    summary = MOD.summarize(manifest())
+    assert summary["elapsed_seconds"] == 581  # 02:00:00Z to 02:09:41Z
+    text = MOD.render_text(summary)
+    lines = text.splitlines()
+    assert "Took:        9 min 41 s" in lines
+    assert lines.index("Took:        9 min 41 s") == lines.index("Finished:    2026-07-04T02:09:41Z") + 1
+    assert json.loads(MOD.render(summary, "json"))["elapsed_seconds"] == 581
+
+
+def test_elapsed_time_accepts_offsets_and_formats_long_and_short_runs() -> None:
+    offset = MOD.summarize(manifest(started_at="2026-07-04T04:00:00+02:00", finished_at="2026-07-04T02:00:45Z"))
+    assert offset["elapsed_seconds"] == 45
+    assert "Took:        45 s" in MOD.render_text(offset)
+    long_run = MOD.summarize(manifest(started_at="2026-07-04T01:00:00Z", finished_at="2026-07-04T02:02:03Z"))
+    assert "Took:        1 h 2 min 3 s" in MOD.render_text(long_run)
+
+
+def _assert_no_elapsed(summary: dict) -> None:
+    assert "elapsed_seconds" not in summary
+    assert "Took:" not in MOD.render_text(summary)
+    assert "elapsed_seconds" not in MOD.render(summary, "json")
+
+
+def test_missing_time_omits_elapsed_time() -> None:
+    for key in ("started_at", "finished_at"):
+        raw = manifest()
+        del raw[key]
+        _assert_no_elapsed(MOD.summarize(raw))
+        _assert_no_elapsed(MOD.summarize(manifest(**{key: ""})))
+        _assert_no_elapsed(MOD.summarize(manifest(**{key: None})))
+
+
+def test_bad_time_string_omits_elapsed_time() -> None:
+    for bad in ("not a time", "2026-13-45T99:99:99Z", "yesterday", 1720058400):
+        _assert_no_elapsed(MOD.summarize(manifest(started_at=bad)))
+        _assert_no_elapsed(MOD.summarize(manifest(finished_at=bad)))
+    # A finish before the start is not a duration.
+    _assert_no_elapsed(MOD.summarize(manifest(started_at="2026-07-04T03:00:00Z")))
+
+
+def test_saved_summary_without_elapsed_time_still_renders() -> None:
+    summary = MOD.summarize(manifest())
+    del summary["elapsed_seconds"]  # a summary saved before the field existed
+    text = MOD.render_text(summary)
+    assert "Took:" not in text and "Finished:    2026-07-04T02:09:41Z" in text
+
+
 def test_summary_fields_are_all_allow_listed_from_the_manifest() -> None:
     written = yaml.safe_load((ROLE / "tasks/update-manifest.yml").read_text())
     text = (ROLE / "tasks/update-manifest.yml").read_text()

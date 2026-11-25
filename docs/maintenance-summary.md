@@ -30,6 +30,7 @@ Workstation update 20260704T020000Z: success
 The update finished and every health check passed.
 
 Finished:    2026-07-04T02:09:41Z
+Took:        9 min 41 s
 Profile:     desktop, update ring general
 Catalog:     0123456789ab (signature verified)
 
@@ -53,6 +54,7 @@ The values are synthetic.
 | Section | Meaning |
 | --- | --- |
 | Status and headline | `success`, `failed`, `rolled_back` or a held run, in one sentence |
+| Took | How long the run took, from its start and finish times (left out when either is missing or unreadable) |
 | Tools changed | Files added, updated or removed, with their paths, and how many stayed the same |
 | Upstream releases checked | The release each moving application resolved to |
 | Health checks | Failures, and warnings for applications that are switched off |
@@ -67,6 +69,13 @@ The values are synthetic.
 never renamed or removed; a breaking change is a new schema version, and the
 helper refuses a manifest whose own schema it does not know (exit status 2).
 The text format is for people and may change wording.
+
+`elapsed_seconds` (added within `v1`) is the run's duration in whole seconds,
+computed from `started_at` and `finished_at` (ISO 8601; a time without an
+offset counts as UTC). It is left out, and the text output has no "Took" line,
+when either time is missing or cannot be parsed, or when the finish is before
+the start. Treat it as optional: a summary saved by an older helper does not
+have it.
 
 Exit status: `0` when a summary was produced, `2` when there is no usable
 manifest.
