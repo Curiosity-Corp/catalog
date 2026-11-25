@@ -27,6 +27,21 @@ earlyoom_avoid_regex: ""
 # Empty leaves the host's zone untouched. StreamStack's light schedule takes its
 # sunrise and sunset from this zone unless streamstack_latitude/longitude are set.
 workstation_timezone: ""
+
+# Keyboard layout and system locale (tasks/keyboard.yml, tasks/locale.yml).
+# Nothing is forced on an unrelated machine: the keyboard is written only on
+# the thin-client and byod-kiosk profiles (kiosks have no one to fix a wrong
+# layout at the login prompt) or when keyboard_manage is true, and the locale
+# only when locale_manage is true. A thin-client lab with a non-US keyboard
+# sets keyboard_layout; see docs/accessibility-and-localization.md.
+keyboard_manage: "{{ workstation_profile in ['thin-client', 'byod-kiosk'] }}"
+keyboard_layout: us
+keyboard_model: pc105
+keyboard_variant: ""
+keyboard_options: ""
+locale_manage: false
+locale_lang: ""
+locale_extra: []
 # Optional machine-local override file. Keep per-person/user values here on the
 # target host instead of committing host-specific maps to this repo.
 developer_workstation_local_vars_file: /etc/ansible/local-vars.yml
@@ -268,6 +283,12 @@ bitwarden_chromium_extension_targets:
 # that sets ExtensionSettings, so no other Chromium policy file may set it.
 chromium_removed_extensions: []
 
+# Set true on a slow, metered or offline-leaning link to skip the release API
+# call for any source whose application contract has an `enabled_when` flag that
+# is false on this host (see docs/low-bandwidth-and-offline.md). Default false:
+# every source is resolved on every run.
+latest_release_skip_disabled_sources: false
+
 # Every API-backed release source also has an explicit application contract.
 # The contract is inventory/provenance data, not a release pin: it says how an
 # application is obtained and how its installed result can be checked.
@@ -403,6 +424,8 @@ workstation_update_ring_randomized_delay_seconds:
 workstation_update_state_dir: /var/lib/curiosity/workstation-updates
 workstation_update_artifact_cache_dir: /var/cache/curiosity/artifacts
 workstation_update_manifest_path: /var/lib/curiosity/workstation-updates/last-run.json
+# World-readable, scrubbed copy of the last run's summary (see docs/maintenance-summary.md).
+workstation_update_summary_dir: /var/lib/curiosity/update-summary
 workstation_update_sbom_path: /var/lib/curiosity/workstation-updates/sbom.cdx.json
 workstation_update_snapshot_retention: 3
 # Count-based retention for snapshots/<run_id> (each holds a copy of every

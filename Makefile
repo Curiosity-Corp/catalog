@@ -1,4 +1,4 @@
-.PHONY: validate syntax lint yaml test research-profile collection sbom
+.PHONY: validate syntax lint yaml test research-profile accessibility-summary collection sbom
 
 PYTHON ?= python3
 ANSIBLE_ROLES_PATH ?= roles
@@ -15,6 +15,15 @@ syntax:
 
 lint:
 	ANSIBLE_ROLES_PATH=$(ANSIBLE_ROLES_PATH) ansible-lint playbooks/site.yml roles
+
+governance:
+	$(PYTHON) -m pytest -q tests/test_governance_docs.py tests/test_telemetry_policy.py
+
+quickstarts:
+	$(PYTHON) -m pytest -q tests/test_quickstarts.py tests/test_restricted_network.py
+
+accessibility-summary:
+	$(PYTHON) -m pytest -q tests/test_accessibility_defaults.py tests/test_update_summary.py
 
 test:
 	$(PYTHON) tests/test_update_policy.py

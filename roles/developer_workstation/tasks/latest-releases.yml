@@ -40,6 +40,29 @@
          or (_github_cli_token.stdout | default('') | trim) }}
   no_log: true
 
+# Opt-in for slow or metered links (latest_release_skip_disabled_sources, see
+# docs/low-bandwidth-and-offline.md): do not call the release API for a source
+# whose application contract names a feature flag (`enabled_when`) that is false
+# on this host. Same rule as update-health.yml. Off by default, so every source
+# is still resolved unless the operator asks otherwise.
+- name: Find release sources whose feature flag is off
+  ansible.builtin.set_fact:
+    _latest_release_sources_off: "{{ _latest_release_sources_off | default([]) + [item.key] }}"
+  loop: "{{ latest_release_contracts | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - latest_release_skip_disabled_sources | default(false) | bool
+    - item.value.enabled_when is defined
+    - not (lookup('vars', item.value.enabled_when, default=true) | bool)
+
+- name: Select the release sources to query
+  ansible.builtin.set_fact:
+    _latest_release_sources: >-
+      {{ latest_github_repositories | dict2items
+         | rejectattr('key', 'in', _latest_release_sources_off | default([]))
+         | list | items2dict }}
+
 - name: Query latest GitHub releases for binary applications
   ansible.builtin.uri:
     url: "https://api.github.com/repos/{{ item.value }}/releases/latest"
@@ -61,7 +84,7 @@
   # the release list below: /releases/latest returns whichever component
   # shipped last, not necessarily the one this workstation installs.
   loop: >-
-    {{ latest_github_repositories | dict2items
+    {{ _latest_release_sources | dict2items
        | rejectattr('key', 'in', latest_github_release_tag_prefixes | default({}) | list)
        | list }}
   loop_control:
@@ -182,7 +205,7 @@
     return_content: true
     status_code: [200]
   loop: >-
-    {{ latest_github_repositories | dict2items
+    {{ _latest_release_sources | dict2items
        | selectattr('key', 'in', latest_github_release_tag_prefixes | default({}) | list)
        | list }}
   loop_control:
@@ -228,7 +251,7 @@
     fail_msg: >-
       Could not resolve a current upstream release for {{ item }}. The lab
       refuses to fall back to a stale version or silently keep an old binary.
-  loop: "{{ latest_github_repositories.keys() | list }}"
+  loop: "{{ _latest_release_sources.keys() | list }}"
 
 - name: Build the compact upstream release manifest
   ansible.builtin.set_fact:

@@ -163,6 +163,17 @@ public-surface checks, and collection building. See
 - [Python research profile](docs/python-research-profile.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Glossary](docs/glossary.md)
+- [Project identity and links](docs/project-identity.md)
+- [Governance](GOVERNANCE.md)
+- [Threat model](docs/threat-model.md)
+- [Vulnerability response](docs/vulnerability-response.md)
+- [Telemetry and evidence policy](docs/telemetry-and-evidence.md)
+- [Researcher quickstarts](docs/quickstarts/README.md)
+- [Update rings](docs/update-rings.md)
+- [Python research profile](docs/python-research-profile.md)
+- [Accessibility and localization](docs/accessibility-and-localization.md)
+- [Maintenance summary](docs/maintenance-summary.md)
+- [Low-bandwidth and offline maintenance](docs/low-bandwidth-and-offline.md)
 - [Roadmap](docs/roadmap.md)
 
 Please do not put passwords, tokens, private keys, internal inventories, or

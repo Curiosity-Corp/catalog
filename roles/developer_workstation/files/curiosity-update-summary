@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""Plain-language summary of the last workstation update run.
+
+Reads the root-only run manifest (schema curiosity.workstation.update/v1) and
+prints what changed, what was verified and what needs attention, as text or as
+JSON with its own schema (curiosity.workstation.update-summary/v1).
+
+The summary is built from an allow-list of manifest fields. It never copies the
+host name, package inventories, checksums, signer fingerprints or application
+contracts, and it redacts credential-looking strings and home directory names
+from the one free-text field (the failure message), so it is safe to show to
+the person who uses the machine and to attach to a bug report.
+
+Exit status: 0 when a summary was produced, 2 when there is no usable manifest.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+SOURCE_SCHEMA = "curiosity.workstation.update/v1"
+SUMMARY_SCHEMA = "curiosity.workstation.update-summary/v1"
+DEFAULT_MANIFEST = "/var/lib/curiosity/workstation-updates/last-run.json"
+DEFAULT_SUMMARY_DIR = "/var/lib/curiosity/update-summary"
+MAX_FREE_TEXT = 300
+
+# Every manifest field this program reads. tests/test_update_summary.py checks
+# that update-manifest.yml still writes each of them.
+MANIFEST_KEYS = (
+    "schema",
+    "run_id",
+    "status",
+    "started_at",
+    "finished_at",
+    "profile",
+    "update_ring",
+    "ring_blockers",
+    "quarantine_active",
+    "install_allowed",
+    "catalog_commit",
+    "catalog_commit_verified",
+    "catalog_integrity_mode",
+    "upstream_releases",
+    "before",
+    "after",
+    "healthcheck_failures",
+    "healthcheck_warnings",
+    "skipped_integrations",
+    "failure",
+)
+
+HEADLINES = {
+    "success": "The update finished and every health check passed.",
+    "held": "The update was held back; nothing was installed.",
+    "failed": "The update stopped before changing anything.",
+    "rolled_back": "The update failed and your previous tools were restored.",
+}
+
+_REDACTIONS = (
+    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"), "Bearer [redacted]"),
+    (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|glpat-[A-Za-z0-9_-]{16,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b"), "[redacted]"),
+    (re.compile(r"(?i)\b([A-Za-z0-9_.-]*(?:token|secret|passw(?:or)?d|passwd|api[_-]?key|credential)[A-Za-z0-9_.-]*)\s*[=:]\s*\S+"), r"\1=[redacted]"),
+    (re.compile(r"(?<=://)[^/\s:@]+:[^/\s@]+@"), "[redacted]@"),
+    (re.compile(r"(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----).*", re.S), r"\1 [redacted]"),
+    (re.compile(r"/(?:home|Users)/[^/\s]+"), "~"),
+    (re.compile(r"/root\b"), "~"),
+)
+
+
+def redact(text: object) -> str:
+    """Return text with credential-like strings and home directories removed."""
+    value = " ".join(str(text).split())
+    for pattern, replacement in _REDACTIONS:
+        value = pattern.sub(replacement, value)
+    if len(value) > MAX_FREE_TEXT:
+        value = value[: MAX_FREE_TEXT - 3] + "..."
+    return value
+
+
+def _list(value: object) -> list:
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _names(value: object) -> list[str]:
+    return sorted({redact(item) for item in _list(value) if isinstance(item, (str, int))})
+
+
+def _tool_changes(before: list, after: list) -> tuple[list[dict], int]:
+    """Compare the managed-binary inventories taken before and after the run."""
+    after_by_path = {str(a.get("path")): a for a in after if isinstance(a, dict)}
+    changes: list[dict] = []
+    unchanged = 0
+    for entry in before:
+        if not isinstance(entry, dict):
+            continue
+        path = str(entry.get("path", ""))
+        post = after_by_path.get(path)
+        if post is None:
+            continue
+        was, now = bool(entry.get("exists")), bool(post.get("exists"))
+        if not was and now:
+            change = "added"
+        elif was and not now:
+            change = "removed"
+        elif was and now and entry.get("checksum") != post.get("checksum"):
+            change = "updated"
+        else:
+            unchanged += 1
+            continue
+        changes.append({"path": redact(path), "change": change})
+    return sorted(changes, key=lambda item: item["path"]), unchanged
+
+
+def summarize(manifest: dict) -> dict:
+    """Build the update-summary/v1 document from a run manifest."""
+    if manifest.get("schema") != SOURCE_SCHEMA:
+        raise ValueError(f"unsupported manifest schema {manifest.get('schema')!r}; expected {SOURCE_SCHEMA}")
+    status = str(manifest.get("status", "unknown"))
+    blockers = _names(manifest.get("ring_blockers"))
+    failures = _names(manifest.get("healthcheck_failures"))
+    warnings = _names(manifest.get("healthcheck_warnings"))
+    skipped = _names(manifest.get("skipped_integrations"))
+    changes, unchanged = _tool_changes(_list(manifest.get("before")), _list(manifest.get("after")))
+    releases = manifest.get("upstream_releases") if isinstance(manifest.get("upstream_releases"), dict) else {}
+    versions = {
+        redact(name): redact(info.get("tag_name", ""))
+        for name, info in sorted(releases.items())
+        if isinstance(info, dict) and info.get("tag_name")
+    }
+    failure = manifest.get("failure") if isinstance(manifest.get("failure"), dict) else {}
+    rolled_back = status == "rolled_back"
+    quarantine = bool(manifest.get("quarantine_active"))
+    mode = str(manifest.get("catalog_integrity_mode", ""))
+    verified = bool(manifest.get("catalog_commit_verified"))
+
+    attention: list[str] = []
+    if status in ("failed", "rolled_back"):
+        reason = redact(failure.get("message", "no reason was recorded"))
+        step = redact(failure.get("task", "unknown step"))
+        attention.append(f"The run failed at '{step}': {reason}")
+    if rolled_back:
+        attention.append("Your previous tools were restored. Fix the cause before the next scheduled run.")
+    if status == "held" or manifest.get("install_allowed") is False:
+        if blockers:
+            attention.append("Waiting for upstream releases to age past the ring delay: " + ", ".join(blockers))
+        else:
+            attention.append("Installation was held back by the update ring or a quarantine.")
+    if quarantine:
+        attention.append("A recent failed update has quarantined installs; they will retry later.")
+    if failures:
+        attention.append("Health checks failed for: " + ", ".join(failures))
+    if mode == "enforce" and not verified:
+        attention.append("The catalog commit is not signed by the trusted key.")
+    elif mode == "warn" and not verified:
+        attention.append("The catalog commit signature was not verified (integrity mode is warn).")
+
+    commit = str(manifest.get("catalog_commit", ""))
+    summary = {
+        "schema": SUMMARY_SCHEMA,
+        "source_schema": SOURCE_SCHEMA,
+        "run_id": redact(manifest.get("run_id", "")),
+        "status": status,
+        "headline": HEADLINES.get(status, f"The update ended with status '{redact(status)}'."),
+        "started_at": redact(manifest.get("started_at", "")),
+        "finished_at": redact(manifest.get("finished_at", "")),
+        "profile": redact(manifest.get("profile", "")),
+        "update_ring": redact(manifest.get("update_ring", "")),
+        "install_allowed": manifest.get("install_allowed") is not False,
+        "ring_blockers": blockers,
+        "quarantine_active": quarantine,
+        "catalog": {
+            "commit": redact(commit)[:12],
+            "signature_verified": verified,
+            "integrity_mode": redact(mode),
+        },
+        "tools": {"changed": changes, "unchanged": unchanged},
+        "upstream_releases": versions,
+        "health": {"failures": failures, "warnings": warnings},
+        "skipped_integrations": skipped,
+        "rollback": {
+            "performed": rolled_back,
+            "failed_task": redact(failure.get("task", "")) if rolled_back else "",
+            "reason": redact(failure.get("message", "")) if rolled_back else "",
+        },
+        "needs_attention": attention,
+    }
+    return summary
+
+
+def render_text(summary: dict) -> str:
+    """Render a summary document as short terminal text."""
+    lines = [
+        f"Workstation update {summary['run_id'] or '(unknown run)'}: {summary['status']}",
+        summary["headline"],
+        "",
+        f"Finished:    {summary['finished_at'] or 'unknown'}",
+        f"Profile:     {summary['profile'] or 'unknown'}, update ring {summary['update_ring'] or 'unknown'}",
+        "Catalog:     {commit} ({sig})".format(
+            commit=summary["catalog"]["commit"] or "unknown",
+            sig="signature verified" if summary["catalog"]["signature_verified"] else "signature not verified",
+        ),
+        "",
+    ]
+    changed = summary["tools"]["changed"]
+    if changed:
+        lines.append(f"Tools changed ({len(changed)}):")
+        lines += [f"  {item['change']:<8} {item['path']}" for item in changed]
+    else:
+        lines.append("Tools changed: none")
+    lines.append(f"Tools unchanged: {summary['tools']['unchanged']}")
+    if summary["upstream_releases"]:
+        lines.append(f"Upstream releases checked: {len(summary['upstream_releases'])}")
+    lines.append("")
+    health = summary["health"]
+    lines.append("Health checks failed: " + (", ".join(health["failures"]) or "none"))
+    lines.append("Health warnings (disabled apps): " + (", ".join(health["warnings"]) or "none"))
+    lines.append("Optional integrations skipped: " + (", ".join(summary["skipped_integrations"]) or "none"))
+    rollback = summary["rollback"]
+    lines.append("Rollback: " + ("performed" if rollback["performed"] else "not needed"))
+    lines.append("")
+    if summary["needs_attention"]:
+        lines.append("Needs attention:")
+        lines += [f"  - {item}" for item in summary["needs_attention"]]
+    else:
+        lines.append("Needs attention: nothing")
+    return "\n".join(lines) + "\n"
+
+
+def render(summary: dict, fmt: str) -> str:
+    if fmt == "json":
+        return json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    return render_text(summary)
+
+
+def _load(path: Path) -> dict:
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError("the manifest is not a JSON object")
+    return data
+
+
+def _write_public(path: Path, content: str) -> None:
+    """Write a world-readable file atomically."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Summarize the last workstation update run.")
+    parser.add_argument("--manifest", default=DEFAULT_MANIFEST, help="run manifest to read (root-only by default)")
+    parser.add_argument("--summary-dir", default=DEFAULT_SUMMARY_DIR, help="directory holding the saved summary files")
+    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="save last-run-summary.txt and last-run-summary.json (world-readable) in --summary-dir; needs the manifest",
+    )
+    args = parser.parse_args(argv)
+
+    manifest_path = Path(args.manifest)
+    summary_dir = Path(args.summary_dir)
+    try:
+        summary = summarize(_load(manifest_path))
+    except PermissionError:
+        # An ordinary user cannot read the root-only manifest; show the saved,
+        # already-scrubbed summary the last run wrote instead.
+        saved = summary_dir / "last-run-summary.json"
+        try:
+            summary = json.loads(saved.read_text())
+        except (OSError, ValueError):
+            print(f"curiosity-update-summary: cannot read {manifest_path} or {saved}", file=sys.stderr)
+            return 2
+        if summary.get("schema") != SUMMARY_SCHEMA:
+            print("curiosity-update-summary: the saved summary has an unknown schema", file=sys.stderr)
+            return 2
+        sys.stdout.write(render(summary, args.format))
+        return 0
+    except FileNotFoundError:
+        print(f"curiosity-update-summary: no run manifest at {manifest_path}", file=sys.stderr)
+        return 2
+    except (ValueError, OSError) as exc:
+        print(f"curiosity-update-summary: {redact(exc)}", file=sys.stderr)
+        return 2
+
+    if args.write:
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(summary_dir, 0o755)
+        _write_public(summary_dir / "last-run-summary.txt", render_text(summary))
+        _write_public(summary_dir / "last-run-summary.json", render(summary, "json"))
+    else:
+        sys.stdout.write(render(summary, args.format))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

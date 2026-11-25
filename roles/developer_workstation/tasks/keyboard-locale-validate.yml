@@ -1,0 +1,32 @@
+---
+# Validate keyboard and locale variables before anything is written. Included
+# by keyboard.yml and locale.yml; kept separate so it can be tested on its own.
+- name: Validate the keyboard settings
+  ansible.builtin.assert:
+    that:
+      - keyboard_layout | string is match('^[a-z]{2,3}(,[a-z]{2,3})*$')
+      - keyboard_model | string is match('^[a-z0-9_-]+$')
+      - keyboard_variant | string is match('^[A-Za-z0-9_,-]*$')
+      - keyboard_options | string is match('^[A-Za-z0-9_:,.-]*$')
+    fail_msg: >-
+      keyboard_layout must be an XKB layout code such as us, de or gb (several
+      separated by commas, for example us,ru); keyboard_model, keyboard_variant
+      and keyboard_options may contain only letters, digits and _ : , . -
+      (got layout '{{ keyboard_layout }}', model '{{ keyboard_model }}',
+      variant '{{ keyboard_variant }}', options '{{ keyboard_options }}').
+    quiet: true
+  when: keyboard_manage | bool
+
+- name: Validate the locale settings
+  ansible.builtin.assert:
+    that:
+      - locale_lang | string is match('^([a-z]{2,3}_[A-Z]{2}(@[a-z]+)?\.UTF-8|C\.UTF-8)$')
+      - >-
+        locale_extra | map('string') | reject('match',
+        '^([a-z]{2,3}_[A-Z]{2}(@[a-z]+)?\.UTF-8|C\.UTF-8)$') | list | length == 0
+    fail_msg: >-
+      locale_lang must be a UTF-8 locale such as en_US.UTF-8, en_GB.UTF-8 or
+      de_DE.UTF-8 (or C.UTF-8), and locale_extra a list of the same; got
+      '{{ locale_lang }}' and {{ locale_extra }}.
+    quiet: true
+  when: locale_manage | bool

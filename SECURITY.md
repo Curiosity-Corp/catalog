@@ -22,6 +22,13 @@ profile, task tag, impact, reproduction steps, and a proposed mitigation if
 known. Reports are acknowledged when a maintainer is available, triaged for
 severity, and disclosed with credit only when the reporter agrees.
 
+What happens after you report is written down in the
+[vulnerability response runbook](docs/vulnerability-response.md): the
+acknowledgement, triage, fix, disclosure, credit and emergency-release steps and
+their target clocks. The team rehearses it with a made-up report
+([tabletop exercise](docs/security-tabletop.md)). What the project defends, and
+what it does not, is in the [threat model](docs/threat-model.md).
+
 ## Supported versions
 
 Only the latest released collection and the default branch receive routine
