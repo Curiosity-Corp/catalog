@@ -162,6 +162,7 @@ public-surface checks, and collection building. See
 - [PIA VPN split tunnel and managed WiFi](docs/pia-vpn-and-wifi.md)
 - [Python research profile](docs/python-research-profile.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Glossary](docs/glossary.md)
 - [Roadmap](docs/roadmap.md)
 
 Please do not put passwords, tokens, private keys, internal inventories, or
