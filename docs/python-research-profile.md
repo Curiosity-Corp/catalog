@@ -71,11 +71,17 @@ moving software to its latest release at run time.
   and move with its security and point updates.
 
 To hold versions for a whole lab, do not pin them in the package list: keep a
-constraints file and name it.
+constraints file and name it. Start from
+[`examples/python-research-constraints.txt`](../examples/python-research-constraints.txt),
+a commented example with synthetic ranges, copy it to the machine as
+`/etc/lab/constraints.txt` with the ranges your lab agreed on, and set:
 
 ```yaml
 science_python_pip_extra_args: "--constraint /etc/lab/constraints.txt"
 ```
+
+A constraints file only limits versions of packages that are already being
+installed; it never adds one to the environment.
 
 To hold versions for one study, give the study its own environment (next
 section).
