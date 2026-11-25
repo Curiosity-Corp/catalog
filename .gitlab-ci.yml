@@ -106,6 +106,34 @@ accessibility-summary:
   script:
     - python -m pytest -q tests/test_accessibility_defaults.py tests/test_update_summary.py tests/test_update_interrupted_recovery.py
 
+# catalog#135: follow docs/quickstarts/laptop.md in a throwaway Debian 13
+# container (preview with --check --diff, then apply, then apply again) and
+# keep a per-step report. "localhost" is the job container itself; this job
+# never targets a real host or inventory. It runs on merge requests that touch
+# the quickstart or this harness, and is a manual button on every other merge
+# request. The report feeds docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
+debian13-quickstart:
+  stage: test
+  image: debian:trixie
+  timeout: 90m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - scripts/debian_quickstart_run.sh
+        - docs/quickstarts/laptop.md
+        - examples/laptop.yml
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+  script:
+    - scripts/debian_quickstart_run.sh
+  artifacts:
+    when: always
+    name: "debian13-quickstart-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - debian-quickstart/
+    expire_in: 30 days
+
 lint:
   extends: .python_setup
   stage: validate
