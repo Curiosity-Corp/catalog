@@ -63,6 +63,29 @@ wrong type (a single string instead of a list, a relative venv path).
 before any venv is touched, so nothing on the machine changed. See the
 [Python research profile](python-research-profile.md).
 
+## Invalid time zone
+
+```text
+workstation_timezone=<value> is not an IANA zone in /usr/share/zoneinfo (for example America/New_York).
+```
+
+**Likely cause.** `workstation_timezone` holds something that is not a zone
+name: a locale such as `en_US.UTF-8`, an abbreviation such as `EST`, a typo
+(`America/New-York`), or a region directory such as `America` on its own.
+
+**Check.** `timedatectl list-timezones | grep -i <city>` on the machine lists
+the names it accepts.
+
+**Next.** Set the exact name, for example `workstation_timezone: Europe/Berlin`,
+or leave it empty (`""`, the default) to keep the machine's own zone. The check
+runs before the zone is changed, so nothing on the machine changed.
+
+The keyboard layout has no variable yet: `thin-client` and `byod-kiosk`
+machines are always set to the US layout (`tasks/keyboard.yml`), so there is no
+keyboard value to get wrong. If `@` and `"` are swapped on such a machine, the
+keyboard task has not run: run the pull again and look for
+`Write /etc/default/keyboard (XKBLAYOUT=us)` in its output.
+
 ## Update rolled back after a failed health check
 
 ```text

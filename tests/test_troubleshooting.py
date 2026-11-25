@@ -15,9 +15,19 @@ ROOT = Path(__file__).resolve().parents[1]
 TASKS = ROOT / "roles/developer_workstation/tasks"
 PAGE = ROOT / "docs/troubleshooting.md"
 TEXT = PAGE.read_text()
+QUICKSTARTS = ROOT / "docs/quickstarts"
 CI = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
 
-MESSAGES = re.findall(r"^```text\n(.+?)\n```", TEXT, flags=re.MULTILINE | re.DOTALL)
+# Quickstarts quote some of the same messages (docs/quickstarts/restricted-networks.md);
+# they are held to the same rule.
+QUOTING_PAGES = [PAGE, *sorted(QUICKSTARTS.glob("*.md"))]
+
+
+def _messages(text: str) -> list[str]:
+    return re.findall(r"^```text\n(.+?)\n```", text, flags=re.MULTILINE | re.DOTALL)
+
+
+MESSAGES = _messages(TEXT)
 
 
 def _strings(node: object):
@@ -63,18 +73,26 @@ def _occurs(message: str) -> bool:
 
 def test_page_quotes_the_issue_s_failures() -> None:
     joined = "\n".join(MESSAGES)
-    for fragment in ("stale version", "SHA-256 asset digests", "ipykernel", "rolled back"):
+    for fragment in (
+        "stale version",
+        "SHA-256 asset digests",
+        "ipykernel",
+        "is not an IANA zone",
+        "rolled back",
+    ):
         assert fragment in joined, fragment
-    assert len(MESSAGES) >= 4
+    assert len(MESSAGES) >= 5
 
 
 def test_every_quoted_message_is_still_printed_by_the_role() -> None:
-    for message in MESSAGES:
-        assert _occurs(message), f"no task prints: {message}"
+    for page in QUOTING_PAGES:
+        for message in _messages(page.read_text()):
+            assert _occurs(message), f"{page.relative_to(ROOT)}: no task prints: {message}"
 
 
 def test_a_reworded_message_would_fail() -> None:
     assert not _occurs("Could not resolve an upstream release for <name>.")
+    assert not _occurs("workstation_timezone=<value> is not a valid zone.")
 
 
 def test_page_links_resolve() -> None:
@@ -86,6 +104,14 @@ def test_page_links_resolve() -> None:
 
 def test_readme_links_the_page() -> None:
     assert "](docs/troubleshooting.md)" in (ROOT / "README.md").read_text()
+
+
+def test_quickstarts_index_links_the_page() -> None:
+    # docs/quickstarts/ arrives with Draft !166; from the commit that adds its
+    # index, the index must link this page.
+    index = QUICKSTARTS / "README.md"
+    if index.exists():
+        assert "](../troubleshooting.md)" in index.read_text()
 
 
 def test_this_file_runs_in_the_policy_job() -> None:
