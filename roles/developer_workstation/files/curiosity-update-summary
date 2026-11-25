@@ -21,6 +21,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 SOURCE_SCHEMA = "curiosity.workstation.update/v1"
@@ -88,6 +89,46 @@ def _list(value: object) -> list:
 
 def _names(value: object) -> list[str]:
     return sorted({redact(item) for item in _list(value) if isinstance(item, (str, int))})
+
+
+def _parse_time(value: object) -> datetime | None:
+    """Parse an ISO 8601 manifest time; None when it is missing or unparseable.
+
+    The role writes ansible_date_time.iso8601 (for example 2026-07-04T02:09:41Z).
+    A time without an offset is taken as UTC.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text[-1:] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def elapsed_seconds(started_at: object, finished_at: object) -> int | None:
+    """Whole seconds from start to finish, or None when either time is unusable.
+
+    A finish before the start is not a duration, so it also gives None.
+    """
+    start, finish = _parse_time(started_at), _parse_time(finished_at)
+    if start is None or finish is None or finish < start:
+        return None
+    return int(round((finish - start).total_seconds()))
+
+
+def format_duration(seconds: int) -> str:
+    """Render a duration for people: '45 s', '9 min 41 s', '1 h 2 min 3 s'."""
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours} h {minutes} min {secs} s"
+    if minutes:
+        return f"{minutes} min {secs} s"
+    return f"{secs} s"
 
 
 def _tool_changes(before: list, after: list) -> tuple[list[dict], int]:
@@ -189,6 +230,9 @@ def summarize(manifest: dict) -> dict:
         },
         "needs_attention": attention,
     }
+    elapsed = elapsed_seconds(manifest.get("started_at"), manifest.get("finished_at"))
+    if elapsed is not None:
+        summary["elapsed_seconds"] = elapsed
     return summary
 
 
@@ -199,6 +243,12 @@ def render_text(summary: dict) -> str:
         summary["headline"],
         "",
         f"Finished:    {summary['finished_at'] or 'unknown'}",
+    ]
+    # A summary saved before this field existed has no elapsed_seconds.
+    elapsed = summary.get("elapsed_seconds")
+    if isinstance(elapsed, int) and not isinstance(elapsed, bool) and elapsed >= 0:
+        lines.append(f"Took:        {format_duration(elapsed)}")
+    lines += [
         f"Profile:     {summary['profile'] or 'unknown'}, update ring {summary['update_ring'] or 'unknown'}",
         "Catalog:     {commit} ({sig})".format(
             commit=summary["catalog"]["commit"] or "unknown",
