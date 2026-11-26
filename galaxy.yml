@@ -42,6 +42,8 @@ build_ignore:
   - .ci-venv
   - .research-profile
   - research-profile-report.md
+  # config-validation CI job report and run logs (catalog#31), not collection content.
+  - config-validation
   - docs/evidence
   # Unresolved provenance, left out of the artifact until resolved (catalog#48,
   # THIRD_PARTY.md): screenshots of third-party apps and a live camera frame.

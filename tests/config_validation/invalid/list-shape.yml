@@ -1,0 +1,5 @@
+---
+# A single name where a list belongs. Ansible's list type would split the
+# string on commas and accept it; validate-config.yml reports it.
+# expect: locale_extra must be a list (YAML "- item" lines or [a, b]); got "de_DE.UTF-8".
+locale_extra: de_DE.UTF-8

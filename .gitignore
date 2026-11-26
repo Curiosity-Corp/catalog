@@ -16,6 +16,7 @@ __pycache__/
 .ci-venv/
 .research-profile/
 research-profile-report.md
+config-validation/
 debian-quickstart/
 .debian-quickstart-work/
 .quickstart-check-preview/

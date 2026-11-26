@@ -1,0 +1,31 @@
+---
+# Types and secret marking of the role's public variables (catalog#31).
+# defaults/main.yml stays the source of every default. Ansible checks this spec
+# before the role's first task; the role's own first task then checks the UUIDs,
+# names and paths. workstation_storage_luks_key_file is marked no_log as a
+# credential path.
+argument_specs:
+  main:
+    short_description: Encrypted btrfs /home volume for a workstation
+    description:
+      - Validates the public configuration before any disk, mount or service change.
+      - The full variable reference is docs/reference.md and the design docs/storage.md.
+    author: Curiosity Research Corporation
+    options:
+      workstation_storage_enabled: {type: bool}
+      workstation_storage_luks_uuid: {type: str}
+      workstation_storage_fs_uuid: {type: str}
+      workstation_storage_mapper: {type: str}
+      workstation_storage_tpm2: {type: bool}
+      workstation_storage_data_mount: {type: str}
+      workstation_storage_mount_options: {type: str}
+      workstation_storage_mount_extra: {type: str}
+      workstation_storage_extra_mounts: {type: list}
+      workstation_storage_users: {type: list}
+      workstation_storage_soak_days: {type: int}
+      workstation_storage_maintenance_timers_enabled: {type: bool}
+      workstation_storage_provision: {type: bool}
+      workstation_storage_device: {type: str}
+      workstation_storage_luks_size: {type: str}
+      workstation_storage_luks_key_file: {type: str, no_log: true}
+      workstation_storage_tpm2_pcrs: {type: str}

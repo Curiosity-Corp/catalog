@@ -143,6 +143,7 @@ profile_notes:
 tags:
   always:
     description: "Runs on every invocation, even with --tags. Skip it only with --skip-tags always."
+  validate: {description: "The public configuration check (validate-config.yml). Always runs, before any change; see configuration.md#validation."}
   updates: {description: "The managed update transaction: foundation, rings, rollback, health and manifest."}
   security: {description: "Security hardening, including the pro-mimic plane."}
   hardware: {description: "Hardware profile packages, services, udev rules and device helpers."}

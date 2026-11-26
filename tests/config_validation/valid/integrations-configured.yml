@@ -1,0 +1,30 @@
+---
+# Every opt-in integration with a cross-field rule, configured completely.
+# Placeholder values only: example.org hosts and made-up checksums.
+workstation_profile: desktop
+hardware_profile: generic
+coder_cli_enabled: true
+coder_deployment_url: https://coder.example.org
+keycloak_sso_enabled: true
+keycloak_host: sso.example.org
+keycloak_realm: lab
+keycloak_desktop_client_id: workstation-desktop
+weechat_enabled: true
+weechat_teams_enabled: true
+weechat_teams_client_id: 00000000-0000-0000-0000-000000000000
+jellyfin_desktop_enabled: true
+jellyfin_web_url: http://jellyfin.lab.example.org:8096
+focuspass_screenlock_enabled: true
+focuspass_screenlock_install_url: https://downloads.example.org/focuspass-screenlock.deb
+focuspass_screenlock_install_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+catalog_integrity_mode: enforce
+catalog_signing_key_fingerprint: 0123456789ABCDEF0123456789ABCDEF01234567
+fleetd_enabled: true
+fleetd_registry_id: lab-ws-01
+fleetd_package_base_url: https://packages.example.org/fleetd
+wifi_ssid: lab-wifi
+wifi_psk: correct-horse-battery
+custom_ca_certificates:
+  - name: lab-root
+    src: /srv/ca/lab-root.crt
+earlyoom_mem_percent: "10"

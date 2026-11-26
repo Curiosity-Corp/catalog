@@ -1,0 +1,6 @@
+---
+# A mistyped profile is reported with its value and the allowed values.
+# expect: value of workstation_profile must be one of: desktop, workspace, thin-client, byod-kiosk, got: lab
+# expect: value of workstation_update_ring must be one of: canary, early, general, got: nightly
+workstation_profile: lab
+workstation_update_ring: nightly

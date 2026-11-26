@@ -1,0 +1,12 @@
+---
+# Only the role's public configuration validation, which reads variables and
+# changes nothing (scripts/config_validation_check.sh).
+- name: Validate the public configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Run validate-config.yml
+      ansible.builtin.include_role:
+        name: developer_workstation
+        tasks_from: validate-config

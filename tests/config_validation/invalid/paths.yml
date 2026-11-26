@@ -1,0 +1,8 @@
+---
+# expect: custom_ca_bundle_path must be empty or an absolute path without spaces
+# expect: got "certs/ca.crt"
+# expect: science_python_venv must be empty or an absolute path without spaces
+# expect: dev_user_home must be the primary account's absolute home directory
+custom_ca_bundle_path: certs/ca.crt
+science_python_venv: opt/science venv
+dev_user_home: home/researcher

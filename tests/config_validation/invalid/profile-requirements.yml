@@ -1,0 +1,4 @@
+---
+# expect: workstation_profile byod-kiosk needs kiosk_target_url
+workstation_profile: byod-kiosk
+kiosk_target_url: ""

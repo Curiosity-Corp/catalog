@@ -11,6 +11,95 @@ default, valid values, stability (supported, experimental, internal or
 private hook) and safety impact. It is generated from the role defaults and
 tasks, and CI fails when it is out of date.
 
+## Validation
+
+Every run of the `developer_workstation` role checks the public configuration
+before it installs a package, writes a file or touches a service. The check
+(`roles/developer_workstation/tasks/validate-config.yml`, tag `validate`) runs
+right after the local variables load. It runs under any `--tags`, including
+`--skip-tags preflight`, and needs neither root nor facts. It reads variables
+and changes nothing. An invalid configuration stops the run there, and the host
+is left as it was.
+
+It checks three layers:
+
+1. **Types and allowed values.** Each role's `meta/argument_specs.yml` gives the
+   type of every public variable (`str`, `bool`, `int`, `list`, `dict`, `raw`)
+   and the allowed values of the enums (`workstation_profile`,
+   `workstation_update_ring`, `catalog_integrity_mode`, `display_manager_mode`,
+   `minimal_desktop_greeter`, `minimal_desktop_tint2_layout`). Ansible checks
+   the spec automatically before the role starts, and `validate_argument_spec`
+   checks it again once `local-vars.yml` has loaded. `workstation_storage` has
+   its own spec, which Ansible checks automatically. Variables whose default is
+   derived from the hardware profile are typed too, so an override is checked;
+   the three whose defaults need host facts are not.
+2. **Shapes the type check lets through.** A list must really be a list (Ansible
+   would quietly split `"a,b"`), and a mapping must be a mapping. A `*_url` must
+   be empty or `https://` with no login part before an `@`. `jellyfin_web_url`
+   and `kiosk_target_url` may also use `http://`. A `*_sha256` must be 64 hex
+   digits and a `*_fingerprint` 16 or 40. A path-like name (`*_path`, `*_dir`,
+   `*_home`, `*_bin`, `*_file`, `*_venv` and so on) must be empty or an absolute
+   path.
+3. **Rules between variables:**
+   - `hardware_profile` must name a profile in `hardware_profiles`.
+   - The update ring needs an age and a delay policy, and its numbers must be
+     whole numbers.
+   - `catalog_integrity_mode: enforce` needs a 40-digit fingerprint.
+   - An enabled integration needs the values it uses: `coder_cli_enabled` needs
+     `coder_deployment_url`; the byod-kiosk profile needs `kiosk_target_url`;
+     missionctl needs its URL and checksum on thin-client; focuspass needs its
+     URL and checksum; Keycloak SSO needs its host, realm and client ID;
+     WeeChat Teams needs its client ID; Jellyfin needs its web URL; fleetd needs
+     its registry ID and package URL; Wi-Fi needs a PSK of at least 8 characters.
+   - `pia_tunnel_apps` cannot be combined with a hardware profile that already
+     routes everything through PIA.
+
+   Each rule uses the same profile condition as the task it protects, so a
+   setting a profile ignores is never required.
+
+Every problem the check finds is reported in one failed task:
+
+```text
+The public configuration is invalid and nothing on this host was changed.
+Fix these setting(s), then run the role again (docs/configuration.md#validation):
+- coder_deployment_url must be empty or an https:// URL without login details before an @, such as https://host.example.org/path; got "http://***@coder.example.org".
+- hardware_profile must name an entry of hardware_profiles, one of generic, arm-thin-client, x86-byod-laptop, z590, deskmeet-b760, t460 (use generic when no hardware-specific profile applies); got "z591".
+```
+
+A wrong type or enum value stops the run one step earlier, with Ansible's own
+messages, for example:
+
+```text
+Validation of arguments failed:
+value of workstation_profile must be one of: desktop, workspace, thin-client, byod-kiosk, got: lab
+argument 'swap_size_gb' is of type str and we were unable to convert to int: "'lots'" cannot be converted to an int
+```
+
+Secrets are never printed. A variable marked `no_log` in the spec (tokens, the
+Wi-Fi PSK, enroll secrets, key files, webhook URLs) appears as `$REDACTED$` in
+Ansible's messages and as `(hidden: no_log value)` in the role's own. A login
+part in a URL appears as `***@`. The rules that read a secret run in their own
+`no_log` task, and their messages name the variable without its value.
+
+A retired variable (such as `claude_native_installer_url`, retired by
+catalog#171) is not in the spec: a host that still sets one gets only the
+role's warning that it is ignored, never a validation error.
+
+The later checks inside each feature's tasks stay as a second line of
+defence. A configuration that used to fail half-way through a run now fails at
+the start, before anything changes.
+
+When you add a public variable, give it a line in the role's
+`meta/argument_specs.yml`: a type, `choices` for an enum, and `no_log: true` for
+a secret. Name a URL, checksum or path so that its suffix matches the shape
+check. A requirement between variables becomes an entry in `_config_rules`
+(`_config_hidden_rules` when it reads a secret). Tests: add a valid and an
+invalid case under `tests/config_validation/` (see its README). The
+`config-validation` CI job runs them with `scripts/config_validation_check.sh`.
+`tests/test_argument_specs.py` fails when a public variable of
+[`reference.md`](reference.md) has no spec entry, or when a secret is not marked
+`no_log`.
+
 ## Minimal local variables
 
 ```yaml

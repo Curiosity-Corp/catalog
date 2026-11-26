@@ -1,0 +1,9 @@
+---
+# A URL with embedded credentials is reported without them.
+# expect: coder_deployment_url must be empty or an https:// URL without login details before an @
+# expect: got "http://***@coder.example.org"
+# expect: kiosk_target_url must be empty or an http:// or https:// URL
+# expect: got "ftp://kiosk.example.org/"
+coder_cli_enabled: true
+coder_deployment_url: http://researcher:SENTINEL-url-password@coder.example.org
+kiosk_target_url: ftp://kiosk.example.org/

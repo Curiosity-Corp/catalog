@@ -1,0 +1,258 @@
+---
+# =============================================================================
+# Public configuration validation (catalog#31)
+# =============================================================================
+# Included by main.yml before the pre-flight checks and before any package,
+# file or service task, so a mistyped profile, URL, enum or path stops the run
+# with nothing changed. It reads only variables: no command, no file access on
+# the host, no facts.
+#
+# Three layers, each reporting every problem it finds at once:
+#
+# 1. meta/argument_specs.yml through validate_argument_spec: types and the
+#    allowed values of enumerations. Ansible already ran the same spec before
+#    the role's first task; this second run sees the values that
+#    /etc/ansible/local-vars.yml loaded since.
+# 2. Shape and format rules the spec cannot state, applied by name to every
+#    string option of the spec: list and mapping options really are lists and
+#    mappings (the spec's list type silently splits a string on commas),
+#    *_url is an https:// URL, *_sha256 a SHA-256, *_fingerprint an OpenPGP key
+#    fingerprint, and path-like names are absolute.
+# 3. Rules between variables: an enabled integration that needs another value,
+#    and option combinations that cannot work. They use the same profile
+#    conditions as the tasks they protect, so a valid configuration is
+#    unchanged.
+#
+# Messages name the variable, show the value it has and say what is allowed.
+# Secrets never appear: an option marked no_log in the spec is shown as
+# "(hidden: no_log value)", a URL's login part before an @ as ***@, and the
+# rules that read a secret run in their own no_log task whose messages never
+# quote the value (tests/test_no_log_policy.py).
+#
+# The task-level checks further down the role stay as a second line of defence.
+# docs/configuration.md#validation documents this for operators;
+# scripts/config_validation_check.sh and tests/config_validation/ test it.
+# =============================================================================
+
+- name: Load the public variable specification
+  ansible.builtin.set_fact:
+    _config_spec: >-
+      {{ (lookup('ansible.builtin.file', role_path ~ '/meta/argument_specs.yml')
+          | from_yaml).argument_specs.main.options }}
+
+- name: Validate the types and allowed values of the public variables
+  ansible.builtin.validate_argument_spec:
+    argument_spec: "{{ _config_spec }}"
+
+- name: Find list, mapping, URL, checksum and path values of the wrong shape
+  ansible.builtin.set_fact:
+    _config_problems: >-
+      {%- set ns = namespace(problems=[]) -%}
+      {%- for name, spec in _config_spec.items() -%}
+      {%- set value = lookup('ansible.builtin.vars', name, default=none) -%}
+      {%- if spec.no_log | default(false) -%}
+      {%- set shown = '(hidden: no_log value)' -%}
+      {%- else -%}
+      {%- set shown = value | to_json | regex_replace('://[^/@\s"]*@', '://***@') -%}
+      {%- endif -%}
+      {%- set text = value | string | trim if value is string else '' -%}
+      {%- if value is none -%}
+      {%- elif spec.type == 'list' and (value is string or value is mapping or value is not sequence) -%}
+      {%- set ns.problems = ns.problems + [name ~ ' must be a list (YAML "- item" lines or [a, b]); got ' ~ shown ~ '.'] -%}
+      {%- elif spec.type == 'dict' and value is not mapping -%}
+      {%- set ns.problems = ns.problems + [name ~ ' must be a mapping of key: value pairs; got ' ~ shown ~ '.'] -%}
+      {%- elif spec.type != 'str' or text | length == 0 -%}
+      {%- elif name is match('.*_url$') and name in _config_http_urls -%}
+      {%- if text is not match(_config_url_re | replace('https', 'https?')) -%}
+      {%- set ns.problems = ns.problems + [name ~ ' must be empty or an http:// or https:// URL without login details before an @, such as https://host.example.org/path; got ' ~ shown ~ '.'] -%}
+      {%- endif -%}
+      {%- elif name is match('.*_url$') -%}
+      {%- if text is not match(_config_url_re) -%}
+      {%- set ns.problems = ns.problems + [name ~ ' must be empty or an https:// URL without login details before an @, such as https://host.example.org/path; got ' ~ shown ~ '.'] -%}
+      {%- endif -%}
+      {%- elif name is match('.*_sha256$') -%}
+      {%- if text is not match('^[0-9A-Fa-f]{64}$') -%}
+      {%- set ns.problems = ns.problems + [name ~ ' must be empty or a SHA-256 checksum of 64 hexadecimal characters (sha256sum prints it); got ' ~ shown ~ '.'] -%}
+      {%- endif -%}
+      {%- elif name is match('.*_fingerprint$') -%}
+      {%- if text is not match('^([0-9A-Fa-f]{16}|[0-9A-Fa-f]{40})$') -%}
+      {%- set ns.problems = ns.problems + [name ~ ' must be empty or an OpenPGP key fingerprint of 40 (or a key id of 16) hexadecimal characters without spaces; got ' ~ shown ~ '.'] -%}
+      {%- endif -%}
+      {%- elif name is match(_config_path_name_re) and name not in _config_bare_file_names -%}
+      {%- if text is not match('^/\S*$') -%}
+      {%- set ns.problems = ns.problems + [name ~ ' must be empty or an absolute path without spaces, such as /opt/example; got ' ~ shown ~ '.'] -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.problems }}
+  vars:
+    _config_url_re: '^https://[^/@\s]+(/\S*)?$'
+    # URLs a browser opens on the local network, where plain http is common.
+    _config_http_urls: [jellyfin_web_url, kiosk_target_url]
+    _config_path_name_re: '.*_(path|dir|home|bin|executable|python|venv|root|file)$'
+    # *_file options that hold a file name, not a path.
+    _config_bare_file_names: [streamstack_framing_model_file, claude_native_release_key_file]
+
+- name: Find option combinations that cannot work
+  ansible.builtin.set_fact:
+    _config_problems: >-
+      {{ _config_problems
+         + (_config_rules | rejectattr('ok') | map(attribute='msg') | list) }}
+  vars:
+    _hardware_profile_names: "{{ hardware_profiles | default({}) | list }}"
+    _ring_ages: "{{ workstation_update_ring_min_age_seconds | default({}) }}"
+    _ring_delays: "{{ workstation_update_ring_randomized_delay_seconds | default({}) }}"
+    _whole_number_re: '^[0-9]+$'
+    _config_rules:
+      - ok: "{{ hardware_profile | default('') in _hardware_profile_names }}"
+        msg: >-
+          hardware_profile must name an entry of hardware_profiles, one of
+          {{ _hardware_profile_names | join(', ') }} (use generic when no
+          hardware-specific profile applies); got {{ hardware_profile | default(none) | to_json }}.
+      - ok: "{{ dev_user_home | default('') | string is match('^/\\S+$') }}"
+        msg: >-
+          dev_user_home must be the primary account's absolute home directory,
+          such as /home/researcher; got {{ dev_user_home | default(none) | to_json }}.
+      - ok: >-
+          {{ workstation_update_ring | default('') not in ['canary', 'early', 'general']
+             or (workstation_update_ring in _ring_ages and workstation_update_ring in _ring_delays) }}
+        msg: >-
+          workstation_update_ring_min_age_seconds and
+          workstation_update_ring_randomized_delay_seconds must each have an
+          entry for the selected ring {{ workstation_update_ring | default('') | to_json }}; they
+          have {{ _ring_ages | list | to_json }} and {{ _ring_delays | list | to_json }}.
+      - ok: >-
+          {{ (_ring_ages | dict2items + _ring_delays | dict2items)
+             | map(attribute='value') | map('string') | reject('match', _whole_number_re) | list | length == 0 }}
+        msg: >-
+          workstation_update_ring_min_age_seconds and
+          workstation_update_ring_randomized_delay_seconds must map each ring to
+          a whole number of seconds (0 or more); got {{ _ring_ages | to_json }} and
+          {{ _ring_delays | to_json }}.
+      - ok: "{{ workstation_update_snapshot_keep | default(3) | string is match(_whole_number_re) and workstation_update_snapshot_keep | default(3) | int >= 1 }}"
+        msg: >-
+          workstation_update_snapshot_keep must be a whole number of at least 1
+          (the current run's rollback snapshot is always kept); got
+          {{ workstation_update_snapshot_keep | default(none) | to_json }}.
+      - ok: "{{ workstation_update_quarantine_seconds | default(0) | string is match(_whole_number_re) }}"
+        msg: >-
+          workstation_update_quarantine_seconds must be a whole number of
+          seconds, 0 or more; got {{ workstation_update_quarantine_seconds | default(none) | to_json }}.
+      - ok: >-
+          {{ [earlyoom_mem_percent | default('5'), earlyoom_swap_percent | default('50')]
+             | map('string') | select('match', '^[0-9]{1,3}$') | map('int') | select('ge', 1) | select('le', 100) | list | length == 2 }}
+        msg: >-
+          earlyoom_mem_percent and earlyoom_swap_percent must each be a whole
+          percent from 1 to 100; got {{ earlyoom_mem_percent | default(none) | to_json }} and
+          {{ earlyoom_swap_percent | default(none) | to_json }}.
+      - ok: >-
+          {{ catalog_integrity_mode | default('warn') != 'enforce'
+             or catalog_signing_key_fingerprint | default('') | string | trim is match('^[0-9A-Fa-f]{40}$') }}
+        msg: >-
+          catalog_integrity_mode enforce needs catalog_signing_key_fingerprint,
+          the 40-character fingerprint of the trusted signing key; got
+          {{ catalog_signing_key_fingerprint | default('') | to_json }}. Use warn until the key is provisioned.
+      - ok: "{{ not (coder_cli_enabled | default(false) | bool) or coder_deployment_url | default('') | length > 0 }}"
+        msg: >-
+          coder_cli_enabled is true, so coder_deployment_url must be set to the
+          lab's own Coder deployment, such as https://coder.example.org; it is empty.
+      - ok: "{{ workstation_profile | default('') != 'byod-kiosk' or kiosk_target_url | default('') | length > 0 }}"
+        msg: >-
+          workstation_profile byod-kiosk needs kiosk_target_url, the page the
+          kiosk opens (such as https://portal.example.org); it is empty.
+      - ok: >-
+          {{ workstation_profile | default('') != 'thin-client'
+             or not (missionctl_enabled | default(false) | bool)
+             or (missionctl_install_url | default('') | length > 0
+                 and missionctl_install_sha256 | default('') | length > 0) }}
+        msg: >-
+          missionctl_enabled is true on a thin-client, so missionctl_install_url
+          (a direct https:// link to the binary) and missionctl_install_sha256
+          (its trusted SHA-256) must both be set; got
+          {{ missionctl_install_url | default('') | regex_replace('://[^/@\s]*@', '://***@') | to_json }} and
+          {{ missionctl_install_sha256 | default('') | to_json }}.
+      - ok: >-
+          {{ workstation_profile | default('') == 'byod-kiosk'
+             or not (focuspass_screenlock_enabled | default(false) | bool)
+             or (focuspass_screenlock_install_url | default('') | length > 0
+                 and focuspass_screenlock_install_sha256 | default('') | length > 0) }}
+        msg: >-
+          focuspass_screenlock_enabled is true, so focuspass_screenlock_install_url
+          (an https:// link to the .deb) and focuspass_screenlock_install_sha256
+          (its trusted SHA-256) must both be set; got
+          {{ focuspass_screenlock_install_url | default('') | regex_replace('://[^/@\s]*@', '://***@') | to_json }} and
+          {{ focuspass_screenlock_install_sha256 | default('') | to_json }}.
+      - ok: >-
+          {{ workstation_profile | default('') not in ['desktop', 'thin-client', 'byod-kiosk']
+             or not (keycloak_sso_enabled | default(false) | bool)
+             or [keycloak_host | default(''), keycloak_realm | default(''), keycloak_desktop_client_id | default('')]
+                | map('string') | select('eq', '') | list | length == 0 }}
+        msg: >-
+          keycloak_sso_enabled is true, so keycloak_host, keycloak_realm and
+          keycloak_desktop_client_id must all be set; got
+          {{ keycloak_host | default('') | to_json }}, {{ keycloak_realm | default('') | to_json }} and
+          {{ keycloak_desktop_client_id | default('') | to_json }}.
+      - ok: >-
+          {{ workstation_profile | default('') == 'thin-client'
+             or not (weechat_enabled | default(false) | bool)
+             or not (weechat_teams_enabled | default(false) | bool)
+             or weechat_teams_client_id | default('') | length > 0 }}
+        msg: >-
+          weechat_teams_enabled is true, so weechat_teams_client_id must be set
+          to the operator's Teams public client ID; it is empty.
+      - ok: >-
+          {{ workstation_profile | default('') != 'desktop'
+             or not (jellyfin_desktop_enabled | default(false) | bool)
+             or jellyfin_web_url | default('') | length > 0 }}
+        msg: >-
+          jellyfin_desktop_enabled is true, so jellyfin_web_url must be set to
+          the Jellyfin server's address, such as https://jellyfin.example.org; it is empty.
+      - ok: >-
+          {{ not (fleetd_enabled | default(false) | bool)
+             or (fleetd_registry_id | default('') | length > 0
+                 and fleetd_package_base_url | default('') | length > 0) }}
+        msg: >-
+          fleetd_enabled is true, so fleetd_registry_id (this device's registry
+          id) and fleetd_package_base_url (https, no trailing slash) must both be
+          set; got {{ fleetd_registry_id | default('') | to_json }} and
+          {{ fleetd_package_base_url | default('') | regex_replace('://[^/@\s]*@', '://***@') | to_json }}.
+      - ok: >-
+          {{ workstation_profile | default('') not in ['desktop', 'thin-client', 'byod-kiosk']
+             or pia_tunnel_apps | default([]) | length == 0
+             or not ((hardware_profiles | default({})).get(hardware_profile | default(''), {}).get('pia_vpn', false) | bool) }}
+        msg: >-
+          hardware profile {{ hardware_profile | default('') | to_json }} sets pia_vpn: true (the
+          PIA desktop app split tunnel) and pia_tunnel_apps lists
+          {{ pia_tunnel_apps | default([]) | to_json }}. Use one mechanism per host: empty
+          pia_tunnel_apps, or a hardware profile without pia_vpn.
+
+# Rules that read a secret. no_log keeps the values out of every output
+# (tests/test_no_log_policy.py); only the messages, which name the variable and
+# never its value, leave this task.
+- name: Find secret-bearing settings that cannot work, without printing them
+  ansible.builtin.set_fact:
+    _config_hidden_problems: "{{ _config_hidden_rules | rejectattr('ok') | map(attribute='msg') | list }}"
+  vars:
+    _config_hidden_rules:
+      - ok: >-
+          {{ workstation_profile | default('') not in ['desktop', 'thin-client', 'byod-kiosk']
+             or wifi_ssid | default('') | length == 0
+             or wifi_psk | default('') | string | length >= 8 }}
+        msg: >-
+          wifi_ssid is set, so wifi_psk (the network's passphrase) must have at
+          least 8 characters; its value is not shown. Keep it in Ansible Vault
+          or protected host variables.
+  no_log: true
+
+- name: Stop before any change when the public configuration is invalid
+  ansible.builtin.assert:
+    that:
+      - _config_problems | length == 0
+      - _config_hidden_problems | length == 0
+    fail_msg: |-
+      The public configuration is invalid and nothing on this host was changed.
+      Fix these setting(s), then run the role again (docs/configuration.md#validation):
+      - {{ (_config_problems + _config_hidden_problems) | join(_config_item_separator) }}
+    quiet: true
+  vars:
+    _config_item_separator: "\n- "

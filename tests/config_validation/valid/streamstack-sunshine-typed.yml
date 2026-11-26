@@ -1,0 +1,8 @@
+---
+# StreamStack and Sunshine settings are validated, never acted on, by this
+# test: the job only runs validate-config.yml for valid files.
+sunshine_enabled: false
+sunshine_default_user: operator
+streamstack_width: 1920
+streamstack_height: 1080
+streamstack_fps: "30"

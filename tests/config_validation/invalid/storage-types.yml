@@ -1,0 +1,8 @@
+---
+# role: workstation_storage
+# The storage role checks its spec before its first task.
+# expect: The value 'maybe' is not a valid boolean
+# expect: argument 'workstation_storage_soak_days' is of type str and we were unable to convert to int
+workstation_storage_enabled: maybe
+workstation_storage_soak_days: two weeks
+workstation_storage_luks_key_file: /root/SENTINEL-key-path

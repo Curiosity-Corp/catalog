@@ -1,0 +1,5 @@
+---
+# A kiosk that opens an intranet page over plain http.
+workstation_profile: byod-kiosk
+hardware_profile: x86-byod-laptop
+kiosk_target_url: http://portal.lab.example.org/

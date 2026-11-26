@@ -28,6 +28,8 @@ Safety impact (a variable can carry several flags; blank means no special concer
 
 Defaults of dictionaries and long values are summarised here; read the role's `defaults/main.yml` for the full value.
 
+Validation: every run checks these variables before it changes anything, under any `--tags` (the `validate` tag). Types and allowed values come from each role's `meta/argument_specs.yml`; list and mapping shapes, `https://` URLs, SHA-256 checksums, absolute paths and the settings an enabled integration needs are checked too. An invalid value stops the run with a message naming the variable, its value (a secret is never shown) and what is allowed. [configuration.md](configuration.md#validation) describes the checks; a new public variable needs an entry in the role's argument spec.
+
 ## Profiles
 
 Two independent selectors choose what a host converges. Any `workstation_profile` can be combined with any hardware profile.
@@ -57,7 +59,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | Tag | Status | Tasks | Task files | Profiles | Description |
 | --- | --- | --- | --- | --- | --- |
 | `ai` | supported | 12 | `ai-assistants.yml`, `main.yml` | `desktop`, `workspace` |  |
-| `always` | supported | 12 | `main.yml`, `update-transaction.yml` |  | Runs on every invocation, even with --tags. Skip it only with --skip-tags always. |
+| `always` | supported | 13 | `main.yml`, `update-transaction.yml` |  | Runs on every invocation, even with --tags. Skip it only with --skip-tags always. |
 | `ansible-pull` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `bitwarden` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `boot` | supported | 3 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
@@ -162,6 +164,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `user` | supported | 3 | `main.yml` | `thin-client` |  |
 | `user-git-timers` | supported | 1 | `main.yml` |  |  |
 | `user-systemd` | supported | 2 | `main.yml` |  |  |
+| `validate` | supported | 1 | `main.yml` |  | The public configuration check (validate-config.yml). Always runs, before any change; see configuration.md#validation. |
 | `vscode` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `weechat` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client` |  |
 | `wifi` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
