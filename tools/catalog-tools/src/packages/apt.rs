@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use regex::Regex;
@@ -133,6 +134,107 @@ pub fn choose_provider(simulation: &str, name: &str, providers: &[String]) -> Op
     brought_in.or(only).cloned()
 }
 
+/// How many times `update` runs before the probe gives up on a mirror.
+pub const UPDATE_ATTEMPTS: u32 = 4;
+
+/// apt's own per-file retries inside one `update` (`Acquire::Retries`).
+pub const ACQUIRE_RETRIES: u32 = 3;
+
+/// The wait before the first retry of `update`; it doubles each time.
+pub const UPDATE_BACKOFF: Duration = Duration::from_secs(15);
+
+/// What apt prints when an archive or the network failed it for the moment:
+/// a mirror resync (a hash sum mismatch, a missing index), a dropped
+/// connection, a timeout. Matched case-insensitively.
+const TRANSIENT_MARKERS: &[&str] = &[
+    "failed to fetch",
+    "hash sum mismatch",
+    "some index files failed to download",
+    "mirror sync in progress",
+    "temporary failure resolving",
+    "could not resolve",
+    "could not connect",
+    "unable to connect",
+    "connection failed",
+    "connection timed out",
+    "connection reset",
+    "connection refused",
+    "timed out",
+    "timeout",
+];
+
+/// True when apt's output shows a failure that a later attempt can clear.
+pub fn is_transient_update_failure(output: &str) -> bool {
+    let output = output.to_lowercase();
+    TRANSIENT_MARKERS
+        .iter()
+        .any(|marker| output.contains(marker))
+}
+
+/// One run of `apt-get update`, reduced to what the retry needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateRun {
+    pub success: bool,
+    /// The exit status as apt's error message shows it.
+    pub status: String,
+    /// stdout and stderr together: apt warns on one and errors on the other.
+    pub output: String,
+}
+
+impl From<Output> for UpdateRun {
+    fn from(output: Output) -> Self {
+        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        Self {
+            success: output.status.success(),
+            status: output.status.to_string(),
+            output: text,
+        }
+    }
+}
+
+/// Run `update` up to `attempts` times. A transient failure waits `backoff`,
+/// doubled each time, then retries; any other failure, a runner error, and a
+/// transient failure on the last attempt fail closed.
+pub fn update_with_retry(
+    mut run: impl FnMut() -> Result<UpdateRun>,
+    mut sleep: impl FnMut(Duration),
+    attempts: u32,
+    backoff: Duration,
+) -> Result<()> {
+    let attempts = attempts.max(1);
+    let mut wait = backoff;
+    for attempt in 1..=attempts {
+        let result = run()?;
+        if result.success {
+            return Ok(());
+        }
+        let said = tail(result.output.as_bytes());
+        if !is_transient_update_failure(&result.output) {
+            bail!(
+                "apt-get update failed ({}) on attempt {attempt} of {attempts}, \
+                 not a transient fetch failure, so not retried: {said}",
+                result.status
+            );
+        }
+        if attempt == attempts {
+            bail!(
+                "apt-get update failed ({}) on all {attempts} attempts; \
+                 the archive stayed unreachable or inconsistent: {said}",
+                result.status
+            );
+        }
+        eprintln!(
+            "apt-get update hit a transient failure on attempt {attempt} of {attempts}; \
+             retrying in {}s: {said}",
+            wait.as_secs()
+        );
+        sleep(wait);
+        wait = wait.saturating_mul(2);
+    }
+    unreachable!("the last attempt returns or fails")
+}
+
 /// apt with its lists and caches in a private directory.
 pub struct Apt {
     directory: PathBuf,
@@ -174,17 +276,19 @@ impl Apt {
             .with_context(|| format!("cannot run {program}; is this a Debian-family system?"))
     }
 
-    /// Download the package lists of the configured archives.
+    /// Download the package lists of the configured archives, riding out a
+    /// mirror resync or a network hiccup (see [`update_with_retry`]).
     pub fn update(&self) -> Result<()> {
-        let output = self.run("apt-get", &["-qq", "update"])?;
-        if !output.status.success() {
-            bail!(
-                "apt-get update failed ({}): {}",
-                output.status,
-                tail(&output.stderr)
-            );
-        }
-        Ok(())
+        let retries = format!("Acquire::Retries={ACQUIRE_RETRIES}");
+        update_with_retry(
+            || {
+                self.run("apt-get", &["-qq", "-o", &retries, "update"])
+                    .map(UpdateRun::from)
+            },
+            std::thread::sleep,
+            UPDATE_ATTEMPTS,
+            UPDATE_BACKOFF,
+        )
     }
 
     /// Candidate versions of the named packages.
@@ -325,6 +429,140 @@ jq:
         let output = "Package: dnsutils\nVersions: \n\nReverse Depends: \n  bind9-host,dnsutils\nDependencies: \nProvides: \nReverse Provides: \nbind9-dnsutils 1:9.20.15-1 (= )\nbind9-dnsutils 1:9.20.11-4 (= )\n";
         assert_eq!(parse_reverse_provides(output), ["bind9-dnsutils"]);
         assert!(parse_reverse_provides("Package: jq\nReverse Provides: \n").is_empty());
+    }
+
+    fn failed(output: &str) -> UpdateRun {
+        UpdateRun {
+            success: false,
+            status: "exit status: 100".into(),
+            output: output.into(),
+        }
+    }
+
+    fn succeeded() -> UpdateRun {
+        UpdateRun {
+            success: true,
+            status: "exit status: 0".into(),
+            output: String::new(),
+        }
+    }
+
+    /// Run `update_with_retry` over scripted runs; returns the result, how
+    /// many runs it made and the waits it asked for.
+    fn scripted(runs: Vec<UpdateRun>, attempts: u32) -> (Result<()>, usize, Vec<Duration>) {
+        let mut runs = runs.into_iter();
+        let mut made = 0;
+        let mut waits = Vec::new();
+        let result = update_with_retry(
+            || {
+                made += 1;
+                Ok(runs.next().expect("no more scripted runs"))
+            },
+            |wait| waits.push(wait),
+            attempts,
+            Duration::from_secs(10),
+        );
+        (result, made, waits)
+    }
+
+    const RESYNC_2204: &str = "W: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/jammy-updates/InRelease  Hash Sum mismatch\nE: Some index files failed to download. They have been ignored, or old ones used instead.\n";
+    const RESYNC_2604: &str = "W: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/resolute-security/universe/binary-amd64/Packages.gz\nE: Some index files failed to download. They have been ignored, or old ones used instead.\n";
+
+    #[test]
+    fn transient_update_failures() {
+        assert!(is_transient_update_failure(RESYNC_2204));
+        assert!(is_transient_update_failure(RESYNC_2604));
+        assert!(is_transient_update_failure(
+            "Err:1 http://archive.ubuntu.com/ubuntu noble InRelease\n  Temporary failure resolving 'archive.ubuntu.com'\n"
+        ));
+        assert!(is_transient_update_failure(
+            "Err:2 http://security.ubuntu.com noble-security InRelease\n  Could not connect to security.ubuntu.com:80 (91.189.91.83), connection timed out\n"
+        ));
+        assert!(is_transient_update_failure("E: HASH SUM MISMATCH"));
+    }
+
+    #[test]
+    fn other_update_failures_are_not_transient() {
+        assert!(!is_transient_update_failure(
+            "E: Malformed entry 1 in list file /etc/apt/sources.list.d/x.list (Component)\nE: The list of sources could not be read.\n"
+        ));
+        assert!(!is_transient_update_failure(
+            "E: Could not open lock file /var/lib/apt/lists/lock - open (13: Permission denied)\n"
+        ));
+        assert!(!is_transient_update_failure(""));
+    }
+
+    #[test]
+    fn update_succeeds_first_time_without_waiting() {
+        let (result, made, waits) = scripted(vec![succeeded()], 4);
+        assert!(result.is_ok());
+        assert_eq!(made, 1);
+        assert!(waits.is_empty());
+    }
+
+    #[test]
+    fn update_retries_a_resync_with_backoff() {
+        let (result, made, waits) = scripted(
+            vec![failed(RESYNC_2204), failed(RESYNC_2604), succeeded()],
+            4,
+        );
+        assert!(result.is_ok());
+        assert_eq!(made, 3);
+        assert_eq!(waits, [Duration::from_secs(10), Duration::from_secs(20)]);
+    }
+
+    #[test]
+    fn update_fails_closed_after_the_last_attempt() {
+        let (result, made, waits) = scripted(vec![failed(RESYNC_2204); 3], 3);
+        let message = result.unwrap_err().to_string();
+        assert_eq!(made, 3);
+        assert_eq!(waits.len(), 2);
+        assert!(message.contains("on all 3 attempts"), "{message}");
+        assert!(
+            message.contains("Some index files failed to download"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn update_fails_closed_at_once_on_another_error() {
+        let (result, made, waits) = scripted(
+            vec![failed("E: The list of sources could not be read.\n")],
+            4,
+        );
+        let message = result.unwrap_err().to_string();
+        assert_eq!(made, 1);
+        assert!(waits.is_empty());
+        assert!(message.contains("attempt 1 of 4"), "{message}");
+        assert!(message.contains("not retried"), "{message}");
+    }
+
+    #[test]
+    fn update_stops_on_a_runner_error() {
+        let mut made = 0;
+        let result = update_with_retry(
+            || {
+                made += 1;
+                bail!("cannot run apt-get")
+            },
+            |_| panic!("must not wait"),
+            4,
+            Duration::from_secs(10),
+        );
+        assert_eq!(made, 1);
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot run apt-get")
+        );
+    }
+
+    #[test]
+    fn update_runs_at_least_once() {
+        let (result, made, _) = scripted(vec![succeeded()], 0);
+        assert!(result.is_ok());
+        assert_eq!(made, 1);
     }
 
     #[test]
