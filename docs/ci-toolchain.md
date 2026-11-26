@@ -28,6 +28,11 @@ The collection's own dependency range for users stays in `galaxy.yml` and
   interpreters, so its tag is a variable and cannot carry a digest; Renovate
   does not see it. It still installs the hash-checked lock. Raise the matrix by
   hand when a new CPython ships.
+- `platform-packages` runs inside each distro it probes (`${IMAGE}`, a matrix
+  of `ubuntu:22.04` to `debian:13`), so its image is a variable and carries no
+  digest. The probe refreshes apt's lists inside the job and the evidence file
+  records the archive answers, not the image, so the image date does not decide
+  the result (docs/platform-differences.md). Add a release to the matrix by hand.
 - `cloud-init-schema` installs cloud-init's own `requirements.txt` from the
   release tarball. The tarball is checked by SHA-256, but its unpinned
   requirements are upstream's choice; the job runs on merge requests only and

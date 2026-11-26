@@ -312,7 +312,7 @@ platform-packages:
   stage: test
   # IMAGE is the platform as the evidence names it; the pull goes through the
   # ECR Public mirror of the Docker Library, never Docker Hub (catalog#97).
-  image: public.ecr.aws/docker/library/$IMAGE
+  image: public.ecr.aws/docker/library/${IMAGE}
   needs:
     - job: tools
       artifacts: true
@@ -335,7 +335,7 @@ platform-packages:
 # The dated evidence file (docs/platform-differences.md says how to refresh it).
 platform-evidence:
   stage: test
-  image: public.ecr.aws/docker/library/debian:13-slim
+  image: public.ecr.aws/docker/library/debian:13-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
   needs:
     - job: tools
       artifacts: true
