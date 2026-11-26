@@ -140,12 +140,19 @@ def test_every_signed_by_keyring_converges_through_the_shared_flow() -> None:
             for task in _walk(_load(TASKS / filename))
             if "ansible.builtin.apt_repository" in task
         ]
+        # Vendor repositories whose channel depends on the distribution are
+        # written by apt-vendor-repo.yml, which takes the keyring as a var.
+        vendor_repos = [
+            task["vars"]["apt_vendor_repo_signed_by"]
+            for task in _walk(_load(TASKS / filename))
+            if task.get("ansible.builtin.include_tasks") == "apt-vendor-repo.yml"
+        ]
         signed_by = {
             match
             for repo in repos
             for match in re.findall(r"signed-by=(/[^\] \n]+)", repo)
             if match.startswith(KEYRING_DIRS)
-        }
+        } | {path for path in vendor_repos if path.startswith(KEYRING_DIRS)}
         converged = {v["apt_keyring_dest"] for v in _includes(filename)}
         assert signed_by == converged, (
             f"{filename}: signed-by keyrings {sorted(signed_by - converged)} are "

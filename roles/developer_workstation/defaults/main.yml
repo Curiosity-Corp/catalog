@@ -723,9 +723,67 @@ openziti_key_fingerprint: "34CBCF18427D8814B5BDBB0DDE3623EF08C996E5"
 # Vendor APT signing keys are re-downloaded here on every run and installed to
 # their signed-by path only when the vendor content differs (apt-keyring.yml).
 apt_keyring_staging_dir: /var/lib/curiosity/apt-keyrings
-# Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu
-# (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet)
-apt_fallback_release: "noble"
+# Release that third-party APT repos are pinned to, chosen per distribution
+# (catalog#163). Ubuntu and its derivatives use noble, because third-party
+# vendors lag bleeding-edge Ubuntu releases.
+# Debian uses its own codename: each vendor's Debian channel is keyed by it.
+apt_fallback_release_by_distribution:
+  Debian: "{{ ansible_distribution_release | default('') }}"
+apt_fallback_release: >-
+  {{ apt_fallback_release_by_distribution.get(ansible_distribution | default(''), 'noble') }}
+# Vendor repositories whose path differs between Ubuntu and Debian
+# (catalog#163). The family is debian on Debian and ubuntu everywhere else, so
+# Ubuntu hosts keep exactly their noble lines. Vendor listings checked on
+# 2026-11-25:
+#   .NET   packages.microsoft.com/debian/<major>/prod: 12 bookworm, 13 trixie
+#   Azure  packages.microsoft.com/repos/azure-cli: bookworm, no trixie (Debian
+#          13 ships azure-cli in main, so the distro package is used there)
+#   Mongo  repo.mongodb.org/apt/debian <codename>/mongodb-org/<channel> main:
+#          bookworm, trixie
+# On Debian, apt-vendor-repo.yml checks the vendor's Release file and skips the
+# repository with that reason when the vendor publishes none for the release,
+# so a release added or dropped upstream needs no change here.
+apt_vendor_family: "{{ 'debian' if (ansible_distribution | default('')) == 'Debian' else 'ubuntu' }}"
+apt_vendor_repos:
+  dotnet:
+    ubuntu:
+      uri: "https://packages.microsoft.com/ubuntu/24.04/prod"
+      suite: "{{ apt_fallback_release }}"
+      components: main
+    debian:
+      uri: "https://packages.microsoft.com/debian/{{ ansible_distribution_major_version | default('') }}/prod"
+      suite: "{{ apt_fallback_release }}"
+      components: main
+  azure_cli:
+    ubuntu:
+      uri: "https://packages.microsoft.com/repos/azure-cli/"
+      suite: "{{ apt_fallback_release }}"
+      components: main
+    debian:
+      uri: "https://packages.microsoft.com/repos/azure-cli/"
+      suite: "{{ apt_fallback_release }}"
+      components: main
+  mongodb:
+    ubuntu:
+      uri: "https://repo.mongodb.org/apt/ubuntu"
+      suite: "{{ apt_fallback_release }}/mongodb-org/{{ latest_mongodb_channel | default('') }}"
+      components: multiverse
+    debian:
+      uri: "https://repo.mongodb.org/apt/debian"
+      suite: "{{ apt_fallback_release }}/mongodb-org/{{ latest_mongodb_channel | default('') }}"
+      components: main
+# Packages in the role's APT lists that a distribution does not ship
+# (catalog#162). software-properties-common is gone from Debian 13, and nothing
+# in the role needs it (apt_repository uses python3-apt).
+apt_packages_not_in_distribution:
+  Debian:
+    - software-properties-common
+# Names removed from the APT package lists on this host: the distribution's
+# missing packages, plus mongodb-mongosh when repos.yml skipped the MongoDB
+# repository because MongoDB publishes no channel for the release.
+apt_packages_excluded: >-
+  {{ apt_packages_not_in_distribution.get(ansible_distribution | default(''), [])
+     + ([] if (apt_mongodb_repo_enabled | default(true)) else ['mongodb-mongosh']) }}
 # Chezmoi dotfiles (per-user, zero-PII bootstrap)
 # Set `user_dotfiles_repo` to the user's fork URL to enable; empty = skip.
 # Keep private repositories and personal identity values in host/group vars,

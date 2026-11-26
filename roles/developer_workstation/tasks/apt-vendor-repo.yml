@@ -1,0 +1,66 @@
+---
+# =============================================================================
+# One vendor APT repository whose channel depends on the distribution
+# (catalog#163). Callers pass:
+#   apt_vendor_repo_key        key in apt_vendor_repos (dotnet, azure_cli, mongodb)
+#   apt_vendor_repo_filename   sources.list.d file name
+#   apt_vendor_repo_signed_by  keyring path for signed-by
+#   apt_vendor_repo_available  optional, default true: false when the caller
+#                              already found no channel (MongoDB's index)
+# Ubuntu writes the noble line unchanged. Debian first fetches the vendor's
+# Release file for the host's release and skips the repository, saying why,
+# when the vendor publishes none (HTTP 404). The result is left in
+# _apt_vendor_repo_published for the caller.
+# =============================================================================
+
+- name: Select the distribution's channel for vendor repository {{ apt_vendor_repo_key }}
+  ansible.builtin.set_fact:
+    _apt_vendor_repo: "{{ apt_vendor_repos[apt_vendor_repo_key][apt_vendor_family] }}"
+    _apt_vendor_repo_published: "{{ apt_vendor_repo_available | default(true) | bool }}"
+    _apt_vendor_repo_reason: "the vendor publishes no channel for this release"
+
+- name: Check the vendor publishes this Debian release for {{ apt_vendor_repo_key }}
+  ansible.builtin.uri:
+    url: "{{ _apt_vendor_repo.uri | regex_replace('/+$', '') }}/dists/{{ _apt_vendor_repo.suite }}/Release"
+    method: GET
+    status_code: [200, 404]
+  register: _apt_vendor_repo_release
+  # A read-only GET: run it under --check too, so a preview shows the real choice.
+  check_mode: false
+  when:
+    - apt_vendor_family == 'debian'
+    - _apt_vendor_repo_published | bool
+
+- name: Record whether the vendor channel exists for {{ apt_vendor_repo_key }}
+  ansible.builtin.set_fact:
+    _apt_vendor_repo_published: "{{ _apt_vendor_repo_release.status == 200 }}"
+    _apt_vendor_repo_reason: >-
+      {{ _apt_vendor_repo.uri }} dists/{{ _apt_vendor_repo.suite }} returned
+      HTTP {{ _apt_vendor_repo_release.status }}
+  when: _apt_vendor_repo_release is not skipped and _apt_vendor_repo_release.status is defined
+
+# Before catalog#163 the role wrote the Ubuntu noble line on Debian too, into
+# this same file; apt_repository only appends, so drop that line explicitly.
+- name: Remove the Ubuntu noble line an earlier run wrote on Debian for {{ apt_vendor_repo_key }}
+  ansible.builtin.lineinfile:
+    path: "/etc/apt/sources.list.d/{{ apt_vendor_repo_filename }}.list"
+    regexp: "^deb\\s.*\\]\\s{{ apt_vendor_repos[apt_vendor_repo_key].ubuntu.uri | regex_escape }}\\snoble[/\\s]"
+    state: absent
+  when: apt_vendor_family == 'debian'
+  notify: Update apt cache
+
+- name: Report the skipped vendor repository {{ apt_vendor_repo_key }}
+  ansible.builtin.debug:
+    msg: >-
+      Skipping the {{ apt_vendor_repo_key }} repository on {{ ansible_distribution }}
+      {{ ansible_distribution_release }}: {{ _apt_vendor_repo_reason }}. Its
+      packages come from the distribution archive where it ships them.
+  when: not (_apt_vendor_repo_published | bool)
+
+- name: Add vendor repository {{ apt_vendor_repo_key }}
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by={{ apt_vendor_repo_signed_by }}] {{ _apt_vendor_repo.uri }} {{ _apt_vendor_repo.suite }} {{ _apt_vendor_repo.components }}"
+    filename: "{{ apt_vendor_repo_filename }}"
+    state: present
+  when: _apt_vendor_repo_published | bool
+  notify: Update apt cache

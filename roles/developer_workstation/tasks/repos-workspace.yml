@@ -53,19 +53,19 @@
     apt_keyring_dest: /usr/share/keyrings/microsoft-archive-keyring.gpg
 
 - name: Add Microsoft .NET SDK repository
-  ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/ubuntu/24.04/prod {{ apt_fallback_release }} main"
-    filename: microsoft-dotnet
-    state: present
-  notify: Update apt cache
+  ansible.builtin.include_tasks: apt-vendor-repo.yml
+  vars:
+    apt_vendor_repo_key: dotnet
+    apt_vendor_repo_filename: microsoft-dotnet
+    apt_vendor_repo_signed_by: /usr/share/keyrings/microsoft-archive-keyring.gpg
 
 # --- Azure CLI ---
 - name: Add Microsoft Azure CLI repository
-  ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/azure-cli/ {{ apt_fallback_release }} main"
-    filename: azure-cli
-    state: present
-  notify: Update apt cache
+  ansible.builtin.include_tasks: apt-vendor-repo.yml
+  vars:
+    apt_vendor_repo_key: azure_cli
+    apt_vendor_repo_filename: azure-cli
+    apt_vendor_repo_signed_by: /usr/share/keyrings/microsoft-archive-keyring.gpg
 
 # --- Google Cloud CLI ---
 - name: Converge google-cloud APT keyring
@@ -86,7 +86,7 @@
 - name: Discover newest MongoDB APT channel
   ansible.builtin.uri:
     url: >-
-      https://s3.amazonaws.com/repo.mongodb.org?list-type=2&prefix=apt/ubuntu/dists/{{ apt_fallback_release }}/mongodb-org/&delimiter=/
+      https://s3.amazonaws.com/repo.mongodb.org?list-type=2&prefix=apt/{{ apt_vendor_family }}/dists/{{ apt_fallback_release }}/mongodb-org/&delimiter=/
     return_content: true
   register: _mongodb_repo_index
   changed_when: false
@@ -96,10 +96,11 @@
     latest_mongodb_channel: >-
       {{
         _mongodb_repo_index.content
-        | regex_findall('<Prefix>apt/ubuntu/dists/[^<]+/mongodb-org/([0-9]+\\.[0-9]+)/</Prefix>')
+        | regex_findall('<Prefix>apt/' ~ apt_vendor_family ~ '/dists/[^<]+/mongodb-org/([0-9]+\\.[0-9]+)/</Prefix>')
         | map('float')
         | sort
         | last
+        | default('', true)
       }}
 
 - name: Set MongoDB signing-key version for the newest channel
@@ -111,6 +112,14 @@
   ansible.builtin.assert:
     that: latest_mongodb_channel | default('') | string | length > 0
     fail_msg: "MongoDB did not publish a current APT channel"
+  when: apt_vendor_family == 'ubuntu'
+
+# Debian (catalog#163): MongoDB publishes per-codename channels; with none for
+# this release, apt-vendor-repo.yml skips the repository with that reason and
+# apt_packages_excluded drops mongodb-mongosh, instead of failing the run.
+- name: Record whether MongoDB publishes a channel for this release
+  ansible.builtin.set_fact:
+    apt_mongodb_repo_enabled: "{{ latest_mongodb_channel | default('') | string | length > 0 }}"
 
 - name: Converge mongodb APT keyring
   ansible.builtin.include_tasks: apt-keyring.yml
@@ -118,13 +127,19 @@
     apt_keyring_name: mongodb
     apt_keyring_url: "https://www.mongodb.org/static/pgp/server-{{ latest_mongodb_key_version }}.asc"
     apt_keyring_dest: /usr/share/keyrings/mongodb-archive-keyring.gpg
+  when: apt_mongodb_repo_enabled | bool
 
 - name: Add MongoDB repository
-  ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg] https://repo.mongodb.org/apt/ubuntu {{ apt_fallback_release }}/mongodb-org/{{ latest_mongodb_channel }} multiverse"
-    filename: mongodb-org
-    state: present
-  notify: Update apt cache
+  ansible.builtin.include_tasks: apt-vendor-repo.yml
+  vars:
+    apt_vendor_repo_key: mongodb
+    apt_vendor_repo_filename: mongodb-org
+    apt_vendor_repo_signed_by: /usr/share/keyrings/mongodb-archive-keyring.gpg
+    apt_vendor_repo_available: "{{ apt_mongodb_repo_enabled }}"
+
+- name: Record whether the MongoDB repository was written
+  ansible.builtin.set_fact:
+    apt_mongodb_repo_enabled: "{{ _apt_vendor_repo_published | bool }}"
 
 # --- Node.js (NodeSource) ---
 - name: Converge nodesource APT keyring
