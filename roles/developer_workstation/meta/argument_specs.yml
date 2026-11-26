@@ -114,10 +114,8 @@ argument_specs:
       npm_global_packages: {type: list}
       ai_assistant_packages: {type: list}
       codex_standalone_enabled: {type: bool}
-      codex_standalone_installer_url: {type: str}
       codex_standalone_release: {type: str}
       claude_native_enabled: {type: bool}
-      claude_native_installer_url: {type: str}
       claude_native_channel: {type: str}
       m365_cli_packages: {type: list}
       qwen_provider_enabled: {type: bool}
@@ -164,7 +162,6 @@ argument_specs:
       keycloak_desktop_client_id: {type: str}
       keycloak_allowed_users: {type: str}
       ziti_enabled: {type: bool}
-      ziti_install_script_url: {type: str}
       ziti_service_name: {type: str}
       ziti_manage_service: {type: bool}
       ziti_oidc_provider: {type: str}
