@@ -10,8 +10,8 @@ any of it as a Debian 13 support statement.
 
 ## Machine
 
-- Guide followed: `docs/quickstarts/laptop.md` at commit `a78f6934` (branch
-  `agent/135-debian13-quickstart`), pipeline 170823, job 3077667.
+- Guide followed: `docs/quickstarts/laptop.md` at commit `a78f6934`, rechecked at `e2174579` (branch
+  `agent/135-debian13-quickstart`), pipelines 170823 (job 3077667) and 170868 (job 3078977).
 - Hardware: none. A Kubernetes pod on the shared GitLab runner (Talos Linux
   node, kernel `6.18.63-talos`), image `python:3.13-slim-trixie`.
 - Release: Debian GNU/Linux 13 (trixie), `/etc/debian_version` 13.8.
@@ -65,18 +65,19 @@ On the Debian 13 archive alone, 12 of the 146 names have no candidate.
 Adding the role's vendor repositories supplies nine of them (`code`,
 `google-cloud-cli`, `google-chrome-stable`, `microsoft-edge-stable`,
 `brave-browser`, `firefox`, `1password-cli`, `mongodb-mongosh`, `openziti`).
-Three stay missing, and any one of them fails the role's single
-`Install all APT packages` task:
+Three still have no candidate of their own. Each was then simulated alone
+(pipeline 170868, job 3078977):
 
-| Name in the role | Debian 13 | Issue |
+| Name in the role | `apt-get install --simulate` on Debian 13 | Issue |
 | --- | --- | --- |
-| `dnsutils` | gone; the tools are in `bind9-dnsutils` | #162 |
-| `libfuse2` | renamed `libfuse2t64` (64-bit time_t transition) | #162 |
-| `software-properties-common` | not in Debian 13 | #162 |
+| `dnsutils` | exit 0: virtual, apt installs `bind9-dnsutils` | none |
+| `libfuse2` | exit 0: virtual, apt installs `libfuse2t64` (64-bit time_t transition) | none |
+| `software-properties-common` | exit 100: `has no installation candidate` | #162 |
 
-Without those three, `apt-get install --simulate` resolves the rest: 1,099
-packages would be installed. The newest-JDK pick resolves to
-`openjdk-25-jdk` 25.0.5.1+2-1~deb13u1 (201 packages).
+`software-properties-common` alone fails the role's single
+`Install all APT packages` task. Without it, `apt-get install --simulate`
+resolves the rest: 1,099 packages would be installed. The newest-JDK pick
+resolves to `openjdk-25-jdk` 25.0.5.1+2-1~deb13u1 (201 packages).
 
 ### Repositories
 
