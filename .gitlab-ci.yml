@@ -307,7 +307,9 @@ tools:
 # image, with apt's lists in a private directory, so it needs no root.
 platform-packages:
   stage: test
-  image: $IMAGE
+  # IMAGE is the platform as the evidence names it; the pull goes through the
+  # ECR Public mirror of the Docker Library, never Docker Hub (catalog#97).
+  image: public.ecr.aws/docker/library/$IMAGE
   needs:
     - job: tools
       artifacts: true
@@ -330,7 +332,7 @@ platform-packages:
 # The dated evidence file (docs/platform-differences.md says how to refresh it).
 platform-evidence:
   stage: test
-  image: debian:13-slim
+  image: public.ecr.aws/docker/library/debian:13-slim
   needs:
     - job: tools
       artifacts: true

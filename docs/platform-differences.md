@@ -12,7 +12,8 @@ hand:
 
 The `platform-packages` CI job runs `catalog-tools packages probe` inside the
 stock image of each platform (`ubuntu:22.04`, `ubuntu:24.04`, `ubuntu:26.04`,
-`debian:12`, `debian:13`). The probe runs `apt-get update` with apt's lists and
+`debian:12`, `debian:13`), pulled from ECR Public's mirror of the Docker Library
+(`public.ecr.aws/docker/library/`, catalog#97). The probe runs `apt-get update` with apt's lists and
 caches in a private directory, so it needs no root. It then asks
 `apt-cache policy` for every package. A name without a candidate gets a
 simulated install (`apt-get --simulate install`). When that works, the name is
