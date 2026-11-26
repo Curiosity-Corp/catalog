@@ -36,7 +36,7 @@ unverified, and trust in a certificate authority the user did not choose.
 | --- | --- | --- | --- |
 | Upstream release APIs (GitHub, GitLab) | That a tagged release exists | An unauthenticated answer as proof of integrity; a failed answer as permission to install an older build | Assets are chosen only when the API lists a SHA-256 digest, and failed discovery stops the run |
 | Package managers (APT, pip, pipx) | Signed repository metadata | Unsigned or mutable installer scripts | `signed-by` keyrings, keyrings refetched through one shared flow, no shell pipelines that dearmor keys outside it |
-| Host-local secrets (tokens, passwords, keys) | The operator's inventory or vault | The repository, logs and bug reports | None committed; `no_log` on secret-bearing tasks; secret scanning in CI |
+| Host-local secrets (tokens, passwords, keys) | The operator's inventory or vault | The repository, logs and bug reports | None committed; `no_log` on secret-bearing tasks, enforced by `tests/test_no_log_policy.py` (inventory: `docs/secret-handling-audit.md`); secret scanning in CI |
 | Controller-supplied files (custom CA bundles) | The operator who supplied them | Anything inside the public repository | The role ships no certificates; the operator names each file |
 | The machine's own state before a run | Nothing | A partial earlier run | Snapshot before change, health check after, automatic rollback |
 | Other users on a shared machine | Nothing beyond their own account | Their files and sessions | Per-user paths, cleanup that excludes live sessions, opt-in cleanup |

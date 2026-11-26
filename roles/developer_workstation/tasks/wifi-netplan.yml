@@ -21,7 +21,6 @@
       - wifi_nm_uuid | regex_search('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') is not none
       - wifi_netplan_name is match('^[a-z0-9-]+$')
     fail_msg: wifi_ssid, wifi_psk (8+ chars) and a lowercase wifi_nm_uuid are required to manage WiFi
-  no_log: true
 
 - name: Create a scratch root to validate the WiFi netplan file
   ansible.builtin.tempfile:
