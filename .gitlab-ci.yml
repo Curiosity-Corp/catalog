@@ -107,8 +107,9 @@ accessibility-summary:
     - python -m pytest -q tests/test_accessibility_defaults.py tests/test_update_summary.py tests/test_update_interrupted_recovery.py
 
 # catalog#135: follow docs/quickstarts/laptop.md in a throwaway Debian 13
-# container (preview with --check --diff, then apply, then apply again) and
-# keep a per-step report. "localhost" is the job container itself; this job
+# container (step 1 as typed, then preview with --check --diff and apply under
+# fakeroot, because the shared runner gives no root; see the script header)
+# and keep a per-step report. "localhost" is the job container itself; this job
 # never targets a real host or inventory. It runs on merge requests that touch
 # the quickstart or this harness, and is a manual button on every other merge
 # request. The report feeds docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
