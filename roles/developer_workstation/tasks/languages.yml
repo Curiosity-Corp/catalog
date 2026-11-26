@@ -19,13 +19,22 @@
   ansible.builtin.uri:
     url: https://go.dev/VERSION?m=text
     return_content: true
+    status_code: [200]
   register: go_version
+  retries: 3
+  delay: 2
+  until: (go_version.status | default(0)) == 200
 
+# go.dev/dl/?mode=json publishes the SHA-256 of every archive (catalog#171).
 - name: Get latest Go release metadata
   ansible.builtin.uri:
     url: https://go.dev/dl/?mode=json
     return_content: true
+    status_code: [200]
   register: _go_release_metadata
+  retries: 3
+  delay: 2
+  until: (_go_release_metadata.status | default(0)) == 200
   changed_when: false
 
 - name: Set Go update state
@@ -74,13 +83,12 @@
     fail_msg: "No verified Linux amd64 Go archive was found for {{ go_latest_release }}"
   when: go_needs_update
 
-- name: Download latest Go release
-  ansible.builtin.get_url:
-    url: "https://go.dev/dl/{{ _go_latest_asset.filename }}"
-    dest: "{{ workstation_update_artifact_cache_dir }}/{{ _go_latest_asset.filename }}"
-    checksum: "sha256:{{ _go_latest_asset.sha256 }}"
-    mode: "0644"
-    force: false
+- name: Download and verify latest Go release
+  ansible.builtin.include_tasks: verified-download.yml
+  vars:
+    verified_download_name: "{{ _go_latest_asset.filename }}"
+    verified_download_url: "https://go.dev/dl/{{ _go_latest_asset.filename }}"
+    verified_download_sha256: "{{ _go_latest_asset.sha256 }}"
   when: go_needs_update
 
 - name: Remove the existing Go tree before extraction
@@ -93,7 +101,7 @@
 
 - name: Install latest Go
   ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/{{ _go_latest_asset.filename }}"
+    src: "{{ verified_download_path }}"
     dest: /usr/local
     remote_src: true
   when: go_needs_update
@@ -495,19 +503,110 @@
           (_sdkman_git_status.stdout | default('') | trim | length) == 0) }}
     _sdkman_manage_runtime: true
 
-- name: Install or update SDKMAN from its Git repository
+# SDKMAN! follows its latest release tag, not the master branch tip, and the
+# checkout must be the commit GitHub's API names for that tag: a ref served by
+# the git transport alone is not trusted (catalog#171). Queried here rather than
+# through latest_github_repositories, which is for installers with a binary
+# healthcheck; the headers and retries are the same as latest-releases.yml.
+- name: Resolve the latest SDKMAN release
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/sdkman/sdkman-cli/releases/latest"
+    headers: >-
+      {{
+        {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'curiosity-catalog-workstation-updater'
+        }
+        | combine(
+            ({'Authorization': 'Bearer ' ~ _github_api_token}
+             if (_github_api_token | default('') | length > 0) else {})
+          )
+      }}
+    return_content: true
+    status_code: [200]
+  register: _sdkman_latest_release
+  retries: 3
+  delay: 2
+  until: (_sdkman_latest_release.status | default(0)) == 200
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: _sdkman_allow_source_update | bool
+
+- name: Require an SDKMAN release tag
+  ansible.builtin.assert:
+    that:
+      - _sdkman_latest_release.json.tag_name | default('') is match('^[0-9]+[.][0-9]+[.][0-9]+$')
+    fail_msg: "GitHub did not name a current SDKMAN release for sdkman/sdkman-cli."
+    quiet: true
+  when: _sdkman_allow_source_update | bool
+
+- name: Resolve the commit of the latest SDKMAN release tag
+  ansible.builtin.uri:
+    url: "https://api.github.com/repos/sdkman/sdkman-cli/commits/{{ _sdkman_latest_release.json.tag_name }}"
+    headers: >-
+      {{
+        {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'curiosity-catalog-workstation-updater'
+        }
+        | combine(
+            ({'Authorization': 'Bearer ' ~ _github_api_token}
+             if (_github_api_token | default('') | length > 0) else {})
+          )
+      }}
+    return_content: true
+    status_code: [200]
+  register: _sdkman_release_commit
+  retries: 3
+  delay: 2
+  until: (_sdkman_release_commit.status | default(0)) == 200
+  changed_when: false
+  check_mode: false
+  # Same optional bearer header as the release discovery queries.
+  no_log: true
+  when: _sdkman_allow_source_update | bool
+
+- name: Require the SDKMAN release commit
+  ansible.builtin.assert:
+    that:
+      - _sdkman_release_commit.json.sha | default('') is match('^[0-9a-f]{40}$')
+    fail_msg: >-
+      GitHub did not name the commit of SDKMAN release
+      {{ _sdkman_latest_release.json.tag_name }}; refusing an
+      unverified checkout.
+    quiet: true
+  when: _sdkman_allow_source_update | bool
+
+- name: Install or update SDKMAN from its latest release tag
   ansible.builtin.git:
     repo: https://github.com/sdkman/sdkman-cli.git
     dest: "{{ dev_user_home }}/.sdkman"
     depth: 1
-    version: master
+    version: "{{ _sdkman_latest_release.json.tag_name }}"
     force: false
   become: true
   become_user: "{{ dev_user }}"
   environment:
     HOME: "{{ dev_user_home }}"
+  register: _sdkman_checkout
   when:
     - _sdkman_allow_source_update | bool
+
+- name: Require the SDKMAN checkout to be the release commit
+  ansible.builtin.assert:
+    that:
+      - _sdkman_checkout.after | default('') == _sdkman_release_commit.json.sha
+    fail_msg: >-
+      {{ dev_user_home }}/.sdkman is at {{ _sdkman_checkout.after | default('(unknown)') }},
+      not {{ _sdkman_release_commit.json.sha }}, the commit GitHub names for SDKMAN
+      {{ _sdkman_latest_release.json.tag_name }}; stopping before it is used.
+    quiet: true
+  when:
+    - _sdkman_allow_source_update | bool
+    - not ansible_check_mode
 
 - name: Inspect the SDKMAN init source after checkout synchronization
   ansible.builtin.stat:

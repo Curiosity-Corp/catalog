@@ -68,7 +68,7 @@ def main() -> None:
         for field in ("installer", "verification", "healthcheck"):
             if not contract.get(field):
                 raise SystemExit(f"Application contract {name} is missing {field}")
-    if not {"m365-cli", "codex"}.issubset(additional_contracts):
+    if not {"m365-cli", "codex"}.issubset(set(additional_contracts) | set(contracts)):
         raise SystemExit("The universal application contract must cover m365-cli and Codex")
 
     latest_task = (ROLE / "tasks/latest-releases.yml").read_text()
@@ -217,9 +217,15 @@ def main() -> None:
         raise SystemExit("Every AI package must have an explicit user command launcher")
     if any(entry.get("command") == "codex" for entry in ai_command_links):
         raise SystemExit("Codex must not have an npm command launcher")
-    codex_contract = additional_contracts.get("codex", {})
+    # catalog#171: Codex installs from its GitHub release (the install.sh
+    # asset, checked against its digest), so its contract is a release contract.
+    if "codex" in additional_contracts:
+        raise SystemExit("Codex installs from its GitHub release; keep its contract in latest_release_contracts")
+    codex_contract = contracts.get("codex", {})
     if codex_contract.get("installer") != "codex-standalone":
         raise SystemExit("The Codex contract must use the standalone installer")
+    if codex_contract.get("verification") != "github-asset-digest":
+        raise SystemExit("The Codex installer must be verified against its GitHub asset digest")
     if codex_contract.get("healthcheck", [None])[0] != ".local/bin/codex":
         raise SystemExit(
             "The Codex healthcheck must target the user-scoped standalone launcher"
@@ -372,7 +378,7 @@ def main() -> None:
         "tasks/hardware-pipx.yml": ("state: latest",),
         "tasks/languages.yml": (
             "https://go.dev/dl/?mode=json",
-            "sha256:{{ _go_latest_asset.sha256 }}",
+            "verified_download_sha256: \"{{ _go_latest_asset.sha256 }}\"",
             "Merge pyenv into the existing user directory",
             ".pyenv.catalog-staging",
             "https://api.sdkman.io/2/candidates/all",
@@ -525,16 +531,28 @@ def main() -> None:
         "tasks/bitwarden-desktop.yml",
         "tasks/dotfiles.yml",
     )
+    # tasks/verified-download.yml is the shared path for a vendor-published
+    # digest (catalog#171): it downloads into the same cache with get_url's
+    # checksum, so a file that includes it has verified cached handling.
+    verified_download_text = (ROLE / "tasks/verified-download.yml").read_text()
+    for fragment in (
+        'checksum: "sha256:{{ verified_download_sha256_hex }}"',
+        "workstation_update_artifact_cache_dir",
+        "refusing to install an unverified download",
+    ):
+        if fragment not in verified_download_text:
+            raise SystemExit(f"tasks/verified-download.yml must keep: {fragment}")
     for relative in direct_release_tasks:
         text = (ROLE / relative).read_text()
-        if "checksum:" not in text or "workstation_update_artifact_cache_dir" not in text:
+        verified_cache = "checksum:" in text and "workstation_update_artifact_cache_dir" in text
+        if not verified_cache and "verified-download.yml" not in text:
             raise SystemExit(f"{relative} is missing verified cached artifact handling")
 
     kubernetes_text = (ROLE / "tasks/kubernetes.yml").read_text()
     for fragment in (
-        "Resolve latest Helm artifact checksum",
-        "checksum_algorithm: sha256",
-        "Remove an invalid cached Helm artifact",
+        "Download and verify latest Helm",
+        'verified_download_sha256_url: "https://get.helm.sh/helm-',
+        'verified_download_sha256_url: "https://dl.k8s.io/release/',
         'include: ["linux-amd64/helm"]',
         "krew-{{ _krew_latest_asset.digest | regex_replace('^sha256:', '') }}.tar.gz",
         "include: [./krew-linux_amd64]",

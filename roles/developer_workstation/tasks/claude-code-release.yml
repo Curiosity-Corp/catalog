@@ -1,0 +1,164 @@
+---
+# =============================================================================
+# Resolve and verify the Claude Code native release (catalog#171)
+# =============================================================================
+# The same steps claude.ai/install.sh takes, with the signature check it
+# leaves out: Anthropic signs every release's manifest.json, which lists the
+# SHA-256 of each platform binary, with the Claude Code release signing key.
+#
+#   1. Read the version the channel (claude_native_channel) points at.
+#   2. Download that version's manifest.json and manifest.json.sig.
+#   3. Verify the signature with gpg in a GnuPG home holding only the key
+#      pinned in the role (files/claude-code-release-key.asc), and require the
+#      pinned primary fingerprint in the VALIDSIG status line.
+#   4. Take this platform's SHA-256 from the verified manifest.
+#
+# Output fact, consumed by claude-code-user.yml through verified-download.yml:
+#   _claude_native_release  {version, platform, url, sha256}
+# Runs as root into the root-only artifact cache. tests/test_verified_download.py
+# runs it against a local fixture server with a throwaway signing key.
+# =============================================================================
+
+- name: Validate the Claude Code release inputs
+  ansible.builtin.assert:
+    that:
+      - claude_native_channel in ['latest', 'stable']
+      - claude_native_release_base_url is match('^https?://[^ ]+[^/ ]$')
+      - claude_native_release_key_fingerprint is match('^[0-9A-F]{40}$')
+      - ansible_facts['architecture'] in claude_native_platform_map
+    fail_msg: >-
+      claude_native_channel must be latest or stable, the release base URL
+      http(s) without a trailing slash, the key fingerprint 40 upper-case hex
+      digits, and the architecture one of {{ claude_native_platform_map.keys() | list }}.
+    quiet: true
+
+- name: Resolve the Claude Code release of channel {{ claude_native_channel }}
+  ansible.builtin.uri:
+    url: "{{ claude_native_release_base_url }}/{{ claude_native_channel }}"
+    return_content: true
+    status_code: [200]
+  register: _claude_native_channel_version
+  retries: 3
+  delay: 2
+  until: (_claude_native_channel_version.status | default(0)) == 200
+  changed_when: false
+  check_mode: false
+
+- name: Require a Claude Code release version
+  ansible.builtin.assert:
+    that:
+      - _claude_native_channel_version.content | trim is match('^[0-9]+[.][0-9]+[.][0-9]+$')
+    fail_msg: >-
+      {{ claude_native_release_base_url }}/{{ claude_native_channel }} did not
+      name a release version.
+    quiet: true
+
+- name: Set the Claude Code release paths
+  ansible.builtin.set_fact:
+    _claude_native_version: "{{ _claude_native_channel_version.content | trim }}"
+    _claude_native_release_dir: >-
+      {{ claude_native_release_cache_dir }}/{{ _claude_native_channel_version.content | trim }}
+
+- name: Ensure the Claude Code release cache exists
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ claude_native_release_cache_dir }}"
+    - "{{ _claude_native_release_dir }}"
+
+- name: Download the Claude Code release manifest and its signature
+  ansible.builtin.get_url:
+    url: "{{ claude_native_release_base_url }}/{{ _claude_native_version }}/{{ item }}"
+    dest: "{{ _claude_native_release_dir }}/{{ item }}"
+    # Fetched every run: a replaced or damaged cached copy never wedges the host,
+    # and the signature check below decides whether it is used.
+    force: true
+    mode: "0600"
+    timeout: 60
+  loop:
+    - manifest.json
+    - manifest.json.sig
+  register: _claude_native_manifest_download
+  retries: 3
+  delay: 5
+  until: _claude_native_manifest_download is succeeded
+
+- name: Install the pinned Claude Code release signing key
+  ansible.builtin.copy:
+    src: "{{ claude_native_release_key_file }}"
+    dest: "{{ _claude_native_release_dir }}/release-key.asc"
+    mode: "0600"
+
+- name: Create the isolated Claude Code verification keyring
+  # As the AWS CLI verification does (cloud-clis.yml): a GnuPG home that only
+  # ever holds the pinned key, so no other key on the host can vouch.
+  ansible.builtin.file:
+    path: "{{ _claude_native_release_dir }}/gnupg"
+    state: directory
+    mode: "0700"
+
+- name: Import the pinned Claude Code release signing key
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --homedir
+      - "{{ _claude_native_release_dir }}/gnupg"
+      - --batch
+      - --import
+      - "{{ _claude_native_release_dir }}/release-key.asc"
+  register: _claude_native_key_import
+  changed_when: "'not changed' not in (_claude_native_key_import.stderr | default(''))"
+
+- name: Verify the Claude Code release manifest signature
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --homedir
+      - "{{ _claude_native_release_dir }}/gnupg"
+      - --batch
+      - --status-fd
+      - "1"
+      - --verify
+      - "{{ _claude_native_release_dir }}/manifest.json.sig"
+      - "{{ _claude_native_release_dir }}/manifest.json"
+  register: _claude_native_manifest_signature
+  changed_when: false
+  # VALIDSIG <signing key> ... <primary key>: the last field is the primary
+  # fingerprint, so a vendor signing subkey still has to chain to the pin.
+  failed_when: >-
+    _claude_native_manifest_signature.rc != 0
+    or (_claude_native_manifest_signature.stdout_lines
+        | select('match', '^\[GNUPG:\] VALIDSIG ')
+        | map('split') | map('last')
+        | select('equalto', claude_native_release_key_fingerprint)
+        | list | length) == 0
+
+- name: Read the verified Claude Code release manifest
+  ansible.builtin.slurp:
+    src: "{{ _claude_native_release_dir }}/manifest.json"
+  register: _claude_native_manifest
+
+- name: Take this platform's binary from the verified manifest
+  ansible.builtin.set_fact:
+    _claude_native_release:
+      version: "{{ _claude_native_version }}"
+      platform: "{{ _claude_native_platform }}"
+      url: "{{ claude_native_release_base_url }}/{{ _claude_native_version }}/{{ _claude_native_platform }}/claude"
+      sha256: >-
+        {{ ((_claude_native_manifest.content | b64decode | from_json).platforms | default({}))
+           .get(_claude_native_platform, {}).checksum | default('') }}
+  vars:
+    _claude_native_platform: "{{ claude_native_platform_map[ansible_facts['architecture']] }}"
+
+- name: Require a verified Claude Code binary checksum
+  ansible.builtin.assert:
+    that:
+      - (_claude_native_manifest.content | b64decode | from_json).version | default('') == _claude_native_version
+      - _claude_native_release.sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      The signed manifest of Claude Code {{ _claude_native_version }} names another
+      version or has no SHA-256 for {{ _claude_native_release.platform }}; refusing
+      to install an unverified binary.
+    quiet: true

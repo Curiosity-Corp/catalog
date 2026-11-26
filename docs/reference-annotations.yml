@@ -59,6 +59,12 @@ variables:
   streamstack_seat_marker_dir: {stability: supported}
   streamstack_retired_packages: {stability: supported}
   workstation_update_managed_paths: {stability: supported}
+  # Release-signature pins (catalog#171): changing one changes what the role trusts.
+  claude_native_release_base_url: {stability: internal, safety: supply-chain}
+  claude_native_release_key_file: {stability: internal, safety: supply-chain}
+  claude_native_release_key_fingerprint: {stability: internal, safety: supply-chain}
+  claude_native_release_cache_dir: {stability: internal}
+  claude_native_platform_map: {stability: internal}
   # Table of files to delete, not a configuration input.
   retired_modprobe_options: {stability: internal}
 
