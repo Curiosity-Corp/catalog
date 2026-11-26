@@ -4,6 +4,7 @@
 # expect: jellyfin_desktop_enabled is true, so jellyfin_web_url must be set
 # expect: fleetd_enabled is true, so fleetd_registry_id
 # expect: focuspass_screenlock_enabled is true, so focuspass_screenlock_install_url
+# expect: catalog_tools_enabled is true, so catalog_tools_install_url
 # expect: weechat_teams_enabled is true, so weechat_teams_client_id must be set
 workstation_profile: desktop
 keycloak_sso_enabled: true
@@ -11,5 +12,6 @@ keycloak_host: sso.example.org
 jellyfin_desktop_enabled: true
 fleetd_enabled: true
 focuspass_screenlock_enabled: true
+catalog_tools_enabled: true
 weechat_enabled: true
 weechat_teams_enabled: true

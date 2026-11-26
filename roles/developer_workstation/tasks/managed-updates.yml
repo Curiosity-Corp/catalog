@@ -132,6 +132,16 @@
     - missionctl_enabled | default(false)
     - workstation_update_install_allowed | default(true)
 
+- name: Include catalog-tools diagnostics
+  ansible.builtin.include_tasks:
+    file: catalog-tools.yml
+    apply:
+      tags: [catalog-tools, diagnostics]
+  tags: [catalog-tools, diagnostics]
+  when:
+    - catalog_tools_enabled | default(false)
+    - workstation_update_install_allowed | default(true)
+
 - name: Include security tools
   ansible.builtin.include_tasks:
     file: security.yml

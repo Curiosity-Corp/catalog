@@ -115,6 +115,27 @@ missionctl_install_url: ""
 missionctl_install_sha256: ""
 missionctl_install_path: /usr/local/bin/missionctl
 
+# catalog-tools, the catalog's own diagnostics binary (catalog#18,
+# docs/troubleshooting.md): `catalog-tools diagnostics summary` tells a
+# researcher why a maintenance run failed. Set the URL and SHA-256 of the
+# `catalog-tools` asset of the catalog release you run
+# (docs/release-checklist.md) before enabling it. The check list says which
+# services (read only, never started or stopped) and file systems it checks.
+catalog_tools_enabled: false
+catalog_tools_install_url: ""
+catalog_tools_install_sha256: ""
+catalog_tools_install_path: /usr/local/bin/catalog-tools
+catalog_tools_diagnostics_checks_path: /etc/curiosity/diagnostics-checks.json
+catalog_tools_diagnostics_services: >-
+  {{ (['ansible-pull.timer', 'ansible-pull.service']
+      if workstation_profile in ['desktop', 'thin-client', 'byod-kiosk'] else [])
+     + ['logrotate.timer', 'systemd-tmpfiles-clean.timer'] }}
+catalog_tools_diagnostics_disk_paths: [/, /var, /usr/local, /tmp]
+# Free space below which a file system is reported, in MiB.
+catalog_tools_diagnostics_min_free_mib: 2048
+# Days after which the last update's record counts as stale.
+catalog_tools_diagnostics_stale_after_days: 14
+
 # Coder CLI tracks the deployment's own server version at install time
 # (see tasks/coder-cli.yml) rather than a static pin — the client must match
 # the server exactly for `coder ssh` and other RPC-driven commands to work.

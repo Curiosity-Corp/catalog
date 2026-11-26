@@ -68,6 +68,15 @@ argument_specs:
       missionctl_install_url: {type: str}
       missionctl_install_sha256: {type: str}
       missionctl_install_path: {type: str}
+      catalog_tools_enabled: {type: bool}
+      catalog_tools_install_url: {type: str}
+      catalog_tools_install_sha256: {type: str}
+      catalog_tools_install_path: {type: str}
+      catalog_tools_diagnostics_checks_path: {type: str}
+      catalog_tools_diagnostics_services: {type: list, elements: str}
+      catalog_tools_diagnostics_disk_paths: {type: list, elements: str}
+      catalog_tools_diagnostics_min_free_mib: {type: int}
+      catalog_tools_diagnostics_stale_after_days: {type: int}
       coder_deployment_url: {type: str}
       github_api_token: {type: str, no_log: true}
       latest_github_repositories: {type: dict}

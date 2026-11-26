@@ -17,6 +17,9 @@ jellyfin_web_url: http://jellyfin.lab.example.org:8096
 focuspass_screenlock_enabled: true
 focuspass_screenlock_install_url: https://downloads.example.org/focuspass-screenlock.deb
 focuspass_screenlock_install_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+catalog_tools_enabled: true
+catalog_tools_install_url: https://downloads.example.org/catalog-tools
+catalog_tools_install_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 catalog_integrity_mode: enforce
 catalog_signing_key_fingerprint: 0123456789ABCDEF0123456789ABCDEF01234567
 fleetd_enabled: true
