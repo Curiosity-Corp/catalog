@@ -1008,6 +1008,42 @@ entries:
       checked: '2026-11-26'
     replacement: Hold the pinned version (the lock keeps it reproducible) and replace the tool in a merge
       request if upstream stops.
+  - name: reuse
+    upstream: Free Software Foundation Europe (Codeberg project)
+    source: https://codeberg.org/fsfe/reuse-tool
+    declarations:
+      ci-python:reuse: https://pypi.org/project/reuse/
+    licence: Apache-2.0 AND CC0-1.0 AND CC-BY-SA-4.0 AND GPL-3.0-or-later
+    licence_source: https://pypi.org/project/reuse/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in, hash-locked in ci/requirements.txt; Renovate proposes
+      bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://codeberg.org/fsfe/reuse-tool
+      checked: '2026-11-26'
+    replacement: Hold the pinned version (the lock keeps it reproducible); scripts/check-third-party.sh
+      is its only caller, so a replacement SPDX/REUSE linter swaps in there.
+  - name: charset-normalizer
+    upstream: jawah (GitHub project)
+    source: https://github.com/jawah/charset_normalizer
+    declarations:
+      ci-python:charset-normalizer: https://pypi.org/project/charset-normalizer/
+    licence: MIT
+    licence_source: https://pypi.org/project/charset-normalizer/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in, hash-locked in ci/requirements.txt; Renovate proposes
+      bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/jawah/charset_normalizer
+      checked: '2026-11-26'
+    replacement: Hold the pinned version (the lock keeps it reproducible); reuse can fall back to
+      python-magic (libmagic in the job image) if upstream stops.
   - name: uv
     upstream: astral-sh (GitHub project)
     source: https://github.com/astral-sh/uv
