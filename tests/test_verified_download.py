@@ -178,9 +178,13 @@ def test_exactly_one_digest_source_is_required(tmp_path: Path, digests: dict[str
 
 # --- Claude Code: signed release manifest -------------------------------------
 
+# The fixtures' own gpg, resolved before any test puts a wrapper on PATH.
+GPG = shutil.which("gpg") or "gpg"
+
+
 def _gpg(home: Path, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["gpg", "--homedir", str(home), "--batch", "--pinentry-mode", "loopback", "--passphrase", "", *args],
+        [GPG, "--homedir", str(home), "--batch", "--pinentry-mode", "loopback", "--passphrase", "", *args],
         capture_output=True, text=True, check=True, timeout=120, **kwargs,
     )
 
@@ -301,6 +305,69 @@ def test_tampered_manifest_is_refused(tmp_path: Path, site, keys) -> None:
     assert result.returncode != 0
     assert "Verify the Claude Code release manifest signature" in result.stdout
     assert "BADSIG" in output(result), output(result)
+    assert _binary_requests(requests) == []
+
+
+@pytest.fixture()
+def gpg_without_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """gpg as on the CI runner: no /run/user, so the agent socket path overflows.
+
+    There gpg does its work, then reports it cannot reach a gpg-agent and exits
+    2 even after a good import or signature. The role must judge by the status
+    lines, so this wrapper turns every successful gpg run into that exit.
+    """
+    real = shutil.which("gpg")
+    assert real, "gpg is required"
+    assert real == GPG, "the wrapper must wrap the fixtures' gpg"
+    wrapper_dir = tmp_path / "agentless-bin"
+    wrapper_dir.mkdir()
+    wrapper = wrapper_dir / "gpg"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f'"{real}" "$@"\n'
+        "rc=$?\n"
+        '[ "$rc" -ne 0 ] && exit "$rc"\n'
+        "echo \"gpg: can't connect to the gpg-agent: File name too long\" >&2\n"
+        "exit 2\n"
+    )
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{wrapper_dir}{os.pathsep}{os.environ['PATH']}")
+
+
+def test_signed_manifest_verifies_when_gpg_cannot_reach_an_agent(
+    tmp_path: Path, site, keys, gpg_without_agent: None
+) -> None:
+    root, base, requests = site
+    vendor, _ = keys
+    _publish_release(root, vendor)
+    result = _run_claude(tmp_path, _claude_vars(tmp_path, base, vendor))
+    assert result.returncode == 0, output(result)
+    assert len(_binary_requests(requests)) == 1
+
+
+def test_tampered_manifest_is_refused_when_gpg_cannot_reach_an_agent(
+    tmp_path: Path, site, keys, gpg_without_agent: None
+) -> None:
+    root, base, requests = site
+    vendor, _ = keys
+    _publish_release(root, vendor)
+    manifest = root / "claude-code-releases/1.2.3/manifest.json"
+    manifest.write_text(manifest.read_text().replace(DIGEST, OTHER_DIGEST))
+    result = _run_claude(tmp_path, _claude_vars(tmp_path, base, vendor))
+    assert result.returncode != 0
+    assert "BADSIG" in output(result), output(result)
+    assert _binary_requests(requests) == []
+
+
+def test_a_key_file_that_imports_nothing_is_refused(tmp_path: Path, site, keys, gpg_without_agent: None) -> None:
+    root, base, requests = site
+    vendor, _ = keys
+    _publish_release(root, vendor)
+    play_vars = _claude_vars(tmp_path, base, vendor)
+    Path(play_vars["claude_native_release_key_file"]).write_text("not a key\n")
+    result = _run_claude(tmp_path, play_vars)
+    assert result.returncode != 0
+    assert "Import the pinned Claude Code release signing key" in result.stdout, output(result)
     assert _binary_requests(requests) == []
 
 
@@ -542,7 +609,7 @@ def test_pinned_claude_release_key_has_the_pinned_fingerprint(tmp_path: Path) ->
     home = tmp_path / "g"
     home.mkdir(mode=0o700)
     shown = subprocess.run(
-        ["gpg", "--homedir", str(home), "--batch", "--with-colons", "--show-keys", str(key_file)],
+        [GPG, "--homedir", str(home), "--batch", "--with-colons", "--show-keys", str(key_file)],
         capture_output=True, text=True, check=True, timeout=60,
     ).stdout
     primary = [line for line in shown.splitlines() if line.startswith(("pub:", "fpr:"))]
