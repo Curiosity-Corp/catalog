@@ -1,0 +1,6 @@
+---
+# Wrong types: a word where a number or a boolean belongs.
+# expect: argument 'swap_size_gb' is of type str and we were unable to convert to int
+# expect: The value 'maybe' is not a valid boolean
+swap_size_gb: lots
+coder_cli_enabled: maybe

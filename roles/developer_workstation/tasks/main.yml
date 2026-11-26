@@ -38,6 +38,21 @@
   tags: [always]
 
 # =============================================================================
+# Public Configuration Validation
+# =============================================================================
+# Types, enumerations, URLs, paths, checksums and option combinations of the
+# public variables (catalog#31, docs/configuration.md#validation). It reads
+# variables only, needs no root and changes nothing, so it runs first, whatever
+# --tags are given, including the --skip-tags preflight previews: a mistyped
+# setting stops the run before any package, file or service changes.
+- name: Validate the public configuration
+  ansible.builtin.include_tasks:
+    file: validate-config.yml
+    apply:
+      tags: [always, validate]
+  tags: [always, validate]
+
+# =============================================================================
 # Pre-flight Validation
 # =============================================================================
 # Tagged `always` so the checks run whatever --tags are given: the quickstarts

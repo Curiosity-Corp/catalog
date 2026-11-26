@@ -1,0 +1,5 @@
+---
+# expect: missionctl_enabled is true on a thin-client, so missionctl_install_url
+workstation_profile: thin-client
+missionctl_enabled: true
+missionctl_install_url: https://downloads.example.org/missionctl

@@ -1,0 +1,8 @@
+---
+# expect: focuspass_screenlock_install_sha256 must be empty or a SHA-256 checksum of 64 hexadecimal characters
+# expect: got "1234"
+# expect: openziti_key_fingerprint must be empty or an OpenPGP key fingerprint
+# expect: catalog_integrity_mode enforce needs catalog_signing_key_fingerprint
+focuspass_screenlock_install_sha256: "1234"
+openziti_key_fingerprint: 34CB CF18 427D 8814
+catalog_integrity_mode: enforce

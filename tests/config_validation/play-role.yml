@@ -1,0 +1,12 @@
+---
+# The whole role, applied the way playbooks/site.yml applies it (`roles:`; the
+# role's tags are templated from its defaults when the play loads). The
+# config-validation job runs it in check mode with an invalid vars file: the
+# role must stop in its validation tasks before any other task
+# (scripts/config_validation_check.sh).
+- name: Run a role against the job's own container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: "{{ config_validation_role | default('developer_workstation') }}"

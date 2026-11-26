@@ -117,9 +117,30 @@ def test_always_is_reserved_for_the_preflight_and_its_inputs() -> None:
         "Check for local workstation vars file",
         "Load local workstation vars",
         "Derive dev_user_home when only dev_user was locally overridden",
+        # catalog#31: the configuration check reads variables only and must
+        # stop an invalid run under any --tags, before anything changes.
+        "Validate the public configuration",
     }
     tagged = {task["name"] for task in _load(MAIN) if "always" in _tags(task)}
     assert tagged == allowed
+
+
+def test_configuration_validation_runs_first_under_any_tags() -> None:
+    """The validation include runs after local vars load and before every other check (catalog#31)."""
+    tasks = _load(MAIN)
+    names = [task.get("name") for task in tasks]
+    index = names.index("Validate the public configuration")
+    include = tasks[index]
+    spec = include["ansible.builtin.include_tasks"]
+    assert isinstance(spec, dict) and spec["file"] == "validate-config.yml"
+    # A dynamic include passes its tags on only through apply (catalog#104).
+    assert "always" in _tags(include)
+    assert "always" in set(spec.get("apply", {}).get("tags", []))
+    # Not skipped with the pre-flight checks: --skip-tags preflight keeps it.
+    assert "preflight" not in _tags(include)
+    assert index > names.index("Load local workstation vars")
+    first_check = min(names.index(name) for name in EXPECTED_CHECKS if name in names)
+    assert index < first_check
 
 
 def test_root_check_fails_closed_without_user_facts() -> None:

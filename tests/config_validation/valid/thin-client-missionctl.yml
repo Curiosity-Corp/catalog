@@ -1,0 +1,7 @@
+---
+# A thin client with the optional missionctl binary, pinned by checksum.
+workstation_profile: thin-client
+hardware_profile: arm-thin-client
+missionctl_enabled: true
+missionctl_install_url: https://downloads.example.org/missionctl
+missionctl_install_sha256: fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210

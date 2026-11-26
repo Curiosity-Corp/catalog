@@ -205,6 +205,15 @@ fn header(out: &mut Out) {
         "Defaults of dictionaries and long values are summarised here; read the role's `defaults/main.yml` for the full value.",
     );
     out.push("");
+    out.push(
+        "Validation: every run checks these variables before it changes anything, under any `--tags` (the `validate` tag). \
+         Types and allowed values come from each role's `meta/argument_specs.yml`; list and mapping shapes, `https://` URLs, \
+         SHA-256 checksums, absolute paths and the settings an enabled integration needs are checked too. An invalid value \
+         stops the run with a message naming the variable, its value (a secret is never shown) and what is allowed. \
+         [configuration.md](configuration.md#validation) describes the checks; a new public variable needs an entry in the \
+         role's argument spec.",
+    );
+    out.push("");
 }
 
 fn profiles(out: &mut Out, roles: &[Role], annotations: &Annotations) {

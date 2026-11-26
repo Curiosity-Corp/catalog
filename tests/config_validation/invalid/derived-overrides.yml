@@ -1,0 +1,7 @@
+---
+# Overrides of variables whose default is derived from the hardware profile.
+# The derived default is typed, so a wrong override is caught like any other.
+# expect: argument 'monitor_sleep_minutes' is of type str and we were unable to convert to int
+# expect: argument 'litra_cli_enabled' is of type str and we were unable to convert to bool
+monitor_sleep_minutes: soon
+litra_cli_enabled: sometimes

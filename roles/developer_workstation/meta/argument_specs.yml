@@ -1,0 +1,470 @@
+---
+# Types, choices and secret marking of the role's public variables
+# (catalog#31). defaults/main.yml stays the source of every default; this file
+# only says what shape a value must have, so it carries no defaults.
+#
+# Ansible checks this spec automatically before the role's first task, and
+# tasks/validate-config.yml checks it again after /etc/ansible/local-vars.yml
+# is loaded, then adds the rules a spec cannot express (URLs, paths, checksums
+# and options that need each other). docs/configuration.md#validation explains
+# the messages.
+#
+# Covered: every supported, experimental and private-hook variable of
+# docs/reference.md, including the ones whose default is a template (listed
+# last). authd_archive_distribution, fleetd_notation_url and
+# fleetd_package_file are left out: their defaults need host facts, which the
+# check runs without (tests/test_argument_specs.py NOT_IN_SPEC). Internal variables are left
+# out. tests/test_argument_specs.py fails when a public variable has no entry.
+#
+# `no_log: true` marks a secret (docs/reference.md safety impact "secret"):
+# Ansible prints $REDACTED$ instead of its value in every validation message.
+# Only strings carry it; a boolean flag named like a secret holds no secret.
+#
+# Adding a public variable: add it here with its type (and choices when it is
+# an enumeration, no_log when it is a secret) in the same change.
+argument_specs:
+  main:
+    short_description: Maintain a Linux developer workstation or research VM
+    description:
+      - Validates the public configuration before any package, file or service change.
+      - The full variable reference, with defaults and safety impact, is docs/reference.md.
+    author: Curiosity Research Corporation
+    options:
+      dev_user: {type: str}
+      dev_user_home: {type: str}
+      dev_users: {type: list}
+      workstation_user_linger: {type: list}
+      earlyoom_mem_percent: {type: str}
+      earlyoom_swap_percent: {type: str}
+      earlyoom_prefer_regex: {type: str}
+      earlyoom_avoid_regex: {type: str}
+      workstation_timezone: {type: str}
+      keyboard_layout: {type: str}
+      keyboard_model: {type: str}
+      keyboard_variant: {type: str}
+      keyboard_options: {type: str}
+      locale_manage: {type: bool}
+      locale_lang: {type: str}
+      locale_extra: {type: list}
+      developer_workstation_local_vars_file: {type: str}
+      workstation_user_systemd_masked_units: {type: list}
+      workstation_system_masked_units: {type: list}
+      workstation_removed_paths: {type: list}
+      workstation_user_git_timers: {type: list}
+      workstation_user_git_tools_root: {type: str}
+      workstation_user_timer_drift_check: {type: str}
+      workstation_system_unit_dir: {type: str}
+      workstation_profile: {type: str, choices: ["desktop", "workspace", "thin-client", "byod-kiosk"]}
+      preferred_editor: {type: str}
+      coder_cli_enabled: {type: bool}
+      cloud_clis_enabled: {type: bool}
+      thin_client_playwright_enabled: {type: bool}
+      missionctl_enabled: {type: bool}
+      missionctl_install_url: {type: str}
+      missionctl_install_sha256: {type: str}
+      missionctl_install_path: {type: str}
+      coder_deployment_url: {type: str}
+      github_api_token: {type: str, no_log: true}
+      latest_github_repositories: {type: dict}
+      latest_github_release_tag_prefixes: {type: dict}
+      bitwarden_desktop_enabled: {type: bool}
+      slack_desktop_enabled: {type: bool}
+      slack_desktop_snap_channel: {type: str}
+      slack_desktop_snap_id: {type: str}
+      workstation_flatpak_flathub_remote: {type: str}
+      workstation_flatpak_flathub_url: {type: str}
+      jellyfin_desktop_enabled: {type: bool}
+      jellyfin_desktop_flatpak_id: {type: str}
+      jellyfin_desktop_flatpak_ref: {type: str}
+      jellyfin_web_url: {type: str}
+      jellyfin_web_desktop_entry: {type: str}
+      media_folder_enabled: {type: bool}
+      media_folder_name: {type: str}
+      media_folder_web_domain: {type: str}
+      media_folder_web_entries: {type: list}
+      media_folder_desktop_dir: {type: str}
+      media_folder_flatpak_exports: {type: str}
+      media_folder_gnome_shell: {type: str}
+      media_folder_dconf_profile: {type: str}
+      media_folder_dconf_file: {type: str}
+      media_folder_check_helper: {type: str}
+      bitwarden_browser_extensions_enabled: {type: bool}
+      bitwarden_chromium_extension_targets: {type: list}
+      chromium_removed_extensions: {type: list}
+      latest_release_skip_disabled_sources: {type: bool}
+      workstation_update_ring: {type: str, choices: ["canary", "early", "general"]}
+      workstation_update_ring_min_age_seconds: {type: dict}
+      workstation_update_ring_randomized_delay_seconds: {type: dict}
+      workstation_update_summary_dir: {type: str}
+      workstation_update_snapshot_retention: {type: int}
+      workstation_update_snapshot_keep: {type: int}
+      workstation_update_cache_retention_days: {type: int}
+      workstation_update_quarantine_seconds: {type: int}
+      workstation_update_healthcheck_enabled: {type: bool}
+      workstation_update_sbom_enabled: {type: bool}
+      workstation_update_managed_paths: {type: list}
+      catalog_integrity_mode: {type: str, choices: ["off", "warn", "enforce"]}
+      catalog_signing_key_fingerprint: {type: str}
+      science_python_venv: {type: str}
+      science_python_packages: {type: list}
+      science_python_upgrade_packages: {type: list}
+      science_python_pip_extra_args: {type: str}
+      pipx_repair_python: {type: str}
+      npm_global_executable: {type: str}
+      npm_global_packages: {type: list}
+      ai_assistant_packages: {type: list}
+      codex_standalone_enabled: {type: bool}
+      codex_standalone_installer_url: {type: str}
+      codex_standalone_release: {type: str}
+      claude_native_enabled: {type: bool}
+      claude_native_installer_url: {type: str}
+      claude_native_channel: {type: str}
+      m365_cli_packages: {type: list}
+      qwen_provider_enabled: {type: bool}
+      qwen_provider_secret_command: {type: str, no_log: true}
+      qwen_provider_base_url: {type: str}
+      qwen_provider_model: {type: str}
+      apt_upgrade_enabled: {type: bool}
+      nodesource_key_fingerprint: {type: str}
+      openziti_key_fingerprint: {type: str}
+      apt_fallback_release_by_distribution: {type: dict}
+      apt_vendor_repos: {type: dict}
+      apt_packages_not_in_distribution: {type: dict}
+      user_dotfiles_repo: {type: str}
+      chezmoi_user_name: {type: str}
+      chezmoi_user_email: {type: str}
+      chezmoi_editor: {type: str}
+      ansible_pull_repo: {type: str}
+      ansible_pull_branch: {type: str}
+      ansible_pull_playbook: {type: str}
+      ansible_pull_dir: {type: str}
+      ansible_pull_extra_vars: {type: str}
+      ansible_pull_force_on_update_failure: {type: bool}
+      workstation_ansible_pull_memory_high: {type: str}
+      authd_archive_key_fingerprint: {type: str}
+      authd_archive_repo_url: {type: str}
+      logrotate_maxsize: {type: str}
+      logrotate_rotate_count: {type: int}
+      logrotate_ziti_maxsize: {type: str}
+      rsyslog_ratelimit_interval: {type: int}
+      rsyslog_ratelimit_burst: {type: int}
+      weechat_enabled: {type: bool}
+      weechat_teams_enabled: {type: bool}
+      weechat_teams_client_id: {type: str}
+      system_tuning_enabled: {type: bool}
+      swap_size_gb: {type: int}
+      zram_swap_enabled: {type: bool}
+      zram_swap_size_expression: {type: str}
+      zram_swap_algorithm: {type: str}
+      zram_swap_priority: {type: int}
+      entra_id_enabled: {type: bool}
+      keycloak_sso_enabled: {type: bool}
+      keycloak_host: {type: str}
+      keycloak_realm: {type: str}
+      keycloak_desktop_client_id: {type: str}
+      keycloak_allowed_users: {type: str}
+      ziti_enabled: {type: bool}
+      ziti_install_script_url: {type: str}
+      ziti_service_name: {type: str}
+      ziti_manage_service: {type: bool}
+      ziti_oidc_provider: {type: str}
+      ziti_etc_hosts_pins: {type: list}
+      ziti_intercept_domains: {type: list}
+      ziti_health_check_enabled: {type: bool}
+      ziti_health_check_interval: {type: str}
+      ziti_health_check_identities: {type: list}
+      ziti_health_check_probe_hosts: {type: list}
+      ziti_health_check_grace: {type: int}
+      ziti_health_check_min_interval: {type: int}
+      ziti_health_check_timeout: {type: int}
+      ziti_health_check_tunnel_bin: {type: str}
+      custom_ca_certificates: {type: list}
+      custom_ca_bundle_path: {type: str}
+      workspace_gitlab_host: {type: str}
+      workspace_gitlab_external_auth_provider: {type: str}
+      display_config_enabled: {type: bool}
+      t460_console_diagnostics_enabled: {type: bool}
+      t460_fbcon_horizontal_enabled: {type: bool}
+      t460_fbcon_kernel_parameter: {type: str}
+      t460_fbcon_video_args: {type: list}
+      t460_fbcon_cmdline_path: {type: str}
+      console_tuning_fill_framebuffer: {type: bool}
+      console_tuning_palette: {type: dict}
+      console_tuning_wait_seconds: {type: int}
+      console_tuning_settle_seconds: {type: int}
+      console_tuning_install_packages: {type: bool}
+      console_tuning_packages: {type: list}
+      console_tuning_extra_packages: {type: list}
+      console_tuning_apply_now: {type: bool}
+      tmp_hygiene_enabled: {type: bool}
+      tmp_hygiene_max_age: {type: str}
+      tmp_hygiene_pressure_enabled: {type: bool}
+      tmp_hygiene_pressure_threshold: {type: int}
+      tmp_hygiene_pressure_inode_threshold: {type: int}
+      tmp_hygiene_pressure_age: {type: str}
+      tmp_hygiene_pressure_interval: {type: str}
+      tmp_hygiene_exclusions: {type: list}
+      tmp_hygiene_extra_exclusions: {type: list}
+      tmp_hygiene_short_age_paths: {type: list}
+      tmp_hygiene_short_age: {type: str}
+      tmp_hygiene_short_age_interval: {type: str}
+      tmp_hygiene_tmpfiles_path: {type: str}
+      tmp_hygiene_pressure_script_path: {type: str}
+      tmp_hygiene_pressure_config_path: {type: str}
+      tmp_hygiene_nr_inodes: {type: str}
+      tmp_hygiene_nr_inodes_dropin_path: {type: str}
+      minimal_desktop_enabled: {type: bool}
+      minimal_desktop_autologin: {type: bool}
+      minimal_desktop_firefox_tweaks: {type: bool}
+      minimal_desktop_greeter: {type: str, choices: ["gtk", "slick"]}
+      minimal_desktop_integrity_enabled: {type: bool}
+      minimal_desktop_integrity_interval: {type: str}
+      minimal_desktop_integrity_packages: {type: list}
+      minimal_desktop_lightdm_minimum_vt: {type: int}
+      minimal_desktop_lightdm_vtswitch_wrapper: {type: bool}
+      minimal_desktop_lightdm_remove_dropins: {type: list}
+      minimal_desktop_lightdm_restart_sec: {type: int}
+      minimal_desktop_lightdm_start_limit_interval_sec: {type: int}
+      minimal_desktop_lightdm_start_limit_burst: {type: int}
+      minimal_desktop_pinned_vt_sessions: {type: list}
+      minimal_desktop_display_setup_enabled: {type: bool}
+      minimal_desktop_display_outputs: {type: list}
+      minimal_desktop_display_layout: {type: list}
+      minimal_desktop_touch_outputs: {type: list}
+      minimal_desktop_tint2_layout: {type: str, choices: ["bottom", "top"]}
+      minimal_desktop_xdg_autostart_hidden: {type: list}
+      focuspass_screenlock_enabled: {type: bool}
+      focuspass_screenlock_install_url: {type: str}
+      focuspass_screenlock_install_sha256: {type: str}
+      sunshine_enabled: {type: bool}
+      sunshine_default_user: {type: str}
+      sunshine_default_pass: {type: str, no_log: true}
+      vscode_extensions: {type: list}
+      kiosk_target_url: {type: str}
+      firewall_enabled: {type: bool}
+      firewall_ssh_interfaces: {type: list}
+      firewall_mosh: {type: bool}
+      dns_over_tls_interfaces: {type: list}
+      dns_over_tls_servers: {type: list}
+      profile_cleanup_enabled: {type: bool}
+      profile_cleanup_days: {type: int}
+      ubuntu_pro_token: {type: str, no_log: true}
+      fwupd_auto_apply: {type: bool}
+      failed_sweep_webhook_url: {type: str, no_log: true}
+      pro_mimic_needrestart_auto: {type: bool}
+      pro_mimic_needrestart_blacklist: {type: list}
+      pro_mimic_ssh_password_auth: {type: bool}
+      pro_mimic_cis_remediate: {type: bool}
+      display_manager_mode: {type: str, choices: ["always", "ondemand", "disabled"]}
+      pro_mimic_motd_news_enabled: {type: bool}
+      hardware_profile: {type: str}
+      hhtest_user: {type: str}
+      hhtest_uid: {type: int}
+      hhtest_home: {type: str}
+      hhtest_memory_max: {type: str}
+      hhtest_memory_high: {type: str}
+      hhtest_cpu_quota: {type: str}
+      hhtest_cpu_weight: {type: int}
+      hhtest_tasks_max: {type: int}
+      hhtest_cleanup_age_days: {type: int}
+      hhtest_tools_dir: {type: str}
+      hhtest_tmux_release: {type: str}
+      hhtest_tmux_sha256: {type: str}
+      logitech_g604_copy_button: {type: int}
+      logitech_g604_paste_button: {type: int}
+      logitech_g604_lightbar_keycode: {type: int}
+      logitech_g604_desktop_prev_keycode: {type: int}
+      logitech_g604_desktop_next_keycode: {type: int}
+      logitech_g604_back_keycode: {type: int}
+      logitech_g604_forward_keycode: {type: int}
+      logitech_g604_onboard_buttons: {type: bool}
+      logitech_g604_dpi: {type: int}
+      logitech_g604_mic_keycode: {type: int}
+      logitech_g604_zone_keycode: {type: int}
+      logitech_g604_screenshot_keycode: {type: int}
+      logitech_g604_screenshot_command: {type: str}
+      logitech_g604_lightbar_command: {type: str}
+      samsung_tv_key_vault: {type: str}
+      samsung_tv_key_vault_secret: {type: str, no_log: true}
+      developer_workstation_browser_hw_decode_features: {type: list}
+      pointer_accel_conf_path: {type: str}
+      streamstack_camera_video_nr: {type: int}
+      streamstack_camera_label: {type: str}
+      streamstack_camera_card_label: {type: str}
+      streamstack_camera_external: {type: bool}
+      streamstack_program_video_nr: {type: int}
+      streamstack_program_label: {type: str}
+      streamstack_width: {type: int}
+      streamstack_height: {type: int}
+      streamstack_fps: {type: int}
+      streamstack_canon_bridge: {type: str}
+      streamstack_canon_bridge_command: {type: str}
+      streamstack_canon_bridge_autostart: {type: bool}
+      streamstack_console_users: {type: list}
+      streamstack_voice_preset: {type: str}
+      streamstack_microphone: {type: str}
+      streamstack_auto_backend: {type: str}
+      streamstack_auto_model: {type: str}
+      streamstack_auto_interval: {type: int}
+      streamstack_auto_ai_interval: {type: int}
+      streamstack_auto_video: {type: bool}
+      streamstack_auto_audio: {type: bool}
+      streamstack_auto_notify: {type: bool}
+      streamstack_auto_autostart: {type: bool}
+      streamstack_lights_autostart: {type: bool}
+      streamstack_property: {type: str}
+      streamstack_latitude: {type: str}
+      streamstack_longitude: {type: str}
+      streamstack_tray_autostart: {type: bool}
+      streamstack_video_group_users: {type: list}
+      streamstack_camlink_usb_ids: {type: list}
+      streamstack_low_latency: {type: bool}
+      streamstack_audio_rate: {type: int}
+      streamstack_audio_quantum: {type: int}
+      streamstack_audio_min_quantum: {type: int}
+      streamstack_audio_max_quantum: {type: int}
+      streamstack_audio_node_patterns: {type: list}
+      streamstack_audio_exclusive: {type: bool}
+      streamstack_audio_owner_users: {type: list}
+      streamstack_seat_guest_dropin: {type: str}
+      streamstack_seat_marker_dir: {type: str}
+      streamstack_audio_period_size: {type: int}
+      streamstack_audio_headroom: {type: int}
+      streamstack_canonctl_webcam_unit: {type: str}
+      streamstack_canonctl_webcam_resilience: {type: bool}
+      streamstack_realtime_group: {type: str}
+      streamstack_realtime_rtprio: {type: int}
+      streamstack_usb_no_autosuspend_ids: {type: list}
+      streamstack_media_package_state: {type: str}
+      streamstack_intel_media_packages: {type: list}
+      streamstack_kernel_args: {type: list}
+      streamstack_framing_enabled: {type: bool}
+      streamstack_deepfilter_enabled: {type: bool}
+      streamstack_deepfilter_release: {type: str}
+      streamstack_deepfilter_sha256: {type: str}
+      streamstack_deepfilter_dest: {type: str}
+      streamstack_deepfilter_marker: {type: str}
+      streamstack_framing_packages: {type: list}
+      streamstack_openvino_release: {type: str}
+      streamstack_openvino_python_tag: {type: str}
+      streamstack_openvino_wheel: {type: str}
+      streamstack_openvino_wheel_url: {type: str}
+      streamstack_openvino_wheel_sha256: {type: str}
+      streamstack_openvino_telemetry_release: {type: str}
+      streamstack_openvino_telemetry_wheel: {type: str}
+      streamstack_openvino_telemetry_wheel_url: {type: str}
+      streamstack_openvino_telemetry_wheel_sha256: {type: str}
+      streamstack_openvino_target: {type: str}
+      streamstack_compute_runtime_packages: {type: list}
+      streamstack_framing_model_file: {type: str}
+      streamstack_framing_model_url: {type: str}
+      streamstack_framing_model_sha256: {type: str}
+      streamstack_packages: {type: list}
+      streamstack_retired_packages: {type: list}
+      hardware_profiles: {type: dict}
+      grub_autoboot_enabled: {type: bool}
+      pia_split_tunnel_apps: {type: list}
+      pia_split_tunnel_dns: {type: bool}
+      pia_killswitch: {type: str}
+      pia_persist_daemon: {type: bool}
+      pia_autoconnect_on_daemon_start: {type: bool}
+      pia_daemon_oom_score_adjust: {type: int}
+      pia_login_file: {type: str, no_log: true}
+      pia_tunnel_netns: {type: str}
+      pia_tunnel_interface: {type: str}
+      pia_tunnel_region: {type: str}
+      pia_tunnel_bind_interval: {type: str}
+      pia_tunnel_mtu: {type: int}
+      pia_tunnel_keepalive: {type: int}
+      pia_tunnel_max_handshake_age: {type: int}
+      pia_tunnel_session_max_hours: {type: int}
+      pia_tunnel_watchdog_interval: {type: str}
+      pia_tunnel_app_definitions: {type: dict}
+      wifi_ssid: {type: str}
+      wifi_psk: {type: str, no_log: true}
+      wifi_netplan_name: {type: str}
+      wifi_netplan_match: {type: str}
+      wifi_nm_uuid: {type: str}
+      fleetd_enabled: {type: bool}
+      fleetd_registry_id: {type: str}
+      fleetd_device_class: {type: str}
+      fleetd_package_class: {type: str}
+      fleetd_package_base_url: {type: str}
+      fleetd_package_release: {type: str}
+      fleetd_package_name: {type: str}
+      fleetd_package_netrc_file: {type: str}
+      fleetd_enroll_secret: {type: str, no_log: true}
+      fleetd_enroll_secret_env_file: {type: str, no_log: true}
+      fleetd_device_class_file: {type: str}
+      fleetd_registry_id_file: {type: str}
+      fleetd_cache_dir: {type: str}
+      fleetd_signature_verify: {type: bool}
+      fleetd_signing_certificate: {type: str}
+      fleetd_sha256sums_sha256: {type: str}
+      fleetd_notation_policy_name: {type: str}
+      fleetd_notation_dir: {type: str}
+      fleetd_notation_config_dir: {type: str}
+      fleetd_notation_release: {type: str}
+      fleetd_notation_sha256: {type: dict}
+      fleetd_architecture_map: {type: dict}
+      workstation_converge_stamp_path: {type: str}
+      # Derived defaults: templates over the hardware profile, the workstation
+      # profile or another variable. The operator may still override them, so
+      # the override is typed here; the default renders to the same type.
+      ansible_pull_verify_commit: {type: bool}
+      apt_fallback_release: {type: str}
+      apt_packages_excluded: {type: list, elements: str}
+      apt_vendor_family: {type: str, choices: ["debian", "ubuntu"]}
+      authd_archive_key_url: {type: str}
+      coder_cli_buildinfo_url: {type: str}
+      coder_cli_install_script_url: {type: str}
+      codex_standalone_home_dir: {type: str}
+      codex_standalone_install_dir: {type: str}
+      console_tuning_enabled: {type: bool}
+      console_tuning_font: {type: str}
+      console_tuning_manage_console_setup: {type: bool}
+      console_tuning_ttys: {type: list}
+      console_video: {type: str}
+      developer_workstation_browser_hw_video_decode: {type: bool}
+      developer_workstation_cpu_max_perf_pct: {type: raw}
+      developer_workstation_cpu_thermal_log: {type: bool}
+      developer_workstation_crash_diagnostics: {type: dict}
+      developer_workstation_intel_media_non_free: {type: bool}
+      developer_workstation_mouse_debounce_buttons: {type: list, elements: str}
+      developer_workstation_mouse_debounce_devices: {type: list}
+      developer_workstation_mouse_debounce_ms: {type: int}
+      hhtest_authorized_keys: {type: list}
+      hhtest_enabled: {type: bool}
+      hhtest_playwright_browsers_path: {type: str}
+      hhtest_required_hostname: {type: str}
+      i915_pcon_frl_444_enabled: {type: bool}
+      keyboard_manage: {type: bool}
+      litra_cli_enabled: {type: bool}
+      logitech_g604_accel_speed: {type: raw}
+      logitech_g604_enabled: {type: bool}
+      minimal_desktop_compositor_enabled: {type: bool}
+      minimal_desktop_display_broadcast_rgb: {type: str}
+      minimal_desktop_display_guard: {type: dict}
+      minimal_desktop_display_guard_enabled: {type: bool}
+      minimal_desktop_display_outputs_preferred: {type: list}
+      minimal_desktop_display_scale: {type: raw}
+      minimal_desktop_double_click_ms: {type: int}
+      minimal_desktop_idle_lock_minutes: {type: int}
+      minimal_desktop_xorg_accel_method: {type: str}
+      minimal_desktop_xorg_auto_add_gpu: {type: raw}
+      minimal_desktop_xorg_gdb_trace: {type: bool}
+      minimal_desktop_xorg_preferred_modes: {type: dict}
+      monitor_sleep_minutes: {type: int}
+      npm_global_prefix: {type: str}
+      pia_tunnel_apps: {type: list, elements: str}
+      pia_tunnel_login_file: {type: str, no_log: true}
+      pia_tunnel_port_forward: {type: bool}
+      pia_tunnel_users: {type: list, elements: str}
+      pointer_accel_products: {type: list}
+      samsung_tv_cli_enabled: {type: bool}
+      streamstack_deepfilter_url: {type: str}
+      streamstack_enabled: {type: bool}
+      streamstack_intel_media_non_free: {type: bool}
+      vm_page_cluster: {type: raw}
+      vm_swappiness: {type: raw}
+      workstation_converge_stamp_enabled: {type: bool}

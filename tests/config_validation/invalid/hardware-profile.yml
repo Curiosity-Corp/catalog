@@ -1,0 +1,4 @@
+---
+# expect: hardware_profile must name an entry of hardware_profiles, one of generic, arm-thin-client
+# expect: got "z591"
+hardware_profile: z591

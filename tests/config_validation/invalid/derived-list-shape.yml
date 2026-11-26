@@ -1,0 +1,5 @@
+---
+# A single name where a derived list belongs (the type check passes first,
+# then validate-config.yml's shape check reports it).
+# expect: pia_tunnel_apps must be a list (YAML "- item" lines or [a, b]); got "firefox".
+pia_tunnel_apps: firefox

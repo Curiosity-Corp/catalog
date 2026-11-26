@@ -1,0 +1,8 @@
+---
+# The PIA desktop app split tunnel (z590's pia_vpn) and the PIA namespace
+# cannot run together.
+# expect: hardware profile "z590" sets pia_vpn: true
+# expect: Use one mechanism per host
+workstation_profile: desktop
+hardware_profile: z590
+pia_tunnel_apps: [brave-browser]

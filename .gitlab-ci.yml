@@ -82,7 +82,7 @@ yaml:
   extends: .python_setup
   stage: validate
   script:
-    - yamllint -f parsable .github .gitlab ci docs examples playbooks roles .gitlab-ci.yml galaxy.yml requirements.yml renovate.json
+    - yamllint -f parsable .github .gitlab ci docs examples playbooks roles tests/config_validation .gitlab-ci.yml galaxy.yml requirements.yml renovate.json
 
 syntax:
   extends: .python_setup
@@ -145,6 +145,24 @@ verified-downloads:
   image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   script:
     - python -m pytest -q tests/test_verified_download.py tests/test_verified_download_vendors.py
+
+# catalog#31: the public configuration check (docs/configuration.md#validation).
+# Every example, every hardware and workstation profile pair and the cases in
+# tests/config_validation/valid/ must pass; every case in invalid/ must stop
+# inside the validation tasks with its expected messages, change nothing and
+# print no secret. "localhost" is this throwaway job container; the job never
+# targets a real host or inventory.
+config-validation:
+  extends: .python_setup
+  stage: test
+  script:
+    - scripts/config_validation_check.sh
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - config-validation/report.md
+      - config-validation/runs/
 
 # Governance, security-process and identity documents stay true and current.
 governance:
@@ -239,7 +257,7 @@ policy:
       tests/test_ziti_health.py tests/test_no_conflict_markers.py tests/test_update_snapshot_retention.py
       tests/test_mouse_debounce.py tests/test_fleetd.py tests/test_user_git_timers.py
       tests/test_python_research.py tests/test_monitor_sleep_pointer.py tests/test_apt_vendor_channels.py tests/test_preflight_tags.py
-      tests/test_no_log_policy.py
+      tests/test_no_log_policy.py tests/test_argument_specs.py
 
 # catalog#36: install the Python research profile for real, in this throwaway
 # container. Applies the role's own science-venv.yml with

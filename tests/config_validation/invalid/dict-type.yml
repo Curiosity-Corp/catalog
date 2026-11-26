@@ -1,0 +1,4 @@
+---
+# A list where a mapping belongs.
+# expect: argument 'workstation_update_ring_min_age_seconds' is of type list and we were unable to convert to dict
+workstation_update_ring_min_age_seconds: [3600]
