@@ -61,3 +61,7 @@ build_ignore:
   - platform-packages
   - evidence
   - .apt-probe
+  # CI job artifacts the `collection` job downloads into its workspace; the
+  # third_party scan found their logs inside the built tarball (catalog#48).
+  - quickstart-check-preview
+  - debian-quickstart
