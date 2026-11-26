@@ -3,8 +3,8 @@
 # Per-user pre-flight validation
 # =============================================================================
 # Included once per item of dev_users with loop_var dw_user. Never reference
-# dev_user or dev_user_home here: that would collapse
-# every iteration onto the primary account.
+# the primary account's variables here: that would collapse every iteration
+# onto the primary account (tests/test_desktop_multiuser.py).
 #
 # main.yml applies the tags [always, preflight] to these tasks, so they run
 # whatever --tags are given (catalog#165).
