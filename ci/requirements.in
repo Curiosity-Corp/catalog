@@ -4,6 +4,7 @@
 # file with the command in its header (docs/ci-toolchain.md).
 ansible-core==2.22.0
 ansible-lint==26.11.1
+check-jsonschema==0.39.0
 pytest==9.2.0
 pyyaml==6.0.4
 uv==0.13.10

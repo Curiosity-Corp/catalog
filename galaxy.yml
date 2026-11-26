@@ -48,6 +48,7 @@ build_ignore:
   - Makefile
   - "*.tar.gz"
   - collection.cdx.json
+  - ci/schemas
   - .venv
   - tools
   - reference.generated.md

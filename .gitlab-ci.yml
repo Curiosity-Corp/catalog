@@ -372,8 +372,20 @@ sbom:
   needs:
     - job: collection
       artifacts: true
+    - job: tools
+      artifacts: true
+  # The dependency-complete SBOM (catalog#21, docs/sbom.md): source files,
+  # collection dependencies, the locked CI toolchain and the runtime sources of
+  # ci/sbom-sources.yml. Generation fails when that inventory and the roles
+  # disagree; check-jsonschema validates the result against the vendored
+  # CycloneDX 1.6 schema (--base-uri keeps its $refs offline); --check fails
+  # when a declared dependency is missing from the file that is published.
   script:
-    - python scripts/build_collection_sbom.py "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" collection.cdx.json
+    - archive="$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
+    - test -n "$archive"
+    - ./catalog-tools sbom --archive "$archive" --output collection.cdx.json
+    - check-jsonschema --base-uri "file://${CI_PROJECT_DIR}/ci/schemas/cyclonedx-1.6/bom-1.6.schema.json" --schemafile ci/schemas/cyclonedx-1.6/bom-1.6.schema.json collection.cdx.json
+    - ./catalog-tools sbom --archive "$archive" --output collection.cdx.json --check
   artifacts:
     paths:
       - collection.cdx.json
@@ -412,6 +424,28 @@ provenance:
       - collection.cdx.json
       - "*.tar.gz"
     expire_in: 30 days
+
+# A release tag keeps the artifact, its SBOM, the toolchain record and the
+# checksums together and never expires them, so the release page can link all
+# four (catalog#21, docs/release-checklist.md).
+release_assets:
+  stage: package
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_TAG
+  needs:
+    - job: provenance
+      artifacts: true
+  script:
+    - sha256sum -c collection.sha256
+  artifacts:
+    name: "curiosity-workstation-${CI_COMMIT_TAG}"
+    paths:
+      - collection.sha256
+      - ci-toolchain.txt
+      - collection.cdx.json
+      - "*.tar.gz"
+    expire_in: never
 
 secret_hygiene:
   extends: .python_setup
