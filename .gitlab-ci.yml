@@ -115,7 +115,7 @@ accessibility-summary:
 debian13-quickstart:
   stage: test
   image: debian:trixie
-  timeout: 90m
+  timeout: 2h
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
