@@ -12,13 +12,15 @@ machine, or the `ansible-playbook` output for a run by hand. The run's record is
 ## No current upstream release
 
 ```text
-Could not resolve a current upstream release for <name>. The lab refuses to fall back to a stale version or silently keep an old binary.
+Could not resolve a current upstream release for <name> with a SHA-256 digest on its assets. The lab refuses to fall back to a stale version or silently keep an old binary.
 ```
 
 **Likely cause.** The GitHub releases API did not answer for that tool: the
 unauthenticated rate limit (60 requests an hour per address, shared by every
 machine behind one NAT), no route to `api.github.com` (a proxy or firewall), or
-an upstream release published without assets.
+an upstream release published without assets, or whose assets GitHub never
+hashed (`digest: null`). The role drops an asset without a SHA-256 digest
+rather than install it unverified.
 
 **Check.** `curl -sI https://api.github.com/rate_limit` from the machine shows
 `x-ratelimit-remaining`; a proxy error or timeout points at the network.
