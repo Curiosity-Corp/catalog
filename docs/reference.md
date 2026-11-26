@@ -223,6 +223,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `t460_fbcon_kernel_parameter` | `developer_workstation` | experimental |
 | `t460_fbcon_video_args` | `developer_workstation` | experimental |
 | `ai_assistant_command_links` | `developer_workstation` | internal |
+| `ansible_pull_state_dir` | `developer_workstation` | internal |
 | `apt_keyring_staging_dir` | `developer_workstation` | internal |
 | `authd_archive_key_asc_path` | `developer_workstation` | internal |
 | `authd_archive_keyring_path` | `developer_workstation` | internal |
@@ -298,7 +299,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-490 variables, from `roles/developer_workstation/defaults/main.yml`.
+494 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -448,9 +449,13 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `ansible_pull_playbook` | string | `"playbooks/site.yml"` |  | supported | supply-chain | (undocumented) |
 | `ansible_pull_dir` | string | `"/opt/curiosity-catalog"` |  | supported |  | (undocumented) |
 | `ansible_pull_extra_vars` | string | `""` |  | supported |  | (undocumented) |
-| `ansible_pull_force_on_update_failure` | bool | `false` |  | supported | supply-chain | Some managed hosts carry a reviewed local compatibility commit while the public catalog catches up. Those hosts may still run that known-good checkout when ansible-pull cannot update it; leave this disabled by default. |
+| `ansible_pull_force_on_update_failure` | bool | `false` |  | supported | supply-chain | Some managed hosts carry a reviewed local compatibility commit while the public catalog catches up. Those hosts may still run that known-good checkout when ansible-pull cannot update it; leave this disabled by default. (...) |
+| `ansible_pull_credentials_file` | string | `""` |  | supported | security | A private ansible_pull_repo: path of a root-only (0600/0400) git-credential-store file that the site's bootstrap writes from its secret manager. The wrapper reads it through a get-only helper scoped to the repo URL, so a 401 can never erase it. The role checks it, never reads or writes it. (...) A root-only credential-store file the site bootstrap writes; the role checks its mode and never reads or writes it. |
 | `ansible_pull_verify_commit` | string (template) | `"{{ catalog_integrity_mode == 'enforce' }}"` |  | supported | supply-chain | (undocumented) |
 | `workstation_ansible_pull_memory_high` | string | `"8G"` |  | supported |  | Soft memory limit for ansible-pull.service. Above it the kernel reclaims the run's page cache (update snapshots, downloads) instead of letting it press on the rest of the host; there is deliberately no MemoryMax, so a run is never OOM-killed by its own cgroup. Any systemd size value, or "infinity". |
+| `ansible_pull_poll_enabled` | bool | `true` |  | supported |  | Poll (catalog#159): ansible-pull-poll.timer runs `curiosity-ansible-pull --if-behind` on this schedule. (...) |
+| `ansible_pull_poll_schedule` | string | `"*:0/15"` |  | supported |  | (undocumented) |
+| `ansible_pull_state_dir` | string | `"/var/lib/curiosity/ansible-pull"` |  | internal |  | Holds applied-commit (the last successful run) and poll-started-commit. |
 | `authd_archive_distribution` | string (template) | `"{{ ansible_distribution_release }}"` |  | supported |  | (undocumented) |
 | `authd_archive_key_fingerprint` | string | `"155D766F2E771AED"` |  | supported | supply-chain | (undocumented) |
 | `authd_archive_key_url` | string (template) | template expression |  | supported |  | (undocumented) |

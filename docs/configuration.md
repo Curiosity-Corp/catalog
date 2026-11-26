@@ -1218,6 +1218,56 @@ and downloads) above the limit instead of letting it press on the rest of the
 host. There is deliberately no `MemoryMax=`, so the pull's own cgroup never
 OOM-kills it. Use any systemd size value, or `infinity` to remove the limit.
 
+### Converging within one poll of a merge
+
+`ansible-pull.timer` is the full converge: 02:00 (plus the ring's randomized
+delay) and five minutes after boot. `ansible-pull-poll.timer` (catalog#159)
+runs `curiosity-ansible-pull --if-behind` every `ansible_pull_poll_schedule`.
+It reads the branch head with one `git ls-remote` and compares it with
+`<ansible_pull_state_dir>/applied-commit`, the commit of the last run that
+finished successfully. When the branch has moved it starts
+`ansible-pull.service` itself, so a polled run has the same lock,
+`MemoryHigh=` and `OnSuccess=` chain as the nightly one.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ansible_pull_poll_enabled` | `true` | `false` stops the poll timer and removes its units; the 02:00 run stays. |
+| `ansible_pull_poll_schedule` | `*:0/15` | `OnCalendar=` of the poll. A poll with nothing new is one `git ls-remote`. |
+| `ansible_pull_state_dir` | `/var/lib/curiosity/ansible-pull` | Holds `applied-commit` and `poll-started-commit`. |
+
+The poll does nothing while a run is in progress or holds
+`/var/lock/ansible-pull.lock`. It starts one run per commit
+(`poll-started-commit`): when that run fails, the next commit or the 02:00 run
+retries, so a broken commit never restarts a full converge every poll. A
+reviewed local checkout (local changes, or commits the branch does not
+contain) is left to the 02:00 run. The update ring holds: `canary` converges
+at once, `early` and `general` wait until the commit is
+`workstation_update_ring_min_age_seconds` old. An unreadable remote or a failed
+fetch fails `ansible-pull-poll.service`, so it shows in `systemctl --failed`
+and the journal instead of passing silently.
+
+### Pulling a private catalog
+
+A failed fetch now fails the full run too (catalog#116): the wrapper never
+re-applies the old checkout silently, so a host whose credential broke shows in
+`systemctl --failed` instead of drifting for days. Set
+`ansible_pull_force_on_update_failure: true` on a host that must keep running
+its known-good checkout while the remote is unreachable.
+
+For a private `ansible_pull_repo`, the site's bootstrap writes the deploy
+credential from its secret manager into a root-only git-credential-store file
+and sets `ansible_pull_credentials_file` to its path. The role only checks
+that the file exists, is owned by root and has mode `0600` or `0400`; it never
+reads, writes or logs it. The wrapper clears every inherited credential helper
+for the catalog URL and reads the file through a helper that answers only
+`get`, so a 401 can no longer erase the line the way a host-wide `store`
+helper did. A URL with embedded credentials is refused.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ansible_pull_credentials_file` | `""` | Root-only credential-store file for a private catalog; empty uses git's own configuration. |
+| `ansible_pull_force_on_update_failure` | `false` | `true` runs the existing checkout when the fetch fails, instead of failing the run. |
+
 ## Console tuning
 
 `console_tuning_enabled` (default `false`) opts a large or mixed-size-display

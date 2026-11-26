@@ -48,6 +48,8 @@ ALLOWED = {
         "path to the root-only enroll secret file; the value is checked with grep on the host and never read into the play",
     ("roles/developer_workstation/tasks/user-git-timer-entry.yml", "credentials_file"):
         "path to a root-only git-credential-store file; only the path reaches git's environment",
+    ("roles/developer_workstation/tasks/ansible-pull-timer.yml", "ansible_pull_credentials_file"):
+        "path to the root-only git-credential-store file the site bootstrap writes; the role stats it and the wrapper hands only the path to a get-only git helper, never reading its content into the play",
     ("roles/developer_workstation/tasks/user-git-timer-entry.yml", "credential"):
         "the literal git config key credential.helper, not a value",
     ("roles/developer_workstation/tasks/workspace-helpers.yml", "credential"):

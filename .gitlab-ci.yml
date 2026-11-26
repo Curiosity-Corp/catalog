@@ -271,7 +271,7 @@ policy:
       tests/test_ziti_health.py tests/test_no_conflict_markers.py tests/test_update_snapshot_retention.py
       tests/test_mouse_debounce.py tests/test_fleetd.py tests/test_user_git_timers.py
       tests/test_python_research.py tests/test_monitor_sleep_pointer.py tests/test_apt_vendor_channels.py tests/test_preflight_tags.py
-      tests/test_no_log_policy.py tests/test_argument_specs.py
+      tests/test_no_log_policy.py tests/test_argument_specs.py tests/test_ansible_pull_poll.py
 
 # catalog#36: install the Python research profile for real, in this throwaway
 # container. Applies the role's own science-venv.yml with

@@ -845,13 +845,32 @@ ansible_pull_extra_vars: ""
 # Some managed hosts carry a reviewed local compatibility commit while the
 # public catalog catches up. Those hosts may still run that known-good checkout
 # when ansible-pull cannot update it; leave this disabled by default.
+# Otherwise a failed fetch fails the run (catalog#116): it never re-applies the
+# old checkout silently.
 ansible_pull_force_on_update_failure: false
+# A private ansible_pull_repo: path of a root-only (0600/0400)
+# git-credential-store file that the site's bootstrap writes from its secret
+# manager. The wrapper reads it through a get-only helper scoped to the repo
+# URL, so a 401 can never erase it. The role checks it, never reads or writes
+# it. Empty: git's own configuration (a public repository needs none).
+ansible_pull_credentials_file: ""
 ansible_pull_verify_commit: "{{ catalog_integrity_mode == 'enforce' }}"
 # Soft memory limit for ansible-pull.service. Above it the kernel reclaims the
 # run's page cache (update snapshots, downloads) instead of letting it press on
 # the rest of the host; there is deliberately no MemoryMax, so a run is never
 # OOM-killed by its own cgroup. Any systemd size value, or "infinity".
 workstation_ansible_pull_memory_high: 8G
+# Poll (catalog#159): ansible-pull-poll.timer runs
+# `curiosity-ansible-pull --if-behind` on this schedule. It compares the
+# branch head (one git ls-remote) with the commit of the last successful run
+# and starts ansible-pull.service when the branch has moved, so a merge reaches
+# the host within one poll instead of at the next 02:00 run. Rings other than
+# canary wait until the commit is workstation_update_ring_min_age_seconds old.
+# false stops the timer and removes its units; the 02:00 run stays.
+ansible_pull_poll_enabled: true
+ansible_pull_poll_schedule: "*:0/15"
+# Holds applied-commit (the last successful run) and poll-started-commit.
+ansible_pull_state_dir: /var/lib/curiosity/ansible-pull
 authd_archive_distribution: "{{ ansible_distribution_release }}"
 authd_archive_key_fingerprint: "155D766F2E771AED"
 authd_archive_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x{{ authd_archive_key_fingerprint }}"
