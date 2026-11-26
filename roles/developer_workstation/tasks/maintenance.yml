@@ -69,8 +69,22 @@
   when:
     - ubuntu_pro_token | default('') | length > 0
     - not (_pro_attached | default(false))
+  register: _pro_attach
   changed_when: true
+  failed_when: false
   no_log: true
+
+# no_log above hides pro's output, so report a failed attach here without
+# echoing the token.
+- name: Require a successful Ubuntu Pro attach
+  ansible.builtin.assert:
+    that:
+      - _pro_attach is skipped or _pro_attach.rc == 0
+    fail_msg: >-
+      pro attach failed (exit {{ _pro_attach.rc | default('unknown') }}).
+      Check ubuntu_pro_token, then run 'sudo pro attach' by hand to see the error.
+    quiet: true
+  when: ubuntu_pro_token | default('') | length > 0
 
 - name: Enable Livepatch (kernel-only — inherently reboot-sensitive scope)
   ansible.builtin.command: pro enable livepatch --assume-yes

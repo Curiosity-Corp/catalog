@@ -51,6 +51,8 @@
         src: /opt/piavpn/etc/account.json
       register: _pia_account
       failed_when: false
+      # account.json holds the daemon's auth token; slurp returns the file.
+      no_log: true
 
     - name: Check for the PIA login file
       ansible.builtin.stat:
@@ -64,12 +66,25 @@
           - /opt/piavpn/bin/piactl
           - login
           - "{{ pia_login_file }}"
+      register: _pia_login
       no_log: true
       changed_when: true
+      failed_when: false
       when:
         - pia_login_file | length > 0
         - _pia_login_stat.stat.exists
         - _pia_account.content is not defined or not ((_pia_account.content | b64decode | from_json).loggedIn | default(false))
+
+    # no_log above hides piactl's output, so report a failed login here
+    # without echoing the credentials file's contents.
+    - name: Require a successful PIA login
+      ansible.builtin.assert:
+        that:
+          - _pia_login is skipped or _pia_login.rc == 0
+        fail_msg: >-
+          piactl login {{ pia_login_file }} failed (exit {{ _pia_login.rc | default('unknown') }}).
+          Check the login file's format and the account, then run piactl login by hand.
+        quiet: true
 
     - name: Read current PIA daemon settings
       ansible.builtin.command:
