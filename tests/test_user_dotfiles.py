@@ -81,12 +81,15 @@ def test_chezmoi_home_skips_the_shell_fallback_and_tmux_block() -> None:
     names = [t.get("name") for t in MAIN]
     detect = _task(MAIN, "Detect an existing chezmoi source for dev_user")
     assert detect["ansible.builtin.stat"]["path"] == "{{ dev_user_home }}/.local/share/chezmoi/.git"
-    assert detect["tags"] == ["always"]
     assert detect["register"] == "_dev_user_chezmoi_source"
 
     fallback = _task(MAIN, "Include shell RC fallback")
     assert CHEZMOI_SOURCE in _when(fallback)
     hyper = _task(MAIN, "Include hyper-workspace helpers")
+    # Any --tags that runs a consumer also runs the detection; `always` stays
+    # reserved for the pre-flight checks (catalog#165, tests/test_preflight_tags.py).
+    assert "always" not in detect["tags"]
+    assert set(fallback["tags"]) | set(hyper["tags"]) <= set(detect["tags"])
     assert names.index(detect["name"]) < min(names.index(fallback["name"]), names.index(hyper["name"]))
 
     tmux = _task(HYPER_WORKSPACE, "Add tmux configuration for hyper-workspace")
