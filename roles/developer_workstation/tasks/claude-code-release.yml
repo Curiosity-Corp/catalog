@@ -106,6 +106,9 @@
       - --homedir
       - "{{ _claude_native_release_dir }}/gnupg"
       - --batch
+      # Importing a public key and checking a signature need no secret key:
+      # never start a gpg-agent, whose socket a long cache path can overflow.
+      - --no-autostart
       - --import
       - "{{ _claude_native_release_dir }}/release-key.asc"
   register: _claude_native_key_import
@@ -118,6 +121,9 @@
       - --homedir
       - "{{ _claude_native_release_dir }}/gnupg"
       - --batch
+      # Importing a public key and checking a signature need no secret key:
+      # never start a gpg-agent, whose socket a long cache path can overflow.
+      - --no-autostart
       - --status-fd
       - "1"
       - --verify

@@ -115,7 +115,13 @@ def current_user(tmp_path: Path) -> dict[str, str]:
     """A dev_users entry for the user running the test, with its home in tmp_path."""
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
-    return {"name": getpass.getuser(), "home": str(home)}
+    try:
+        name = getpass.getuser()
+    except OSError:
+        # A CI runner's uid may have no passwd entry and no USER; the name is
+        # only passed through (become is dropped), so the uid stands in.
+        name = str(os.getuid())
+    return {"name": name, "home": str(home)}
 
 
 class _RecordingHandler(http.server.SimpleHTTPRequestHandler):
