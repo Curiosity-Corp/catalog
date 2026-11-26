@@ -18,7 +18,7 @@ VARS="$HOME/laptop-vars.yml"
 mkdir -p "$OUT"
 REPORT="$OUT/report.md"
 SUMMARY="$OUT/steps.tsv"
-[ -n "${QUICKSTART_INNER:-}" ] || : >"$SUMMARY"
+[ -n "${QUICKSTART_STAGE:-}" ] || : >"$SUMMARY"
 
 # step <name> <command...>: run one quickstart step, keep its log and exit code.
 step() {
@@ -35,7 +35,7 @@ step() {
   return 0
 }
 
-[ -n "${QUICKSTART_INNER:-}" ] || {
+[ -n "${QUICKSTART_STAGE:-}" ] || {
   echo "# Debian quickstart run"
   echo
   echo "- Date (UTC): $(date -u +%Y-%m-%dT%H:%MZ)"
@@ -48,92 +48,84 @@ step() {
   echo "- sudo present: $(command -v sudo >/dev/null && echo yes || echo no)"
   echo "- Tags: $TAGS"
 } >"$REPORT"
-[ -z "${QUICKSTART_INNER:-}" ] || echo "- Inside PRoot: uid $(id -u), PID 1 $(tr '\0' ' ' </proc/1/cmdline 2>/dev/null)" >>"$REPORT"
+[ "${QUICKSTART_STAGE:-}" != inner ] || echo "- Inside the namespace: uid $(id -u), PID 1 $(tr '\0' ' ' </proc/1/cmdline 2>/dev/null)" >>"$REPORT"
 
-# The shared Kubernetes runner forces a non-root uid, drops every capability,
-# blocks ptrace and ships no sudo, so the quickstart (which needs root) cannot
-# run directly. Give it a root it can use, in order of fidelity:
-#   1. PRoot -0 (fakes uid 0 through ptrace) when ptrace works;
-#   2. fakechroot + fakeroot (LD_PRELOAD, no ptrace or user namespaces), the
-#      same tools debootstrap's fakechroot variant uses.
-# Both run on a copy of this container's own Debian root filesystem, so every
-# library in the "chroot" is the one on the host. Their tools come from
-# Debian's signed archive, fetched by apt as the unprivileged user. What this
-# emulation cannot show is recorded in the evidence file next to the results.
-if [ "$(id -u)" != 0 ] && [ -z "${QUICKSTART_INNER:-}" ]; then
+# The shared Kubernetes runner forces a non-root uid, drops every capability
+# and ships no sudo, so the quickstart (which needs root) cannot run directly.
+# Measured on the first runs: kernel.yama.ptrace_scope is 2, so PRoot cannot
+# trace; fakechroot started but could not exec any command. Unprivileged user
+# namespaces are open, so:
+#   - copy this container's own Debian root filesystem into a writable
+#     directory (every file then belongs to the runner uid);
+#   - unshare a user and mount namespace that maps the runner uid to 0, which
+#     makes that copy root-owned and lets us bind /proc, /sys, /dev and chroot;
+#   - run under fakeroot inside it, because only uid 0 is mapped and dpkg must
+#     chown files to other users and groups (_apt, shadow, ...).
+# fakeroot comes from Debian's signed archive, fetched by apt as the runner
+# user. What this emulation cannot show is recorded in the evidence file.
+if [ "$(id -u)" != 0 ] && [ -z "${QUICKSTART_STAGE:-}" ]; then
   {
     echo "- kernel.yama.ptrace_scope: $(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo absent)"
     echo "- user.max_user_namespaces: $(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo absent)"
     echo "- Capabilities (CapEff): $(awk '/^CapEff/ { print $2 }' /proc/self/status)"
+    echo "- Root: emulated with a user namespace (runner uid $(id -u) mapped to 0), chroot and fakeroot"
   } >>"$REPORT"
-  base="$PWD/.proot"
+  base="$PWD/.rootless"
   rootfs="$base/rootfs"
   mkdir -p "$base/lists/partial" "$base/cache/archives/partial" "$base/debs" "$rootfs"
   apt_user=(-o "Dir::State::Lists=$base/lists" -o "Dir::Cache=$base/cache"
             -o Debug::NoLocking=true -o "APT::Sandbox::User=$(id -un 2>/dev/null || echo nobody)")
   apt-get "${apt_user[@]}" update >"$OUT/0-tools-fetch.log" 2>&1 \
-    && (cd "$base/debs" && apt-get "${apt_user[@]}" download proot libtalloc2 \
-          fakeroot libfakeroot fakechroot libfakechroot) >>"$OUT/0-tools-fetch.log" 2>&1 \
-    || { echo "- Result: could not download the root emulators from the Debian archive (see 0-tools-fetch.log)" >>"$REPORT"; cat "$REPORT"; exit 1; }
+    && (cd "$base/debs" && apt-get "${apt_user[@]}" download fakeroot libfakeroot) >>"$OUT/0-tools-fetch.log" 2>&1 \
+    || { echo "- Result: could not download fakeroot from the Debian archive (see 0-tools-fetch.log)" >>"$REPORT"; cat "$REPORT"; exit 1; }
   # A file this uid cannot read (for example /etc/shadow) is skipped; tar exits
   # 2 for those, which is expected here.
   tar --one-file-system -C / --exclude=./proc --exclude=./sys --exclude=./dev \
     --exclude=./builds --exclude=./tmp -cf - . 2>"$OUT/0-rootfs.log" \
     | tar -C "$rootfs" --no-same-owner --no-same-permissions -xf - 2>>"$OUT/0-rootfs.log"
-  # The emulators live inside the copy, so their paths are valid both outside
-  # and inside the fake root.
   for deb in "$base"/debs/*.deb; do dpkg-deb -x "$deb" "$rootfs"; done
   chmod -R u+rwX "$rootfs"
-  mkdir -p "$rootfs/tmp" "$rootfs/root" "$rootfs/src"
+  mkdir -p "$rootfs/tmp" "$rootfs/root" "$rootfs/src" "$rootfs/proc" "$rootfs/sys" "$rootfs/dev"
   chmod 1777 "$rootfs/tmp"
   cp /etc/resolv.conf /etc/hosts "$rootfs/etc/"
   # Rebuild the shadow files the copy could not read: locked passwords only.
   awk -F: '{ print $1 ":*:20000:0:99999:7:::" }' "$rootfs/etc/passwd" >"$rootfs/etc/shadow"
   awk -F: '{ print $1 ":*::" }' "$rootfs/etc/group" >"$rootfs/etc/gshadow"
-  lib="$rootfs/usr/lib/x86_64-linux-gnu"
-  inner_env=(QUICKSTART_INNER=1 HOME=/root LANG=C.UTF-8 TAGS="$TAGS"
-             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-             CI_COMMIT_SHA="${CI_COMMIT_SHA:-}" CI_JOB_IMAGE="${CI_JOB_IMAGE:-}")
-  if LD_LIBRARY_PATH="$lib" "$rootfs/usr/bin/proot" -0 -r "$rootfs" /bin/true >"$OUT/0-proot-probe.log" 2>&1; then
-    echo "- Root: emulated with PRoot -0 (runner uid $(id -u))" >>"$REPORT"
-    LD_LIBRARY_PATH="$lib" "$rootfs/usr/bin/proot" -0 -r "$rootfs" -b /proc -b /sys -b /dev \
-      -b "$PWD:/src" -w /src \
-      /usr/bin/env -i "${inner_env[@]}" OUT=/src/debian-quickstart \
-      /bin/bash /src/scripts/debian_quickstart_run.sh
-    exit $?
+  QUICKSTART_STAGE=namespace ROOTFS="$rootfs" SRC="$PWD" \
+    unshare --user --map-root-user --mount /bin/bash "$0" 2>"$OUT/0-namespace.log"
+  rc=$?
+  if [ "$rc" != 0 ] && ! grep -q '^| 4-apply' "$REPORT"; then
+    echo "- Result: the namespace stage failed (exit $rc): $(head -n 3 "$OUT/0-namespace.log" | tr '\n' ' ')" >>"$REPORT"
   fi
-  echo "- PRoot unusable here (see 0-proot-probe.log): $(head -n 1 "$OUT/0-proot-probe.log")" >>"$REPORT"
-  echo "- Root: emulated with fakechroot + fakeroot (runner uid $(id -u))" >>"$REPORT"
-  # fakechroot cannot bind-mount, so the checkout is copied in and the step
-  # logs are copied back out afterwards.
-  tar -C "$PWD" --exclude=./.proot --exclude=./.git -cf - . | tar -C "$rootfs/src" -xf -
-  fakeroot_lib="$lib/libfakeroot/libfakeroot-sysv.so"
-  fakechroot_lib="$lib/fakechroot/libfakechroot.so"
-  key_pid=$("$rootfs/usr/bin/faked-sysv") \
-    || { echo "- Result: faked-sysv did not start" >>"$REPORT"; cat "$REPORT"; exit 1; }
-  ldconfig_subst=/sbin/ldconfig=/bin/true:/usr/sbin/ldconfig=/bin/true:/usr/bin/ldd=/usr/bin/ldd.fakechroot
-  env -u LD_LIBRARY_PATH "${inner_env[@]}" OUT=/src/debian-quickstart \
-    FAKEROOTKEY="${key_pid%:*}" FAKECHROOT=true \
-    FAKECHROOT_VERSION="$(dpkg-deb -f "$base"/debs/fakechroot_*.deb Version | sed 's/-.*//')" \
-    FAKECHROOT_EXCLUDE_PATH=/dev:/proc:/sys FAKECHROOT_CMD_SUBST="$ldconfig_subst" \
-    LD_LIBRARY_PATH="$lib/fakechroot:$lib/libfakeroot" \
-    LD_PRELOAD="$fakechroot_lib:$fakeroot_lib" \
-    /usr/sbin/chroot "$rootfs" /bin/bash /src/scripts/debian_quickstart_run.sh
+  cat "$REPORT"
+  exit "$rc"
+fi
+if [ "${QUICKSTART_STAGE:-}" = namespace ]; then
+  set -e
+  for fs in proc sys dev; do mount --rbind "/$fs" "$ROOTFS/$fs"; done
+  mount --bind "$SRC" "$ROOTFS/src"
+  key_pid=$(chroot "$ROOTFS" /usr/bin/faked-sysv)
+  set +e
+  chroot "$ROOTFS" /usr/bin/env -i QUICKSTART_STAGE=inner HOME=/root LANG=C.UTF-8 TAGS="$TAGS" \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    OUT=/src/debian-quickstart CI_COMMIT_SHA="${CI_COMMIT_SHA:-}" CI_JOB_IMAGE="${CI_JOB_IMAGE:-}" \
+    FAKEROOTKEY="${key_pid%:*}" \
+    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu/libfakeroot \
+    LD_PRELOAD=libfakeroot-sysv.so \
+    /bin/bash /src/scripts/debian_quickstart_run.sh
   rc=$?
   kill "${key_pid#*:}" 2>/dev/null || true
-  cp -a "$rootfs/src/debian-quickstart/." "$OUT/"
-  cat "$OUT/report.md"
   exit "$rc"
 fi
 if [ "$(id -u)" != 0 ]; then
-  echo "- Result: still not root inside the emulator, so the quickstart cannot run." >>"$REPORT"
+  echo "- Result: not root even inside the namespace, so the quickstart cannot run." >>"$REPORT"
   cat "$REPORT"
   exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
 # chroot starts in /; the steps use paths relative to the checkout.
-[ -z "${QUICKSTART_INNER:-}" ] || cd /src
+[ -z "${QUICKSTART_STAGE:-}" ] || cd /src
 
 # Step 1: prepare the controller. The guide uses sudo; the container is root
 # and ships no sudo, so the commands run without it. The guide clones v0.1.0;

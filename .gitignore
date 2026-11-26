@@ -17,7 +17,7 @@ __pycache__/
 .research-profile/
 research-profile-report.md
 debian-quickstart/
-.proot/
+.rootless/
 *.tar.gz
 collection.cdx.json
 
