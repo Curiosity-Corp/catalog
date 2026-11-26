@@ -103,7 +103,7 @@ quickstarts:
 # this throwaway container; the non-root runner cannot apt-get the package.
 # Merge requests only: main does not change the example without one.
 cloud-init-schema:
-  image: python:3.13
+  image: public.ecr.aws/docker/library/python:3.13
   stage: test
   variables:
     CLOUD_INIT_VERSION: "26.2"
@@ -123,7 +123,7 @@ cloud-init-schema:
 # The full python image ships curl; the slim one does not, and the shared
 # runner is non-root, so it cannot apt-get it.
 resume-standin:
-  image: python:3.13
+  image: public.ecr.aws/docker/library/python:3.13
   stage: test
   script:
     - python -m venv .ci-venv
@@ -158,7 +158,7 @@ accessibility-summary:
 # docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
 debian13-quickstart:
   stage: test
-  image: python:3.13-slim-trixie
+  image: public.ecr.aws/docker/library/python:3.13-slim-trixie
   timeout: 1h
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -187,7 +187,7 @@ debian13-quickstart:
 # ships gpg, as Ubuntu does; the script adds python3-apt to its venv.
 quickstart-check-preview:
   stage: test
-  image: python:3.13-trixie
+  image: public.ecr.aws/docker/library/python:3.13-trixie
   script:
     - scripts/quickstart_check_preview.sh
   artifacts:
