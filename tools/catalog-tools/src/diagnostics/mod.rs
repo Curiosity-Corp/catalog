@@ -456,18 +456,14 @@ pub fn summary(bundle: &Value) -> String {
     let health = &bundle["health"];
     let count = |key: &str| health[key].as_array().map_or(0, Vec::len);
     let mut out = String::new();
-    out.push_str("### Workstation diagnostics
-
-");
+    out.push_str("### Workstation diagnostics\n\n");
     out.push_str(&format!(
-        "- Tool: {}, created {}
-",
+        "- Tool: {}, created {}\n",
         text(&bundle["tool"]),
         text(&bundle["created_at"])
     ));
     out.push_str(&format!(
-        "- Profile `{}`, architecture `{}`, OS {}, ansible-core {}, Ansible {}
-",
+        "- Profile `{}`, architecture `{}`, OS {}, ansible-core {}, Ansible {}\n",
         text(&bundle["profile"]),
         text(&bundle["architecture"]),
         text(&bundle["os"]),
@@ -493,36 +489,27 @@ pub fn summary(bundle: &Value) -> String {
         ));
     }
     out.push_str(&last);
-    out.push('
-');
+    out.push('\n');
     out.push_str(&format!(
-        "- Checked: {} commands, {} services, {} disks, {} managed files
-",
+        "- Checked: {} commands, {} services, {} disks, {} managed files\n",
         count("commands"),
         count("services"),
         count("disks"),
         health["artifacts"]["checked"].as_u64().unwrap_or(0),
     ));
     if let Some(reason) = health["check_list"].as_str() {
-        out.push_str(&format!("- Not checked: {reason}
-"));
+        out.push_str(&format!("- Not checked: {reason}\n"));
     }
     for reason in health["not_checked"].as_array().into_iter().flatten() {
-        out.push_str(&format!("- Not checked: {}
-", text(reason)));
+        out.push_str(&format!("- Not checked: {}\n", text(reason)));
     }
-    out.push_str("
-#### What needs attention
-
-");
+    out.push_str("\n#### What needs attention\n\n");
     let findings = bundle["findings"].as_array().map(Vec::as_slice).unwrap_or_default();
     if findings.is_empty() {
-        out.push_str("Nothing: every check passed.
-");
+        out.push_str("Nothing: every check passed.\n");
     }
     for finding in findings {
-        out.push_str(&format!("- {}
-", text(finding)));
+        out.push_str(&format!("- {}\n", text(finding)));
     }
     let redacted: Vec<String> = bundle["redacted"]
         .as_object()
@@ -532,9 +519,7 @@ pub fn summary(bundle: &Value) -> String {
         .collect();
     if !redacted.is_empty() {
         out.push_str(&format!(
-            "
-Redacted before printing: {}.
-",
+            "\nRedacted before printing: {}.\n",
             redacted.join(", ")
         ));
     }

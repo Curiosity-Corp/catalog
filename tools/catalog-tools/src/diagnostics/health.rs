@@ -383,7 +383,7 @@ pub fn parse_unit(text: &str) -> Result<Vec<(String, String)>, String> {
 fn gather_disks<H: Host>(host: &H, paths: &[String], health: &mut Health) {
     for path in paths.iter().take(MAX_DISKS) {
         let space = if path.starts_with('/') && !path.split('/').any(|part| part == "..") {
-            host.run("df", &["-P", "-k", "--", path])
+            host.run("df", &["-P", "-k", "--", path.as_str()])
                 .and_then(|text| parse_df(&text))
         } else {
             Err("not an absolute path; not queried".to_string())
