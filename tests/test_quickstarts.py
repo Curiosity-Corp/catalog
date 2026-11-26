@@ -159,6 +159,50 @@ def test_cloud_init_user_data_is_key_only_and_does_not_apply_the_role() -> None:
     assert not unknown, unknown
     meta = yaml.safe_load((EXAMPLES / "cloud-init/meta-data").read_text())
     assert meta["instance-id"] and meta["local-hostname"]
+    data_fs = next(fs for fs in data["fs_setup"] if fs["label"] == "research-data")
+    assert data_fs["overwrite"] is False, "the data disk is formatted only while it is empty"
+    data_mount = next(m for m in data["mounts"] if m[0] == "LABEL=research-data")
+    assert "nofail" in data_mount[3], "the VM must boot without its data disk"
+
+
+def test_virt_install_example_dry_run_only_creates_new_things(tmp_path: Path) -> None:
+    script = EXAMPLES / "cloud-init/virt-install.sh"
+    assert os.access(script, os.X_OK)
+    image = tmp_path / "cloud.img"
+    image.write_bytes(b"")
+    key = tmp_path / "id.pub"
+    key.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDryRunKeyForTestsOnly0000000000000000000 t@example.invalid\n")
+    workdir = tmp_path / "vm"
+
+    def run(*extra: str, key_file: Path = key) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(script), "--image", str(image), "--ssh-key", str(key_file),
+             "--workdir", str(workdir), "--name", "lab-vm", *extra],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+
+    result = run("--dry-run")
+    assert result.returncode == 0, result.stderr
+    commands = [line[2:] for line in result.stdout.splitlines() if line.startswith("+ ")]
+    tools = [c.split()[0] for c in commands]
+    assert tools == ["cloud-localds", "qemu-img", "qemu-img", "virt-install"], commands
+    assert " -b " in commands[1] and "-F qcow2" in commands[1], "the OS disk is an overlay on the base image"
+    install = commands[3]
+    assert "--name lab-vm" in install and "--import" in install
+    assert install.count("--disk") == 3 and "device=cdrom" in install
+    assert not workdir.exists(), "--dry-run writes nothing"
+    for forbidden in ("virsh destroy", "virsh undefine", "rm ", "--overwrite", "ansible-playbook"):
+        assert forbidden not in result.stdout
+
+    placeholder = tmp_path / "placeholder.pub"
+    raw = (EXAMPLES / "cloud-init/user-data").read_text()
+    placeholder.write_text(re.search(r"ssh-ed25519 \S*EXAMPLE\S* \S+", raw).group(0) + "\n")
+    refused = run("--dry-run", key_file=placeholder)
+    assert refused.returncode != 0 and "placeholder" in refused.stderr
+    private = tmp_path / "id"
+    private.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    refused = run("--dry-run", key_file=private)
+    assert refused.returncode != 0 and "public key" in refused.stderr
 
 
 def test_notebook_unit_binds_loopback_and_keeps_authentication() -> None:
