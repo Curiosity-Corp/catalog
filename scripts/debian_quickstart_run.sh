@@ -110,14 +110,17 @@ printf '%s\t%s\t%s\n' "apt-simulation" "$apt_rc" "-" >>"$SUMMARY"
 # Step 3: preview. The play sets become: true; the runner has no sudo, so
 # become is switched off with the ansible_become connection variable, which
 # outranks the play keyword. The venv's Python is the target interpreter
-# because the image has no /usr/bin/python3.
+# because the image has no /usr/bin/python3. The role's pre-flight checks run
+# under any --tags (catalog#165): 3-list-tasks lists them, and 3-check-diff
+# skips them by name, since the runner is not root and has no `researcher`
+# account; the quickstart-check-preview job proves the root check fires.
 export ANSIBLE_ROLES_PATH="$PWD/roles"
 nobecome=(-e ansible_become=false -e "ansible_python_interpreter=$(command -v python)")
 step 3-syntax ansible-playbook -i localhost, playbooks/site.yml --syntax-check
 step 3-list-tasks ansible-playbook -i localhost, -c local playbooks/site.yml \
   -e @"$VARS" --tags "$TAGS" --list-tasks
 step 3-check-diff ansible-playbook -i localhost, -c local playbooks/site.yml \
-  -e @"$VARS" "${nobecome[@]}" --tags "$TAGS" --check --diff
+  -e @"$VARS" "${nobecome[@]}" --tags "$TAGS" --skip-tags preflight --check --diff
 
 # Step 4 (apply with --become) is not run: the runner cannot become root.
 
