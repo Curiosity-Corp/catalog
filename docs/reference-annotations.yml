@@ -130,6 +130,7 @@ variables:
   ansible_pull_playbook: {safety: supply-chain}
   ansible_pull_verify_commit: {safety: supply-chain}
   ansible_pull_force_on_update_failure: {safety: supply-chain}
+  ansible_pull_credentials_file: {safety: security, note: "A root-only credential-store file the site bootstrap writes; the role checks its mode and never reads or writes it."}
   apt_upgrade_enabled: {safety: boot}
   swap_size_gb: {safety: boot}
   hardware_profile: {note: "Selects an entry of hardware_profiles."}

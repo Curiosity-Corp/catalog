@@ -163,6 +163,9 @@ argument_specs:
       ansible_pull_dir: {type: str}
       ansible_pull_extra_vars: {type: str}
       ansible_pull_force_on_update_failure: {type: bool}
+      ansible_pull_credentials_file: {type: str}
+      ansible_pull_poll_enabled: {type: bool}
+      ansible_pull_poll_schedule: {type: str}
       workstation_ansible_pull_memory_high: {type: str}
       authd_archive_key_fingerprint: {type: str}
       authd_archive_repo_url: {type: str}
