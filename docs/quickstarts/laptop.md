@@ -62,9 +62,30 @@ ansible-playbook -i localhost, -c local playbooks/site.yml \
 ```
 
 `--list-tasks` prints the task groups that would run for those tags and
-changes nothing. `--check --diff` goes further but cannot predict package,
-shell or service tasks accurately; treat it as a hint, not a guarantee, and use
-the VM run as the real preview.
+changes nothing. `--check --diff` goes further and also changes nothing:
+
+```bash
+ansible-playbook -i localhost, -c local playbooks/site.yml \
+  -e @$HOME/laptop-vars.yml --tags "$TAGS" --check --diff --become --ask-become-pass
+```
+
+It cannot predict package, shell or service tasks accurately; treat it as a
+hint, not a guarantee, and use the VM run as the real preview. On a laptop the
+role has not run on yet:
+
+- Each vendor APT keyring shows as a change ("Would download ...") without
+  being downloaded or checked; the real apply downloads it and verifies it.
+- The preview stops at **Install all APT packages** (`packages` tag): the
+  vendor repositories it would add exist only after a real apply, so their
+  packages have no install candidate yet.
+- Without the `packages` tag it stops at
+  **Require latest metadata for every binary release source**: check mode
+  skips the update transaction's upstream release queries, so the `python`,
+  `science` and `data-science` tags cannot be previewed.
+
+`--tags repos --check --diff` previews the whole repository setup. CI runs
+these previews in a clean Debian 13 container on every merge request
+(`scripts/quickstart_check_preview.sh`).
 
 ## 4. Apply
 
