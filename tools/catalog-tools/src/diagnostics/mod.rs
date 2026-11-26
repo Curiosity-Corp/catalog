@@ -75,7 +75,10 @@ pub fn gather(
 ) -> Inputs {
     let [ansible, community, uname] = PROBES.map(|(program, args)| probe(program, args));
     let manifest = read_manifest(manifest_path);
-    let parsed = manifest.as_ref().ok().and_then(|text| parse_manifest(text).ok());
+    let parsed = manifest
+        .as_ref()
+        .ok()
+        .and_then(|text| parse_manifest(text).ok());
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|home| home.is_absolute());
@@ -397,17 +400,22 @@ pub fn build(inputs: &Inputs, redactor: &mut Redactor, created_at: &str) -> Valu
 /// What the last run's record says went wrong, in plain words, from the
 /// already validated and redacted `last_run`; adds its age in days.
 fn run_findings(last_run: &mut Value, health: &health::Health) -> Vec<String> {
-    let text = |key: &str| last_run.get(key).and_then(Value::as_str).map(str::to_string);
+    let text = |key: &str| {
+        last_run
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
     let mut findings = Vec::new();
     if let Some(error) = text("error") {
-        findings.push(format!("The last update's record could not be read: {error}."));
+        findings.push(format!(
+            "The last update's record could not be read: {error}."
+        ));
         return findings;
     }
     match text("status").as_deref() {
         Some("success") | Some("unknown") | None => {}
-        Some(status) => findings.push(format!(
-            "The last update run ended with status `{status}`."
-        )),
+        Some(status) => findings.push(format!("The last update run ended with status `{status}`.")),
     }
     if let Some(task) = text("failed_task") {
         match text("failure_message") {
@@ -504,7 +512,10 @@ pub fn summary(bundle: &Value) -> String {
         out.push_str(&format!("- Not checked: {}\n", text(reason)));
     }
     out.push_str("\n#### What needs attention\n\n");
-    let findings = bundle["findings"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let findings = bundle["findings"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     if findings.is_empty() {
         out.push_str("Nothing: every check passed.\n");
     }
@@ -818,7 +829,10 @@ mod tests {
         );
         let text = summary(&bundle);
         assert!(text.contains("- Last update: `rolled_back`, finished 2026-11-24T08:20:11Z (1 days ago), catalog commit `0743a9d6` (verified)"), "{text}");
-        assert!(text.contains("- Post-update health checks failed for: delta."), "{text}");
+        assert!(
+            text.contains("- Post-update health checks failed for: delta."),
+            "{text}"
+        );
         assert!(text.contains("Redacted before printing: 1 user."), "{text}");
         assert!(!text.contains("researcher"), "{text}");
     }
@@ -851,7 +865,10 @@ mod tests {
         assert_eq!(bundle["findings"], json!([]));
         let text = summary(&bundle);
         assert!(text.contains("Nothing: every check passed."), "{text}");
-        assert!(text.contains("- Checked: 0 commands, 0 services, 0 disks, 0 managed files"), "{text}");
+        assert!(
+            text.contains("- Checked: 0 commands, 0 services, 0 disks, 0 managed files"),
+            "{text}"
+        );
     }
 
     #[test]

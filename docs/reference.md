@@ -64,6 +64,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `bitwarden` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `boot` | supported | 3 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `browser-video-decode` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
+| `catalog-tools` | supported | 1 | `managed-updates.yml` |  |  |
 | `certificates` | supported | 1 | `main.yml` | `thin-client`, `byod-kiosk` |  |
 | `chat` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client` |  |
 | `cleanup` | supported | 1 | `logrotate.yml` |  |  |
@@ -76,6 +77,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `crash-diagnostics` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `data-science` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `devops` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
+| `diagnostics` | supported | 1 | `managed-updates.yml` |  |  |
 | `display` | supported | 8 | `main.yml`, `minimal-desktop.yml`, `pro-mimic.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `dns` | supported | 1 | `main.yml` | `thin-client`, `byod-kiosk` |  |
 | `dotfiles` | supported | 1 | `main.yml` |  |  |
@@ -255,6 +257,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `workstation_update_state_dir` | `developer_workstation` | internal |
 | `workstation_update_transaction_tags` | `developer_workstation` | internal |
 | `ziti_health_check_script_path` | `developer_workstation` | internal |
+| `catalog_tools_install_url` | `developer_workstation` | private-hook |
 | `coder_deployment_url` | `developer_workstation` | private-hook |
 | `custom_ca_certificates` | `developer_workstation` | private-hook |
 | `failed_sweep_webhook_url` | `developer_workstation` | private-hook |
@@ -290,7 +293,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-471 variables, from `roles/developer_workstation/defaults/main.yml`.
+480 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -328,6 +331,15 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `missionctl_install_url` | string | `""` |  | private-hook | supply-chain | (undocumented) |
 | `missionctl_install_sha256` | string | `""` |  | supported | supply-chain | (undocumented) |
 | `missionctl_install_path` | string | `"/usr/local/bin/missionctl"` |  | supported |  | (undocumented) |
+| `catalog_tools_enabled` | bool | `false` |  | supported |  | catalog-tools, the catalog's own diagnostics binary (catalog#18, docs/troubleshooting.md): `catalog-tools diagnostics summary` tells a researcher why a maintenance run failed. (...) |
+| `catalog_tools_install_url` | string | `""` |  | private-hook | supply-chain | (undocumented) |
+| `catalog_tools_install_sha256` | string | `""` |  | supported | supply-chain | (undocumented) |
+| `catalog_tools_install_path` | string | `"/usr/local/bin/catalog-tools"` |  | supported |  | (undocumented) |
+| `catalog_tools_diagnostics_checks_path` | string | `"/etc/curiosity/diagnostics-checks.json"` |  | supported |  | (undocumented) |
+| `catalog_tools_diagnostics_services` | string (template) | template expression |  | supported |  | (undocumented) |
+| `catalog_tools_diagnostics_disk_paths` | list | `["/", "/var", "/usr/local", "/tmp"]` |  | supported |  | (undocumented) |
+| `catalog_tools_diagnostics_min_free_mib` | int | `2048` |  | supported |  | Free space below which a file system is reported, in MiB. |
+| `catalog_tools_diagnostics_stale_after_days` | int | `14` |  | supported |  | Days after which the last update's record counts as stale. |
 | `coder_deployment_url` | string | `""` |  | private-hook |  | Coder CLI tracks the deployment's own server version at install time (see tasks/coder-cli.yml) rather than a static pin — the client must match the server exactly for `coder ssh` and other RPC-driven commands to work. |
 | `coder_cli_install_script_url` | string (template) | template expression |  | supported |  | (undocumented) |
 | `coder_cli_buildinfo_url` | string (template) | template expression |  | supported |  | (undocumented) |

@@ -218,12 +218,7 @@ fn strings(value: Option<&Value>) -> Vec<&str> {
         .unwrap_or_default()
 }
 
-fn gather_commands<H: Host>(
-    host: &H,
-    manifest: &Value,
-    home: Option<&Path>,
-    health: &mut Health,
-) {
+fn gather_commands<H: Host>(host: &H, manifest: &Value, home: Option<&Path>, health: &mut Health) {
     let Some(contracts) = manifest
         .get("application_contracts")
         .and_then(Value::as_object)
@@ -266,13 +261,18 @@ fn gather_commands<H: Host>(
         } else if !is_version_query {
             (None, Some("its health check is not a version query"))
         } else if started.elapsed() >= VERSION_BUDGET {
-            (None, Some("the time budget for version queries was used up"))
+            (
+                None,
+                Some("the time budget for version queries was used up"),
+            )
         } else {
-            let output = host.run(&path.display().to_string(), args).and_then(|text| {
-                first_line(&text)
-                    .map(str::to_string)
-                    .ok_or_else(|| "printed nothing".to_string())
-            });
+            let output = host
+                .run(&path.display().to_string(), args)
+                .and_then(|text| {
+                    first_line(&text)
+                        .map(str::to_string)
+                        .ok_or_else(|| "printed nothing".to_string())
+                });
             (Some(output), None)
         };
         let release = releases.and_then(|r| r.get(name));
@@ -350,7 +350,8 @@ fn gather_services<H: Host>(host: &H, units: &[String], health: &mut Health) {
         let state = if UNIT.is_match(unit) {
             let mut args = SYSTEMCTL_SHOW.to_vec();
             args.extend(["--", unit.as_str()]);
-            host.run("systemctl", &args).and_then(|text| parse_unit(&text))
+            host.run("systemctl", &args)
+                .and_then(|text| parse_unit(&text))
         } else {
             Err("not a systemd unit name; not queried".to_string())
         };
@@ -435,8 +436,7 @@ static REPOSITORY: LazyLock<Regex> = LazyLock::new(|| {
 static STATE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9-]{0,39}$").expect("valid"));
 static VERSION_IN_TEXT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|[^0-9A-Za-z.])v?([0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.]+)?)")
-        .expect("valid")
+    Regex::new(r"(?:^|[^0-9A-Za-z.])v?([0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.]+)?)").expect("valid")
 });
 
 /// The version number in a version query's first line.
@@ -597,9 +597,7 @@ pub fn render(health: &Health, redactor: &mut Redactor) -> (Value, Vec<String>) 
             }
             Err(reason) => {
                 let reason = redactor.redact(reason);
-                findings.push(format!(
-                    "Free space on {path} could not be read: {reason}."
-                ));
+                findings.push(format!("Free space on {path} could not be read: {reason}."));
                 json!({ "path": path, "error": reason })
             }
         };
@@ -886,7 +884,11 @@ mod tests {
             "{findings:?}"
         );
         assert!(
-            !host.calls.borrow().iter().any(|call| call[0].ends_with("delta")),
+            !host
+                .calls
+                .borrow()
+                .iter()
+                .any(|call| call[0].ends_with("delta")),
             "a missing command is never run"
         );
     }
@@ -1018,7 +1020,10 @@ mod tests {
         let text = section.to_string();
         assert!(!text.to_ascii_lowercase().contains("sunshine"), "{text}");
         assert!(!text.to_ascii_lowercase().contains("streamstack"), "{text}");
-        assert!(!text.contains("litra"), "switched-off integrations are skipped");
+        assert!(
+            !text.contains("litra"),
+            "switched-off integrations are skipped"
+        );
     }
 
     #[test]
@@ -1056,7 +1061,10 @@ mod tests {
                 "/usr/local/bin/delta --version",
                 Err("cannot open /home/researcher/.config/delta on lab-ws01 (192.0.2.9)"),
             )
-            .output("df -P -k -- /var/lib/curiosity", Err("exited with status 1"));
+            .output(
+                "df -P -k -- /var/lib/curiosity",
+                Err("exited with status 1"),
+            );
         host.digests.insert(
             "/usr/local/bin/lazygit".into(),
             FileDigest::Unreadable("permission denied for researcher".into()),
@@ -1079,7 +1087,10 @@ mod tests {
         let health = gather(&host, None, Ok(list), None, 0);
         assert!(host.calls.borrow().is_empty(), "{:?}", host.calls.borrow());
         let (section, _) = render(&health, &mut redactor());
-        assert_eq!(section["services"][0]["unit"], crate::diagnostics::UNEXPECTED);
+        assert_eq!(
+            section["services"][0]["unit"],
+            crate::diagnostics::UNEXPECTED
+        );
     }
 
     #[test]
@@ -1128,7 +1139,10 @@ mod tests {
         );
         assert!(parse_df("only a header\n").is_err());
         assert_eq!(version_in("OpenTofu v1.8.0"), Some("1.8.0"));
-        assert_eq!(version_in("Client Version: v1.31.2+k3s1"), Some("1.31.2+k3s1"));
+        assert_eq!(
+            version_in("Client Version: v1.31.2+k3s1"),
+            Some("1.31.2+k3s1")
+        );
         assert_eq!(version_in("no digits"), None);
         assert!(matches_release("2025.1.0", "desktop-v2025.1.0"));
         assert!(!matches_release("0.44.0", "v0.44.1"));

@@ -366,7 +366,10 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 102
     let present = tools.join("goodtool");
     script(
         &present,
-        &format!(r#"echo "goodtool $*" >> '{}'; echo 'goodtool 1.2.3'"#, calls.display()),
+        &format!(
+            r#"echo "goodtool $*" >> '{}'; echo 'goodtool 1.2.3'"#,
+            calls.display()
+        ),
     );
     let stale = tools.join("staletool");
     script(&stale, "echo 'staletool 0.9.0'");
@@ -449,7 +452,11 @@ fn health_checks_find_a_missing_binary_a_failed_service_and_a_stale_artifact() {
     assert_eq!(command("goodtool")["matches_release"], true);
     assert_eq!(command("goodtool")["repository"], "example/goodtool");
     assert_eq!(command("gonetool")["status"], "missing");
-    assert_eq!(command("streamstack"), Value::Null, "StreamStack is left out");
+    assert_eq!(
+        command("streamstack"),
+        Value::Null,
+        "StreamStack is left out"
+    );
     assert_eq!(health["services"].as_array().unwrap().len(), 2);
     assert_eq!(health["services"][1]["active"], "failed");
     assert_eq!(health["disks"][0]["available_mib"], 500);
