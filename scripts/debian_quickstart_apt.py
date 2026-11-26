@@ -269,7 +269,19 @@ def main() -> int:
         xrc, xinst, xerr = simulate(vend, [pkg], f"simulate-{pkg}")
         per_extra[pkg] = {"candidate": extra_cand.get(pkg), "simulate_exit": xrc,
                           "would_install": xinst, "errors": xerr}
+    # A name with no candidate may still be a virtual package that apt (and the
+    # role's apt module) resolves to a single provider; ask apt for each one.
+    per_missing = {}
+    for pkg in missing:
+        proc = vend.run("apt-get", "install", "--simulate", "-y", pkg, log=f"simulate-missing-{pkg}")
+        text = proc.stdout + proc.stderr
+        chosen = re.search(r"Note, selecting '([^']+)' instead of", text)
+        verdict = [ln.strip() for ln in text.splitlines() if ln.startswith(("E:", "Package ", "However"))
+                   or "is not available" in ln or "has no installation candidate" in ln]
+        per_missing[pkg] = {"simulate_exit": proc.returncode,
+                            "provider": chosen.group(1) if chosen else None, "messages": verdict[:6]}
     findings["with_vendor_repos"] = {
+        "missing_resolution": per_missing,
         "update_exit": upd.returncode, "update_problems": problems, "missing": missing,
         "simulate_exit": rc, "would_install": inst, "errors": errors, "selected": per_extra,
     }
@@ -289,8 +301,12 @@ def main() -> int:
     md += [f"| {r['file']} | `{r['line']}` | {r['problem'] or 'none'} |" for r in findings["repositories"]]
     md += ["", f"- `apt-get update` exit {v['update_exit']}"]
     md += [f"  - `{p}`" for p in v["update_problems"][:20]]
-    md += [f"- Packages with no candidate: {', '.join(v['missing']) or 'none'}",
-           f"- `apt-get install --simulate` of the rest: exit {v['simulate_exit']}, "
+    md += [f"- Packages with no candidate: {', '.join(v['missing']) or 'none'}"]
+    for pkg, res in v["missing_resolution"].items():
+        how = f"apt selects `{res['provider']}`" if res["provider"] else "no provider selected"
+        md.append(f"  - `apt-get install --simulate {pkg}`: exit {res['simulate_exit']}, {how}")
+        md += [f"    - `{m}`" for m in res["messages"]]
+    md += [f"- `apt-get install --simulate` of the rest: exit {v['simulate_exit']}, "
            f"{v['would_install']} packages would be installed"]
     md += [f"  - `{e}`" for e in v["errors"][:20]]
     for pkg, res in v["selected"].items():
