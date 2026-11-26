@@ -107,3 +107,20 @@ def test_renovate_is_public_and_valid_json() -> None:
     config = json.loads((ROOT / "renovate.json").read_text())
     assert config["$schema"].startswith("https://docs.renovatebot.com/")
     assert "config:recommended" in config["extends"]
+
+
+def test_ci_images_are_not_pulled_from_docker_hub() -> None:
+    """Every CI image names its registry host (catalog#97).
+
+    A bare ``python:3.13-slim`` resolves to Docker Hub, whose anonymous pull
+    limit returns 429 to the shared runners.
+    """
+    ci = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
+    images = [ci["image"]] + [
+        job["image"]
+        for job in ci.values()
+        if isinstance(job, dict) and isinstance(job.get("image"), str)
+    ]
+    for image in images:
+        first = image.split("/", 1)[0]
+        assert "/" in image and ("." in first or ":" in first), f"{image} has no registry host"
