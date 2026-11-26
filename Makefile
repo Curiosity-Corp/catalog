@@ -1,11 +1,11 @@
-.PHONY: validate syntax lint yaml test research-profile accessibility-summary collection sbom tools reference reference-check packages-check register-check register-alerts
+.PHONY: validate syntax lint yaml test research-profile accessibility-summary collection sbom third-party tools reference reference-check packages-check register-check register-alerts
 
 PYTHON ?= python3
 ANSIBLE_ROLES_PATH ?= roles
 SOURCE_DATE_EPOCH ?= 0
 export SOURCE_DATE_EPOCH
 
-validate: yaml syntax lint test tools reference-check packages-check register-check collection sbom
+validate: yaml syntax lint test tools reference-check packages-check register-check collection sbom third-party
 
 yaml:
 	yamllint -f parsable .
@@ -61,6 +61,11 @@ research-profile:
 collection:
 	ansible-galaxy collection build --force
 	$(PYTHON) scripts/normalize_collection_artifact.py "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
+
+# Licence scan of the built collection (THIRD_PARTY.md); CI runs the same in
+# the `third_party` job.
+third-party: collection
+	scripts/check-third-party.sh "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
 
 # The release SBOM (docs/sbom.md); CI runs the same in the `sbom` job.
 SBOM_SCHEMA = ci/schemas/cyclonedx-1.6/bom-1.6.schema.json

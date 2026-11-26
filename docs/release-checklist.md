@@ -8,6 +8,11 @@ Use this checklist for every public collection release.
 - [ ] Run `make validate` on a clean checkout.
 - [ ] Run a disposable VM test for each changed profile or integration.
 - [ ] Update `CHANGELOG.md`, `docs/compatibility.md`, and migration notes.
+- [ ] Review the third-party inventory (`THIRD_PARTY.md`, `REUSE.toml`,
+      `NOTICE`, `LICENSES/`): every vendored file's version still matches,
+      the run-time licences are re-read, `needs-review` entries and
+      `build_ignore` exclusions still have an open follow-up issue, and the
+      pipeline's `third_party` job (licence scan of the built tarball) is green.
 - [ ] Build the collection with `ansible-galaxy collection build`.
 - [ ] Inspect the tarball contents and compare its checksum with the CI job.
 - [ ] Sign the Git tag and collection artifact when the release key is

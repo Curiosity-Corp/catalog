@@ -43,6 +43,10 @@ build_ignore:
   - .research-profile
   - research-profile-report.md
   - docs/evidence
+  # Unresolved provenance, left out of the artifact until resolved (catalog#48,
+  # THIRD_PARTY.md): screenshots of third-party apps and a live camera frame.
+  # No role task reads them.
+  - roles/developer_workstation/files/streamstack/docs/evidence
   - tests
   - scripts
   - Makefile

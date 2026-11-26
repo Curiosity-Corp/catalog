@@ -1,0 +1,302 @@
+# Licence inventory of the curiosity.workstation collection (catalog#48).
+#
+# This is the machine-readable twin of THIRD_PARTY.md: every file in the built
+# collection must match an annotation here. It follows the REUSE specification
+# 3.3 (https://reuse.software/spec-3.3/), so `reuse lint` reads it; the
+# Curiosity-* keys are this project's inventory fields and REUSE ignores them.
+#
+#   Curiosity-Kind          first-party | vendored | derived | patch | key-material
+#   Curiosity-Source        where the material comes from
+#   Curiosity-Version       release, tag or commit it was taken from
+#   Curiosity-Provenance    resolved | needs-review (ships because a role task
+#                           needs it; the open question has a follow-up issue)
+#   Curiosity-Redistribution  what a redistributor of the built collection must do
+#   Curiosity-Follow-Up     the issue that resolves an open question
+#
+# How the CI check works (the `third_party` job, docs/release-checklist.md):
+#
+# - First-party annotations match text files by extension and the role scripts
+#   by name, with precedence "aggregate". Images, fonts, archives, installers,
+#   keys and certificates are never matched by a glob: each one is listed below,
+#   so an unlisted one fails `reuse lint` with "no license identifier".
+# - Third-party and reviewed files are listed by exact path with precedence
+#   "override", so the notice inside them is recorded here, not read from them.
+# - A file under a first-party glob that carries its own copyright or licence
+#   notice is third-party material nobody listed; the job fails on it.
+#
+# Annotations are read top to bottom and the last match wins, so keep the broad
+# first-party globs first and the exact third-party paths last.
+version = 1
+
+# ---------------------------------------------------------------------------
+# First party: the collection's own automation, documentation and scripts
+# ---------------------------------------------------------------------------
+[[annotations]]
+path = [
+  "**/*.py",
+  "**/*.yml",
+  "**/*.yaml",
+  "**/*.md",
+  "**/*.j2",
+  "**/*.txt",
+  "**/*.in",
+  "**/*.json",
+  "**/*.toml",
+  "**/*.css",
+  "**/*.js",
+  "**/*.mjs",
+  "**/*.html",
+  "**/*.sh",
+  "**/*.conf",
+  "**/*.cfg",
+  "**/*.service",
+  "**/*.timer",
+  "**/*.target",
+  "**/*.desktop",
+  "**/*.rules",
+  "**/*.rasi",
+  "**/*.tint2rc",
+  "**/*.webmanifest",
+  "**/.gitignore",
+  "**/.yamllint",
+  "**/Makefile",
+  "examples/cloud-init/meta-data",
+  "examples/cloud-init/user-data",
+  "roles/*/files/curiosity-*",
+  "roles/*/files/*/curiosity-*",
+  "roles/*/files/hh-*",
+  "roles/developer_workstation/files/hhtest-cleanup",
+  "roles/developer_workstation/files/hyper-workspace",
+  "roles/developer_workstation/files/i915-pcon-frl-444/i915-pcon-frl-444-build",
+  "roles/developer_workstation/files/i915-pcon-frl-444/i915-reload",
+  "roles/developer_workstation/files/i915-pcon-frl-444/zz-i915-pcon-frl-444",
+  "roles/developer_workstation/files/i915-pcon-frl-444/zz-i915-pcon-frl-444.postrm",
+  "roles/developer_workstation/files/minimal-desktop/autostart",
+  "roles/developer_workstation/files/minimal-desktop/dunstrc",
+  "roles/developer_workstation/files/minimal-desktop/lightdm-xserver-wrapper",
+  "roles/developer_workstation/files/minimal-desktop/tint2-volume-status",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "first-party"
+Curiosity-Provenance = "resolved"
+
+# NOTICE quotes the third-party copyright lines it is required to carry, so it
+# is listed by path; its own text is the project's.
+[[annotations]]
+path = "NOTICE"
+precedence = "override"
+SPDX-FileCopyrightText = "Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "first-party"
+Curiosity-Provenance = "resolved"
+
+[[annotations]]
+path = "roles/developer_workstation/files/bitwarden/com.bitwarden.Bitwarden.policy"
+precedence = "override"
+SPDX-FileCopyrightText = "Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "first-party"
+Curiosity-Source = "written for catalog#110; declares the polkit action id com.bitwarden.Bitwarden.unlock that the Bitwarden desktop app asks for"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Apache-2.0 with the collection. The action id is an interface name, not copied code."
+
+# ---------------------------------------------------------------------------
+# StreamStack: vendored subtree of the StreamStack project (same organisation)
+# ---------------------------------------------------------------------------
+[[annotations]]
+path = [
+  "roles/developer_workstation/files/streamstack/**/*.cube",
+  "roles/developer_workstation/files/streamstack/**/*.lock",
+  "roles/developer_workstation/files/streamstack/**/Dockerfile",
+  "roles/developer_workstation/files/streamstack/packaging/bin/*",
+  "roles/developer_workstation/files/streamstack/packaging/kernel/postinst.d/*",
+  "roles/developer_workstation/files/streamstack/packaging/apt-public.fingerprint",
+  "roles/developer_workstation/files/streamstack/tests/fixtures/*.hex",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "StreamStack project, Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "vendored"
+Curiosity-Source = "StreamStack, squashed git subtree in roles/developer_workstation/files/streamstack (git-subtree-split 0ddadd2aa46bb3b28c87af3d179a47f016ea1604)"
+Curiosity-Version = "0.0.32"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Apache-2.0: ship the subtree's own LICENSE, which the collection does. The subtree has no NOTICE file and bundles no third-party code, fonts or models; DeepFilterNet, OpenVINO and YuNet are fetched on the host. The .cube LUTs are generated by its presets builder; the .hex fixtures are USB descriptors read from a device."
+
+[[annotations]]
+path = [
+  "roles/developer_workstation/files/streamstack/docs/auto-framing.md",
+  "roles/developer_workstation/files/streamstack/src/streamstack/engine/segment.py",
+  "roles/developer_workstation/files/streamstack/src/streamstack/framing/model.py",
+  "roles/developer_workstation/files/streamstack/tools/bench_ai.py",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "StreamStack project, Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "vendored"
+Curiosity-Source = "StreamStack 0.0.32 (see above)"
+Curiosity-Version = "0.0.32"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Apache-2.0 with the subtree. The copyright lines inside these files are attribution strings for models StreamStack downloads at run time (YuNet, PaddleSeg, MediaPipe, MODNet); no model or third-party code is bundled."
+
+[[annotations]]
+path = [
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/console/icon-192.png",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/console/icon-512.png",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/console/icon-maskable-512.png",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/console/icon.svg",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/icons/streamstack-live.png",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/icons/streamstack-live.svg",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/icons/streamstack-off.png",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/icons/streamstack-off.svg",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/icons/streamstack-raw.png",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/icons/streamstack-raw.svg",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/icons/streamstack-warn.png",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/icons/streamstack-warn.svg",
+  "roles/developer_workstation/files/streamstack/src/streamstack/data/console/presets/looks/*.png",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "StreamStack project, Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "first-party"
+Curiosity-Source = "generated by StreamStack's own tools: tools/make_console_icons.py for the icons (plain shapes) and python -m streamstack.presets.build for the look thumbnails (one synthetic portrait)"
+Curiosity-Version = "0.0.32"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Apache-2.0 with the subtree; no third-party artwork or fonts."
+
+[[annotations]]
+path = [
+  "roles/developer_workstation/files/streamstack/tests/fixtures/camera-frame.jpg",
+  "roles/developer_workstation/files/streamstack/tests/fixtures/canon_liveview_1056x704.jpg",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "StreamStack project, Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "first-party"
+Curiosity-Source = "synthetic colour-bar test patterns with a timecode overlay (checked by eye), used as camera-frame fixtures"
+Curiosity-Version = "0.0.32"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Apache-2.0 with the subtree; no photograph."
+
+[[annotations]]
+path = "roles/developer_workstation/files/streamstack/src/streamstack/data/console/demo/*.jpg"
+precedence = "override"
+SPDX-FileCopyrightText = "StreamStack project, Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "first-party"
+Curiosity-Source = "generated demo test cards (docs/console.md); the generating command is not in the tree"
+Curiosity-Version = "0.0.32"
+Curiosity-Provenance = "needs-review"
+Curiosity-Redistribution = "Apache-2.0 with the subtree. The lettering looks like Lato (SIL OFL 1.1), which permits text rendered into images; no font file is shipped. Ships because the console shows the Be Right Back card at run time."
+Curiosity-Follow-Up = "catalog#170"
+
+[[annotations]]
+path = [
+  "roles/developer_workstation/files/streamstack/packaging/apt-public.asc",
+  "roles/developer_workstation/files/streamstack/packaging/signing-cert.pem",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "StreamStack project, Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "key-material"
+Curiosity-Source = "the StreamStack project's own APT signing public key (fingerprint in packaging/apt-public.fingerprint) and CI signing certificate"
+Curiosity-Version = "as vendored with 0.0.32"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Public verification material; it carries no secret. Keep it unmodified."
+
+# ---------------------------------------------------------------------------
+# Third-party works, derivatives and key material shipped in the collection
+# ---------------------------------------------------------------------------
+[[annotations]]
+path = "roles/developer_workstation/files/wee_most.py"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2022 Damien Tardy-Panis <damien.dev@tardypad.me>",
+  "Curiosity Research Corporation (local modifications)",
+]
+SPDX-License-Identifier = "GPL-3.0-only"
+Curiosity-Kind = "derived"
+Curiosity-Source = "wee-most, https://git.sr.ht/~tardypad/wee-most (itself forked from wee_matter and inspired by wee_slack)"
+Curiosity-Version = "0.3.0 (WEECHAT_SCRIPT_VERSION; the upstream commit is not recorded)"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "GPLv3: keep the copyright and licence notice in the file, ship LICENSES/GPL-3.0-only.txt, say the file was modified (NOTICE does: Python 3.12 raw-string regexes, personal access token login) and keep the source available (the file is its own source). The header grants GPLv3 without 'or later'. Used by tasks/weechat.yml, optional chat profile, off by default."
+
+[[annotations]]
+path = "roles/developer_workstation/files/teams.py"
+precedence = "override"
+SPDX-FileCopyrightText = "Curiosity Research Corporation"
+SPDX-License-Identifier = "GPL-3.0-only"
+Curiosity-Kind = "first-party"
+Curiosity-Source = "written for this collection (SCRIPT_AUTHOR curiosity-corp); its header says it follows the patterns of wee_most.py and marks it GPL3"
+Curiosity-Version = "0.1.0 (SCRIPT_VERSION)"
+Curiosity-Provenance = "needs-review"
+Curiosity-Redistribution = "GPLv3 as marked: ship LICENSES/GPL-3.0-only.txt; the file is its own source. Ships because tasks/weechat.yml installs it (optional chat profile, off by default)."
+Curiosity-Follow-Up = "catalog#167"
+
+[[annotations]]
+path = "roles/developer_workstation/files/minimal-desktop/onyx-large-themerc"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2003-2011 Dana Jansens, Mikael Magnusson, Derek Foreman, Ben Jansens (Openbox Onyx theme)",
+  "Curiosity Research Corporation (padding changes)",
+]
+SPDX-License-Identifier = "GPL-2.0-or-later"
+Curiosity-Kind = "derived"
+Curiosity-Source = "Openbox, /usr/share/themes/Onyx/openbox-3/themerc (Ubuntu package openbox 3.6.1-12ubuntu3); licence from the package's Debian copyright file (Files: *, GPL-2+)"
+Curiosity-Version = "3.6.1"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "GPLv2+: keep the attribution, say the file was changed (NOTICE does: padding.width 2 to 6, padding.height 6 added) and ship LICENSES/GPL-2.0-or-later.txt. The file is its own source."
+
+[[annotations]]
+path = "roles/developer_workstation/files/minimal-desktop/rc.xml"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Curiosity Research Corporation",
+  "Openbox authors (if derived from the stock rc.xml)",
+]
+SPDX-License-Identifier = "GPL-2.0-or-later"
+Curiosity-Kind = "derived"
+Curiosity-Source = "written for this collection against the Openbox 3.4 rc schema; 105 of its 246 distinct lines also occur in Openbox 3.6.1's stock /etc/xdg/openbox/rc.xml"
+Curiosity-Version = "compared with Openbox 3.6.1"
+Curiosity-Provenance = "needs-review"
+Curiosity-Redistribution = "Treated as GPLv2+ until its authorship is recorded: ship LICENSES/GPL-2.0-or-later.txt; the file is its own source. Ships because tasks/minimal-desktop-openbox.yml deploys it."
+Curiosity-Follow-Up = "catalog#168"
+
+[[annotations]]
+path = "roles/developer_workstation/files/minimal-desktop/openbox-zone"
+precedence = "override"
+SPDX-FileCopyrightText = "Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "first-party"
+Curiosity-Source = "ported from the seantech workstation (CHANGELOG, minimal desktop zone snapping); the file names no author or licence"
+Curiosity-Version = "no upstream version"
+Curiosity-Provenance = "needs-review"
+Curiosity-Redistribution = "Apache-2.0 with the collection once the original author confirms the script is theirs to license. Ships because the minimal desktop's key bindings call it."
+Curiosity-Follow-Up = "catalog#168"
+
+[[annotations]]
+path = "roles/developer_workstation/files/i915-pcon-frl-444/i915-pcon-frl-444.patch"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2008 Intel Corporation (drivers/gpu/drm/i915/display/intel_dp.c, context lines)",
+  "Curiosity Research Corporation (added code)",
+]
+SPDX-License-Identifier = "MIT"
+Curiosity-Kind = "patch"
+Curiosity-Source = "a patch to drivers/gpu/drm/i915/display/intel_dp.c of the host's Ubuntu kernel source package, applied on the host by i915-pcon-frl-444-build"
+Curiosity-Version = "base kernel version not recorded"
+Curiosity-Provenance = "needs-review"
+Curiosity-Redistribution = "The patched file carries Intel's MIT permission notice (LICENSES/MIT.txt; NOTICE repeats it); the module built on the host falls under the kernel's GPL-2.0 and is never redistributed. Ships because the i915 PCON tasks build with it."
+Curiosity-Follow-Up = "catalog#169"
+
+[[annotations]]
+path = "roles/developer_workstation/files/pia-ca.rsa.4096.crt"
+precedence = "override"
+SPDX-FileCopyrightText = "Private Internet Access"
+SPDX-License-Identifier = "LicenseRef-Public-Verification-Material"
+Curiosity-Kind = "key-material"
+Curiosity-Source = "the Private Internet Access RSA-4096 CA certificate (CN=Private Internet Access, expires 2034-04-12), published by PIA for verifying its servers"
+Curiosity-Version = "certificate serial 9d2efaf3836499ed"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Public CA certificate with no licence grant; redistributed unmodified only so tasks/pia-tunnel.yml can verify PIA servers. Keep it unmodified."
