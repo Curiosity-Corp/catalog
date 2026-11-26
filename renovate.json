@@ -3,10 +3,22 @@
   "extends": ["config:recommended"],
   "dependencyDashboard": true,
   "labels": ["dependencies"],
+  "pip-compile": {
+    "managerFilePatterns": ["/(^|/)ci/requirements\\.txt$/"]
+  },
+  "lockFileMaintenance": {
+    "enabled": true
+  },
   "packageRules": [
     {
       "matchUpdateTypes": ["digest", "pinDigest"],
       "groupName": "container image digests"
+    },
+    {
+      "description": "ci/requirements.txt is a lock generated from ci/requirements.in by the pip-compile manager; plain pip_requirements must not bump its transitive pins one by one.",
+      "matchManagers": ["pip_requirements"],
+      "matchFileNames": ["ci/requirements.txt"],
+      "enabled": false
     }
   ]
 }

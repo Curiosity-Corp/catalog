@@ -15,6 +15,9 @@ Use this checklist for every public collection release.
 - [ ] Publish the GitHub/GitLab release notes and registry artifact.
 - [ ] Record the release URL, artifact checksum, CI pipeline, documentation
       URL, and compatibility evidence in the dated evidence log.
+- [ ] Copy the `provenance` job's `ci-toolchain.txt` (image digest, Python,
+      locked tooling, collections) into the same evidence log
+      (`docs/ci-toolchain.md`).
 - [ ] Compare the repository description and the release page with
       `docs/project-identity.md`; `galaxy.yml`, README, `SECURITY.md` and that
       page must agree (CI checks the files, not the hosting settings).
