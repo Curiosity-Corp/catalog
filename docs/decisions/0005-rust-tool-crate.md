@@ -1,7 +1,10 @@
-# ADR 0001: The catalog's tools are one Rust crate
+# 0005: The catalog's tools are one Rust crate
 
 - Status: accepted
 - Date: 2026-11-23
+- Deciders: catalog maintainers
+- Affects: the repository's tooling (`tools/`, the `tools` CI job); no
+  variable, tag, profile, platform or schema changes in this record
 - Issues: catalog#160 (first slice), catalog#27; hypervoid/admiral#136
 
 ## Context
@@ -39,6 +42,23 @@ and its own Draft MR.
   checksum, not as an interpreted script.
 - The crate is not part of the Ansible collection artifact (`galaxy.yml`
   `build_ignore`).
+
+## Safety impact
+
+Nothing changes on a research machine through this record: the crate is
+excluded from the collection artifact and the role installs no part of it.
+A later slice that installs a release binary on hosts ships as its own change,
+with its own task, pinned checksum and, where it adds a variable or a
+default-on behaviour, its own decision record.
+
+## Alternatives considered
+
+- One Python script per tool (the closed MRs above): ruled out by the fleet's
+  no-new-Python-or-Go decision, and it needs an interpreter on every host
+  for the commands the role installs.
+- Go: ruled out by the same decision.
+- Ansible modules or filter plugins: they fit tasks run on a host, not
+  repository tooling such as a reference generator or a CI drift check.
 
 ## Consequences
 

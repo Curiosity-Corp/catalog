@@ -1,7 +1,7 @@
 # catalog-tools
 
 The catalog's tools, as one Rust binary with a subcommand per tool
-([ADR 0001](../docs/adr/0001-rust-tool-crate.md), catalog#160). The Ansible
+([decision 0005](../docs/decisions/0005-rust-tool-crate.md), catalog#160). The Ansible
 collection itself does not depend on it and does not ship it.
 
 | Subcommand | What it does | Issue |

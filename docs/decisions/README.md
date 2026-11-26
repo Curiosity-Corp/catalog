@@ -35,3 +35,4 @@ Routine fixes and documentation changes do not need one.
 | [0002](0002-optional-integrations-default-off.md) | Integrations that need private services default to off | accepted |
 | [0003](0003-opt-in-assistive-technology-packages.md) | Opt-in assistive technology packages | proposed |
 | [0004](0004-resumable-downloads.md) | Resume only the downloads above 100 MB, with `curl -C -` | proposed |
+| [0005](0005-rust-tool-crate.md) | The catalog's tools are one Rust crate | accepted |
