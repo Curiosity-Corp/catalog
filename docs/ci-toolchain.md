@@ -9,6 +9,7 @@ and moved only by a reviewed merge request.
 | Input | Declared in | Pin | Moved by |
 | --- | --- | --- | --- |
 | Job images (`python:3.13`, `-slim`, `-trixie`) | `.gitlab-ci.yml` | tag plus `@sha256:` digest of the multi-arch index, pulled from ECR Public's Docker Library mirror (catalog#97) | Renovate `docker` manager: digest bumps grouped as "container image digests", tag bumps one MR each |
+| Rust image for `tools` (`rust:1-bookworm`) | `.gitlab-ci.yml` | tag plus `@sha256:` digest; the crates are pinned by `tools/Cargo.lock` (`cargo --locked`) | Renovate `docker` manager (digest) and `cargo` manager |
 | Python tooling (ansible-core, ansible-lint, yamllint, PyYAML, pytest, uv) | `ci/requirements.in` | exact `==` for each direct dependency | Renovate `pip-compile` manager: bumps the pin and regenerates the lock in the same MR |
 | Their transitive dependencies | `ci/requirements.txt` | full lock with SHA-256 hashes, installed with `pip install --require-hashes` | Renovate lock file maintenance (weekly MR) |
 | pip | the job image | the image digest | the image digest bump |
@@ -37,8 +38,8 @@ The collection's own dependency range for users stays in `galaxy.yml` and
 Renovate is the normal path. To bump something yourself, change it in one MR:
 
 1. Images: resolve the new digest with
-   `crane digest public.ecr.aws/docker/library/python:<tag>` (or
-   `skopeo inspect --format '{{.Digest}}' docker://public.ecr.aws/docker/library/python:<tag>`)
+   `crane digest public.ecr.aws/docker/library/<image>:<tag>` (or
+   `skopeo inspect --format '{{.Digest}}' docker://public.ecr.aws/docker/library/<image>:<tag>`)
    and replace both tag and digest on every line that uses the image.
 2. Python tooling: edit the pin in `ci/requirements.in`, then regenerate the
    lock with the command in the header of `ci/requirements.txt`:
