@@ -31,9 +31,9 @@ hardware profile) is defined in the [glossary](../glossary.md).
    host names of a real lab) in host or group variables, Ansible Vault or a
    secret manager, never in a file you commit.
 3. Select tasks with `--tags` for a first pass. Tasks without a tag do not run
-   when `--tags` is given, so the pre-flight checks and the host-local
-   variables file `/etc/ansible/local-vars.yml` are skipped: pass your
-   variables with `-e @file.yml` in that mode.
+   when `--tags` is given. The pre-flight checks (root, managed users,
+   profile) and the host-local variables file `/etc/ansible/local-vars.yml`
+   they read are the exception: they run whatever tags you give.
 4. The role has no uninstaller. The supported way to undo a run is to restore
    the VM snapshot or backup you took before it; each guide lists what the role
    leaves behind and how to switch the recurring parts off.

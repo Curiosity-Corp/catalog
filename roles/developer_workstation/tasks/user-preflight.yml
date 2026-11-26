@@ -3,8 +3,11 @@
 # Per-user pre-flight validation
 # =============================================================================
 # Included once per item of dev_users with loop_var dw_user. Never reference
-
+# dev_user or dev_user_home here: that would collapse
 # every iteration onto the primary account.
+#
+# main.yml applies the tags [always, preflight] to these tasks, so they run
+# whatever --tags are given (catalog#165).
 
 - name: Verify the managed user exists
   ansible.builtin.getent:
