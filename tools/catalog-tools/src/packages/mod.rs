@@ -83,6 +83,11 @@ pub fn role_packages(root: &Path) -> Result<Vec<String>> {
                 path.display()
             );
         };
+        let names = match names {
+            Value::String(expression) => task_list_variable(task, expression)
+                .with_context(|| format!("{}: task {INSTALL_TASK:?}", path.display()))?,
+            names => names,
+        };
         return Ok(yaml::as_list(Some(names))
             .into_iter()
             .filter_map(Value::as_str)
@@ -91,6 +96,32 @@ pub fn role_packages(root: &Path) -> Result<Vec<String>> {
             .collect());
     }
     bail!("{}: task {INSTALL_TASK:?} not found", path.display())
+}
+
+/// The list behind an apt `name` given as a template over one of the task's
+/// own variables, for example
+/// `{{ _apt_packages | reject('in', apt_packages_excluded) | list }}`
+/// (catalog#162). The whole list is returned: filters such as the
+/// per-distribution exclusions are what the probe's evidence is for.
+fn task_list_variable<'a>(task: &'a Value, expression: &str) -> Result<&'a Value> {
+    let variable = expression
+        .trim()
+        .strip_prefix("{{")
+        .map(str::trim_start)
+        .and_then(|rest| {
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(rest.len());
+            (end > 0).then(|| &rest[..end])
+        })
+        .with_context(|| {
+            format!("apt name {expression:?} is neither a list nor a template over a task variable")
+        })?;
+    match task.get("vars").and_then(|vars| vars.get(variable)) {
+        Some(list @ Value::Sequence(_)) => Ok(list),
+        Some(_) => bail!("apt name {expression:?}: task variable {variable:?} is not a list"),
+        None => bail!("apt name {expression:?}: {variable:?} is not one of the task's vars"),
+    }
 }
 
 /// Turn apt's answers into a platform result.
@@ -404,6 +435,48 @@ mod tests {
         assert_eq!(role_packages(directory.path()).unwrap(), ["gcc", "jq"]);
         std::fs::write(&path, "---\n- name: Other\n  ansible.builtin.debug: {}\n").unwrap();
         assert!(role_packages(directory.path()).is_err());
+    }
+
+    #[test]
+    fn role_packages_follow_a_templated_task_variable() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(PACKAGES_TASK);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let task = |name: &str| {
+            format!(
+                "---
+- name: Install all APT packages  # noqa: args
+  vars:
+    _apt_packages:
+      - gcc
+      - \"{{{{ java_package }}}}\"
+      - software-properties-common
+    _not_a_list: gcc
+  ansible.builtin.apt:
+    name: {name}
+    state: present
+"
+            )
+        };
+        std::fs::write(
+            &path,
+            task("\"{{ _apt_packages | reject('in', apt_packages_excluded) | list }}\""),
+        )
+        .unwrap();
+        assert_eq!(
+            role_packages(directory.path()).unwrap(),
+            ["gcc", "software-properties-common"]
+        );
+        for broken in [
+            "\"{{ _missing | list }}\"",
+            "\"{{ _not_a_list }}\"",
+            "\"{{ ['gcc'] }}\"",
+            "gcc",
+        ] {
+            std::fs::write(&path, task(broken)).unwrap();
+            let error = format!("{:#}", role_packages(directory.path()).unwrap_err());
+            assert!(error.contains(INSTALL_TASK), "{broken}: {error}");
+        }
     }
 
     #[test]

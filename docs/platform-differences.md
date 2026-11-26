@@ -46,7 +46,10 @@ package. Each other platform needs the role to handle its gaps first:
 - `tokei` is not in Ubuntu 22.04 or 24.04, or in Debian 12.
 - `eza` is not in Ubuntu 22.04 or Debian 12, and `tealdeer` is not in Ubuntu 22.04.
 - `firefox` is `firefox-esr` on Debian.
-- `software-properties-common` is gone from Debian 13.
+- `software-properties-common` is gone from Debian 13. The role already handles
+  it: the install task removes names listed in `apt_packages_not_in_distribution`
+  for the host's distribution (catalog#162). The probe still asks about the
+  whole list, so this evidence keeps showing why each exclusion exists.
 
 The virtual names (`libfuse2`, `dnsutils`, `p7zip-full`) install through
 their providers, so apt handles them without a change.
