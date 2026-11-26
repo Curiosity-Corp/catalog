@@ -18,7 +18,12 @@ import json
 import os
 import re
 import subprocess
+import time
+import urllib.error
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
+from http.client import HTTPResponse
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +50,32 @@ def _cached(directory: Path, prefix: str) -> Path:
     return found[0]
 
 
+@contextmanager
+def _urlopen(request: urllib.request.Request | str) -> Iterator[HTTPResponse]:
+    """urlopen with the release queries' retries: 3 more tries, 2 s apart.
+
+    The role retries every upstream lookup (`retries: 3`, `delay: 2`), so a
+    single slow read is not a vendor change; this helper gives the test's own
+    lookups the same allowance. Only a timeout, a refused or reset connection or
+    a 5xx is retried; any other HTTP error fails at once, and the last failure
+    is raised unchanged.
+    """
+    for attempt in range(4):
+        try:
+            response = urllib.request.urlopen(request, timeout=60)
+        except urllib.error.HTTPError as error:
+            if error.code < 500 or attempt == 3:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 3:
+                raise
+        else:
+            with response:
+                yield response
+            return
+        time.sleep(2)
+
+
 def _github_token_vars() -> dict[str, Any]:
     token = os.environ.get("GITHUB_TOKEN", "")
     return {"_github_api_token": token} if token else {}
@@ -60,13 +91,13 @@ def _github_latest_release(repository: str) -> dict[str, Any]:
             **({"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}"} if os.environ.get("GITHUB_TOKEN") else {}),
         },
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with _urlopen(request) as response:
         return json.load(response)
 
 
 def _latest_tag_from_redirect(repository: str) -> str:
     """The latest release tag, from github.com's redirect (no API quota)."""
-    with urllib.request.urlopen(f"https://github.com/{repository}/releases/latest", timeout=60) as response:
+    with _urlopen(f"https://github.com/{repository}/releases/latest") as response:
         final = response.geturl()
     match = re.search(r"/releases/tag/([^/?#]+)$", final)
     assert match, f"github.com/{repository}/releases/latest redirected to {final}"
@@ -158,12 +189,12 @@ def test_claude_code_release_signature_and_binary_verify(tmp_path: Path) -> None
 def test_claude_code_release_check_rejects_an_altered_real_manifest(tmp_path: Path) -> None:
     """The real signature does not cover a manifest with a changed checksum."""
     base = DEFAULTS["claude_native_release_base_url"]
-    with urllib.request.urlopen(f"{base}/stable", timeout=60) as response:
+    with _urlopen(f"{base}/stable") as response:
         version = response.read().decode().strip()
     site = tmp_path / "site" / version
     site.mkdir(parents=True)
     for name in ("manifest.json", "manifest.json.sig"):
-        with urllib.request.urlopen(f"{base}/{version}/{name}", timeout=60) as response:
+        with _urlopen(f"{base}/{version}/{name}") as response:
             (site / name).write_bytes(response.read())
     (tmp_path / "site/stable").write_text(version)
     manifest = (site / "manifest.json").read_text()
