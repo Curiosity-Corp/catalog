@@ -332,22 +332,18 @@ entries:
     source: https://github.com/openziti/ziti
     declarations:
       source:apt-openziti: https://packages.openziti.org/zitipax-openziti-deb-stable
-      source:openziti-installer: https://get.openziti.io/tun/scripts/install-ubuntu.bash
     licence: Apache-2.0
     licence_source: https://github.com/openziti/ziti/blob/main/LICENSE
     owner: role-maintainer
     update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
-      the newest version the repository serves from the stable channel; the install script only adds that
-      repository'
-    verification: tls-only
+      the newest version the repository serves from the stable channel'
+    verification: vendor-repository-signature
     security_critical: true
     support:
       status: maintained
       evidence: https://github.com/openziti/ziti
       checked: '2026-11-26'
-    replacement: Add the signed repository and key directly (as repos.yml already can) instead of running
-      the script; the release binaries of openziti/ziti otherwise.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+    replacement: The release binaries of openziti/ziti, checked against their GitHub digest.
   - name: mozilla-apt
     upstream: Mozilla
     source: https://www.mozilla.org/firefox/
@@ -571,14 +567,14 @@ entries:
     licence_source: https://github.com/kubernetes/kubernetes/blob/master/LICENSE
     owner: role-maintainer
     update_channel: the current stable release (dl.k8s.io/release/stable.txt) on each run
-    verification: tls-only
+    # each binary is checked against the .sha256 dl.k8s.io publishes next to it (verified-download.yml)
+    verification: vendor-signature
     security_critical: true
     support:
       status: maintained
       evidence: https://kubernetes.io/releases/
       checked: '2026-11-26'
-    replacement: Check the published .sha256 next to each binary, or use the signed pkgs.k8s.io APT repository.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+    replacement: The signed pkgs.k8s.io APT repository.
   - name: helm
     upstream: Helm project (CNCF)
     source: https://github.com/helm/helm
@@ -589,15 +585,14 @@ entries:
     licence_source: https://github.com/helm/helm/blob/main/LICENSE
     owner: role-maintainer
     update_channel: the latest release on each run
-    verification: tls-only
+    # the archive is checked against the .sha256sum get.helm.sh publishes next to it (verified-download.yml)
+    verification: vendor-signature
     security_critical: true
     support:
       status: maintained
       evidence: https://github.com/helm/helm
       checked: '2026-11-26'
-    replacement: Check the published .sha256sum, or install from the GitHub release with its digest as
-      latest-releases.yml does.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+    replacement: Install from the GitHub release with its digest, as latest-releases.yml does.
   - name: go-toolchain
     upstream: The Go project (Google)
     source: https://github.com/golang/go
@@ -607,15 +602,14 @@ entries:
     licence_source: https://github.com/golang/go/blob/master/LICENSE
     owner: role-maintainer
     update_channel: the current release (go.dev/VERSION) on each run
-    verification: tls-only
+    # the archive is checked against the SHA-256 go.dev/dl/?mode=json publishes (verified-download.yml)
+    verification: vendor-signature
     security_critical: true
     support:
       status: maintained
       evidence: https://go.dev/doc/devel/release#policy
       checked: '2026-11-26'
-    replacement: Check the SHA-256 that go.dev/dl/?mode=json publishes, or use the distribution's golang
-      package.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+    replacement: The distribution's golang package.
   - name: tmux
     upstream: tmux project
     source: https://github.com/tmux/tmux
@@ -815,37 +809,37 @@ entries:
     upstream: OpenAI
     source: https://github.com/openai/codex
     declarations:
-      source:codex-standalone-installer: https://chatgpt.com/codex/install.sh
+      github-release:codex: openai/codex
     licence: Apache-2.0
     licence_source: https://github.com/openai/codex/blob/main/LICENSE
     owner: role-maintainer
-    update_channel: the vendor install script on each run, then the tool updates itself
-    verification: tls-only
+    update_channel: the install.sh of the latest openai/codex GitHub release on each run, then the tool updates itself
+    # the release's install.sh is checked against its GitHub asset digest before it runs
+    verification: vendor-signature
     security_critical: true
     support:
       status: maintained
       evidence: https://github.com/openai/codex
       checked: '2026-11-26'
-    replacement: npm install -g @openai/codex (the npm path ai-assistants.yml already has), or the release
-      binary with its digest.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+    replacement: npm install -g @openai/codex (the npm path ai-assistants.yml already has).
   - name: claude-code
     upstream: Anthropic
     source: https://github.com/anthropics/claude-code
     declarations:
-      source:claude-native-installer: https://claude.ai/install.sh
+      source:claude-code-release: https://downloads.claude.ai/claude-code-releases
     licence: proprietary
     licence_source: https://github.com/anthropics/claude-code/blob/main/LICENSE.md
     owner: role-maintainer
-    update_channel: the vendor install script on each run, then the tool updates itself
-    verification: tls-only
+    update_channel: the release claude_native_channel names, on each run without a working install; then the tool updates itself
+    # the binary is checked against the SHA-256 in the release manifest, whose signature gpg checks
+    # against the pinned Claude Code release key (claude-code-release.yml)
+    verification: vendor-signature
     security_critical: true
     support:
       status: maintained
       evidence: https://docs.anthropic.com/en/docs/claude-code/setup
       checked: '2026-11-26'
     replacement: npm install -g @anthropic-ai/claude-code.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
   - name: composer
     upstream: Composer project
     source: https://github.com/composer/composer
@@ -870,15 +864,16 @@ entries:
     licence: Apache-2.0
     licence_source: https://github.com/sdkman/sdkman-cli/blob/master/LICENSE
     owner: role-maintainer
-    update_channel: a git checkout of sdkman-cli, then the SDKMAN! API for candidates
-    verification: tls-only
+    update_channel: a git checkout of the latest sdkman-cli release tag, then the SDKMAN! API for candidates
+    # the checkout must be the commit GitHub's API names for the release tag; the candidates the SDKMAN!
+    # API serves are still TLS-only
+    verification: vendor-signature
     security_critical: true
     support:
       status: maintained
       evidence: https://github.com/sdkman/sdkman-cli
       checked: '2026-11-26'
     replacement: The distribution's openjdk, maven and gradle packages.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
   - name: pia
     upstream: Private Internet Access (Kape Technologies)
     source: https://www.privateinternetaccess.com/download
@@ -1437,7 +1432,7 @@ entries:
     upstream: bitnami (GitHub project)
     source: https://github.com/bitnami/sealed-secrets
     declarations:
-      github-release:kubeseal: bitnami-labs/sealed-secrets
+      github-release:kubeseal: bitnami/sealed-secrets
     licence: Apache-2.0
     licence_source: https://github.com/bitnami/sealed-secrets/blob/main/LICENSE
     owner: role-maintainer
@@ -1445,11 +1440,10 @@ entries:
     verification: vendor-signature
     security_critical: true
     support:
-      status: moved
-      evidence: https://github.com/bitnami-labs/sealed-secrets
+      status: maintained
+      evidence: https://github.com/bitnami/sealed-secrets
       checked: '2026-11-26'
-    replacement: Point latest_github_repositories at bitnami/sealed-secrets.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+    replacement: none needed while the project is maintained.
   - name: kustomize
     upstream: kubernetes-sigs (GitHub project)
     source: https://github.com/kubernetes-sigs/kustomize
@@ -1697,7 +1691,7 @@ entries:
     upstream: velero-io (GitHub project)
     source: https://github.com/velero-io/velero
     declarations:
-      github-release:velero: vmware-tanzu/velero
+      github-release:velero: velero-io/velero
     licence: Apache-2.0
     licence_source: https://github.com/velero-io/velero/blob/main/LICENSE
     owner: role-maintainer
@@ -1705,11 +1699,10 @@ entries:
     verification: vendor-signature
     security_critical: false
     support:
-      status: moved
-      evidence: https://github.com/vmware-tanzu/velero
+      status: maintained
+      evidence: https://github.com/velero-io/velero
       checked: '2026-11-26'
-    replacement: Point latest_github_repositories at velero-io/velero.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+    replacement: none needed while the project is maintained.
   - name: watchexec
     upstream: watchexec (GitHub project)
     source: https://github.com/watchexec/watchexec

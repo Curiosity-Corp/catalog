@@ -37,19 +37,34 @@
   environment:
     HOME: "{{ dw_user.home }}"
 
-- name: Download official Claude Code native installer
-  ansible.builtin.get_url:
-    url: "{{ claude_native_installer_url }}"
-    dest: /tmp/install-claude-{{ dw_user.name }}.sh
-    mode: "0700"
-    force: true
-  become: true
-  become_user: "{{ dw_user.name }}"
+# What claude.ai/install.sh does, with its manifest's signature checked
+# (claude-code-release.yml): download the signed release's binary, verify its
+# SHA-256 and let it link itself as ~/.local/bin/claude on the channel.
+- name: Resolve and verify the Claude Code release
+  ansible.builtin.include_tasks: claude-code-release.yml
+  when: _claude_native_check.rc != 0
+
+- name: Download and verify the Claude Code binary
+  ansible.builtin.include_tasks:
+    file: verified-download.yml
+    apply:
+      become: true
+      become_user: "{{ dw_user.name }}"
+  vars:
+    verified_download_name: "claude-{{ _claude_native_release.version }}-{{ _claude_native_release.platform }}"
+    verified_download_url: "{{ _claude_native_release.url }}"
+    verified_download_sha256: "{{ _claude_native_release.sha256 }}"
+    verified_download_cache_dir: "{{ dw_user.home }}/.claude/downloads"
+    verified_download_mode: "0700"
   when: _claude_native_check.rc != 0
 
 - name: Install native Claude Code
   ansible.builtin.command:
-    cmd: /bin/bash /tmp/install-claude-{{ dw_user.name }}.sh {{ claude_native_channel }}
+    argv:
+      - "{{ verified_download_path }}"
+      - install
+      - "{{ claude_native_channel }}"
+    chdir: "{{ dw_user.home }}/.claude/downloads"
   environment:
     HOME: "{{ dw_user.home }}"
   register: _claude_native_install
@@ -84,10 +99,13 @@
   environment:
     HOME: "{{ dw_user.home }}"
 
-- name: Clean up Claude Code native installer
+- name: Clean up the downloaded Claude Code binary
+  # `claude install` copies itself into ~/.local/share/claude/versions.
   ansible.builtin.file:
-    path: /tmp/install-claude-{{ dw_user.name }}.sh
+    path: "{{ verified_download_path }}"
     state: absent
+  become: true
+  become_user: "{{ dw_user.name }}"
   when: _claude_native_check.rc != 0
 
 - name: List every Claude Code launcher on the user PATH

@@ -300,3 +300,14 @@ Curiosity-Source = "the Private Internet Access RSA-4096 CA certificate (CN=Priv
 Curiosity-Version = "certificate serial 9d2efaf3836499ed"
 Curiosity-Provenance = "resolved"
 Curiosity-Redistribution = "Public CA certificate with no licence grant; redistributed unmodified only so tasks/pia-tunnel.yml can verify PIA servers. Keep it unmodified."
+
+[[annotations]]
+path = "roles/developer_workstation/files/claude-code-release-key.asc"
+precedence = "override"
+SPDX-FileCopyrightText = "Anthropic PBC"
+SPDX-License-Identifier = "LicenseRef-Public-Verification-Material"
+Curiosity-Kind = "key-material"
+Curiosity-Source = "the Anthropic Claude Code Release Signing public key <security@anthropic.com>, published by Anthropic for verifying Claude Code release manifests (https://code.claude.com/docs/en/setup)"
+Curiosity-Version = "primary key 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE, created 2026-03-30"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Public signing key with no licence grant; redistributed unmodified only so tasks/claude-code-release.yml can verify the signed release manifest (catalog#171). Keep it unmodified."

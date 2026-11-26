@@ -220,6 +220,11 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `apt_keyring_staging_dir` | `developer_workstation` | internal |
 | `authd_archive_key_asc_path` | `developer_workstation` | internal |
 | `authd_archive_keyring_path` | `developer_workstation` | internal |
+| `claude_native_platform_map` | `developer_workstation` | internal |
+| `claude_native_release_base_url` | `developer_workstation` | internal |
+| `claude_native_release_cache_dir` | `developer_workstation` | internal |
+| `claude_native_release_key_file` | `developer_workstation` | internal |
+| `claude_native_release_key_fingerprint` | `developer_workstation` | internal |
 | `claude_retired_system_launchers` | `developer_workstation` | internal |
 | `claude_retired_user_launchers` | `developer_workstation` | internal |
 | `console_tuning_config_path` | `developer_workstation` | internal |
@@ -282,7 +287,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-469 variables, from `roles/developer_workstation/defaults/main.yml`.
+471 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -324,7 +329,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `coder_cli_install_script_url` | string (template) | template expression |  | supported |  | (undocumented) |
 | `coder_cli_buildinfo_url` | string (template) | template expression |  | supported |  | (undocumented) |
 | `github_api_token` | string | `""` |  | supported | secret | Upstream release metadata used by the binary installers. These are repository identities, not release pins: the tasks query each upstream's latest release during every ansible-pull and install the matching current Linux asset. |
-| `latest_github_repositories` | dict | mapping, 44 keys |  | supported |  | (undocumented) |
+| `latest_github_repositories` | dict | mapping, 45 keys |  | supported |  | (undocumented) |
 | `latest_github_release_tag_prefixes` | dict | mapping, 1 key |  | supported |  | Sources whose repository publishes several products as separate releases (bitwarden/clients tags desktop-v*, cli-v*, browser-v* and web-v*), so /releases/latest is not the product this role installs. (...) |
 | `bitwarden_desktop_enabled` | bool | `true` |  | supported |  | Install the official Bitwarden desktop app (.deb) system-wide on desktop workstations. Each user signs in to their own vault; the role never touches credentials or vault data. |
 | `slack_desktop_enabled` | bool | `false` |  | supported |  | Install the official Slack desktop app (the `slack` snap: publisher Slack, verified; strict confinement) system-wide on desktop workstations (tasks/slack-desktop.yml). Off by default; a host or an internal overlay turns it on. The role never touches a user's Slack data or sign-in. (...) |
@@ -351,8 +356,8 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `bitwarden_chromium_extension_targets` | list | list, 3 items |  | supported |  | (undocumented) |
 | `chromium_removed_extensions` | list | `[]` |  | supported |  | Chromium-family extensions a host removes from every profile, by store id (32 letters a-p). (...) |
 | `latest_release_skip_disabled_sources` | bool | `false` |  | supported |  | Set true on a slow, metered or offline-leaning link to skip the release API call for any source whose application contract has an `enabled_when` flag that is false on this host (see docs/low-bandwidth-and-offline.md). Default false: every source is resolved on every run. |
-| `latest_release_contracts` | dict | mapping, 44 keys |  | internal |  | Every API-backed release source also has an explicit application contract. The contract is inventory/provenance data, not a release pin: it says how an application is obtained and how its installed result can be checked. (...) |
-| `workstation_application_contracts` | dict | mapping, 18 keys |  | internal |  | Applications whose native update channel is not a GitHub release API. They still participate in the same health, provenance, and rollback contract. |
+| `latest_release_contracts` | dict | mapping, 45 keys |  | internal |  | Every API-backed release source also has an explicit application contract. The contract is inventory/provenance data, not a release pin: it says how an application is obtained and how its installed result can be checked. (...) |
+| `workstation_application_contracts` | dict | mapping, 17 keys |  | internal |  | Applications whose native update channel is not a GitHub release API. They still participate in the same health, provenance, and rollback contract. |
 | `workstation_update_transaction_tags` | list | list, 34 items |  | internal |  | Dynamic includes are entered only when their include task carries the selected tag. These tags cover the managed update transaction and its component includes so focused pulls (for example `--tags ai`) still run the foundation, rollback, health, and manifest tasks around the selected app. |
 | `workstation_update_ring` | string | `"canary"` | `"canary"`, `"early"`, `"general"` | supported |  | The default ring is canary because this is an R&D lab. Host/group vars can move a machine to early/general without introducing a release pin. |
 | `workstation_update_ring_min_age_seconds` | dict | mapping, 3 keys |  | supported |  | (undocumented) |
@@ -384,13 +389,16 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `ai_assistant_packages` | list | `["@google/gemini-cli", "@qwen-code/qwen-code"]` |  | supported |  | AI coding assistants are also user-scoped and refreshed nightly. Keep the package list in defaults so every workstation profile gets the same policy. (...) |
 | `ai_assistant_command_links` | list | list, 2 items |  | internal |  | npm considers an already-installed package current even when an interrupted image build left its global command shim absent. Keep the command contract explicit so the Ansible run repairs the user-facing launchers idempotently. |
 | `codex_standalone_enabled` | bool | `true` |  | supported |  | Standalone Codex CLI. The role ensures the official standalone binary is present at the user-scoped launcher path and migrates machines away from the legacy npm-managed install. A user-level auto-update timer (codex-auto-update) keeps the release current between ansible-pull runs. |
-| `codex_standalone_installer_url` | string | `"https://chatgpt.com/codex/install.sh"` |  | supported |  | (undocumented) |
 | `codex_standalone_release` | string | `"latest"` |  | supported |  | (undocumented) |
 | `codex_standalone_install_dir` | string (template) | `"{{ dev_user_home }}/.local/bin"` |  | supported |  | (undocumented) |
 | `codex_standalone_home_dir` | string (template) | `"{{ dev_user_home }}/.codex"` |  | supported |  | (undocumented) |
 | `claude_native_enabled` | bool | `true` |  | supported |  | Native Claude Code, for every dev_users account. The official installer owns ~/.local/bin/claude (a link into ~/.local/share/claude/versions). (...) |
-| `claude_native_installer_url` | string | `"https://claude.ai/install.sh"` |  | supported |  | (undocumented) |
-| `claude_native_channel` | string | `"latest"` |  | supported |  | Decided 2026-10-23 (decision log D910, instarlab/connections): workstations follow the "latest" channel under the standing rule of always running the latest versions. tests/test_update_policy.py fails on any other value. |
+| `claude_native_release_base_url` | string | `"https://downloads.claude.ai/claude-code-releases"` |  | internal | supply-chain | Claude Code releases: the channel file names a version whose manifest.json (SHA-256 per platform binary) is signed with the Claude Code release signing key. (...) |
+| `claude_native_release_key_file` | string | `"claude-code-release-key.asc"` |  | internal | supply-chain | (undocumented) |
+| `claude_native_release_key_fingerprint` | string | `"31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"` |  | internal | supply-chain | (undocumented) |
+| `claude_native_release_cache_dir` | string (template) | `"{{ workstation_update_artifact_cache_dir }}/claude-code"` |  | internal |  | (undocumented) |
+| `claude_native_platform_map` | dict | mapping, 2 keys |  | internal |  | (undocumented) |
+| `claude_native_channel` | string | `"latest"` | `"latest"`, `"stable"` | supported |  | Decided 2026-10-23 (decision log D910, instarlab/connections): workstations follow the "latest" channel under the standing rule of always running the latest versions. tests/test_update_policy.py fails on any other value. |
 | `claude_retired_user_launchers` | list | `[".npm-global/bin/claude", ".claude/local"]` |  | internal |  | Launchers left by earlier install methods, relative to each dev_users home: the npm global shim and the retired ~/.claude/local "local" install. Root-prefix npm copies are removed by node-packages.yml. |
 | `claude_retired_system_launchers` | list | `["/usr/local/bin/claude"]` |  | internal |  | (undocumented) |
 | `m365_cli_packages` | list | `["@pnp/cli-microsoft365"]` |  | supported |  | Microsoft 365 CLI is kept in its own user-scoped package list (installed by tasks/m365-cli.yml, tag: m365) rather than folded into npm_global_packages, so a capability-gated consumer can opt it in on the `m365` Ansible tag instead of getting it unconditionally with every other npm global. |
@@ -451,7 +459,6 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `keycloak_desktop_client_id` | string | `""` |  | private-hook | security | (undocumented) |
 | `keycloak_allowed_users` | string | `"ALL"` |  | private-hook | security | (undocumented) |
 | `ziti_enabled` | bool | `false` |  | supported | network | OpenZiti ZTNA (ziti-edge-tunnel + OIDC session hooks) |
-| `ziti_install_script_url` | string | `"https://get.openziti.io/tun/scripts/install-ubuntu.bash"` |  | supported |  | (undocumented) |
 | `ziti_service_name` | string | `"ziti-edge-tunnel.service"` |  | supported |  | (undocumented) |
 | `ziti_manage_service` | bool | `true` |  | supported | network | (undocumented) |
 | `ziti_oidc_provider` | string | `""` |  | private-hook | network | (undocumented) |

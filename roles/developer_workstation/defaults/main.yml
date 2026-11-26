@@ -145,8 +145,8 @@ latest_github_repositories:
   kubectx: ahmetb/kubectx
   krew: kubernetes-sigs/krew
   stern: stern/stern
-  velero: vmware-tanzu/velero
-  kubeseal: bitnami-labs/sealed-secrets
+  velero: velero-io/velero
+  kubeseal: bitnami/sealed-secrets
   sops: getsops/sops
   age: FiloSottile/age
   sunshine: LizardByte/Sunshine
@@ -171,6 +171,9 @@ latest_github_repositories:
   mattermost_desktop: mattermost/desktop
   bitwarden_desktop: bitwarden/clients
   nerd_fonts: ryanoasis/nerd-fonts
+  # The Codex installer script is taken from this release with its digest and
+  # installs the same release (ai-assistants.yml).
+  codex: openai/codex
 
 # Sources whose repository publishes several products as separate releases
 # (bitwarden/clients tags desktop-v*, cli-v*, browser-v* and web-v*), so
@@ -344,6 +347,7 @@ latest_release_contracts:
   mattermost_desktop: {installer: github-archive, verification: github-asset-digest, scope: user, healthcheck: [/opt/mattermost-desktop/mattermost-desktop, --version]}
   bitwarden_desktop: {installer: github-deb, verification: github-asset-digest, enabled_when: bitwarden_desktop_enabled, healthcheck: [/opt/Bitwarden/chrome_crashpad_handler, --version]}
   nerd_fonts: {installer: github-archive, verification: github-asset-digest, healthcheck: [fc-cache, -V]}
+  codex: {installer: codex-standalone, verification: github-asset-digest, scope: user, enabled_when: codex_standalone_enabled, healthcheck: [.local/bin/codex, --version]}
 
 # Applications whose native update channel is not a GitHub release API. They
 # still participate in the same health, provenance, and rollback contract.
@@ -361,8 +365,7 @@ workstation_application_contracts:
   vault: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/vault, version]}
   packer: {installer: hashicorp-release, verification: hashicorp-sha256, healthcheck: [/usr/local/bin/packer, version]}
   m365-cli: {installer: npm, verification: npm-registry-integrity, scope: user, healthcheck: ["{{ npm_global_prefix }}/bin/m365", --version]}
-  codex: {installer: codex-standalone, verification: official-installer, scope: user, enabled_when: codex_standalone_enabled, healthcheck: [.local/bin/codex, --version]}
-  claude: {installer: claude-native, verification: official-installer, scope: user, enabled_when: claude_native_enabled, healthcheck: [.local/bin/claude, --version]}
+  claude: {installer: claude-native, verification: signed-manifest-sha256, scope: user, enabled_when: claude_native_enabled, healthcheck: [.local/bin/claude, --version]}
   uv: {installer: pipx, verification: pypi-integrity, scope: user, healthcheck: [.local/bin/uv, --version]}
   slack_desktop: {installer: snap-store, verification: snap-assertions, enabled_when: slack_desktop_enabled, healthcheck: [/usr/local/sbin/curiosity-slack-desktop-check]}
   jellyfin_desktop: {installer: flathub, verification: flatpak-gpg-ref-origin, enabled_when: jellyfin_desktop_enabled, healthcheck: [/usr/local/sbin/curiosity-jellyfin-desktop-check]}
@@ -641,7 +644,6 @@ ai_assistant_command_links:
 # legacy npm-managed install. A user-level auto-update timer (codex-auto-update)
 # keeps the release current between ansible-pull runs.
 codex_standalone_enabled: true
-codex_standalone_installer_url: "https://chatgpt.com/codex/install.sh"
 codex_standalone_release: latest
 codex_standalone_install_dir: "{{ dev_user_home }}/.local/bin"
 codex_standalone_home_dir: "{{ dev_user_home }}/.codex"
@@ -653,7 +655,18 @@ codex_standalone_home_dir: "{{ dev_user_home }}/.codex"
 # autoUpdatesChannel), and fails if more than one `claude` remains on the
 # user's PATH.
 claude_native_enabled: true
-claude_native_installer_url: "https://claude.ai/install.sh"
+# Claude Code releases: the channel file names a version whose manifest.json
+# (SHA-256 per platform binary) is signed with the Claude Code release signing
+# key. The role pins that key (files/claude-code-release-key.asc, fingerprint
+# below, as published at https://code.claude.com/docs/en/setup) and installs
+# only a binary whose checksum is in a manifest it signed (catalog#171).
+claude_native_release_base_url: https://downloads.claude.ai/claude-code-releases
+claude_native_release_key_file: claude-code-release-key.asc
+claude_native_release_key_fingerprint: 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+claude_native_release_cache_dir: "{{ workstation_update_artifact_cache_dir }}/claude-code"
+claude_native_platform_map:
+  x86_64: linux-x64
+  aarch64: linux-arm64
 # Decided 2026-10-23 (decision log D910, instarlab/connections): workstations
 # follow the "latest" channel under the standing rule of always running the
 # latest versions. tests/test_update_policy.py fails on any other value.
@@ -864,7 +877,6 @@ keycloak_allowed_users: "ALL"
 
 # OpenZiti ZTNA (ziti-edge-tunnel + OIDC session hooks)
 ziti_enabled: false
-ziti_install_script_url: "https://get.openziti.io/tun/scripts/install-ubuntu.bash"
 ziti_service_name: "ziti-edge-tunnel.service"
 ziti_manage_service: true
 ziti_oidc_provider: ""

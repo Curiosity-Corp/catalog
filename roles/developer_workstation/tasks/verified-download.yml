@@ -1,0 +1,105 @@
+---
+# =============================================================================
+# One vendor download, verified against the vendor's published SHA-256
+# =============================================================================
+# The path every GitHub release installer already takes (latest-releases.yml
+# resolves the asset digest, cli-tools.yml downloads with it), for downloads
+# whose vendor publishes the digest somewhere else: a checksum file next to
+# the artifact (dl.k8s.io, get.helm.sh), a JSON index (go.dev) or a signed
+# manifest (claude-code-release.yml). catalog#171.
+#
+#   1. Take the expected SHA-256 as given, or read it from the vendor's
+#      checksum file (retried like the release API queries).
+#   2. Refuse anything that is not a SHA-256: nothing is downloaded.
+#   3. Download into a digest-named cache file with get_url's checksum. A
+#      mismatch deletes the download and fails the run (retried, since a
+#      truncated transfer looks the same); a cached file is reused only while
+#      its digest still matches.
+#
+# Inputs (set with `vars:` on the include):
+#   verified_download_name        Short id; names the cache file and the tasks.
+#   verified_download_url         The artifact URL.
+#   verified_download_sha256      The expected SHA-256 (hex, optional "sha256:"), or
+#   verified_download_sha256_url  the vendor's checksum file; its first SHA-256 is taken.
+#   verified_download_mode        Mode of the cached file (default 0644).
+#   verified_download_cache_dir   Default workstation_update_artifact_cache_dir (root
+#                                 only); a user-scoped installer passes a directory
+#                                 in that user's home and includes this file with
+#                                 `apply: {become: true, become_user: <user>}`.
+# Output fact:
+#   verified_download_path        The verified file; use it, never the URL.
+#   verified_download_sha256_hex  Its SHA-256.
+# tests/test_verified_download.py runs this file against a local fixture server.
+# =============================================================================
+
+- name: Validate the verified download inputs for {{ verified_download_name }}
+  ansible.builtin.assert:
+    that:
+      - verified_download_name is match('^[A-Za-z0-9][A-Za-z0-9._+-]*$')
+      - verified_download_url is match('^https?://[^ ]+$')
+      - >-
+        (verified_download_sha256 | default('') | length > 0)
+        != (verified_download_sha256_url | default('') | length > 0)
+    fail_msg: >-
+      verified-download.yml needs verified_download_name, an http(s)
+      verified_download_url and exactly one of verified_download_sha256 or
+      verified_download_sha256_url.
+    quiet: true
+
+- name: Read the vendor checksum file for {{ verified_download_name }}
+  ansible.builtin.uri:
+    url: "{{ verified_download_sha256_url }}"
+    return_content: true
+    status_code: [200]
+  register: _verified_download_sum_file
+  retries: 3
+  delay: 2
+  until: (_verified_download_sum_file.status | default(0)) == 200
+  changed_when: false
+  # A read-only GET: check mode still needs the digest to preview the download.
+  check_mode: false
+  when: verified_download_sha256_url | default('') | length > 0
+
+- name: Resolve the expected SHA-256 for {{ verified_download_name }}
+  ansible.builtin.set_fact:
+    verified_download_sha256_hex: >-
+      {{ ((verified_download_sha256 | default('') | regex_replace('^sha256:', ''))
+          if (verified_download_sha256 | default('') | length > 0)
+          else (_verified_download_sum_file.content | default('')
+                | regex_search('(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])')
+                | default('', true)))
+         | trim | lower }}
+
+- name: Require a vendor SHA-256 before downloading {{ verified_download_name }}
+  ansible.builtin.assert:
+    that:
+      - verified_download_sha256_hex is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      No usable SHA-256 for {{ verified_download_name }} ({{ verified_download_sha256_url
+      | default('given digest', true) }}); refusing to install an unverified download.
+    quiet: true
+
+- name: Set the verified cache path for {{ verified_download_name }}
+  ansible.builtin.set_fact:
+    verified_download_path: >-
+      {{ verified_download_cache_dir | default(workstation_update_artifact_cache_dir) }}/{{
+         verified_download_name }}-{{ verified_download_sha256_hex }}
+
+- name: Ensure the verified download cache exists for {{ verified_download_name }}
+  ansible.builtin.file:
+    path: "{{ verified_download_path | dirname }}"
+    state: directory
+    mode: "0750"
+
+- name: Download and verify {{ verified_download_name }}
+  ansible.builtin.get_url:
+    url: "{{ verified_download_url }}"
+    dest: "{{ verified_download_path }}"
+    checksum: "sha256:{{ verified_download_sha256_hex }}"
+    mode: "{{ verified_download_mode | default('0644') }}"
+    force: false
+    timeout: 60
+  register: _verified_download_result
+  retries: 3
+  delay: 5
+  until: _verified_download_result is succeeded

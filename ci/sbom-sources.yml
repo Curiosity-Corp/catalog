@@ -284,6 +284,14 @@ sources:
     covers: ["https://go.dev/VERSION?m=text"]
     declared_in: [roles/developer_workstation/tasks/languages.yml]
     pinned: false
+  - name: claude-code-release
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://downloads.claude.ai/claude-code-releases
+    declared_in: [roles/developer_workstation/tasks/claude-code-release.yml, roles/developer_workstation/tasks/claude-code-user.yml]
+    note: the binary's SHA-256 comes from the release manifest, whose signature is checked with gpg against only the pinned Claude Code release key
+    pinned: false
   - name: tmux-release
     kind: runtime-package
     source: release-download
@@ -373,24 +381,6 @@ sources:
     pinned: false
 
   # --- External installers --------------------------------------------------
-  - name: codex-standalone-installer
-    kind: external-installer
-    source: installer-script
-    url_var: codex_standalone_installer_url
-    declared_in: [roles/developer_workstation/tasks/ai-assistants.yml]
-    pinned: false
-  - name: claude-native-installer
-    kind: external-installer
-    source: installer-script
-    url_var: claude_native_installer_url
-    declared_in: [roles/developer_workstation/tasks/claude-code-user.yml]
-    pinned: false
-  - name: openziti-installer
-    kind: external-installer
-    source: installer-script
-    url_var: ziti_install_script_url
-    declared_in: [roles/developer_workstation/tasks/ziti.yml]
-    pinned: false
   - name: composer-installer
     kind: external-installer
     source: installer-script
