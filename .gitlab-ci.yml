@@ -175,6 +175,24 @@ debian13-quickstart:
       - debian-quickstart/
     expire_in: 30 days
 
+# catalog#164: run the laptop quickstart's step 3 preview (--check --diff) in
+# this throwaway container, which the role has never run on, and fail if it
+# stops before the end of the repos task group or anywhere laptop.md step 3
+# does not name. "localhost" is the job container; it previews and applies
+# nothing, and never targets a real host or inventory. The full trixie image
+# ships gpg, as Ubuntu does; the script adds python3-apt to its venv.
+quickstart-check-preview:
+  stage: test
+  image: python:3.13-trixie
+  script:
+    - scripts/quickstart_check_preview.sh
+  artifacts:
+    when: always
+    name: "quickstart-check-preview-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - quickstart-check-preview/
+    expire_in: 30 days
+
 lint:
   extends: .python_setup
   stage: validate
@@ -189,7 +207,7 @@ policy:
     - >-
       python -m pytest -q tests/test_public_contract.py tests/test_console_tuning.py
       tests/test_tmp_hygiene.py tests/test_workstation_posture.py tests/test_hardware_profiles.py
-      tests/test_desktop_multiuser.py tests/test_apt_keyring_policy.py
+      tests/test_desktop_multiuser.py tests/test_apt_keyring_policy.py tests/test_apt_keyring_check_mode.py
       tests/test_user_systemd_policy.py tests/test_system_retirement.py tests/test_pipx_repair.py
       tests/test_science_venv_repair.py tests/test_m365_cli_entrypoints.py tests/test_troubleshooting.py tests/test_glossary.py
       tests/test_sunshine_asset_selection.py tests/test_update_rollback_symlinks.py

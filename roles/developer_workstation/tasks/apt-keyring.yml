@@ -17,6 +17,14 @@
 #
 # The destination is only rewritten, and `Update apt cache` only notified,
 # when the vendor content differs from what is installed.
+#
+# Check mode (--check, catalog#164): the directory task above does not create
+# the staging directory, so on a machine the role has never run on there is
+# nowhere to download to and nothing to inspect. The preview then reports the
+# keyring as "would change" and skips the download and inspection instead of
+# failing, so the rest of the play is still previewed. A real apply never
+# takes that path: the stat and the report run only in check mode, and the
+# block's condition is always true outside it (tests/test_apt_keyring_check_mode.py).
 # =============================================================================
 
 - name: Ensure APT keyring directories exist
@@ -30,96 +38,116 @@
     - "{{ apt_keyring_staging_dir }}"
     - "{{ apt_keyring_dest | dirname }}"
 
-- name: Download vendor APT signing key for {{ apt_keyring_name }}
-  ansible.builtin.get_url:
-    url: "{{ apt_keyring_url }}"
-    dest: "{{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.download"
-    mode: "0644"
-    force: true
-    timeout: 30
-  register: _apt_keyring_download
-  retries: 3
-  delay: 5
-  until: _apt_keyring_download is succeeded
+- name: Look for the APT keyring staging directory (check mode) for {{ apt_keyring_name }}
+  ansible.builtin.stat:
+    path: "{{ apt_keyring_staging_dir }}"
+  register: _apt_keyring_staging
+  when: ansible_check_mode
 
-- name: Detect ASCII armor in the downloaded key for {{ apt_keyring_name }}
-  ansible.builtin.command:
-    argv:
-      - grep
-      - --quiet
-      - --text
-      - --fixed-strings
-      - "--regexp=-----BEGIN PGP PUBLIC KEY BLOCK-----"
-      - "{{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.download"
-  register: _apt_keyring_armor
-  changed_when: false
-  failed_when: _apt_keyring_armor.rc not in [0, 1]
-
-- name: Require an armored download for an armored keyring path for {{ apt_keyring_name }}
-  ansible.builtin.assert:
-    that: _apt_keyring_armor.rc == 0
-    fail_msg: >-
-      {{ apt_keyring_url }} is not ASCII-armored but {{ apt_keyring_dest }}
-      is an armored keyring path
-  when: apt_keyring_dest.endswith('.asc')
-
-- name: Dearmor the downloaded key for {{ apt_keyring_name }}
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --batch
-      - --yes
-      - --dearmor
-      - --output
-      - "{{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.keyring"
-      - "{{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.download"
-  changed_when: false
+- name: Report the keyring a real apply would install for {{ apt_keyring_name }}
+  ansible.builtin.debug:
+    msg: >-
+      Would download {{ apt_keyring_url }} and install it as
+      {{ apt_keyring_dest }}; the key itself is not previewed because
+      {{ apt_keyring_staging_dir }} does not exist until the first real apply
+  changed_when: true
   when:
-    - not apt_keyring_dest.endswith('.asc')
-    - _apt_keyring_armor.rc == 0
+    - ansible_check_mode
+    - not _apt_keyring_staging.stat.exists
 
-- name: Select the keyring content to install for {{ apt_keyring_name }}
-  ansible.builtin.set_fact:
-    _apt_keyring_candidate: >-
-      {{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.{{
-        'keyring' if (not apt_keyring_dest.endswith('.asc') and _apt_keyring_armor.rc == 0)
-        else 'download'
-      }}
+- name: Download, verify and install the APT keyring for {{ apt_keyring_name }}
+  when: not ansible_check_mode or _apt_keyring_staging.stat.exists
+  block:
+    - name: Download vendor APT signing key for {{ apt_keyring_name }}
+      ansible.builtin.get_url:
+        url: "{{ apt_keyring_url }}"
+        dest: "{{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.download"
+        mode: "0644"
+        force: true
+        timeout: 30
+      register: _apt_keyring_download
+      retries: 3
+      delay: 5
+      until: _apt_keyring_download is succeeded
 
-- name: Inspect the keyring content for {{ apt_keyring_name }}
-  ansible.builtin.command:
-    argv:
-      - gpg
-      - --batch
-      - --show-keys
-      - --with-colons
-      - "{{ _apt_keyring_candidate }}"
-  register: _apt_keyring_info
-  changed_when: false
-  failed_when: false
+    - name: Detect ASCII armor in the downloaded key for {{ apt_keyring_name }}
+      ansible.builtin.command:
+        argv:
+          - grep
+          - --quiet
+          - --text
+          - --fixed-strings
+          - "--regexp=-----BEGIN PGP PUBLIC KEY BLOCK-----"
+          - "{{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.download"
+      register: _apt_keyring_armor
+      changed_when: false
+      failed_when: _apt_keyring_armor.rc not in [0, 1]
 
-- name: Require a valid key before replacing the installed keyring for {{ apt_keyring_name }}
-  ansible.builtin.assert:
-    that:
-      - _apt_keyring_info.rc == 0
-      - _apt_keyring_info.stdout_lines | select('match', '^pub:') | list | length > 0
-      - >-
-        (apt_keyring_fingerprint | default('')) | length == 0
-        or (_apt_keyring_info.stdout_lines
-            | select('match', '^fpr:.*:' ~ apt_keyring_fingerprint ~ ':')
-            | list | length > 0)
-    fail_msg: >-
-      {{ apt_keyring_url }} did not yield a valid OpenPGP key{{
-        (' with fingerprint ' ~ apt_keyring_fingerprint)
-        if (apt_keyring_fingerprint | default('')) | length > 0 else ''
-      }}; {{ apt_keyring_dest }} was left unchanged
+    - name: Require an armored download for an armored keyring path for {{ apt_keyring_name }}
+      ansible.builtin.assert:
+        that: _apt_keyring_armor.rc == 0
+        fail_msg: >-
+          {{ apt_keyring_url }} is not ASCII-armored but {{ apt_keyring_dest }}
+          is an armored keyring path
+      when: apt_keyring_dest.endswith('.asc')
 
-- name: Install the APT keyring for {{ apt_keyring_name }}
-  ansible.builtin.copy:
-    src: "{{ _apt_keyring_candidate }}"
-    dest: "{{ apt_keyring_dest }}"
-    remote_src: true
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Update apt cache
+    - name: Dearmor the downloaded key for {{ apt_keyring_name }}
+      ansible.builtin.command:
+        argv:
+          - gpg
+          - --batch
+          - --yes
+          - --dearmor
+          - --output
+          - "{{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.keyring"
+          - "{{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.download"
+      changed_when: false
+      when:
+        - not apt_keyring_dest.endswith('.asc')
+        - _apt_keyring_armor.rc == 0
+
+    - name: Select the keyring content to install for {{ apt_keyring_name }}
+      ansible.builtin.set_fact:
+        _apt_keyring_candidate: >-
+          {{ apt_keyring_staging_dir }}/{{ apt_keyring_name }}.{{
+            'keyring' if (not apt_keyring_dest.endswith('.asc') and _apt_keyring_armor.rc == 0)
+            else 'download'
+          }}
+
+    - name: Inspect the keyring content for {{ apt_keyring_name }}
+      ansible.builtin.command:
+        argv:
+          - gpg
+          - --batch
+          - --show-keys
+          - --with-colons
+          - "{{ _apt_keyring_candidate }}"
+      register: _apt_keyring_info
+      changed_when: false
+      failed_when: false
+
+    - name: Require a valid key before replacing the installed keyring for {{ apt_keyring_name }}
+      ansible.builtin.assert:
+        that:
+          - _apt_keyring_info.rc == 0
+          - _apt_keyring_info.stdout_lines | select('match', '^pub:') | list | length > 0
+          - >-
+            (apt_keyring_fingerprint | default('')) | length == 0
+            or (_apt_keyring_info.stdout_lines
+                | select('match', '^fpr:.*:' ~ apt_keyring_fingerprint ~ ':')
+                | list | length > 0)
+        fail_msg: >-
+          {{ apt_keyring_url }} did not yield a valid OpenPGP key{{
+            (' with fingerprint ' ~ apt_keyring_fingerprint)
+            if (apt_keyring_fingerprint | default('')) | length > 0 else ''
+          }}; {{ apt_keyring_dest }} was left unchanged
+
+    - name: Install the APT keyring for {{ apt_keyring_name }}
+      ansible.builtin.copy:
+        src: "{{ _apt_keyring_candidate }}"
+        dest: "{{ apt_keyring_dest }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Update apt cache

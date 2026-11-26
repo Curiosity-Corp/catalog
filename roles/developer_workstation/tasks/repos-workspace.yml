@@ -90,6 +90,9 @@
     return_content: true
   register: _mongodb_repo_index
   changed_when: false
+  # A read-only GET: run it in check mode too, or the preview cannot resolve
+  # the channel and stops at the assert below (catalog#164).
+  check_mode: false
 
 - name: Set newest MongoDB APT channel
   ansible.builtin.set_fact:

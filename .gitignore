@@ -18,6 +18,8 @@ __pycache__/
 research-profile-report.md
 debian-quickstart/
 .debian-quickstart-work/
+.quickstart-check-preview/
+quickstart-check-preview/
 *.tar.gz
 collection.cdx.json
 
