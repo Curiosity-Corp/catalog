@@ -135,8 +135,10 @@ The most important variables are:
 | `custom_ca_certificates` | `[]` | Controller-local private CA files, kept outside Git |
 
 See [`docs/configuration.md`](docs/configuration.md) for examples and the
-full safety model. `roles/developer_workstation/defaults/main.yml` is the
-authoritative variable reference.
+full safety model. [`docs/reference.md`](docs/reference.md) is the generated
+reference of every variable and tag, with type, default, valid values,
+stability and safety impact; the role defaults remain the source it is built
+from.
 
 ## Development checks
 
@@ -147,7 +149,9 @@ make validate
 ```
 
 The checks cover YAML, Ansible syntax, Ansible Lint, policy regression tests,
-public-surface checks, and collection building. See
+public-surface checks, the generated variable reference, and collection
+building. The catalog's tools are one Rust binary, `catalog-tools`, in
+[`tools/`](tools/README.md). See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a change.
 
 ## Community and security

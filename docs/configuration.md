@@ -6,6 +6,11 @@ conservative for optional integrations. Put site-specific values in inventory,
 `playbooks/host_vars/localhost.yml` is a documentation-safe example, not a
 machine inventory.
 
+[`reference.md`](reference.md) lists every variable and tag with its type,
+default, valid values, stability (supported, experimental, internal or
+private hook) and safety impact. It is generated from the role defaults and
+tasks, and CI fails when it is out of date.
+
 ## Minimal local variables
 
 ```yaml

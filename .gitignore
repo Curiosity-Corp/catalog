@@ -23,6 +23,12 @@ quickstart-check-preview/
 *.tar.gz
 collection.cdx.json
 
+# Rust tool crate (tools/) build output and CI artifacts
+tools/target/
+.cargo-home/
+reference.generated.md
+tools-fmt.patch
+
 # Editors and OS files
 .DS_Store
 .idea/

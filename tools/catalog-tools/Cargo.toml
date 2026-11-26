@@ -1,0 +1,22 @@
+[package]
+name = "catalog-tools"
+version = "0.1.0"
+description = "Tools for the curiosity.workstation Ansible collection: the variable and tag reference generator."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5", features = ["derive"] }
+regex = "1.11"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_norway = "0.9.42"
+
+[dev-dependencies]
+tempfile = "3.20"
