@@ -54,6 +54,8 @@ It checks three layers:
      at least 8 characters.
    - `pia_tunnel_apps` cannot be combined with a hardware profile that already
      routes everything through PIA.
+   - `accessibility_packages` must be empty on the workspace profile, which has
+     no desktop session; its names come from a fixed list (layer 1).
 
    Each rule uses the same profile condition as the task it protects, so a
    setting a profile ignores is never required.

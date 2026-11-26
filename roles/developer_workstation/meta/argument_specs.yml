@@ -51,6 +51,12 @@ argument_specs:
       locale_manage: {type: bool}
       locale_lang: {type: str}
       locale_extra: {type: list}
+      # The reviewed list of decision record 0003; adding a name is a change
+      # to the record, this spec and tests/test_accessibility_defaults.py.
+      accessibility_packages:
+        type: list
+        elements: str
+        choices: [orca, espeak-ng, brltty, onboard, xkbset]
       developer_workstation_local_vars_file: {type: str}
       workstation_user_systemd_masked_units: {type: list}
       workstation_system_masked_units: {type: list}

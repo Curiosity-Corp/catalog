@@ -115,6 +115,16 @@ refused with the accepted list; each accepted name renders one apt install).
 Revisit when a reviewer asks for a package that is not on the list, or when the
 minimal desktop moves off X11 (`xkbset` is X11-only).
 
+## Implementation
+
+catalog#173 implements this as written while the record stays proposed, so a
+reviewer can try it: the default `[]` changes nothing, and a reviewer's
+comments can still change the list or the decision. The list is the `choices`
+of `accessibility_packages` in `meta/argument_specs.yml`, which
+`tasks/validate-config.yml` checks before any change;
+`tests/test_accessibility_defaults.py` fails when the spec and the table above
+differ. A `workspace` (no desktop session) refuses a non-empty list.
+
 ## Review
 
 No review by a person who uses assistive technology has happened yet. Nobody

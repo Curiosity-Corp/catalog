@@ -1,0 +1,4 @@
+---
+# The default: nothing requested, valid on every profile including workspace.
+workstation_profile: workspace
+accessibility_packages: []

@@ -1,0 +1,5 @@
+---
+# Assistive technology outside decision record 0003's reviewed list is refused,
+# with the accepted names, before any package is installed (catalog#173).
+# expect: value of accessibility_packages must be one or more of: orca, espeak-ng, brltty, onboard, xkbset. Got no match for: nvda
+accessibility_packages: [orca, nvda]
