@@ -310,6 +310,16 @@
   tags: [packages]
   when: workstation_profile == 'byod-kiosk'
 
+- name: Include assistive technology packages (opt-in, decision record 0003)
+  ansible.builtin.include_tasks:
+    file: accessibility-packages.yml
+    apply:
+      tags: [accessibility, packages]
+  tags: [accessibility, packages]
+  when:
+    - accessibility_packages | length > 0
+    - workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']
+
 - name: Refresh user-scoped npm packages before upstream release discovery
   tags: [updates, packages, node, ai]
   when:

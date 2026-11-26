@@ -269,3 +269,160 @@ def test_display_scale_override_is_a_plain_variable() -> None:
     assert "minimal_desktop_display_scale" in DEFAULTS
     assert "hardware_profiles" in DEFAULTS["minimal_desktop_display_scale"]
     assert json.dumps(DEFAULTS["keyboard_manage"])  # serialisable default expression
+
+
+# --- opt-in assistive technology packages (decision record 0003, catalog#173) --
+
+RECORD_0003 = ROOT / "docs/decisions/0003-opt-in-assistive-technology-packages.md"
+SPEC = yaml.safe_load((ROLE / "meta/argument_specs.yml").read_text())["argument_specs"]["main"]["options"]
+# Modules accessibility-packages.yml may use: install packages and read the
+# package lists. Anything that writes a file, touches a service or removes a
+# package would break the record's "packages only, never overwrite" promise.
+PACKAGES_ONLY_MODULES = {"ansible.builtin.apt", "ansible.builtin.command", "ansible.builtin.assert"}
+TASK_KEYWORDS = {"name", "loop", "register", "changed_when", "check_mode", "vars", "when"}
+
+
+def record_package_names() -> list[str]:
+    """The package names of the record's accepted-list table, in its order."""
+    lines = RECORD_0003.read_text().splitlines()
+    header = lines.index("| Package | What it gives | Notes |")
+    names = []
+    for line in lines[header + 2:]:
+        if not line.startswith("|"):
+            break
+        names.append(line.split("|")[1].strip().strip("`"))
+    return names
+
+
+def test_accessibility_packages_default_to_nothing() -> None:
+    assert DEFAULTS["accessibility_packages"] == []
+
+
+def test_accessibility_packages_accept_only_the_records_list() -> None:
+    spec = SPEC["accessibility_packages"]
+    assert spec["type"] == "list" and spec["elements"] == "str"
+    assert spec["choices"] == record_package_names() == ["orca", "espeak-ng", "brltty", "onboard", "xkbset"]
+
+
+def test_record_stays_proposed_until_an_assistive_technology_user_reviews_it() -> None:
+    assert "- Status: proposed" in RECORD_0003.read_text()
+
+
+def test_main_includes_accessibility_packages_only_when_asked_on_a_desktop() -> None:
+    include = next(t for t in load("main.yml") if t["name"].startswith("Include assistive technology packages"))
+    assert include["ansible.builtin.include_tasks"]["file"] == "accessibility-packages.yml"
+    assert include["when"] == ["accessibility_packages | length > 0",
+                               "workstation_profile in ['desktop', 'thin-client', 'byod-kiosk']"]
+    assert include["tags"] == ["accessibility", "packages"]
+    assert include["ansible.builtin.include_tasks"]["apply"]["tags"] == ["accessibility", "packages"]
+
+
+def test_accessibility_packages_install_packages_only() -> None:
+    tasks = load("accessibility-packages.yml")
+    modules = [next(k for k in t if k not in TASK_KEYWORDS) for t in tasks]
+    assert set(modules) <= PACKAGES_ONLY_MODULES, modules
+    for task in tasks:
+        if "ansible.builtin.command" in task:
+            assert task["ansible.builtin.command"]["argv"][:2] == ["apt-cache", "policy"]
+            assert task["changed_when"] is False
+        if "ansible.builtin.apt" in task:
+            assert task["ansible.builtin.apt"].get("state", "present") == "present"
+            assert "purge" not in task["ansible.builtin.apt"] and "autoremove" not in task["ansible.builtin.apt"]
+    # Refresh the lists, look up candidates, stop on a missing one, then the one install.
+    assert modules == ["ansible.builtin.apt", "ansible.builtin.command", "ansible.builtin.assert", "ansible.builtin.apt"]
+    assert "name" not in tasks[0]["ansible.builtin.apt"]
+    assert tasks[-1]["ansible.builtin.apt"]["name"] == "{{ accessibility_packages | unique }}"
+
+
+def accessibility_include(variables: dict, marker: Path) -> dict:
+    include = copy.deepcopy(next(t for t in load("main.yml") if t["name"].startswith("Include assistive technology packages")))
+    include["ansible.builtin.include_tasks"]["file"] = str(TASKS / "accessibility-packages.yml")
+    after = {"name": "after", "ansible.builtin.copy": {"dest": str(marker), "content": "reached\n"}}
+    return {"hosts": "localhost", "connection": "local", "gather_facts": False, "vars": variables,
+            "tasks": [include, after]}
+
+
+@pytest.mark.parametrize("profile", ["desktop", "workspace", "thin-client", "byod-kiosk"])
+def test_empty_accessibility_packages_change_nothing(tmp_path: Path, profile: str) -> None:
+    """The default list skips the whole file: no package list refresh, lookup or install."""
+    marker = tmp_path / "after"
+    result = run_playbook(tmp_path / "empty.yml",
+                          [accessibility_include({"accessibility_packages": [], "workstation_profile": profile}, marker)])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert marker.exists()
+    included = [t["name"] for t in load("accessibility-packages.yml")]
+    assert not [name for name in included if name in result.stdout], result.stdout
+    assert "skipping: [localhost]" in result.stdout
+    assert "changed=1 " in result.stdout  # only the test's own marker file
+
+
+def validate_play(variables: dict, out: Path, name: str) -> dict:
+    rejected = {"ansible.builtin.copy": {"dest": str(out / f"{name}.rejected"), "content": "{{ ansible_failed_result.msg }}"}}
+    # Stands in for the first task after validation: it must never run when
+    # validation refuses the configuration.
+    reached = {"ansible.builtin.copy": {"dest": str(out / f"{name}.reached"), "content": "reached\n"}}
+    validate = {"ansible.builtin.include_role": {"name": "developer_workstation", "tasks_from": "validate-config"}}
+    return {"hosts": "localhost", "connection": "local", "gather_facts": False, "vars": variables,
+            "tasks": [{"name": "scenario", "block": [validate, reached], "rescue": [rejected]}]}
+
+
+ACCESSIBILITY_ACCEPTED = {
+    "empty_desktop": {"workstation_profile": "desktop", "accessibility_packages": []},
+    "empty_workspace": {"workstation_profile": "workspace", "accessibility_packages": []},
+    "all_desktop": {"workstation_profile": "desktop", "accessibility_packages": ["orca", "espeak-ng", "brltty", "onboard", "xkbset"]},
+    "screen_reader_kiosk": {"workstation_profile": "byod-kiosk", "kiosk_target_url": "https://portal.example.org/",
+                            "accessibility_packages": ["orca"]},
+}
+ACCESSIBILITY_REFUSED = {
+    "unknown_name": ({"workstation_profile": "desktop", "accessibility_packages": ["orca", "nvda"]},
+                     ["accessibility_packages", "orca, espeak-ng, brltty, onboard, xkbset", "nvda"]),
+    "typo": ({"workstation_profile": "desktop", "accessibility_packages": ["Orca"]}, ["accessibility_packages", "Orca"]),
+    "string_not_list": ({"workstation_profile": "desktop", "accessibility_packages": "orca"},
+                        ["accessibility_packages must be a list"]),
+    "workspace": ({"workstation_profile": "workspace", "accessibility_packages": ["orca"]},
+                  ["workstation_profile workspace has no desktop session"]),
+}
+
+
+def test_accessibility_packages_validation(tmp_path: Path) -> None:
+    plays = [validate_play(v, tmp_path, name) for name, v in ACCESSIBILITY_ACCEPTED.items()]
+    plays += [validate_play(v, tmp_path, name) for name, (v, _) in ACCESSIBILITY_REFUSED.items()]
+    result = run_playbook(tmp_path / "validate.yml", plays)
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name in ACCESSIBILITY_ACCEPTED:
+        assert (tmp_path / f"{name}.reached").exists(), name
+        assert not (tmp_path / f"{name}.rejected").exists(), (tmp_path / f"{name}.rejected").read_text()
+    for name, (_, needles) in ACCESSIBILITY_REFUSED.items():
+        assert not (tmp_path / f"{name}.reached").exists(), f"{name}: a task after validation ran"
+        message = (tmp_path / f"{name}.rejected").read_text()
+        for needle in needles:
+            assert needle in message, (name, needle, message)
+
+
+def test_missing_install_candidate_stops_before_installing(tmp_path: Path) -> None:
+    """espeak-ng, onboard and xkbset need Ubuntu's universe; without it the run stops with the fix."""
+    check = copy.deepcopy(by_name(load("accessibility-packages.yml"), "Require an install candidate for every assistive technology package"))
+    policy = {
+        "results": [
+            {"item": "orca", "stdout": "orca:\n  Installed: (none)\n  Candidate: 46.1-1ubuntu1\n  Version table:\n"},
+            {"item": "onboard", "stdout": "onboard:\n  Installed: (none)\n  Candidate: (none)\n  Version table:\n"},
+            {"item": "xkbset", "stdout": ""},
+        ]
+    }
+    available = {"results": policy["results"][:1]}
+    plays = []
+    for name, results, distribution in (("missing", policy, "Ubuntu"), ("missing_debian", policy, "Debian"),
+                                        ("available", available, "Ubuntu")):
+        rejected = {"ansible.builtin.copy": {"dest": str(tmp_path / f"{name}.rejected"), "content": "{{ ansible_failed_result.msg }}"}}
+        installed = {"ansible.builtin.copy": {"dest": str(tmp_path / f"{name}.installed"), "content": "installed\n"}}
+        plays.append({"hosts": "localhost", "connection": "local", "gather_facts": False,
+                      "vars": {"_accessibility_policy": results, "ansible_facts": {"distribution": distribution}},
+                      "tasks": [{"name": "scenario", "block": [copy.deepcopy(check), installed], "rescue": [rejected]}]})
+    result = run_playbook(tmp_path / "candidate.yml", plays)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "available.installed").exists()
+    ubuntu = (tmp_path / "missing.rejected").read_text()
+    assert "onboard, xkbset" in ubuntu and "orca" not in ubuntu.split("which")[0]
+    assert "universe" in ubuntu and "Nothing was installed" in ubuntu
+    assert "universe" not in (tmp_path / "missing_debian.rejected").read_text()
+    assert not (tmp_path / "missing.installed").exists() and not (tmp_path / "missing_debian.installed").exists()

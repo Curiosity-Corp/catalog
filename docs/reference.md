@@ -58,6 +58,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 
 | Tag | Status | Tasks | Task files | Profiles | Description |
 | --- | --- | --- | --- | --- | --- |
+| `accessibility` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` | Opt-in assistive technology packages (accessibility_packages); packages only, see accessibility-and-localization.md. |
 | `ai` | supported | 12 | `ai-assistants.yml`, `main.yml` | `desktop`, `workspace` |  |
 | `always` | supported | 13 | `main.yml`, `update-transaction.yml` |  | Runs on every invocation, even with --tags. Skip it only with --skip-tags always. |
 | `ansible-pull` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
@@ -123,7 +124,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `networking` | supported | 6 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `node` | supported | 11 | `main.yml` | `desktop`, `workspace` |  |
 | `openbox` | supported | 3 | `minimal-desktop.yml` | `byod-kiosk` |  |
-| `packages` | supported | 18 | `ai-assistants.yml`, `main.yml`, `managed-updates.yml`, `minimal-desktop.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Package installation across the role. |
+| `packages` | supported | 19 | `ai-assistants.yml`, `main.yml`, `managed-updates.yml`, `minimal-desktop.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Package installation across the role. |
 | `pia-tunnel` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `picom` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `pinned-vt` | supported | 1 | `minimal-desktop.yml` |  |  |
@@ -293,7 +294,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-480 variables, from `roles/developer_workstation/defaults/main.yml`.
+481 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -314,6 +315,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `locale_manage` | bool | `false` |  | supported |  | (undocumented) |
 | `locale_lang` | string | `""` |  | supported |  | (undocumented) |
 | `locale_extra` | list | `[]` |  | supported |  | (undocumented) |
+| `accessibility_packages` | list | `[]` | list of orca, espeak-ng, brltty, onboard, xkbset (decision record 0003) | supported |  | Assistive technology to install, by package name (decision record 0003, docs/accessibility-and-localization.md). Empty installs nothing. Accepted names: orca, espeak-ng, brltty, onboard, xkbset; any other name stops the run before anything changes. (...) |
 | `developer_workstation_local_vars_file` | string | `"/etc/ansible/local-vars.yml"` |  | supported |  | Optional machine-local override file. Keep per-person/user values here on the target host instead of committing host-specific maps to this repo. |
 | `workstation_user_systemd_masked_units` | list | `[]` |  | supported |  | User-scoped systemd units that must remain masked on this workstation. This is intentionally empty for the public baseline: site operators can declare obsolete or superseded user timers in protected inventory without putting private application names in the collection. (...) |
 | `workstation_system_masked_units` | list | `[]` |  | supported |  | System-scoped counterpart: units that must stay stopped and masked, and paths that must not exist, on this host. Empty in the public baseline; site values belong in /etc/ansible/local-vars.yml or protected inventory. (...) |

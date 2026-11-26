@@ -42,6 +42,12 @@ keyboard_options: ""
 locale_manage: false
 locale_lang: ""
 locale_extra: []
+# Assistive technology to install, by package name (decision record 0003,
+# docs/accessibility-and-localization.md). Empty installs nothing. Accepted
+# names: orca, espeak-ng, brltty, onboard, xkbset; any other name stops the run
+# before anything changes. Packages only: no user configuration, service or
+# autostart entry is written, and removing a name never uninstalls it.
+accessibility_packages: []
 # Optional machine-local override file. Keep per-person/user values here on the
 # target host instead of committing host-specific maps to this repo.
 developer_workstation_local_vars_file: /etc/ansible/local-vars.yml

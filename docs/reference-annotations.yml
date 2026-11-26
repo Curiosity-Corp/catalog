@@ -136,6 +136,7 @@ variables:
   earlyoom_mem_percent: {values: "integer percent, 1 to 100, written as a string"}
   earlyoom_swap_percent: {values: "integer percent, 1 to 100, written as a string"}
   minimal_desktop_display_scale: {values: "number from 1 to 4 in steps of 0.25"}
+  accessibility_packages: {values: "list of orca, espeak-ng, brltty, onboard, xkbset (decision record 0003)"}
 
 # Shown for workstation_profile values the defaults comment does not describe.
 profile_notes:
@@ -144,6 +145,7 @@ profile_notes:
 tags:
   always:
     description: "Runs on every invocation, even with --tags. Skip it only with --skip-tags always."
+  accessibility: {description: "Opt-in assistive technology packages (accessibility_packages); packages only, see accessibility-and-localization.md."}
   validate: {description: "The public configuration check (validate-config.yml). Always runs, before any change; see configuration.md#validation."}
   updates: {description: "The managed update transaction: foundation, rings, rollback, health and manifest."}
   security: {description: "Security hardening, including the pro-mimic plane."}

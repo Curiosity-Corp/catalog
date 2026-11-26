@@ -101,17 +101,61 @@ You can do these today by setting the variables above:
 - Large text and cursor through `minimal_desktop_display_scale`, which also
   makes the panel and icons bigger.
 
-Not covered, to be honest about it: screen readers, on-screen keyboards, sticky
-keys and other assistive input are not installed or configured by the role.
-Install what the person needs and keep it in their own configuration; the role
-will not overwrite it, because it only writes the files named here.
+Not configured, to be honest about it: the role never sets up a screen reader,
+on-screen keyboard, sticky keys or other assistive input for anyone. It can
+install them when you ask (next section); configuring them stays with the
+person who uses them, and the role will not overwrite their settings, because
+it only writes the files named here.
 
-A proposal to install these on request, an opt-in `accessibility_packages`
-list (default empty) with the packages it would accept on each supported
-distribution and what the role must never overwrite, is
+## Assistive technology packages (opt-in)
+
+A screen reader, a braille display driver, an on-screen keyboard or sticky keys
+can be installed from the first run, which matters most on a `thin-client` or
+`byod-kiosk` appliance where nobody can install them afterwards. Nothing is
+installed unless you list it:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `accessibility_packages` | empty list | Packages to install, from the names below only |
+
+| Name | What it gives |
+| --- | --- |
+| `orca` | Screen reader, speech and braille output |
+| `espeak-ng` | Speech synthesiser (usually pulled in by `orca`) |
+| `brltty` | Braille display driver. Only list it when a braille display is used: its udev rules have claimed some USB-serial adapters (CH340/CH341) |
+| `onboard` | On-screen keyboard |
+| `xkbset` | Sticky keys, slow keys and bounce keys on X11 |
+
+```yaml
+accessibility_packages: [orca, onboard]
+```
+
+Apply with `--tags accessibility` (the full run installs them too). It works on
+the `desktop`, `thin-client` and `byod-kiosk` profiles, on every supported
+Ubuntu and Debian release. A `workspace` has no desktop session, so a non-empty
+list there is refused.
+
+What to expect:
+
+- Any other name, including a different spelling, stops the run before
+  anything changes, with a message that lists the accepted names.
+- On Ubuntu, `espeak-ng`, `onboard` and `xkbset` come from the `universe`
+  component. If it is not enabled, the run stops before installing anything and
+  says so; enable it with `add-apt-repository universe`.
+- Packages only. The role starts nothing, adds no autostart entry and writes
+  none of the tools' settings: Orca's speech rate and key bindings, the braille
+  table, Onboard's layout and whether sticky keys are on (`xkbset sticky` in
+  your own session start) stay with the person who uses them.
+- Removing a name from the list does not uninstall the package, because
+  removing a screen reader can lock someone out. Uninstall it by hand when it
+  is really no longer needed.
+
+Why these names and no others is
 [decision record 0003](decisions/0003-opt-in-assistive-technology-packages.md).
-It is only proposed: no review by a person who uses assistive technology has
-happened yet, and the variable does not exist until it is accepted.
+It is still "proposed": no review by a person who uses assistive technology has
+happened yet. If you use one of these tools, your review on catalog#136 is
+welcome, especially whether Orca speaks under the minimal desktop's Openbox
+session.
 
 ## Checked by
 
@@ -121,7 +165,13 @@ every row of the common-layouts table (read from this page, so the table and the
 test cannot drift), quotes and upper-case refused, locales accepted and refused, and the display scale at 1 (low
 resolution, file untouched), 1.5, 2.25 and 4 (rendered) and at 0.5, 1.1, 5 and a
 word (refused). It also checks which profiles force a keyboard and that the
-defaults leave other profiles alone. No physical display is involved, so the
-screen itself, a real non-US keyboard and a real high-DPI monitor are still
+defaults leave other profiles alone. For `accessibility_packages` it checks that
+the empty default skips the install entirely, that the accepted names are exactly
+the decision record's list, that an unknown name, a string instead of a list and
+a list on a `workspace` are refused before any later task, that a package with no
+install candidate (no `universe`) stops the run before installing, and that the
+task file can only install packages. No physical display is involved, so the
+screen itself, a real non-US keyboard, a real high-DPI monitor and a
+screen reader actually speaking are still
 worth one manual look; see the
 [clean-room run template](evidence/clean-room-run-template.md).

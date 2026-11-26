@@ -1,0 +1,56 @@
+---
+# =============================================================================
+# Assistive technology packages (variable: accessibility_packages)
+# =============================================================================
+# Decision record 0003 (docs/decisions/0003-opt-in-assistive-technology-packages.md).
+# main.yml includes this only when the list is non-empty, on the desktop
+# profiles. tasks/validate-config.yml (through meta/argument_specs.yml) has
+# already refused any name outside the reviewed list before anything changed.
+#
+# Packages only. This file must never write a file, start or enable a service,
+# add an autostart entry, change a GSettings key or uninstall anything: a
+# person's speech rate, braille table, key bindings and on-screen keyboard
+# layout are theirs, and removing a screen reader can lock them out.
+# tests/test_accessibility_defaults.py keeps it to the modules below.
+# =============================================================================
+
+- name: Refresh the package lists for assistive technology packages
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  changed_when: false
+
+- name: Look up the install candidate of each assistive technology package
+  ansible.builtin.command:
+    argv: [apt-cache, policy, "{{ item }}"]
+  loop: "{{ accessibility_packages | unique }}"
+  register: _accessibility_policy
+  changed_when: false
+  check_mode: false
+
+# On Ubuntu espeak-ng, onboard and xkbset come from universe. A package with no
+# candidate stops the run here with a fix, before apt fails with a bare
+# "No package matching" and before anything else is installed.
+- name: Require an install candidate for every assistive technology package
+  ansible.builtin.assert:
+    that:
+      - _accessibility_unavailable | length == 0
+    fail_msg: >-
+      accessibility_packages lists {{ _accessibility_unavailable | join(', ') }}, which
+      the package manager cannot install on this host (no install candidate).
+      {% if ansible_facts.distribution | default('') == 'Ubuntu' %}On Ubuntu,
+      espeak-ng, onboard and xkbset come from the universe component: enable
+      it (add-apt-repository universe) and run the role again.{% else %}Check
+      that the distribution's main archive is in the APT sources.{% endif %}
+      Nothing was installed.
+    quiet: true
+  vars:
+    _accessibility_unavailable: >-
+      {{ _accessibility_policy.results
+         | rejectattr('stdout', 'search', '(?m)^\s*Candidate: (?!\(none\))\S')
+         | map(attribute='item') | list }}
+
+- name: Install the requested assistive technology packages
+  ansible.builtin.apt:
+    name: "{{ accessibility_packages | unique }}"
+    state: present

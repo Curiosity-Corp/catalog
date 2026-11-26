@@ -1,0 +1,5 @@
+---
+# A workspace has no desktop session, so a screen reader there cannot work.
+# expect: accessibility_packages lists ["orca"], but workstation_profile workspace has no desktop session
+workstation_profile: workspace
+accessibility_packages: [orca]

@@ -1,0 +1,4 @@
+---
+# Every name decision record 0003 accepts, on a desktop (catalog#173).
+workstation_profile: desktop
+accessibility_packages: [orca, espeak-ng, brltty, onboard, xkbset]

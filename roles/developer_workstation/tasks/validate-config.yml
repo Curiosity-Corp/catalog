@@ -156,6 +156,14 @@
         msg: >-
           coder_cli_enabled is true, so coder_deployment_url must be set to the
           lab's own Coder deployment, such as https://coder.example.org; it is empty.
+      - ok: >-
+          {{ workstation_profile | default('') != 'workspace'
+             or accessibility_packages | default([]) | length == 0 }}
+        msg: >-
+          accessibility_packages lists {{ accessibility_packages | default([]) | to_json }}, but
+          workstation_profile workspace has no desktop session to run them in;
+          they install on desktop, thin-client and byod-kiosk. Leave the list
+          empty on a workspace.
       - ok: "{{ workstation_profile | default('') != 'byod-kiosk' or kiosk_target_url | default('') | length > 0 }}"
         msg: >-
           workstation_profile byod-kiosk needs kiosk_target_url, the page the
