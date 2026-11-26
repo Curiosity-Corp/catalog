@@ -89,7 +89,7 @@ fn collection_component(name: &str, version: &str, kind: Kind) -> Component {
 }
 
 /// `ci/requirements.yml`: name and exact version of each collection.
-fn ci_collections(root: &Path) -> Result<Vec<(String, String)>> {
+pub fn ci_collections(root: &Path) -> Result<Vec<(String, String)>> {
     let document = yaml::load(&root.join(CI_COLLECTIONS))?;
     let mut pins = Vec::new();
     for entry in yaml::as_list(document.get("collections")) {
@@ -117,18 +117,23 @@ fn normalise(name: &str) -> String {
 
 /// Every package of the hash-checked lock, marked direct when
 /// `ci/requirements.in` names it.
-fn python_lock(root: &Path) -> Result<Vec<Component>> {
-    static PIN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([^\s;\\]+)")
-            .expect("valid regex")
-    });
-    static HASH: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"--hash=sha256:([0-9a-f]{64})").expect("valid regex"));
-    let direct: BTreeSet<String> = yaml::read(&root.join(PYTHON_DIRECT))?
+static PIN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==([^\s;\\]+)").expect("valid regex")
+});
+
+/// The direct CI Python dependencies `ci/requirements.in` pins, by normalised name.
+pub fn python_direct(root: &Path) -> Result<BTreeSet<String>> {
+    Ok(yaml::read(&root.join(PYTHON_DIRECT))?
         .lines()
         .filter_map(|line| PIN.captures(line.trim()))
         .map(|captures| normalise(&captures[1]))
-        .collect();
+        .collect())
+}
+
+fn python_lock(root: &Path) -> Result<Vec<Component>> {
+    static HASH: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"--hash=sha256:([0-9a-f]{64})").expect("valid regex"));
+    let direct = python_direct(root)?;
     let lock = yaml::read(&root.join(PYTHON_LOCK))?;
     let mut components: Vec<Component> = Vec::new();
     for line in lock.lines() {
