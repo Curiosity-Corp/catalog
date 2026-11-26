@@ -957,10 +957,46 @@ ziti_health_check_script_path: /usr/local/sbin/curiosity-ziti-health
 custom_ca_certificates: []
 custom_ca_bundle_path: /etc/ssl/certs/ca-certificates.crt
 
-# Generic GitLab/Coder workspace settings. Point these at a lab's own service
-# in host/group vars instead of baking an organization into the role.
-workspace_gitlab_host: gitlab.com
-workspace_gitlab_external_auth_provider: gitlab
+# Remote workspace helpers (tasks/workspace-helpers.yml, workspace profile
+# only; docs/workspace-providers.md). Nothing here names a deployment, host or
+# provider: set them in host or group variables. With these defaults nothing is
+# installed that talks to a workspace service, and a plain SSH workspace needs
+# none of them.
+
+# Install a git credential helper that asks the workspace service (Coder, or a
+# service whose client takes the same arguments) for a short-lived token for
+# workspace_git_host on every git request, so no personal access token is
+# handed out or stored. true needs workspace_git_host and
+# workspace_external_auth_provider; false removes the helper again.
+workspace_git_auth_helper_enabled: false
+# The git host the helper answers for, as host or host:port, such as
+# git.example.org (no scheme, no path). The helper is wired for https:// only.
+workspace_git_host: ""
+# The workspace service's id of the external-auth provider for that git host,
+# such as primary-git. The helper runs `<workspace_external_auth_binary>
+# external-auth access-token <workspace_external_auth_provider>`.
+workspace_external_auth_provider: ""
+# Command that prints the token: a name on PATH or an absolute path. It must
+# accept the arguments above.
+workspace_external_auth_binary: coder
+# HTTPS Basic-auth user name sent with the token. oauth2 suits OAuth tokens of
+# GitLab and most other forges.
+workspace_git_auth_username: oauth2
+# Login-shell environment for every user of the workspace, written to
+# /etc/profile.d/curiosity-workspace-env.sh, such as {GITLAB_HOST:
+# git.example.org} for the GitLab CLI. Empty, with
+# workspace_login_env_unset, removes the file.
+workspace_login_env: {}
+# Environment variable names that login shells unset, such as [GITLAB_TOKEN].
+workspace_login_env_unset: []
+# Where the role installs the credential helper.
+workspace_git_auth_helper_script_path: /usr/local/bin/git-credential-workspace
+# Where the role writes the login-shell environment.
+workspace_login_env_config_path: /etc/profile.d/curiosity-workspace-env.sh
+# The GitLab-named helper of earlier releases, removed on every run.
+workspace_legacy_git_auth_helper_script_path: /usr/local/bin/git-credential-coder-gitlab
+# The GitLab-named profile.d file of earlier releases, removed on every run.
+workspace_legacy_login_env_config_path: /etc/profile.d/coder-gitlab.sh
 
 # Display configuration (GDM auto-login, x11vnc, dconf no-lock)
 # Enable on iGPU passthrough VMs that need physical display + VNC

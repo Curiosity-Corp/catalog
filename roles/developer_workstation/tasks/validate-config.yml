@@ -103,6 +103,27 @@
     _ring_ages: "{{ workstation_update_ring_min_age_seconds | default({}) }}"
     _ring_delays: "{{ workstation_update_ring_randomized_delay_seconds | default({}) }}"
     _whole_number_re: '^[0-9]+$'
+    # Values the workspace credential helper puts into a shell script and
+    # /etc/gitconfig: a host[:port], provider and user names, a command name
+    # or absolute path, environment variable names.
+    _workspace_host_re: '^([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?)?$'
+    _workspace_name_re: '^[A-Za-z0-9._-]*$'
+    _workspace_command_re: '^([A-Za-z0-9._+-]+|/[A-Za-z0-9._+/-]+)?$'
+    _env_name_re: '^[A-Za-z_][A-Za-z0-9_]*$'
+    _workspace_env: "{{ workspace_login_env if workspace_login_env | default({}) is mapping else {} }}"
+    _workspace_env_unset: >-
+      {{ workspace_login_env_unset
+         if workspace_login_env_unset | default([]) is sequence and workspace_login_env_unset is not string
+         else [] }}
+    # Names of the settings the enabled credential helper needs that are empty.
+    _workspace_helper_unset: >-
+      {{ ['workspace_git_host', 'workspace_external_auth_provider',
+          'workspace_external_auth_binary', 'workspace_git_auth_username']
+         | zip([workspace_git_host | default('', true) | string,
+                workspace_external_auth_provider | default('', true) | string,
+                workspace_external_auth_binary | default('', true) | string,
+                workspace_git_auth_username | default('', true) | string])
+         | selectattr('1', 'eq', '') | map('first') | list }}
     _config_rules:
       - ok: "{{ hardware_profile | default('') in _hardware_profile_names }}"
         msg: >-
@@ -164,6 +185,51 @@
           workstation_profile workspace has no desktop session to run them in;
           they install on desktop, thin-client and byod-kiosk. Leave the list
           empty on a workspace.
+      - ok: >-
+          {{ workstation_profile | default('') != 'workspace'
+             or not (workspace_git_auth_helper_enabled | default(false) | bool)
+             or _workspace_helper_unset | length == 0 }}
+        msg: >-
+          workspace_git_auth_helper_enabled is true, so workspace_git_host (the
+          git server, such as git.example.org), workspace_external_auth_provider
+          (the workspace service's id for its external-auth provider),
+          workspace_external_auth_binary and workspace_git_auth_username
+          must all be set; empty: {{ _workspace_helper_unset | join(', ') }}
+          (docs/workspace-providers.md).
+      - ok: "{{ workspace_git_host | default('') | string is match(_workspace_host_re) }}"
+        msg: >-
+          workspace_git_host must be empty or a host name with an optional
+          :port, without scheme, path or login, such as git.example.org; got
+          {{ workspace_git_host | default('') | regex_replace('://[^/@\s]*@', '://***@') | to_json }}.
+      - ok: >-
+          {{ [workspace_external_auth_provider | default(''), workspace_git_auth_username | default('oauth2')]
+             | map('string') | reject('match', _workspace_name_re) | list | length == 0 }}
+        msg: >-
+          workspace_external_auth_provider and workspace_git_auth_username
+          may use only letters, digits, dot, dash and underscore; got
+          {{ workspace_external_auth_provider | default('') | to_json }} and
+          {{ workspace_git_auth_username | default('') | to_json }}.
+      - ok: "{{ workspace_external_auth_binary | default('') | string is match(_workspace_command_re) }}"
+        msg: >-
+          workspace_external_auth_binary must be a command name on PATH, such as
+          coder, or an absolute path, without spaces or shell characters; got
+          {{ workspace_external_auth_binary | default('') | to_json }}.
+      - ok: >-
+          {{ (_workspace_env | list + _workspace_env_unset) | map('string')
+             | reject('match', _env_name_re) | list | length == 0 }}
+        msg: >-
+          workspace_login_env keys and workspace_login_env_unset entries must be
+          environment variable names (letters, digits and underscore, not
+          starting with a digit), such as GITLAB_HOST; got
+          {{ (_workspace_env | list + _workspace_env_unset) | map('string') | reject('match', _env_name_re) | list | to_json }}.
+      - ok: >-
+          {{ _workspace_env | dict2items | map(attribute='value')
+             | reject('string') | reject('number') | list | length == 0
+             and _workspace_env | dict2items | map(attribute='value') | map('string')
+             | select('search', '[\r\n]') | list | length == 0 }}
+        msg: >-
+          workspace_login_env values must be single-line strings or numbers; got
+          {{ _workspace_env | to_json }}.
       - ok: "{{ workstation_profile | default('') != 'byod-kiosk' or kiosk_target_url | default('') | length > 0 }}"
         msg: >-
           workstation_profile byod-kiosk needs kiosk_target_url, the page the

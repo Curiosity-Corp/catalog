@@ -202,8 +202,13 @@ argument_specs:
       ziti_health_check_tunnel_bin: {type: str}
       custom_ca_certificates: {type: list}
       custom_ca_bundle_path: {type: str}
-      workspace_gitlab_host: {type: str}
-      workspace_gitlab_external_auth_provider: {type: str}
+      workspace_git_auth_helper_enabled: {type: bool}
+      workspace_git_host: {type: str}
+      workspace_external_auth_provider: {type: str}
+      workspace_external_auth_binary: {type: str}
+      workspace_git_auth_username: {type: str}
+      workspace_login_env: {type: dict}
+      workspace_login_env_unset: {type: list, elements: str}
       display_config_enabled: {type: bool}
       t460_console_diagnostics_enabled: {type: bool}
       t460_fbcon_horizontal_enabled: {type: bool}

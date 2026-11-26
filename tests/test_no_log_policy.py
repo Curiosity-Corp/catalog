@@ -50,6 +50,8 @@ ALLOWED = {
         "path to a root-only git-credential-store file; only the path reaches git's environment",
     ("roles/developer_workstation/tasks/user-git-timer-entry.yml", "credential"):
         "the literal git config key credential.helper, not a value",
+    ("roles/developer_workstation/tasks/workspace-helpers.yml", "credential"):
+        "the literal git config key credential.https://<host>.helper, not a value; the helper fetches tokens at git request time, never in the play",
     ("roles/developer_workstation/tasks/samsung-tv-cli.yml", "samsung_tv_key_vault_secret"):
         "the Azure Key Vault secret's name; the token is fetched by the user's CLI at run time, never by the role",
     ("roles/developer_workstation/tasks/pro-mimic-pull-status.yml", "pro_mimic_ssh_password_auth"):

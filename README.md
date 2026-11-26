@@ -163,6 +163,7 @@ building. The catalog's tools are one Rust binary, `catalog-tools`, in
 - [Change log](CHANGELOG.md)
 - [Architecture](docs/architecture.md)
 - [Console tuning](docs/console-tuning.md)
+- [Remote workspaces: plain SSH or a workspace service](docs/workspace-providers.md)
 - [PIA VPN split tunnel and managed WiFi](docs/pia-vpn-and-wifi.md)
 - [Python research profile](docs/python-research-profile.md)
 - [Troubleshooting](docs/troubleshooting.md)
