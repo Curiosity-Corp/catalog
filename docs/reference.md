@@ -57,7 +57,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | Tag | Status | Tasks | Task files | Profiles | Description |
 | --- | --- | --- | --- | --- | --- |
 | `ai` | supported | 12 | `ai-assistants.yml`, `main.yml` | `desktop`, `workspace` |  |
-| `always` | supported | 5 | `update-transaction.yml` |  | Runs on every invocation, even with --tags. Skip it only with --skip-tags always. |
+| `always` | supported | 12 | `main.yml`, `update-transaction.yml` |  | Runs on every invocation, even with --tags. Skip it only with --skip-tags always. |
 | `ansible-pull` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `bitwarden` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `boot` | supported | 3 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
@@ -124,6 +124,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `picom` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `pinned-vt` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `pointer-accel` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
+| `preflight` | supported | 4 | `main.yml` |  |  |
 | `pro-mimic` | supported | 9 | `main.yml`, `pro-mimic.yml` | `desktop`, `thin-client`, `byod-kiosk` | Free equivalents of Ubuntu Pro hardening. |
 | `profile-cleanup` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `provenance` | supported | 8 | `main.yml` | `desktop`, `workspace` |  |

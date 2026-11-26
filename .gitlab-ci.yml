@@ -272,7 +272,7 @@ research-profile:
 # shared runner pods run as a non-root user.
 tools:
   stage: validate
-  image: rust:1-bookworm
+  image: public.ecr.aws/docker/library/rust:1-bookworm
   variables:
     CARGO_HOME: "${CI_PROJECT_DIR}/.cargo-home"
     CARGO_TARGET_DIR: "${CI_PROJECT_DIR}/tools/target"
