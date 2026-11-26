@@ -57,6 +57,7 @@ step() {
   echo "- Date (UTC): $(date -u +%Y-%m-%dT%H:%MZ)"
   echo "- Commit: ${CI_COMMIT_SHA:-unknown}"
   echo "- Image: ${CI_JOB_IMAGE:-unknown}"
+  # shellcheck disable=SC1091
   echo "- os-release: $(. /etc/os-release && echo "$PRETTY_NAME")"
   echo "- debian_version: $(cat /etc/debian_version 2>/dev/null || echo absent)"
   echo "- uname -r: $(uname -r)"

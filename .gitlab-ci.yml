@@ -106,21 +106,26 @@ accessibility-summary:
   script:
     - python -m pytest -q tests/test_accessibility_defaults.py tests/test_update_summary.py tests/test_update_interrupted_recovery.py
 
-# catalog#135: follow docs/quickstarts/laptop.md in a throwaway Debian 13
-# container (step 1 as typed, then preview with --check --diff and apply under
-# fakeroot, because the shared runner gives no root; see the script header)
-# and keep a per-step report. "localhost" is the job container itself; this job
-# never targets a real host or inventory. It runs on merge requests that touch
-# the quickstart or this harness, and is a manual button on every other merge
-# request. The report feeds docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
+# catalog#135: follow docs/quickstarts/laptop.md as far as a throwaway,
+# non-root Debian 13 container allows: simulate the role's APT steps with
+# user-owned apt state, then preview the playbook (--check --diff) with become
+# switched off, and keep a per-step report. No root emulation: the runner is
+# uid 1000 with no capabilities on purpose. "localhost" is the job container
+# itself; this job never targets a real host or inventory and applies nothing.
+# python:3.13-slim-trixie is debian:trixie-slim plus an upstream Python, which
+# the guide's apt-installed python3 cannot be without root. It runs on merge
+# requests that touch the quickstart or this harness, and is a manual button on
+# every other merge request. The report feeds
+# docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
 debian13-quickstart:
   stage: test
-  image: debian:trixie
-  timeout: 2h
+  image: python:3.13-slim-trixie
+  timeout: 1h
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - scripts/debian_quickstart_run.sh
+        - scripts/debian_quickstart_apt.py
         - docs/quickstarts/laptop.md
         - examples/laptop.yml
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
