@@ -291,6 +291,16 @@ tools:
     - cargo fmt --all --check || { cargo fmt --all && git diff -- . > ../tools-fmt.patch; exit 1; }
     - cargo run --locked --quiet -- reference --root .. --check
     - cargo run --locked --quiet -- packages check --root ..
+    # The dependency register (catalog#51, docs/dependency-register.md): fails
+    # when a declared dependency is missing from ci/dependency-register.yml or
+    # an entry no longer matches its declaration. Alerts print on every
+    # pipeline; a release tag (and a scheduled pipeline) fails on an untracked
+    # alert or an overdue review.
+    - cargo run --locked --quiet -- register check --root ..
+    - |
+      strict=""
+      if [ -n "${CI_COMMIT_TAG:-}" ] || [ "${CI_PIPELINE_SOURCE}" = "schedule" ]; then strict="--strict"; fi
+      cargo run --locked --quiet -- register alerts --root .. $strict
     # A static binary for the platform-packages jobs, which run in plain distro
     # images without a Rust toolchain.
     - rustup target add x86_64-unknown-linux-musl

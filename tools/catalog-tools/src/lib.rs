@@ -6,6 +6,7 @@
 pub mod diagnostics;
 pub mod packages;
 pub mod reference;
+pub mod register;
 pub mod sbom;
 pub mod yaml;
 

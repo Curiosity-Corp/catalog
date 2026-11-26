@@ -1,0 +1,1724 @@
+---
+# The dependency lifecycle and ownership register (catalog#51,
+# docs/dependency-register.md): for every upstream the collection depends on,
+# who maintains it, its licence, our owner role, how updates arrive and are
+# verified, its support or end-of-life dates as read from the vendor's own page
+# (support.evidence, support.checked), and the replacement plan.
+#
+# The list of dependencies is not curated here: `catalog-tools register check`
+# reads it from ci/sbom-sources.yml, galaxy.yml, ci/requirements.{in,yml},
+# apt_vendor_repos and latest_github_repositories, and fails when a declaration
+# is missing from this file or an entry's `declarations` no longer match.
+# `catalog-tools register alerts` lists abandoned, moved, ending and
+# unverified dependencies and an overdue review; `--strict` (tag and scheduled
+# pipelines) fails on any alert without an alert_tracked_in issue.
+#
+# verification: package-manager-signature | vendor-repository-signature |
+#   vendor-signature | pinned-checksum | tls-only
+# support.status: maintained | archived | moved | unmaintained | end-of-life
+# Dates are YYYY-MM-DD, or YYYY-MM for "the end of that month" when the vendor
+# publishes only a month.
+reviewed: '2026-11-26'
+review_interval_days: 31
+warn_days: 180
+owner_roles:
+  role-maintainer: A Maintainer (GOVERNANCE.md) who reviews changes to the role that installs the dependency.
+  ci-maintainer: A Maintainer (GOVERNANCE.md) who reviews CI and ci/ changes; Renovate proposes the bumps.
+  release-approver: The Release approver (GOVERNANCE.md), who checks the register at release time.
+entries:
+  - name: distribution-apt-archive
+    upstream: Canonical (Ubuntu) and the Debian project
+    source: https://ubuntu.com/about/release-cycle
+    declarations:
+      source:distribution-apt-archive: ansible.builtin.apt
+    licence: various (each package carries its own licence)
+    licence_source: https://ubuntu.com/legal/intellectual-property-policy
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: package-manager-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://ubuntu.com/about/release-cycle
+      checked: '2026-11-26'
+      ends:
+        - scope: Ubuntu 22.04 LTS standard security maintenance
+          date: 2027-05
+        - scope: Ubuntu 24.04 LTS standard security maintenance
+          date: 2029-05
+        - scope: Ubuntu 26.04 LTS standard security maintenance
+          date: 2031-05
+        - scope: Debian 12 full support (security team; LTS follows until 2028-06-30)
+          date: '2026-07-11'
+          evidence: https://www.debian.org/releases/bookworm/
+        - scope: Debian 12 Long Term Support
+          date: '2028-06-30'
+          evidence: https://www.debian.org/releases/bookworm/
+        - scope: Debian 13 full support (LTS follows until 2030-06-30)
+          date: '2028-08-09'
+          evidence: https://www.debian.org/releases/trixie/
+    replacement: Move hosts to the next supported LTS before standard support ends (docs/compatibility.md
+      lists the supported releases).
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: snap-store
+    upstream: Canonical
+    source: https://snapcraft.io/store
+    declarations:
+      source:snap-store: https://snapcraft.io/store
+    licence: 'n/a: a registry service; each snap carries its own licence'
+    licence_source: https://snapcraft.io/store
+    owner: role-maintainer
+    update_channel: snapd refreshes installed snaps on its own schedule from the stable channel
+    verification: package-manager-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://snapcraft.io/docs/refresh-awareness
+      checked: '2026-11-26'
+    replacement: Install the vendor's APT package or Flatpak instead; each snap the role installs has
+      one.
+  - name: npm-registry
+    upstream: npm, Inc. (GitHub)
+    source: https://www.npmjs.com/
+    declarations:
+      source:npm-registry: https://registry.npmjs.org/
+    licence: 'n/a: a registry service; each package carries its own licence'
+    licence_source: https://docs.npmjs.com/policies/npm-license
+    owner: role-maintainer
+    update_channel: community.general.npm installs the latest published version on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://docs.npmjs.com/
+      checked: '2026-11-26'
+    replacement: Use each tool's standalone installer or distribution package.
+  - name: pypi
+    upstream: Python Software Foundation
+    source: https://pypi.org/
+    declarations:
+      source:pypi: https://pypi.org/simple/
+    licence: 'n/a: a registry service; each package carries its own licence'
+    licence_source: https://pypi.org/policy/terms-of-use/
+    owner: role-maintainer
+    update_channel: pipx and pip install the latest published version on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://pypi.org/
+      checked: '2026-11-26'
+    replacement: Distribution python3-* packages, or a hash-checked requirements file.
+  - name: flathub
+    upstream: Flathub (GNOME Foundation project)
+    source: https://flathub.org/
+    declarations:
+      source:flathub: https://dl.flathub.org/repo/flathub.flatpakrepo
+    licence: 'n/a: a remote; each application carries its own licence'
+    licence_source: https://flathub.org/
+    owner: role-maintainer
+    update_channel: flatpak update from the flathub remote
+    verification: package-manager-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://docs.flathub.org/
+      checked: '2026-11-26'
+    replacement: The vendor's APT package or snap.
+  - name: microsoft-dotnet
+    upstream: Microsoft
+    source: https://dotnet.microsoft.com/
+    declarations:
+      source:apt-microsoft-dotnet: https://packages.microsoft.com/ubuntu/24.04/prod
+      vendor-repo:dotnet: https://packages.microsoft.com/ubuntu/24.04/prod https://packages.microsoft.com/debian/{{
+        ansible_distribution_major_version | default('') }}/prod
+    licence: MIT
+    licence_source: https://github.com/dotnet/sdk/blob/main/LICENSE.TXT
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves (the newest dotnet-sdk-N.0 package)'
+    verification: vendor-repository-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core
+      checked: '2026-11-26'
+      ends:
+        - scope: .NET 10 (LTS) and .NET 11 (STS) end of support
+          date: '2028-11-14'
+    replacement: The role installs the newest SDK the repository offers; when a line ends, the next one
+      is already there. Fall back to the distribution's dotnet packages.
+  - name: microsoft-azure-cli
+    upstream: Microsoft
+    source: https://github.com/Azure/azure-cli
+    declarations:
+      source:apt-microsoft-azure-cli: https://packages.microsoft.com/repos/azure-cli/
+      vendor-repo:azure_cli: https://packages.microsoft.com/repos/azure-cli/ https://packages.microsoft.com/repos/azure-cli/
+    licence: MIT
+    licence_source: https://github.com/Azure/azure-cli/blob/dev/LICENSE
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://learn.microsoft.com/en-us/cli/azure/azure-cli-support-lifecycle
+      checked: '2026-11-26'
+    replacement: The Debian archive's azure-cli package (already used on Debian 13), or pipx install azure-cli.
+  - name: microsoft-vscode
+    upstream: Microsoft
+    source: https://github.com/microsoft/vscode
+    declarations:
+      source:apt-microsoft-vscode: https://packages.microsoft.com/repos/code
+    licence: proprietary (Microsoft product licence over MIT source)
+    licence_source: https://code.visualstudio.com/license
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://code.visualstudio.com/updates
+      checked: '2026-11-26'
+    replacement: VSCodium (MIT builds of the same source) from its own signed APT repository or Flathub.
+  - name: microsoft-edge
+    upstream: Microsoft
+    source: https://www.microsoft.com/edge
+    declarations:
+      source:apt-microsoft-edge: https://packages.microsoft.com/repos/edge
+    licence: proprietary
+    licence_source: https://www.microsoft.com/en-us/legal/terms-of-use
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://learn.microsoft.com/en-us/deployedge/microsoft-edge-supported-operating-systems
+      checked: '2026-11-26'
+    replacement: Chromium or Firefox; Edge is optional.
+  - name: mongodb
+    upstream: MongoDB, Inc.
+    source: https://github.com/mongodb/mongo
+    declarations:
+      source:apt-mongodb: https://repo.mongodb.org/apt/ubuntu
+      vendor-repo:mongodb: https://repo.mongodb.org/apt/ubuntu https://repo.mongodb.org/apt/debian
+    licence: SSPL-1.0 (server); Apache-2.0 (mongosh)
+    licence_source: https://github.com/mongodb-js/mongosh/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves; repos.yml picks the newest release channel MongoDB publishes
+      for the host''s release, or skips the repository'
+    verification: vendor-repository-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://www.mongodb.com/legal/support-policy/lifecycles
+      checked: '2026-11-26'
+    replacement: mongosh from npm (community.general.npm), or skip MongoDB tools; the role already skips
+      the repository when no channel exists.
+  - name: github-cli
+    upstream: GitHub
+    source: https://github.com/cli/cli
+    declarations:
+      source:apt-github-cli: https://cli.github.com/packages
+    licence: MIT
+    licence_source: https://github.com/cli/cli/blob/trunk/LICENSE
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/cli/cli
+      checked: '2026-11-26'
+    replacement: The release binaries of cli/cli, checksum-verified, or the distribution's gh package.
+  - name: google-cloud-sdk
+    upstream: Google
+    source: https://cloud.google.com/sdk
+    declarations:
+      source:apt-google-cloud-sdk: https://packages.cloud.google.com/apt
+    licence: Apache-2.0
+    licence_source: https://cloud.google.com/sdk/docs/release-notes
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://cloud.google.com/sdk/docs/release-notes
+      checked: '2026-11-26'
+    replacement: The versioned archive from Google's download page, checksum-verified.
+  - name: google-chrome
+    upstream: Google
+    source: https://www.google.com/chrome/
+    declarations:
+      source:apt-google-chrome: https://dl.google.com/linux/chrome/deb/
+    licence: proprietary
+    licence_source: https://www.google.com/chrome/terms/
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://chromereleases.googleblog.com/
+      checked: '2026-11-26'
+    replacement: Chromium from the distribution or Flathub.
+  - name: 1password
+    upstream: 1Password (AgileBits Inc.)
+    source: https://1password.com/
+    declarations:
+      source:apt-1password: https://downloads.1password.com/linux/debian/
+    licence: proprietary
+    licence_source: https://1password.com/legal/terms-of-service
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://support.1password.com/install-linux/
+      checked: '2026-11-26'
+    replacement: Bitwarden (already installed by the role) or the 1Password Flatpak.
+  - name: brave
+    upstream: Brave Software
+    source: https://github.com/brave/brave-browser
+    declarations:
+      source:apt-brave: https://brave-browser-apt-release.s3.brave.com/
+    licence: MPL-2.0
+    licence_source: https://github.com/brave/brave-browser/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://brave.com/linux/
+      checked: '2026-11-26'
+    replacement: Firefox or Chromium; Brave is optional.
+  - name: nodesource-node
+    upstream: NodeSource (packaging) and the Node.js project (releases)
+    source: https://github.com/nodesource/distributions
+    declarations:
+      source:apt-nodesource: https://deb.nodesource.com/node_24.x
+    licence: MIT
+    licence_source: https://github.com/nodesource/distributions/blob/master/LICENSE.md
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves within the node_24.x line'
+    verification: vendor-repository-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/nodejs/Release#release-schedule
+      checked: '2026-11-26'
+      ends:
+        - scope: Node.js 24 (Krypton) end of life
+          date: '2028-04-30'
+    replacement: Move the repository line (repos.yml) to the next LTS before 24.x ends; the distribution's
+      nodejs package is the fallback.
+  - name: openziti
+    upstream: NetFoundry (OpenZiti project)
+    source: https://github.com/openziti/ziti
+    declarations:
+      source:apt-openziti: https://packages.openziti.org/zitipax-openziti-deb-stable
+      source:openziti-installer: https://get.openziti.io/tun/scripts/install-ubuntu.bash
+    licence: Apache-2.0
+    licence_source: https://github.com/openziti/ziti/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves from the stable channel; the install script only adds that
+      repository'
+    verification: tls-only
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/openziti/ziti
+      checked: '2026-11-26'
+    replacement: Add the signed repository and key directly (as repos.yml already can) instead of running
+      the script; the release binaries of openziti/ziti otherwise.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: mozilla-apt
+    upstream: Mozilla
+    source: https://www.mozilla.org/firefox/
+    declarations:
+      source:apt-mozilla: https://packages.mozilla.org/apt
+    licence: MPL-2.0
+    licence_source: https://www.mozilla.org/MPL/2.0/
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves'
+    verification: vendor-repository-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://support.mozilla.org/kb/install-firefox-linux
+      checked: '2026-11-26'
+    replacement: The distribution's firefox(-esr) package.
+  - name: authd
+    upstream: Canonical
+    source: https://github.com/canonical/authd
+    declarations:
+      source:apt-authd-ppa: https://ppa.launchpadcontent.net/ubuntu-enterprise-desktop/authd/ubuntu
+    licence: LGPL-3.0
+    licence_source: https://github.com/canonical/authd/blob/main/COPYING
+    owner: role-maintainer
+    update_channel: 'APT: the role''s scheduled update run (unattended upgrades or the update tag) installs
+      the newest version the repository serves from the Launchpad PPA'
+    verification: vendor-repository-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/canonical/authd
+      checked: '2026-11-26'
+    replacement: The authd package in the Ubuntu archive once the host's release ships it; local accounts
+      otherwise.
+  - name: deepfilternet
+    upstream: DeepFilterNet project
+    source: https://github.com/Rikorose/DeepFilterNet
+    declarations:
+      source:deepfilternet-ladspa: https://github.com/Rikorose/DeepFilterNet/releases/download/v{{ streamstack_deepfilter_release
+        }}/libdeep_filter_ladspa-{{ streamstack_deepfilter_release }}-x86_64-unknown-linux-gnu.so
+    licence: MIT OR Apache-2.0
+    licence_source: https://github.com/Rikorose/DeepFilterNet#license
+    owner: role-maintainer
+    update_channel: a release pinned in the role defaults; bumped by merge request
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/Rikorose/DeepFilterNet
+      checked: '2026-11-26'
+    replacement: Keep the pinned release; RNNoise (distribution package) as the noise filter.
+  - name: openvino
+    upstream: Intel (OpenVINO toolkit)
+    source: https://github.com/openvinotoolkit/openvino
+    declarations:
+      source:openvino: https://files.pythonhosted.org/packages/77/cf/830aff97404d73b8ada3ba3f02a626089a384299322cb94b52c37eaebd18/openvino-2026.4.1-22982-cp314-cp314-manylinux_2_28_x86_64.whl
+      source:openvino-telemetry: https://files.pythonhosted.org/packages/3b/ac/5ab0ca0aa269ad3c73f7bfc3801b10e5f56f75a31bf68c1ae8bd51cf70a4/openvino_telemetry-2025.2.0-py3-none-any.whl
+    licence: Apache-2.0
+    licence_source: https://pypi.org/project/openvino/
+    owner: role-maintainer
+    update_channel: wheels pinned in the role defaults; bumped by merge request
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://docs.openvino.ai/2025/about-openvino/release-notes-openvino.html
+      checked: '2026-11-26'
+    replacement: Keep the pinned wheels; ONNX Runtime CPU as the framing backend.
+  - name: yunet-face-model
+    upstream: OpenCV (opencv_zoo)
+    source: https://github.com/opencv/opencv_zoo
+    declarations:
+      source:yunet-face-model: https://github.com/opencv/opencv_zoo/raw/f12e12798e8314f7c074a6656816c048dcc95b7a/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+    licence: MIT
+    licence_source: https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/LICENSE
+    owner: role-maintainer
+    update_channel: a model file pinned in the role defaults
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/opencv/opencv_zoo
+      checked: '2026-11-26'
+    replacement: Keep the pinned file; any later YuNet release from opencv_zoo.
+  - name: notation
+    upstream: Notary Project (CNCF)
+    source: https://github.com/notaryproject/notation
+    declarations:
+      source:notation: https://github.com/notaryproject/notation/releases/download/v{{ fleetd_notation_release
+        }}/notation_{{ fleetd_notation_release }}_linux_{{ _fleetd_arch }}.tar.gz
+    licence: Apache-2.0
+    licence_source: https://github.com/notaryproject/notation/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: a release pinned in the role defaults; bumped by merge request
+    verification: pinned-checksum
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/notaryproject/notation
+      checked: '2026-11-26'
+    replacement: cosign (already installed from sigstore/cosign).
+  - name: aws-cli
+    upstream: Amazon Web Services
+    source: https://github.com/aws/aws-cli
+    declarations:
+      source:aws-cli: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+    licence: Apache-2.0
+    licence_source: https://github.com/aws/aws-cli/blob/v2/LICENSE.txt
+    owner: role-maintainer
+    update_channel: the latest v2 installer on each run
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+      checked: '2026-11-26'
+    replacement: pipx install awscli (v1) or the distribution package.
+  - name: gitlab-cli
+    upstream: GitLab Inc.
+    source: https://gitlab.com/gitlab-org/cli
+    declarations:
+      source:gitlab-cli: https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest
+    licence: MIT
+    licence_source: https://gitlab.com/gitlab-org/cli/-/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest release on each run
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://gitlab.com/gitlab-org/cli/-/releases
+      checked: '2026-11-26'
+    replacement: The GitLab API with curl; the distribution's glab package where it exists.
+  - name: hashicorp-packer
+    upstream: HashiCorp (an IBM company)
+    source: https://github.com/hashicorp/packer
+    declarations:
+      source:hashicorp-packer: https://releases.hashicorp.com/packer/
+    licence: BUSL-1.1 (relicensed from MPL-2.0 in 2023; not open source)
+    licence_source: https://github.com/hashicorp/packer/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest release on each run (checkpoint API)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/hashicorp/packer
+      checked: '2026-11-26'
+    replacement: Keep the last MPL-2.0 release, or move image builds to the distribution's tooling.
+  - name: hashicorp-terraform
+    upstream: HashiCorp (an IBM company)
+    source: https://github.com/hashicorp/terraform
+    declarations:
+      source:hashicorp-terraform: https://releases.hashicorp.com/terraform/
+    licence: BUSL-1.1 (relicensed from MPL-2.0 in 2023; not open source)
+    licence_source: https://github.com/hashicorp/terraform/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest release on each run (checkpoint API)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/hashicorp/terraform
+      checked: '2026-11-26'
+    replacement: OpenTofu (already installed from opentofu/opentofu).
+  - name: hashicorp-vault
+    upstream: HashiCorp (an IBM company)
+    source: https://github.com/hashicorp/vault
+    declarations:
+      source:hashicorp-vault: https://releases.hashicorp.com/vault/
+    licence: BUSL-1.1 (relicensed from MPL-2.0 in 2023; not open source)
+    licence_source: https://github.com/hashicorp/vault/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest release on each run (checkpoint API)
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/hashicorp/vault
+      checked: '2026-11-26'
+    replacement: OpenBao, the MPL-2.0 fork, from its signed releases.
+  - name: rclone
+    upstream: rclone project
+    source: https://github.com/rclone/rclone
+    declarations:
+      source:rclone: https://downloads.rclone.org/
+    licence: MIT
+    licence_source: https://github.com/rclone/rclone/blob/master/COPYING
+    owner: role-maintainer
+    update_channel: the latest release on each run
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/rclone/rclone
+      checked: '2026-11-26'
+    replacement: The distribution's rclone package.
+  - name: mattermost-release-server
+    upstream: Mattermost, Inc.
+    source: https://releases.mattermost.com/
+    declarations:
+      source:mattermost-desktop: https://releases.mattermost.com/
+    licence: AGPL-3.0 (server) and Apache-2.0 (mmctl)
+    licence_source: https://github.com/mattermost/mattermost/blob/master/LICENSE.txt
+    owner: role-maintainer
+    update_channel: the latest mmctl release on each run
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/mattermost/mattermost
+      checked: '2026-11-26'
+    replacement: The mmctl asset of the mattermost/mattermost GitHub release.
+  - name: kubectl
+    upstream: Kubernetes project (CNCF)
+    source: https://github.com/kubernetes/kubernetes
+    declarations:
+      source:kubectl: https://dl.k8s.io/release/
+    licence: Apache-2.0
+    licence_source: https://github.com/kubernetes/kubernetes/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the current stable release (dl.k8s.io/release/stable.txt) on each run
+    verification: tls-only
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://kubernetes.io/releases/
+      checked: '2026-11-26'
+    replacement: Check the published .sha256 next to each binary, or use the signed pkgs.k8s.io APT repository.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: helm
+    upstream: Helm project (CNCF)
+    source: https://github.com/helm/helm
+    declarations:
+      source:helm: https://get.helm.sh/helm-
+      github-release:helm: helm/helm
+    licence: Apache-2.0
+    licence_source: https://github.com/helm/helm/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest release on each run
+    verification: tls-only
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/helm/helm
+      checked: '2026-11-26'
+    replacement: Check the published .sha256sum, or install from the GitHub release with its digest as
+      latest-releases.yml does.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: go-toolchain
+    upstream: The Go project (Google)
+    source: https://github.com/golang/go
+    declarations:
+      source:go-toolchain: https://go.dev/dl/
+    licence: BSD-3-Clause
+    licence_source: https://github.com/golang/go/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the current release (go.dev/VERSION) on each run
+    verification: tls-only
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://go.dev/doc/devel/release#policy
+      checked: '2026-11-26'
+    replacement: Check the SHA-256 that go.dev/dl/?mode=json publishes, or use the distribution's golang
+      package.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: tmux
+    upstream: tmux project
+    source: https://github.com/tmux/tmux
+    declarations:
+      source:tmux-release: https://github.com/tmux/tmux/releases/download/
+    licence: ISC
+    licence_source: https://github.com/tmux/tmux/blob/master/COPYING
+    owner: role-maintainer
+    update_channel: a source release pinned in the role
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/tmux/tmux
+      checked: '2026-11-26'
+    replacement: The distribution's tmux package.
+  - name: github-releases-api
+    upstream: GitHub
+    source: https://docs.github.com/rest/releases
+    declarations:
+      source:github-latest-releases: https://api.github.com/repos/
+    licence: 'n/a: an API service'
+    licence_source: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+    owner: role-maintainer
+    update_channel: latest-releases.yml asks the API for each project's latest release on each run
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://docs.github.com/rest/releases
+      checked: '2026-11-26'
+    replacement: The projects' own download pages; each project's entry names its fallback.
+  - name: bitwarden
+    upstream: Bitwarden, Inc.
+    source: https://github.com/bitwarden/clients
+    declarations:
+      source:bitwarden-firefox-extension: https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi
+      github-release:bitwarden_desktop: bitwarden/clients
+    licence: GPL-3.0 (clients) with some components under the Bitwarden License
+    licence_source: https://github.com/bitwarden/clients/blob/main/LICENSE.txt
+    owner: role-maintainer
+    update_channel: the latest release (desktop) and the latest add-on (Firefox) on each run
+    verification: package-manager-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/bitwarden/clients
+      checked: '2026-11-26'
+    replacement: The Bitwarden Flatpak or snap.
+  - name: chromium-extension-stores
+    upstream: Google (Chrome Web Store) and Microsoft (Edge Add-ons)
+    source: https://chromewebstore.google.com/
+    declarations:
+      source:chromium-extension-stores: https://clients2.google.com/service/update2/crx
+    licence: 'n/a: a store service; each extension carries its own licence'
+    licence_source: https://chromewebstore.google.com/
+    owner: role-maintainer
+    update_channel: the browsers update policy-installed extensions themselves
+    verification: package-manager-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions
+      checked: '2026-11-26'
+    replacement: Remove the extension policy; users install by hand.
+  - name: speedtest-cli
+    upstream: sivel/speedtest-cli (archived)
+    source: https://github.com/sivel/speedtest-cli
+    declarations:
+      source:speedtest-cli: https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py
+    licence: Apache-2.0
+    licence_source: https://github.com/sivel/speedtest-cli/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the master branch's speedtest.py on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: archived
+      evidence: https://github.com/sivel/speedtest-cli
+      checked: '2026-11-26'
+    replacement: The distribution's speedtest-cli package, or Ookla's official speedtest CLI; drop the
+      raw download from user-shell-fallback.yml.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: weechat-scripts
+    upstream: WeeChat project
+    source: https://github.com/weechat/scripts
+    declarations:
+      source:weechat-go-script: https://weechat.org/files/scripts/go.py
+    licence: GPL-3.0-or-later
+    licence_source: https://weechat.org/scripts/source/go.py/
+    owner: role-maintainer
+    update_channel: the published go.py on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/weechat/scripts
+      checked: '2026-11-26'
+    replacement: The weechat-scripts distribution package, or WeeChat's /script install.
+  - name: nvm
+    upstream: nvm-sh (GitHub project)
+    source: https://github.com/nvm-sh/nvm
+    declarations:
+      source:git-nvm: https://github.com/nvm-sh/nvm.git
+    licence: MIT
+    licence_source: https://github.com/nvm-sh/nvm/blob/master/LICENSE.md
+    owner: role-maintainer
+    update_channel: the default branch, updated on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/nvm-sh/nvm
+      checked: '2026-11-26'
+    replacement: Distribution nodejs or the NodeSource repository (already configured).
+  - name: pyenv
+    upstream: pyenv (GitHub project)
+    source: https://github.com/pyenv/pyenv
+    declarations:
+      source:git-pyenv: https://github.com/pyenv/pyenv.git
+    licence: MIT
+    licence_source: https://github.com/pyenv/pyenv/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the default branch, updated on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/pyenv/pyenv
+      checked: '2026-11-26'
+    replacement: uv python install (uv is already a CI dependency) or the distribution's python3 packages.
+  - name: oh-my-zsh
+    upstream: ohmyzsh (GitHub project)
+    source: https://github.com/ohmyzsh/ohmyzsh
+    declarations:
+      source:git-oh-my-zsh: https://github.com/ohmyzsh/ohmyzsh.git
+    licence: MIT
+    licence_source: https://github.com/ohmyzsh/ohmyzsh/blob/master/LICENSE.txt
+    owner: role-maintainer
+    update_channel: the default branch, updated on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/ohmyzsh/ohmyzsh
+      checked: '2026-11-26'
+    replacement: Plain zsh with the distribution's zsh plugins.
+  - name: zsh-autosuggestions
+    upstream: zsh-users (GitHub project)
+    source: https://github.com/zsh-users/zsh-autosuggestions
+    declarations:
+      source:git-zsh-autosuggestions: https://github.com/zsh-users/zsh-autosuggestions.git
+    licence: MIT
+    licence_source: https://github.com/zsh-users/zsh-autosuggestions/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the default branch, updated on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/zsh-users/zsh-autosuggestions
+      checked: '2026-11-26'
+    replacement: The distribution's zsh-autosuggestions package.
+  - name: zsh-syntax-highlighting
+    upstream: zsh-users (GitHub project)
+    source: https://github.com/zsh-users/zsh-syntax-highlighting
+    declarations:
+      source:git-zsh-syntax-highlighting: https://github.com/zsh-users/zsh-syntax-highlighting.git
+    licence: BSD-3-Clause
+    licence_source: https://github.com/zsh-users/zsh-syntax-highlighting/blob/master/COPYING.md
+    owner: role-maintainer
+    update_channel: the default branch, updated on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/zsh-users/zsh-syntax-highlighting
+      checked: '2026-11-26'
+    replacement: The distribution's zsh-syntax-highlighting package.
+  - name: wee-slack
+    upstream: wee-slack (GitHub project)
+    source: https://github.com/wee-slack/wee-slack
+    declarations:
+      source:git-wee-slack: https://github.com/wee-slack/wee-slack.git
+    licence: MIT
+    licence_source: https://github.com/wee-slack/wee-slack/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the default branch, updated on each run
+    verification: tls-only
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/wee-slack/wee-slack
+      checked: '2026-11-26'
+    replacement: The Slack desktop client (already installed by the role).
+  - name: openai-codex
+    upstream: OpenAI
+    source: https://github.com/openai/codex
+    declarations:
+      source:codex-standalone-installer: https://chatgpt.com/codex/install.sh
+    licence: Apache-2.0
+    licence_source: https://github.com/openai/codex/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the vendor install script on each run, then the tool updates itself
+    verification: tls-only
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/openai/codex
+      checked: '2026-11-26'
+    replacement: npm install -g @openai/codex (the npm path ai-assistants.yml already has), or the release
+      binary with its digest.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: claude-code
+    upstream: Anthropic
+    source: https://github.com/anthropics/claude-code
+    declarations:
+      source:claude-native-installer: https://claude.ai/install.sh
+    licence: proprietary
+    licence_source: https://github.com/anthropics/claude-code/blob/main/LICENSE.md
+    owner: role-maintainer
+    update_channel: the vendor install script on each run, then the tool updates itself
+    verification: tls-only
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://docs.anthropic.com/en/docs/claude-code/setup
+      checked: '2026-11-26'
+    replacement: npm install -g @anthropic-ai/claude-code.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: composer
+    upstream: Composer project
+    source: https://github.com/composer/composer
+    declarations:
+      source:composer-installer: https://getcomposer.org/installer
+    licence: MIT
+    licence_source: https://github.com/composer/composer/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest installer on each run
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://getcomposer.org/download/
+      checked: '2026-11-26'
+    replacement: The distribution's composer package.
+  - name: sdkman
+    upstream: SDKMAN! project
+    source: https://github.com/sdkman/sdkman-cli
+    declarations:
+      source:sdkman-installer: https://github.com/sdkman/sdkman-cli.git
+    licence: Apache-2.0
+    licence_source: https://github.com/sdkman/sdkman-cli/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: a git checkout of sdkman-cli, then the SDKMAN! API for candidates
+    verification: tls-only
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/sdkman/sdkman-cli
+      checked: '2026-11-26'
+    replacement: The distribution's openjdk, maven and gradle packages.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: pia
+    upstream: Private Internet Access (Kape Technologies)
+    source: https://www.privateinternetaccess.com/download
+    declarations:
+      source:pia-installer: https://installers.privateinternetaccess.com/download/pia-linux-
+    licence: proprietary (client) with MIT-licensed desktop source
+    licence_source: https://github.com/pia-foss/desktop/blob/master/LICENSE.txt
+    owner: role-maintainer
+    update_channel: the newest Linux installer the download page names, on each run
+    verification: tls-only
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://www.privateinternetaccess.com/download
+      checked: '2026-11-26'
+    replacement: WireGuard or OpenVPN from the distribution with PIA's own configuration (docs/pia-tunnel.md).
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: community-general
+    upstream: Ansible community (ansible-collections)
+    source: https://github.com/ansible-collections/community.general
+    declarations:
+      collection:community.general: '>=9.0.0'
+      ci-collection:community.general: https://galaxy.ansible.com/ui/repo/published/community/general/
+    licence: GPL-3.0-or-later
+    licence_source: https://github.com/ansible-collections/community.general/blob/main/COPYING
+    owner: release-approver
+    update_channel: users resolve galaxy.yml's range; CI tests the exact version in ci/requirements.yml,
+      bumped by Renovate
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html
+      checked: '2026-11-26'
+    replacement: Raise galaxy.yml's floor to a maintained major (14.x is current; 9.x is long past end
+      of life); vendor the few modules used if the collection stalls.
+  - name: ansible-core
+    upstream: Ansible project (Red Hat)
+    source: https://github.com/ansible/ansible
+    declarations:
+      ci-python:ansible-core: https://pypi.org/project/ansible-core/
+    licence: GPL-3.0-or-later
+    licence_source: https://pypi.org/project/ansible-core/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in; Renovate proposes bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html
+      checked: '2026-11-26'
+      ends:
+        - scope: ansible-core 2.22 security fixes
+          date: 2027-11
+        - scope: ansible-core 2.22 end of life
+          date: 2028-05
+    replacement: Move to the next ansible-core release before the pinned one leaves security support.
+  - name: ansible-lint
+    upstream: ansible (GitHub project)
+    source: https://github.com/ansible/ansible-lint
+    declarations:
+      ci-python:ansible-lint: https://pypi.org/project/ansible-lint/
+    licence: GPL-3.0-or-later
+    licence_source: https://pypi.org/project/ansible-lint/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in, hash-locked in ci/requirements.txt; Renovate proposes
+      bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/ansible/ansible-lint
+      checked: '2026-11-26'
+    replacement: Hold the pinned version (the lock keeps it reproducible) and replace the tool in a merge
+      request if upstream stops.
+  - name: check-jsonschema
+    upstream: python-jsonschema (GitHub project)
+    source: https://github.com/python-jsonschema/check-jsonschema
+    declarations:
+      ci-python:check-jsonschema: https://pypi.org/project/check-jsonschema/
+    licence: Apache-2.0
+    licence_source: https://pypi.org/project/check-jsonschema/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in, hash-locked in ci/requirements.txt; Renovate proposes
+      bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/python-jsonschema/check-jsonschema
+      checked: '2026-11-26'
+    replacement: Hold the pinned version (the lock keeps it reproducible) and replace the tool in a merge
+      request if upstream stops.
+  - name: pytest
+    upstream: pytest-dev (GitHub project)
+    source: https://github.com/pytest-dev/pytest
+    declarations:
+      ci-python:pytest: https://pypi.org/project/pytest/
+    licence: MIT
+    licence_source: https://pypi.org/project/pytest/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in, hash-locked in ci/requirements.txt; Renovate proposes
+      bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/pytest-dev/pytest
+      checked: '2026-11-26'
+    replacement: Hold the pinned version (the lock keeps it reproducible) and replace the tool in a merge
+      request if upstream stops.
+  - name: pyyaml
+    upstream: yaml (GitHub project)
+    source: https://github.com/yaml/pyyaml
+    declarations:
+      ci-python:pyyaml: https://pypi.org/project/pyyaml/
+    licence: MIT
+    licence_source: https://pypi.org/project/pyyaml/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in, hash-locked in ci/requirements.txt; Renovate proposes
+      bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/yaml/pyyaml
+      checked: '2026-11-26'
+    replacement: Hold the pinned version (the lock keeps it reproducible) and replace the tool in a merge
+      request if upstream stops.
+  - name: uv
+    upstream: astral-sh (GitHub project)
+    source: https://github.com/astral-sh/uv
+    declarations:
+      ci-python:uv: https://pypi.org/project/uv/
+    licence: MIT OR Apache-2.0
+    licence_source: https://pypi.org/project/uv/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in, hash-locked in ci/requirements.txt; Renovate proposes
+      bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/astral-sh/uv
+      checked: '2026-11-26'
+    replacement: Hold the pinned version (the lock keeps it reproducible) and replace the tool in a merge
+      request if upstream stops.
+  - name: yamllint
+    upstream: adrienverge (GitHub project)
+    source: https://github.com/adrienverge/yamllint
+    declarations:
+      ci-python:yamllint: https://pypi.org/project/yamllint/
+    licence: GPL-3.0-or-later
+    licence_source: https://pypi.org/project/yamllint/
+    owner: ci-maintainer
+    update_channel: pinned in ci/requirements.in, hash-locked in ci/requirements.txt; Renovate proposes
+      bumps
+    verification: pinned-checksum
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/adrienverge/yamllint
+      checked: '2026-11-26'
+    replacement: Hold the pinned version (the lock keeps it reproducible) and replace the tool in a merge
+      request if upstream stops.
+  - name: act
+    upstream: nektos (GitHub project)
+    source: https://github.com/nektos/act
+    declarations:
+      github-release:act: nektos/act
+    licence: MIT
+    licence_source: https://github.com/nektos/act/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/nektos/act
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: age
+    upstream: FiloSottile (GitHub project)
+    source: https://github.com/FiloSottile/age
+    declarations:
+      github-release:age: FiloSottile/age
+    licence: BSD-3-Clause
+    licence_source: https://github.com/FiloSottile/age/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/FiloSottile/age
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: argocd
+    upstream: argoproj (GitHub project)
+    source: https://github.com/argoproj/argo-cd
+    declarations:
+      github-release:argocd: argoproj/argo-cd
+    licence: Apache-2.0
+    licence_source: https://github.com/argoproj/argo-cd/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/argoproj/argo-cd
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: bun
+    upstream: oven-sh (GitHub project)
+    source: https://github.com/oven-sh/bun
+    declarations:
+      github-release:bun: oven-sh/bun
+    licence: MIT (with LGPL-2.1 JavaScriptCore)
+    licence_source: https://github.com/oven-sh/bun/blob/main/LICENSE.md
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/oven-sh/bun
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: chezmoi
+    upstream: twpayne (GitHub project)
+    source: https://github.com/twpayne/chezmoi
+    declarations:
+      github-release:chezmoi: twpayne/chezmoi
+    licence: MIT
+    licence_source: https://github.com/twpayne/chezmoi/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/twpayne/chezmoi
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: cosign
+    upstream: sigstore (GitHub project)
+    source: https://github.com/sigstore/cosign
+    declarations:
+      github-release:cosign: sigstore/cosign
+    licence: Apache-2.0
+    licence_source: https://github.com/sigstore/cosign/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/sigstore/cosign
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: crane
+    upstream: google (GitHub project)
+    source: https://github.com/google/go-containerregistry
+    declarations:
+      github-release:crane: google/go-containerregistry
+    licence: Apache-2.0
+    licence_source: https://github.com/google/go-containerregistry/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/google/go-containerregistry
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: delta
+    upstream: dandavison (GitHub project)
+    source: https://github.com/dandavison/delta
+    declarations:
+      github-release:delta: dandavison/delta
+    licence: MIT
+    licence_source: https://github.com/dandavison/delta/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/dandavison/delta
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: deno
+    upstream: denoland (GitHub project)
+    source: https://github.com/denoland/deno
+    declarations:
+      github-release:deno: denoland/deno
+    licence: MIT
+    licence_source: https://github.com/denoland/deno/blob/main/LICENSE.md
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/denoland/deno
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: duf
+    upstream: muesli (GitHub project)
+    source: https://github.com/muesli/duf
+    declarations:
+      github-release:duf: muesli/duf
+    licence: MIT
+    licence_source: https://github.com/muesli/duf/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/muesli/duf
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: dust
+    upstream: bootandy (GitHub project)
+    source: https://github.com/bootandy/dust
+    declarations:
+      github-release:dust: bootandy/dust
+    licence: Apache-2.0
+    licence_source: https://github.com/bootandy/dust/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/bootandy/dust
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: filebrowser
+    upstream: filebrowser (GitHub project)
+    source: https://github.com/filebrowser/filebrowser
+    declarations:
+      github-release:filebrowser: filebrowser/filebrowser
+    licence: Apache-2.0
+    licence_source: https://github.com/filebrowser/filebrowser/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: archived
+      evidence: https://github.com/filebrowser/filebrowser
+      checked: '2026-11-26'
+    replacement: The distribution's or a maintained fork's file server; remove filebrowser from latest_github_repositories.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: flux
+    upstream: fluxcd (GitHub project)
+    source: https://github.com/fluxcd/flux2
+    declarations:
+      github-release:flux: fluxcd/flux2
+    licence: Apache-2.0
+    licence_source: https://github.com/fluxcd/flux2/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/fluxcd/flux2
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: glow
+    upstream: charmbracelet (GitHub project)
+    source: https://github.com/charmbracelet/glow
+    declarations:
+      github-release:glow: charmbracelet/glow
+    licence: MIT
+    licence_source: https://github.com/charmbracelet/glow/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/charmbracelet/glow
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: golangci-lint
+    upstream: golangci (GitHub project)
+    source: https://github.com/golangci/golangci-lint
+    declarations:
+      github-release:golangci_lint: golangci/golangci-lint
+    licence: GPL-3.0
+    licence_source: https://github.com/golangci/golangci-lint/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/golangci/golangci-lint
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: gum
+    upstream: charmbracelet (GitHub project)
+    source: https://github.com/charmbracelet/gum
+    declarations:
+      github-release:gum: charmbracelet/gum
+    licence: MIT
+    licence_source: https://github.com/charmbracelet/gum/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/charmbracelet/gum
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: hyperfine
+    upstream: sharkdp (GitHub project)
+    source: https://github.com/sharkdp/hyperfine
+    declarations:
+      github-release:hyperfine: sharkdp/hyperfine
+    licence: Apache-2.0
+    licence_source: https://github.com/sharkdp/hyperfine/blob/master/LICENSE-APACHE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/sharkdp/hyperfine
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: just
+    upstream: casey (GitHub project)
+    source: https://github.com/casey/just
+    declarations:
+      github-release:just: casey/just
+    licence: CC0-1.0
+    licence_source: https://github.com/casey/just/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/casey/just
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: k9s
+    upstream: derailed (GitHub project)
+    source: https://github.com/derailed/k9s
+    declarations:
+      github-release:k9s: derailed/k9s
+    licence: Apache-2.0
+    licence_source: https://github.com/derailed/k9s/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/derailed/k9s
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: krew
+    upstream: kubernetes-sigs (GitHub project)
+    source: https://github.com/kubernetes-sigs/krew
+    declarations:
+      github-release:krew: kubernetes-sigs/krew
+    licence: Apache-2.0
+    licence_source: https://github.com/kubernetes-sigs/krew/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/kubernetes-sigs/krew
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: kubeconform
+    upstream: yannh (GitHub project)
+    source: https://github.com/yannh/kubeconform
+    declarations:
+      github-release:kubeconform: yannh/kubeconform
+    licence: Apache-2.0
+    licence_source: https://github.com/yannh/kubeconform/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/yannh/kubeconform
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: kubectx
+    upstream: ahmetb (GitHub project)
+    source: https://github.com/ahmetb/kubectx
+    declarations:
+      github-release:kubectx: ahmetb/kubectx
+    licence: Apache-2.0
+    licence_source: https://github.com/ahmetb/kubectx/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/ahmetb/kubectx
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: kubeseal
+    upstream: bitnami (GitHub project)
+    source: https://github.com/bitnami/sealed-secrets
+    declarations:
+      github-release:kubeseal: bitnami-labs/sealed-secrets
+    licence: Apache-2.0
+    licence_source: https://github.com/bitnami/sealed-secrets/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: moved
+      evidence: https://github.com/bitnami-labs/sealed-secrets
+      checked: '2026-11-26'
+    replacement: Point latest_github_repositories at bitnami/sealed-secrets.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: kustomize
+    upstream: kubernetes-sigs (GitHub project)
+    source: https://github.com/kubernetes-sigs/kustomize
+    declarations:
+      github-release:kustomize: kubernetes-sigs/kustomize
+    licence: Apache-2.0
+    licence_source: https://github.com/kubernetes-sigs/kustomize/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/kubernetes-sigs/kustomize
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: lazygit
+    upstream: jesseduffield (GitHub project)
+    source: https://github.com/jesseduffield/lazygit
+    declarations:
+      github-release:lazygit: jesseduffield/lazygit
+    licence: MIT
+    licence_source: https://github.com/jesseduffield/lazygit/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/jesseduffield/lazygit
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: litra
+    upstream: timrogers (GitHub project)
+    source: https://github.com/timrogers/litra-rs
+    declarations:
+      github-release:litra: timrogers/litra-rs
+    licence: MIT
+    licence_source: https://github.com/timrogers/litra-rs/blob/main/LICENSE.md
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/timrogers/litra-rs
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: mattermost
+    upstream: mattermost (GitHub project)
+    source: https://github.com/mattermost/mattermost
+    declarations:
+      github-release:mattermost: mattermost/mattermost
+    licence: AGPL-3.0 (server) and Apache-2.0 (mmctl)
+    licence_source: https://github.com/mattermost/mattermost/blob/master/LICENSE.txt
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/mattermost/mattermost
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: mattermost-desktop
+    upstream: mattermost (GitHub project)
+    source: https://github.com/mattermost/desktop
+    declarations:
+      github-release:mattermost_desktop: mattermost/desktop
+    licence: Apache-2.0
+    licence_source: https://github.com/mattermost/desktop/blob/master/LICENSE.txt
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/mattermost/desktop
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: nerd-fonts
+    upstream: ryanoasis (GitHub project)
+    source: https://github.com/ryanoasis/nerd-fonts
+    declarations:
+      github-release:nerd_fonts: ryanoasis/nerd-fonts
+    licence: MIT (scripts) with each font's own licence (mostly OFL-1.1)
+    licence_source: https://github.com/ryanoasis/nerd-fonts/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/ryanoasis/nerd-fonts
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: sops
+    upstream: getsops (GitHub project)
+    source: https://github.com/getsops/sops
+    declarations:
+      github-release:sops: getsops/sops
+    licence: MPL-2.0
+    licence_source: https://github.com/getsops/sops/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/getsops/sops
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: starship
+    upstream: starship (GitHub project)
+    source: https://github.com/starship/starship
+    declarations:
+      github-release:starship: starship/starship
+    licence: ISC
+    licence_source: https://github.com/starship/starship/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/starship/starship
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: step
+    upstream: smallstep (GitHub project)
+    source: https://github.com/smallstep/cli
+    declarations:
+      github-release:step: smallstep/cli
+    licence: Apache-2.0
+    licence_source: https://github.com/smallstep/cli/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: true
+    support:
+      status: maintained
+      evidence: https://github.com/smallstep/cli
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: stern
+    upstream: stern (GitHub project)
+    source: https://github.com/stern/stern
+    declarations:
+      github-release:stern: stern/stern
+    licence: Apache-2.0
+    licence_source: https://github.com/stern/stern/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/stern/stern
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: sunshine
+    upstream: SunshineStream (GitHub project)
+    source: https://github.com/SunshineStream/Sunshine
+    declarations:
+      github-release:sunshine: LizardByte/Sunshine
+    licence: GPL-3.0
+    licence_source: https://github.com/SunshineStream/Sunshine/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: moved
+      evidence: https://github.com/LizardByte/Sunshine
+      checked: '2026-11-26'
+    replacement: Point latest_github_repositories at SunshineStream/Sunshine.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: talhelper
+    upstream: budimanjojo (GitHub project)
+    source: https://github.com/budimanjojo/talhelper
+    declarations:
+      github-release:talhelper: budimanjojo/talhelper
+    licence: BSD-3-Clause
+    licence_source: https://github.com/budimanjojo/talhelper/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: archived
+      evidence: https://github.com/budimanjojo/talhelper
+      checked: '2026-11-26'
+    replacement: talosctl's own config generation (talos is already installed); remove talhelper from
+      latest_github_repositories.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: talos
+    upstream: siderolabs (GitHub project)
+    source: https://github.com/siderolabs/talos
+    declarations:
+      github-release:talos: siderolabs/talos
+    licence: MPL-2.0
+    licence_source: https://github.com/siderolabs/talos/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/siderolabs/talos
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: tofu
+    upstream: opentofu (GitHub project)
+    source: https://github.com/opentofu/opentofu
+    declarations:
+      github-release:tofu: opentofu/opentofu
+    licence: MPL-2.0
+    licence_source: https://github.com/opentofu/opentofu/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/opentofu/opentofu
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: trivy
+    upstream: aquasecurity (GitHub project)
+    source: https://github.com/aquasecurity/trivy
+    declarations:
+      github-release:trivy: aquasecurity/trivy
+    licence: Apache-2.0
+    licence_source: https://github.com/aquasecurity/trivy/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/aquasecurity/trivy
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: velero
+    upstream: velero-io (GitHub project)
+    source: https://github.com/velero-io/velero
+    declarations:
+      github-release:velero: vmware-tanzu/velero
+    licence: Apache-2.0
+    licence_source: https://github.com/velero-io/velero/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: moved
+      evidence: https://github.com/vmware-tanzu/velero
+      checked: '2026-11-26'
+    replacement: Point latest_github_repositories at velero-io/velero.
+    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+  - name: watchexec
+    upstream: watchexec (GitHub project)
+    source: https://github.com/watchexec/watchexec
+    declarations:
+      github-release:watchexec: watchexec/watchexec
+    licence: Apache-2.0
+    licence_source: https://github.com/watchexec/watchexec/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/watchexec/watchexec
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: yq
+    upstream: mikefarah (GitHub project)
+    source: https://github.com/mikefarah/yq
+    declarations:
+      github-release:yq: mikefarah/yq
+    licence: MIT
+    licence_source: https://github.com/mikefarah/yq/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/mikefarah/yq
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: zoxide
+    upstream: ajeetdsouza (GitHub project)
+    source: https://github.com/ajeetdsouza/zoxide
+    declarations:
+      github-release:zoxide: ajeetdsouza/zoxide
+    licence: MIT
+    licence_source: https://github.com/ajeetdsouza/zoxide/blob/main/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/ajeetdsouza/zoxide
+      checked: '2026-11-26'
+    replacement: Pin the last good release, or the distribution's package where one exists.

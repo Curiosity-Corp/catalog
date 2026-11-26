@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use catalog_tools::diagnostics::{self, redact::Redactor};
 use catalog_tools::packages::{self, Evidence, PlatformResult};
-use catalog_tools::{find_root, reference, sbom};
+use catalog_tools::{find_root, reference, register, sbom};
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -31,6 +31,9 @@ enum Command {
     /// Which of the role's apt packages each platform's archive provides.
     #[command(subcommand)]
     Packages(PackagesCommand),
+    /// The dependency lifecycle and ownership register (ci/dependency-register.yml).
+    #[command(subcommand)]
+    Register(RegisterCommand),
     /// Build a redacted support bundle on this machine; read docs/troubleshooting.md.
     #[command(subcommand)]
     Diagnostics(DiagnosticsCommand),
@@ -106,6 +109,28 @@ struct ReferenceArgs {
 }
 
 #[derive(Subcommand)]
+enum RegisterCommand {
+    /// Exit 1 when a declared dependency is missing from the register, or an
+    /// entry no longer matches a declaration.
+    Check {
+        #[command(flatten)]
+        root: RootArg,
+    },
+    /// Print abandoned, moved, ending and unverified dependencies and an
+    /// overdue review.
+    Alerts {
+        #[command(flatten)]
+        root: RootArg,
+        /// The date to judge on, YYYY-MM-DD (default: today, UTC).
+        #[arg(long)]
+        today: Option<String>,
+        /// Exit 1 when an alert has no tracking issue, or the review is overdue.
+        #[arg(long)]
+        strict: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum PackagesCommand {
     /// Print the role's package names, one per line.
     List {
@@ -160,6 +185,7 @@ fn main() -> ExitCode {
         Command::Packages(command) => run_packages(command),
         Command::Diagnostics(command) => run_diagnostics(command),
         Command::Sbom(args) => run_sbom(&args),
+        Command::Register(command) => run_register(command),
     };
     match outcome {
         Ok(code) => code,
@@ -209,6 +235,71 @@ fn run_sbom(args: &SbomArgs) -> Result<ExitCode> {
         .with_context(|| format!("cannot write {}", args.output.display()))?;
     println!("wrote {}", args.output.display());
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_register(command: RegisterCommand) -> Result<ExitCode> {
+    match command {
+        RegisterCommand::Check { root } => {
+            let root = resolve_root(&root)?;
+            let declared = register::declarations(&root)?;
+            let loaded = register::load(&root.join(register::REGISTER))?;
+            let problems = register::check(&loaded, &declared);
+            if problems.is_empty() {
+                println!(
+                    "{}: {} entries cover all {} declared dependencies",
+                    register::REGISTER,
+                    loaded.entries.len(),
+                    declared.len()
+                );
+                return Ok(ExitCode::SUCCESS);
+            }
+            eprintln!(
+                "{} does not match what the checkout declares:\n  - {}\nSee docs/dependency-register.md.",
+                register::REGISTER,
+                problems.join("\n  - ")
+            );
+            Ok(ExitCode::from(1))
+        }
+        RegisterCommand::Alerts {
+            root,
+            today,
+            strict,
+        } => {
+            let root = resolve_root(&root)?;
+            let loaded = register::load(&root.join(register::REGISTER))?;
+            let today = match today {
+                Some(today) => today,
+                None => register::today()?,
+            };
+            let alerts = register::alerts(&loaded, &today)?;
+            let mut untracked = 0;
+            for alert in &alerts {
+                let tracking = match &alert.tracked_in {
+                    Some(issue) => format!(" [tracked in {issue}]"),
+                    None => {
+                        untracked += 1;
+                        " [UNTRACKED]".to_owned()
+                    }
+                };
+                println!(
+                    "{} {}: {}{tracking}",
+                    alert.kind.as_str(),
+                    alert.entry,
+                    alert.message
+                );
+            }
+            println!(
+                "{} alerts on {today}, {untracked} untracked ({})",
+                alerts.len(),
+                register::REGISTER
+            );
+            Ok(if strict && untracked > 0 {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
+    }
 }
 
 fn run_reference(args: &ReferenceArgs) -> Result<ExitCode> {

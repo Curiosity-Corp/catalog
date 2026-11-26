@@ -18,6 +18,10 @@ Use this checklist for every public collection release.
       SBOM, `docs/sbom.md`), `collection.sha256` and `ci-toolchain.txt`.
       The `sbom` job has already validated the SBOM against the CycloneDX
       schema and checked that it lists every declared dependency.
+- [ ] Review the dependency register (`docs/dependency-register.md`): re-read
+      each entry's `support.evidence` page, update dates and status, and set
+      `reviewed`. The tag pipeline's `tools` job fails on an untracked alert or
+      a review older than `review_interval_days`.
 - [ ] Record the release URL, artifact checksum, CI pipeline, documentation
       URL, and compatibility evidence in the dated evidence log.
 - [ ] Copy the `provenance` job's `ci-toolchain.txt` (image digest, Python,

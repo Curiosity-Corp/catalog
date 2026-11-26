@@ -1,11 +1,11 @@
-.PHONY: validate syntax lint yaml test research-profile accessibility-summary collection sbom tools reference reference-check packages-check
+.PHONY: validate syntax lint yaml test research-profile accessibility-summary collection sbom tools reference reference-check packages-check register-check register-alerts
 
 PYTHON ?= python3
 ANSIBLE_ROLES_PATH ?= roles
 SOURCE_DATE_EPOCH ?= 0
 export SOURCE_DATE_EPOCH
 
-validate: yaml syntax lint test tools reference-check packages-check collection sbom
+validate: yaml syntax lint test tools reference-check packages-check register-check collection sbom
 
 yaml:
 	yamllint -f parsable .
@@ -42,6 +42,13 @@ reference:
 
 reference-check:
 	$(CATALOG_TOOLS) reference --check
+
+# The dependency register (docs/dependency-register.md); CI runs the same in the `tools` job.
+register-check:
+	$(CATALOG_TOOLS) register check
+
+register-alerts:
+	$(CATALOG_TOOLS) register alerts
 
 # Fail when docs/evidence/platform-packages-*.json no longer matches the role's packages.
 packages-check:
