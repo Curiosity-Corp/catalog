@@ -6,7 +6,9 @@ include:
 # Library (catalog#97). Docker Hub's anonymous pull limit returned 429 to the
 # shared runners, and a job only passed when its node already had the image.
 # Same images and tags, no credentials, and Renovate still tracks the tag.
-image: public.ecr.aws/docker/library/python:3.13-slim
+# Each image is also pinned by digest; Renovate proposes digest and tag bumps
+# as merge requests (catalog#22, docs/ci-toolchain.md).
+image: public.ecr.aws/docker/library/python:3.13-slim@sha256:7249d5587b78209a006dc4a3b5340678f84ea729239193aa559962cd8c1fce50
 
 stages:
   - validate
@@ -32,13 +34,14 @@ variables:
     # portable by installing tools into a disposable workspace virtualenv.
     - python -m venv .ci-venv
     - export PATH="$CI_PROJECT_DIR/.ci-venv/bin:$PATH"
-    - python -m pip install --upgrade pip
-    - python -m pip install ansible-core ansible-lint yamllint pyyaml pytest
+    # Hash-checked lock of the CI tooling (catalog#22, docs/ci-toolchain.md).
+    # pip itself comes from the digest-pinned image, so it is not upgraded here.
+    - python -m pip install --require-hashes -r ci/requirements.txt
     # galaxy.ansible.com occasionally resets the connection mid-download, and a
     # single failed job cancels the rest of the pipeline, so retry a few times.
     - |
       attempt=1
-      until ansible-galaxy collection install -r requirements.yml; do
+      until ansible-galaxy collection install -r ci/requirements.yml; do
         rc=$?
         if [ "$attempt" -ge 3 ]; then
           echo "ansible-galaxy collection install failed after $attempt attempts (exit $rc)" >&2
@@ -79,7 +82,7 @@ yaml:
   extends: .python_setup
   stage: validate
   script:
-    - yamllint -f parsable .github .gitlab docs examples playbooks roles .gitlab-ci.yml galaxy.yml requirements.yml renovate.json
+    - yamllint -f parsable .github .gitlab ci docs examples playbooks roles .gitlab-ci.yml galaxy.yml requirements.yml renovate.json
 
 syntax:
   extends: .python_setup
@@ -103,7 +106,7 @@ quickstarts:
 # this throwaway container; the non-root runner cannot apt-get the package.
 # Merge requests only: main does not change the example without one.
 cloud-init-schema:
-  image: public.ecr.aws/docker/library/python:3.13
+  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   stage: test
   variables:
     CLOUD_INIT_VERSION: "26.2"
@@ -123,11 +126,11 @@ cloud-init-schema:
 # The full python image ships curl; the slim one does not, and the shared
 # runner is non-root, so it cannot apt-get it.
 resume-standin:
-  image: public.ecr.aws/docker/library/python:3.13
+  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   stage: test
   script:
     - python -m venv .ci-venv
-    - .ci-venv/bin/python -m pip install pytest
+    - .ci-venv/bin/python -m pip install -c ci/requirements.txt pytest
     - .ci-venv/bin/python -m pytest -q tests/test_resumable_download_standin.py
 
 # Governance, security-process and identity documents stay true and current.
@@ -158,7 +161,7 @@ accessibility-summary:
 # docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
 debian13-quickstart:
   stage: test
-  image: public.ecr.aws/docker/library/python:3.13-slim-trixie
+  image: public.ecr.aws/docker/library/python:3.13-slim-trixie@sha256:7249d5587b78209a006dc4a3b5340678f84ea729239193aa559962cd8c1fce50
   timeout: 1h
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -187,7 +190,7 @@ debian13-quickstart:
 # ships gpg, as Ubuntu does; the script adds python3-apt to its venv.
 quickstart-check-preview:
   stage: test
-  image: public.ecr.aws/docker/library/python:3.13-trixie
+  image: public.ecr.aws/docker/library/python:3.13-trixie@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   script:
     - scripts/quickstart_check_preview.sh
   artifacts:
@@ -241,6 +244,7 @@ research-profile:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes:
         - .gitlab-ci.yml
+        - ci/**/*
         - requirements.yml
         - roles/developer_workstation/defaults/main.yml
         - roles/developer_workstation/tasks/science-tools.yml
@@ -253,7 +257,6 @@ research-profile:
     - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_PIPELINE_SOURCE =~ /^(schedule|web|api)$/
   script:
-    - python -m pip install uv
     - python scripts/validate_python_research.py --work .research-profile --report research-profile-report.md
   artifacts:
     when: always
@@ -272,7 +275,7 @@ research-profile:
 # shared runner pods run as a non-root user.
 tools:
   stage: validate
-  image: public.ecr.aws/docker/library/rust:1-bookworm
+  image: public.ecr.aws/docker/library/rust:1-bookworm@sha256:75d26c23c24cc6ea1cdabf0714a6bff8fd7bf3248716043fd7ae86dac7f41b94
   variables:
     CARGO_HOME: "${CI_PROJECT_DIR}/.cargo-home"
     CARGO_TARGET_DIR: "${CI_PROJECT_DIR}/tools/target"
@@ -334,10 +337,25 @@ provenance:
     - job: sbom
       artifacts: true
   script:
-    - sha256sum *.tar.gz collection.cdx.json | tee collection.sha256
+    # The toolchain that built and checked this artifact, for release evidence
+    # (catalog#22, docs/ci-toolchain.md).
+    - |
+      {
+        echo "image: ${CI_JOB_IMAGE}"
+        echo "python: $(python --version 2>&1)"
+        echo "lock: ci/requirements.txt sha256 $(sha256sum ci/requirements.txt | cut -d' ' -f1)"
+        echo "collections: ci/requirements.yml sha256 $(sha256sum ci/requirements.yml | cut -d' ' -f1)"
+        echo "--- pip freeze"
+        python -m pip freeze --all
+        echo "--- ansible-galaxy collection list"
+        ansible-galaxy collection list --format yaml
+      } > ci-toolchain.txt
+    - cat ci-toolchain.txt
+    - sha256sum *.tar.gz collection.cdx.json ci-toolchain.txt | tee collection.sha256
   artifacts:
     paths:
       - collection.sha256
+      - ci-toolchain.txt
       - collection.cdx.json
       - "*.tar.gz"
     expire_in: 30 days

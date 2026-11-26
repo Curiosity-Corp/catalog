@@ -1,0 +1,10 @@
+# Python tooling every CI job installs (catalog#22). Direct dependencies only,
+# each pinned exactly; Renovate proposes bumps as merge requests. The full,
+# hash-checked lock is ci/requirements.txt: regenerate it after editing this
+# file with the command in its header (docs/ci-toolchain.md).
+ansible-core==2.22.0
+ansible-lint==26.11.1
+pytest==9.2.0
+pyyaml==6.0.4
+uv==0.13.10
+yamllint==1.38.0

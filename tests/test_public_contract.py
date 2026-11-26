@@ -124,3 +124,32 @@ def test_ci_images_are_not_pulled_from_docker_hub() -> None:
     for image in images:
         first = image.split("/", 1)[0]
         assert "/" in image and ("." in first or ":" in first), f"{image} has no registry host"
+
+
+def test_ci_toolchain_is_locked() -> None:
+    """CI images are digest-pinned and tooling installs come from the lock (catalog#22).
+
+    An image whose tag is a CI variable (the research-profile matrix) cannot
+    carry a digest; docs/ci-toolchain.md records that exception.
+    """
+    ci_text = (ROOT / ".gitlab-ci.yml").read_text()
+    ci = yaml.safe_load(ci_text)
+    images = [ci["image"]] + [
+        job["image"]
+        for job in ci.values()
+        if isinstance(job, dict) and isinstance(job.get("image"), str)
+    ]
+    for image in images:
+        assert "${" in image or "@sha256:" in image, f"{image} is not pinned by digest"
+    assert "--require-hashes -r ci/requirements.txt" in ci_text
+    assert "collection install -r ci/requirements.yml" in ci_text
+    for line in ci_text.splitlines():
+        if "pip install" in line and ".ci-cloud-init/src/requirements.txt" not in line:
+            assert "ci/requirements.txt" in line, f"unlocked install: {line.strip()}"
+    lock = (ROOT / "ci/requirements.txt").read_text()
+    for line in (ROOT / "ci/requirements.in").read_text().splitlines():
+        if line and not line.startswith("#"):
+            assert line.lower() in lock.lower(), f"{line} is not in the lock"
+    collections = yaml.safe_load((ROOT / "ci/requirements.yml").read_text())["collections"]
+    for collection in collections:
+        assert all(ch.isdigit() or ch == "." for ch in collection["version"]), collection

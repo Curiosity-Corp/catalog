@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- CI toolchain locked (catalog#22): job images are pinned by digest, the Python tooling installs from a hash-checked lock (`ci/requirements.in` to `ci/requirements.txt`, `pip install --require-hashes`), and CI's Ansible collections are pinned in `ci/requirements.yml`. Renovate proposes image, tooling and lock bumps as merge requests, and the `provenance` job records the toolchain in `ci-toolchain.txt` for release evidence. `docs/ci-toolchain.md` has the update path and the two exceptions. CI only; no role change.
+
 ### Fixed
 
 - Debian: the `repos` and `packages` steps (catalog#162, catalog#163). `apt_fallback_release` is now chosen per distribution: Ubuntu and its derivatives keep `noble`, Debian uses its own codename. .NET, Azure CLI and MongoDB come from `apt_vendor_repos` through the new `tasks/apt-vendor-repo.yml`. On Debian it uses each vendor's Debian channel (`packages.microsoft.com/debian/<major>/prod`, `repo.mongodb.org/apt/debian <codename>/mongodb-org/<channel> main`). It reads the vendor's Release file first and skips the repository with the reason when the vendor publishes none: on Debian 13 that is Azure CLI, which Debian ships in main. It also removes the noble line an earlier run wrote on Debian. `software-properties-common`, which Debian 13 does not ship and nothing in the role needs, is dropped from the package lists on Debian only (`apt_packages_excluded`), as is `mongodb-mongosh` when MongoDB has no channel for the release. Ubuntu output is unchanged: `tests/test_apt_vendor_channels.py` renders the repository lines and package lists for Ubuntu 24.04 and 26.04 and compares them with a fixture rendered from main before the change, renders Debian 13 against the vendor listings of 2026-11-25, and fails when a `repos*.yml` repository line hard-codes an Ubuntu path or codename without a distribution guard.

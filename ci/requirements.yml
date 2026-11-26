@@ -1,0 +1,8 @@
+---
+# Ansible collections CI installs (catalog#22), pinned exactly so a new
+# release cannot change lint or build results unreviewed; Renovate proposes
+# bumps. The collection's own dependency range stays in galaxy.yml and
+# requirements.yml for users.
+collections:
+  - name: community.general
+    version: "14.0.1"

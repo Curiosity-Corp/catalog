@@ -20,8 +20,8 @@ request.
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install --upgrade pip ansible-core ansible-lint yamllint pyyaml pytest
-ansible-galaxy collection install -r requirements.yml
+python -m pip install --require-hashes -r ci/requirements.txt
+ansible-galaxy collection install -r ci/requirements.yml
 ```
 
 Use `make validate` before submitting. Changes to Ansible tasks should include
