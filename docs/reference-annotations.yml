@@ -89,6 +89,7 @@ variables:
   focuspass_screenlock_install_url: {stability: private-hook, safety: supply-chain}
   weechat_teams_client_id: {stability: private-hook}
   user_dotfiles_repo: {stability: private-hook}
+  user_dotfiles_review_argv: {stability: private-hook}
   kiosk_target_url: {stability: private-hook}
 
   # Experimental.

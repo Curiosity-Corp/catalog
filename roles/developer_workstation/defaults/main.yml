@@ -835,6 +835,15 @@ user_dotfiles_repo: ""
 chezmoi_user_name: ""
 chezmoi_user_email: ""
 chezmoi_editor: ""
+# How the role applies user_dotfiles_repo (catalog#151):
+#   force  - chezmoi update/apply --force; the repo wins over every local edit.
+#   review - run the repo's own review gate (user_dotfiles_review_argv) as the
+#            user instead. The role only clones a missing source (chezmoi init,
+#            no apply); the gate decides what may change and reports the rest.
+user_dotfiles_apply: force
+# The gate as an argv list starting with an absolute path, run as dev_user with
+# HOME set, e.g. ["{{ dev_user_home }}/.local/bin/dotfiles-review", "sync"].
+user_dotfiles_review_argv: []
 
 # ansible-pull settings
 ansible_pull_repo: "https://github.com/Curiosity-Corp/catalog.git"

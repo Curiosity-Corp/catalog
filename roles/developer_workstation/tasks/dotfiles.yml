@@ -11,6 +11,21 @@
 # supplies their own fork URL via group_vars/host_vars or `-e`.
 # =============================================================================
 
+- name: Validate the dotfiles apply mode
+  ansible.builtin.assert:
+    that:
+      - user_dotfiles_apply in ['force', 'review']
+      - >-
+        user_dotfiles_apply != 'review'
+        or (user_dotfiles_review_argv | length > 0
+            and user_dotfiles_review_argv[0] is match('^/'))
+    fail_msg: >-
+      user_dotfiles_apply must be force or review; review needs
+      user_dotfiles_review_argv, the repo's own gate as an argv list starting
+      with an absolute path (for example ["{{ dev_user_home }}/.local/bin/dotfiles-review", "sync"]).
+    quiet: true
+  when: user_dotfiles_repo | default('') | length > 0
+
 - name: Resolve verified chezmoi .deb asset
   ansible.builtin.set_fact:
     _chezmoi_deb_asset: >-
@@ -60,7 +75,7 @@
       - "{{ user_dotfiles_repo }}"
   become: true
   become_user: "{{ dev_user }}"
-  environment:
+  environment: &dotfiles_chezmoi_env
     HOME: "{{ dev_user_home }}"
     # Non-interactive init — env vars feed the .chezmoi.toml.tmpl prompts.
     # Set these in host_vars / group_vars. Empty strings keep the role
@@ -79,7 +94,42 @@
       }}
   when:
     - user_dotfiles_repo | default('') | length > 0
+    - user_dotfiles_apply == 'force'
     - not _chezmoi_src.stat.exists
+  changed_when: true
+
+# Review mode (catalog#151): the repo's own gate owns $HOME. catalog only
+# clones a missing source, without applying it, and then runs the gate, which
+# applies what cannot overwrite an owner edit and reports the rest. Nothing
+# here runs chezmoi --force.
+- name: Clone the user's dotfiles source for the review gate
+  ansible.builtin.command:
+    argv:
+      - flock
+      - -w
+      - "120"
+      - /tmp/.chezmoi-sync.lock
+      - chezmoi
+      - init
+      - "{{ user_dotfiles_repo }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment: *dotfiles_chezmoi_env
+  when:
+    - user_dotfiles_repo | default('') | length > 0
+    - user_dotfiles_apply == 'review'
+    - not _chezmoi_src.stat.exists
+  changed_when: true
+
+- name: Run the dotfiles repo's own review gate
+  ansible.builtin.command:
+    argv: "{{ user_dotfiles_review_argv }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment: *dotfiles_chezmoi_env
+  when:
+    - user_dotfiles_repo | default('') | length > 0
+    - user_dotfiles_apply == 'review'
   changed_when: true
 
 - name: Update chezmoi source state for existing dotfiles checkout
@@ -110,6 +160,7 @@
       }}
   when:
     - user_dotfiles_repo | default('') | length > 0
+    - user_dotfiles_apply == 'force'
     - _chezmoi_src.stat.exists
   changed_when: true
 
@@ -139,7 +190,9 @@
             true
           )
       }}
-  when: user_dotfiles_repo | default('') | length > 0
+  when:
+    - user_dotfiles_repo | default('') | length > 0
+    - user_dotfiles_apply == 'force'
   changed_when: true
 
 - name: Guard the optional Rust environment after chezmoi applies workspace dotfiles
@@ -155,3 +208,5 @@
   when:
     - workstation_profile == 'workspace'
     - user_dotfiles_repo | default('') | length > 0
+    # In review mode .profile belongs to the repo's gate, like every file in $HOME.
+    - user_dotfiles_apply == 'force'

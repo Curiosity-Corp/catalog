@@ -118,7 +118,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `minimal-desktop` | supported | 26 | `main.yml`, `minimal-desktop.yml` | `desktop`, `thin-client`, `byod-kiosk` | The minimal Openbox desktop and its display, lock and greeter pieces. |
 | `missionctl` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client` |  |
 | `monitor-sleep` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
-| `mosh` | supported | 1 | `main.yml` | `workspace` |  |
+| `mosh` | supported | 2 | `main.yml` | `workspace` |  |
 | `motd` | supported | 1 | `pro-mimic.yml` |  |  |
 | `mouse-debounce` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `networking` | supported | 6 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
@@ -143,7 +143,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `science` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `security` | supported | 19 | `main.yml`, `managed-updates.yml`, `pro-mimic.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Security hardening, including the pro-mimic plane. |
 | `self-healing` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
-| `shell` | supported | 1 | `main.yml` | `thin-client` |  |
+| `shell` | supported | 2 | `main.yml` | `thin-client` |  |
 | `slack` | supported | 1 | `managed-updates.yml` | `desktop` |  |
 | `ssh` | supported | 1 | `pro-mimic.yml` |  |  |
 | `sso` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
@@ -164,14 +164,14 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `touchpad` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `tuning` | supported | 1 | `main.yml` | `desktop` |  |
 | `updates` | supported | 14 | `main.yml`, `managed-updates.yml`, `pro-mimic.yml` | `desktop`, `workspace` | The managed update transaction: foundation, rings, rollback, health and manifest. |
-| `user` | supported | 3 | `main.yml` | `thin-client` |  |
+| `user` | supported | 4 | `main.yml` | `thin-client` |  |
 | `user-git-timers` | supported | 1 | `main.yml` |  |  |
 | `user-systemd` | supported | 2 | `main.yml` |  |  |
 | `validate` | supported | 1 | `main.yml` |  | The public configuration check (validate-config.yml). Always runs, before any change; see configuration.md#validation. |
 | `vscode` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `weechat` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client` |  |
 | `wifi` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
-| `workspace` | supported | 3 | `main.yml` | `workspace` |  |
+| `workspace` | supported | 4 | `main.yml` | `workspace` |  |
 | `xdg-autostart` | supported | 1 | `minimal-desktop.yml` | `byod-kiosk` |  |
 | `ziti` | supported | 4 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` | OpenZiti tunnel and its health check. |
 
@@ -283,6 +283,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `samsung_tv_key_vault` | `developer_workstation` | private-hook |
 | `samsung_tv_key_vault_secret` | `developer_workstation` | private-hook |
 | `user_dotfiles_repo` | `developer_workstation` | private-hook |
+| `user_dotfiles_review_argv` | `developer_workstation` | private-hook |
 | `weechat_teams_client_id` | `developer_workstation` | private-hook |
 | `wifi_netplan_match` | `developer_workstation` | private-hook |
 | `wifi_netplan_name` | `developer_workstation` | private-hook |
@@ -299,7 +300,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-494 variables, from `roles/developer_workstation/defaults/main.yml`.
+496 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -444,6 +445,8 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `chezmoi_user_name` | string | `""` |  | supported |  | (undocumented) |
 | `chezmoi_user_email` | string | `""` |  | supported |  | (undocumented) |
 | `chezmoi_editor` | string | `""` |  | supported |  | (undocumented) |
+| `user_dotfiles_apply` | string | `"force"` | `"force"`, `"review"` | supported |  | How the role applies user_dotfiles_repo (catalog#151): force  - chezmoi update/apply --force; the repo wins over every local edit. review - run the repo's own review gate (user_dotfiles_review_argv) as the user instead. (...) |
+| `user_dotfiles_review_argv` | list | `[]` |  | private-hook |  | The gate as an argv list starting with an absolute path, run as dev_user with HOME set, e.g. ["{{ dev_user_home }}/.local/bin/dotfiles-review", "sync"]. |
 | `ansible_pull_repo` | string | `"https://github.com/Curiosity-Corp/catalog.git"` |  | supported | supply-chain | ansible-pull settings The host runs whatever this repository's playbook says, as root. |
 | `ansible_pull_branch` | string | `"main"` |  | supported | supply-chain | (undocumented) |
 | `ansible_pull_playbook` | string | `"playbooks/site.yml"` |  | supported | supply-chain | (undocumented) |
