@@ -59,6 +59,9 @@ It checks three layers:
      routes everything through PIA.
    - `accessibility_packages` must be empty on the workspace profile, which has
      no desktop session; its names come from a fixed list (layer 1).
+   - `user_dotfiles_apply: review` with a `user_dotfiles_repo` needs
+     `user_dotfiles_review_argv`, the repo's own review gate as an argv list
+     starting with an absolute path ([user dotfiles](#user-dotfiles)).
 
    Each rule uses the same profile condition as the task it protects, so a
    setting a profile ignores is never required.
@@ -1375,7 +1378,7 @@ files. `user_dotfiles_apply` (catalog#151) says how:
 | `review` | `chezmoi init` (no apply) when the source is missing, then `user_dotfiles_review_argv` as the user. The repo's own gate pulls, applies what cannot overwrite an owner edit and reports the rest; the role never runs chezmoi `--force` and leaves `.profile` to the gate. |
 
 `user_dotfiles_review_argv` is an argv list starting with an absolute path,
-for example `["{{ dev_user_home }}/.local/bin/me", "sync"]`. The gate owns its
+for example `["{{ dev_user_home }}/.local/bin/dotfiles-review", "sync"]`. The gate owns its
 own locking and reporting.
 
 When the user already has a chezmoi source (`~/.local/share/chezmoi/.git`),

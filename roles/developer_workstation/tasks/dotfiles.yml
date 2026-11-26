@@ -22,7 +22,7 @@
     fail_msg: >-
       user_dotfiles_apply must be force or review; review needs
       user_dotfiles_review_argv, the repo's own gate as an argv list starting
-      with an absolute path (for example ["{{ dev_user_home }}/.local/bin/me", "sync"]).
+      with an absolute path (for example ["{{ dev_user_home }}/.local/bin/dotfiles-review", "sync"]).
     quiet: true
   when: user_dotfiles_repo | default('') | length > 0
 

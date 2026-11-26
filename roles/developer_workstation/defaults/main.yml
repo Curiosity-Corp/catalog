@@ -842,7 +842,7 @@ chezmoi_editor: ""
 #            no apply); the gate decides what may change and reports the rest.
 user_dotfiles_apply: force
 # The gate as an argv list starting with an absolute path, run as dev_user with
-# HOME set, e.g. ["{{ dev_user_home }}/.local/bin/me", "sync"].
+# HOME set, e.g. ["{{ dev_user_home }}/.local/bin/dotfiles-review", "sync"].
 user_dotfiles_review_argv: []
 
 # ansible-pull settings

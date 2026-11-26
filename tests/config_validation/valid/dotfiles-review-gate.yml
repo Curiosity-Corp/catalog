@@ -1,0 +1,5 @@
+---
+# Review mode with its gate named by an absolute path (catalog#151).
+user_dotfiles_repo: https://git.example.org/example/dotfiles.git
+user_dotfiles_apply: review
+user_dotfiles_review_argv: [/home/example/.local/bin/dotfiles-review, sync]

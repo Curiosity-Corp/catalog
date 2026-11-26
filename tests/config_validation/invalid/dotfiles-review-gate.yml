@@ -1,0 +1,8 @@
+---
+# Review mode hands $HOME to the dotfiles repo's own gate, so the gate must be
+# named, as an argv list that starts with an absolute path (catalog#151).
+# expect: user_dotfiles_apply is review, so user_dotfiles_review_argv must be
+# expect: got ["dotfiles-review", "sync"]
+user_dotfiles_repo: https://git.example.org/example/dotfiles.git
+user_dotfiles_apply: review
+user_dotfiles_review_argv: [dotfiles-review, sync]

@@ -157,6 +157,8 @@ argument_specs:
       chezmoi_user_name: {type: str}
       chezmoi_user_email: {type: str}
       chezmoi_editor: {type: str}
+      user_dotfiles_apply: {type: str, choices: ["force", "review"]}
+      user_dotfiles_review_argv: {type: list, elements: str}
       ansible_pull_repo: {type: str}
       ansible_pull_branch: {type: str}
       ansible_pull_playbook: {type: str}

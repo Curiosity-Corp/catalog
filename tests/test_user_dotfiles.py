@@ -1,7 +1,7 @@
 """catalog#151: a user's own dotfiles review gate, and no rewrites of a chezmoi home.
 
-user_dotfiles_apply: review hands $HOME to the dotfiles repo's own gate
-(mrh/me's `me sync`), so catalog never runs chezmoi --force over an owner's
+user_dotfiles_apply: review hands $HOME to the dotfiles repo's own review gate
+(user_dotfiles_review_argv), so catalog never runs chezmoi --force over an owner's
 edits. A user who already has a chezmoi source owns their shell and tmux files,
 so the shell fallback and the hyper-workspace tmux block leave them alone.
 """

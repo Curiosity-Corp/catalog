@@ -230,6 +230,16 @@
         msg: >-
           workspace_login_env values must be single-line strings or numbers; got
           {{ _workspace_env | to_json }}.
+      - ok: >-
+          {{ user_dotfiles_repo | default('') | length == 0
+             or user_dotfiles_apply | default('force') != 'review'
+             or (user_dotfiles_review_argv | default([]) | length > 0
+                 and user_dotfiles_review_argv[0] | string is match('^/')) }}
+        msg: >-
+          user_dotfiles_apply is review, so user_dotfiles_review_argv must be the
+          dotfiles repo's own review gate as an argv list starting with an
+          absolute path, such as ["/home/example/.local/bin/dotfiles-review", "sync"];
+          got {{ user_dotfiles_review_argv | default([]) | to_json }}.
       - ok: "{{ workstation_profile | default('') != 'byod-kiosk' or kiosk_target_url | default('') | length > 0 }}"
         msg: >-
           workstation_profile byod-kiosk needs kiosk_target_url, the page the
