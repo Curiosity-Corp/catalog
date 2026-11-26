@@ -16,6 +16,8 @@ __pycache__/
 .ci-venv/
 .research-profile/
 research-profile-report.md
+debian-quickstart/
+.debian-quickstart-work/
 *.tar.gz
 collection.cdx.json
 
