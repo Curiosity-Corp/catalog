@@ -25,6 +25,18 @@ users:
 ssh_pwauth: false
 disable_root: true
 
+# Storage: research data lives on a second virtual disk (/dev/vdb in the
+# libvirt example), so the OS disk can be rebuilt without touching it.
+# overwrite: false formats the disk only when it holds no filesystem yet, and
+# nofail lets the VM boot without it.
+fs_setup:
+  - label: research-data
+    filesystem: ext4
+    device: /dev/vdb
+    overwrite: false
+mounts:
+  - [LABEL=research-data, /srv/research-data, ext4, "defaults,nofail", "0", "2"]
+
 package_update: true
 package_upgrade: false
 packages:
@@ -51,6 +63,7 @@ write_files:
 runcmd:
   - [systemctl, enable, --now, chrony]
   - [mkdir, -p, /opt/curiosity-catalog-src]
+  - [install, -d, -o, researcher, -g, researcher, -m, "0750", /srv/research-data]
   # Pin to a reviewed tag or commit instead of a moving branch.
   - [git, clone, --branch, v0.1.0, --depth, "1", "https://github.com/Curiosity-Corp/catalog.git", /opt/curiosity-catalog-src]
   - [python3, -m, venv, /opt/curiosity-catalog-src/.venv]

@@ -169,6 +169,7 @@ public-surface checks, and collection building. See
 - [Vulnerability response](docs/vulnerability-response.md)
 - [Telemetry and evidence policy](docs/telemetry-and-evidence.md)
 - [Researcher quickstarts](docs/quickstarts/README.md)
+- [Generic VM and cloud-init examples](docs/quickstarts/cloud-init-libvirt.md)
 - [Update rings](docs/update-rings.md)
 - [Python research profile](docs/python-research-profile.md)
 - [Accessibility and localization](docs/accessibility-and-localization.md)

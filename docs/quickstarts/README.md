@@ -12,7 +12,7 @@ examples cannot silently drift from the role.
 | An Ubuntu laptop you own | [Researcher laptop](laptop.md) | [`laptop.yml`](../../examples/laptop.yml) |
 | A VM for compilers, Python and data tools | [Research VM](research-vm.md) | [`research-vm.yml`](../../examples/research-vm.yml) |
 | A VM or workspace for Python and notebooks | [Python research profile](../python-research-profile.md) | [`python-research.yml`](../../examples/python-research.yml), [`research-workstation.yml`](../../examples/research-workstation.yml) |
-| A lab that boots VMs from images | [cloud-init and libvirt](cloud-init-libvirt.md) | [`cloud-init/`](../../examples/cloud-init) |
+| A lab that boots VMs from images | [cloud-init and libvirt](cloud-init-libvirt.md) | [`cloud-init/`](../../examples/cloud-init) (user-data, meta-data, `virt-install.sh`) |
 | An access appliance or a shared lab machine | [Thin client and shared lab](thin-client-and-shared-lab.md) | [`thin-client.yml`](../../examples/thin-client.yml), [`shared-lab.yml`](../../examples/shared-lab.yml) |
 | A university proxy, a slow link or no internet | [Restricted networks](restricted-networks.md) | none (environment settings only) |
 | Jupyter notebooks on a remote machine | [Notebooks](notebooks.md) | [`notebooks/`](../../examples/notebooks) |

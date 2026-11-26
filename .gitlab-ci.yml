@@ -91,6 +91,30 @@ quickstarts:
   script:
     - python -m pytest -q tests/test_quickstarts.py tests/test_restricted_network.py
 
+# The cloud-init example must pass cloud-init's own schema check (catalog#30).
+# No disposable VM is available to CI, so this is the stand-in until someone
+# boots it (docs/quickstarts/cloud-init-libvirt.md#validation-status).
+# cloud-init 25.1 and later build only with meson and are not on PyPI, so the
+# job runs the pinned, digest-checked release straight from its source tree in
+# this throwaway container; the non-root runner cannot apt-get the package.
+# Merge requests only: main does not change the example without one.
+cloud-init-schema:
+  image: python:3.13
+  stage: test
+  variables:
+    CLOUD_INIT_VERSION: "26.2"
+    CLOUD_INIT_SHA256: "16274a4102426871cad84ad07db41f82aa8f4d43d95e5947a62e199c2df775c6"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - mkdir -p .ci-cloud-init/src
+    - curl -fsSL --retry 3 -o .ci-cloud-init/cloud-init.tar.gz "https://github.com/canonical/cloud-init/archive/refs/tags/${CLOUD_INIT_VERSION}.tar.gz"
+    - echo "${CLOUD_INIT_SHA256}  .ci-cloud-init/cloud-init.tar.gz" | sha256sum -c -
+    - tar -xzf .ci-cloud-init/cloud-init.tar.gz -C .ci-cloud-init/src --strip-components=1
+    - python -m venv .ci-venv
+    - .ci-venv/bin/python -m pip install -r .ci-cloud-init/src/requirements.txt
+    - PYTHONPATH=.ci-cloud-init/src .ci-venv/bin/python -m cloudinit.cmd.main schema --config-file examples/cloud-init/user-data
+
 # Stand-in evidence for decision record 0004 (resumable downloads, catalog#133).
 # The full python image ships curl; the slim one does not, and the shared
 # runner is non-root, so it cannot apt-get it.
