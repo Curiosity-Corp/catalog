@@ -1,8 +1,9 @@
 //! Tools for the `curiosity.workstation` Ansible collection (catalog#160).
 //!
 //! The collection itself stays Ansible; this crate holds the tooling around it,
-//! one subcommand per tool (docs/adr/0001-rust-tool-crate.md).
+//! one subcommand per tool (docs/decisions/0005-rust-tool-crate.md).
 
+pub mod diagnostics;
 pub mod packages;
 pub mod reference;
 pub mod yaml;

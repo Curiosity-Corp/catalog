@@ -1,13 +1,14 @@
 # catalog-tools
 
 The catalog's tools, as one Rust binary with a subcommand per tool
-([ADR 0001](../docs/adr/0001-rust-tool-crate.md), catalog#160). The Ansible
+([decision 0005](../docs/decisions/0005-rust-tool-crate.md), catalog#160). The Ansible
 collection itself does not depend on it and does not ship it.
 
 | Subcommand | What it does | Issue |
 | --- | --- | --- |
 | `reference` | Writes `docs/reference.md`, the supported variable and tag reference, from the role defaults, the role tasks and `docs/reference-annotations.yml`. `--check` exits 1 when the committed file is out of date. | #27 |
 | `packages` | `list` prints the role's apt packages. `probe` runs inside a distro image and records which of them its archives provide, which a virtual name installs through, and which are missing. `assemble` writes the dated evidence file. `check` exits 1 when the newest `docs/evidence/platform-packages-*.json` no longer matches the role's package list. See [docs/platform-differences.md](../docs/platform-differences.md). | #14, #15 |
+| `diagnostics` | `preview`, `write`, `path`, `delete`: a redacted, local support bundle (versions, profile, architecture, selected tags, last run). No network code; writes only to `~/.local/state/curiosity/diagnostics/`. Policy and usage: [docs/troubleshooting.md](../docs/troubleshooting.md#sending-a-maintainer-a-diagnostic-bundle). | #41, #25 |
 
 ## Using it
 
@@ -55,6 +56,7 @@ Generated, never edited by hand:
 - `catalog-tools/src/packages/`: the role's package list, the apt probe
   (`apt.rs`, no root: apt's lists and caches go to a private directory), the
   evidence files and dates.
+- `catalog-tools/src/diagnostics/`: the support bundle (`mod.rs`) and its redaction (`redact.rs`).
 - `catalog-tools/tests/`: end-to-end tests on a temporary checkout.
 
 Add a tool as a new module and subcommand, with unit tests in the module and an

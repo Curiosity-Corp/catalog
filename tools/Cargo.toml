@@ -1,4 +1,4 @@
-# Cargo workspace for the catalog's tools (catalog#160, docs/adr/0001-rust-tool-crate.md).
+# Cargo workspace for the catalog's tools (catalog#160, docs/decisions/0005-rust-tool-crate.md).
 # Build and test only through CI (the `tools` job); see tools/README.md.
 [workspace]
 resolver = "3"

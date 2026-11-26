@@ -1,9 +1,11 @@
 //! `catalog-tools`: the catalog's tool binary. See tools/README.md.
 
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use catalog_tools::diagnostics::{self, redact::Redactor};
 use catalog_tools::packages::{self, Evidence, PlatformResult};
 use catalog_tools::{find_root, reference};
 use clap::{Args, Parser, Subcommand};
@@ -26,6 +28,43 @@ enum Command {
     /// Which of the role's apt packages each platform's archive provides.
     #[command(subcommand)]
     Packages(PackagesCommand),
+    /// Build a redacted support bundle on this machine; read docs/troubleshooting.md.
+    #[command(subcommand)]
+    Diagnostics(DiagnosticsCommand),
+}
+
+#[derive(Subcommand)]
+enum DiagnosticsCommand {
+    /// Print the bundle that `write` would save. Writes nothing.
+    Preview(BundleArgs),
+    /// Print the bundle, ask, then save it in the bundle folder (mode 0600).
+    Write {
+        #[command(flatten)]
+        bundle: BundleArgs,
+        /// Save without asking (still prints the bundle first).
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Delete every saved bundle in the bundle folder.
+    Delete,
+    /// Print the bundle folder and the bundles in it.
+    Path,
+}
+
+#[derive(Args)]
+struct BundleArgs {
+    /// The update manifest the role wrote.
+    #[arg(long, default_value = diagnostics::DEFAULT_MANIFEST)]
+    manifest: PathBuf,
+    /// The profile the failing run used (default: the manifest's).
+    #[arg(long)]
+    profile: Option<String>,
+    /// The tags the failing run selected, comma separated (`--tags packages,update`).
+    #[arg(long, value_delimiter = ',')]
+    tags: Vec<String>,
+    /// A further word to hide wherever it appears (a project or colleague name). Repeatable.
+    #[arg(long = "redact", value_name = "WORD")]
+    redact: Vec<String>,
 }
 
 #[derive(Args)]
@@ -100,6 +139,7 @@ fn main() -> ExitCode {
     let outcome = match cli.command {
         Command::Reference(args) => run_reference(&args),
         Command::Packages(command) => run_packages(command),
+        Command::Diagnostics(command) => run_diagnostics(command),
     };
     match outcome {
         Ok(code) => code,
@@ -237,4 +277,73 @@ fn write_file(path: &Path, text: &str) -> Result<()> {
             .with_context(|| format!("cannot create {}", parent.display()))?;
     }
     std::fs::write(path, text).with_context(|| format!("cannot write {}", path.display()))
+}
+
+const NOTHING_SENT: &str = "Nothing has been sent anywhere: this command has no network code.";
+
+fn preview(args: &BundleArgs) -> Result<(String, String)> {
+    let inputs = diagnostics::gather(&args.manifest, args.profile.clone(), args.tags.clone());
+    let mut redactor = Redactor::new(&diagnostics::known_from_environment(args.redact.clone()));
+    let (created_at, stamp) = diagnostics::utc_now();
+    let text = diagnostics::render(&diagnostics::build(&inputs, &mut redactor, &created_at));
+    println!("{text}");
+    eprintln!(
+        "Read the bundle above. Anything that still identifies you, your machine or your research? \
+         Run again with --redact WORD for each such word."
+    );
+    Ok((text, stamp))
+}
+
+fn run_diagnostics(command: DiagnosticsCommand) -> Result<ExitCode> {
+    let dir = diagnostics::bundle_dir()?;
+    match command {
+        DiagnosticsCommand::Preview(args) => {
+            preview(&args)?;
+            eprintln!("Preview only: nothing was written. {NOTHING_SENT}");
+        }
+        DiagnosticsCommand::Write { bundle, yes } => {
+            let (text, stamp) = preview(&bundle)?;
+            if !yes {
+                if !std::io::stdin().is_terminal() {
+                    bail!("not saved: no terminal to ask on; read the preview, then pass --yes");
+                }
+                eprint!("Save this bundle in {}? [y/N] ", dir.display());
+                std::io::stderr()
+                    .flush()
+                    .context("cannot write the question")?;
+                let mut answer = String::new();
+                std::io::stdin()
+                    .lock()
+                    .read_line(&mut answer)
+                    .context("cannot read the answer")?;
+                if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES" | "Yes") {
+                    eprintln!("Not saved. {NOTHING_SENT}");
+                    return Ok(ExitCode::from(1));
+                }
+            }
+            let path = diagnostics::write_bundle(&dir, &stamp, &text)?;
+            println!("Saved {} (readable by you only).", path.display());
+            eprintln!(
+                "{NOTHING_SENT} Attach the file to an issue yourself if you want to share it.\n\
+                 Delete it with `catalog-tools diagnostics delete` or `rm {}`.",
+                path.display()
+            );
+        }
+        DiagnosticsCommand::Delete => {
+            let bundles = diagnostics::list_bundles(&dir)?;
+            for path in &bundles {
+                std::fs::remove_file(path)
+                    .with_context(|| format!("cannot delete {}", path.display()))?;
+                println!("deleted {}", path.display());
+            }
+            println!("{} bundle(s) deleted from {}", bundles.len(), dir.display());
+        }
+        DiagnosticsCommand::Path => {
+            println!("{}", dir.display());
+            for path in diagnostics::list_bundles(&dir)? {
+                println!("{}", path.display());
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
