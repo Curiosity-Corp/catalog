@@ -243,14 +243,36 @@
     - item.status | default(0) == 200
     - _tagged_release_candidates | length > 0
 
+# GitHub reports `digest: null` for assets it never hashed. get_url treats an
+# empty checksum as "no checksum", and its `force: false` then keeps whatever
+# file is already at dest, so an installer that picked such an asset would
+# install and keep an unverified file. Drop those assets here, once, so no
+# installer can select one; a source left with none fails the check below.
+# catalog#28, tests/test_restricted_network.py.
+- name: Keep only release assets that carry a verifiable SHA-256 digest
+  ansible.builtin.set_fact:
+    latest_github_releases: >-
+      {{ latest_github_releases | combine({
+           item.key: item.value | combine({
+             'assets': item.value.assets | default([])
+                       | selectattr('digest', 'defined')
+                       | selectattr('digest', 'match', '^sha256:[0-9a-f]{64}$')
+                       | list
+           })
+         }) }}
+  loop: "{{ latest_github_releases | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
 - name: Require latest metadata for every binary release source
   ansible.builtin.assert:
     that:
       - item in (latest_github_releases | default({}))
       - (latest_github_releases[item].assets | default([]) | length) > 0
     fail_msg: >-
-      Could not resolve a current upstream release for {{ item }}. The lab
-      refuses to fall back to a stale version or silently keep an old binary.
+      Could not resolve a current upstream release for {{ item }} with a
+      SHA-256 digest on its assets. The lab refuses to fall back to a stale
+      version or silently keep an old binary.
   loop: "{{ _latest_release_sources.keys() | list }}"
 
 - name: Build the compact upstream release manifest

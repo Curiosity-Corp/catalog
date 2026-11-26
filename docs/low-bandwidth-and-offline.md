@@ -33,7 +33,7 @@ is off and one that is on: with the variable `false` both are resolved, with it
 | The catalog and the controller's own dependencies | Clone at a tag, `ansible-galaxy collection download`, `pip download ansible-core`, then carry the folder | Run end to end, see [restricted networks](quickstarts/restricted-networks.md#offline-dependency-preparation-controller-side) |
 | Scientific Python packages | On the connected machine: `pip download -d wheels <packages>`. On the workstation: set `science_python_pip_extra_args: "--no-index --find-links /srv/wheels"` | [Recorded once](evidence/python-research-sample-install.md): the install used only the folder, and a package missing from it failed instead of reaching the network |
 | Operating system packages | A local APT mirror or cache, configured through APT's own settings | Not exercised here |
-| Release binaries (Go, Deno, Trivy and others) | Not prepared offline: release discovery needs GitHub, and a failed discovery stops the run rather than using a stale copy | See [what still needs the network](quickstarts/restricted-networks.md#what-still-needs-the-network) |
+| Release binaries (Go, kubectl, Deno, Trivy and others) | Fill the verified-download cache by digest on a connected machine and carry it over; a later run checks each file and reuses it. The release lookup itself still needs a link, and a failed lookup stops the run rather than using a stale copy | `tests/test_restricted_network.py` reuses a cache filled ahead of time with no network and refuses a wrong file; see [preparing the cache offline](quickstarts/restricted-networks.md#preparing-the-verified-download-cache-offline) |
 
 Download the wheels with the same Python version and CPU architecture as the
 workstation. With `--no-index`, the list in `science_python_packages` must be
@@ -44,7 +44,8 @@ those).
 
 Installers that use `get_url` with a SHA-256 download only when the installed
 tool is out of date and the file is missing from `/var/cache/curiosity/artifacts`
-or fails its checksum. The nightly pull is spread over a randomized delay on the
+or fails its checksum. [Where downloads go](quickstarts/restricted-networks.md#where-downloads-go)
+lists every cache. The nightly pull is spread over a randomized delay on the
 `general` ring, so a shared link is not hit by every machine at once. Set
 `GITHUB_TOKEN` to avoid unauthenticated API rate limits.
 
