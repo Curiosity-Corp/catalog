@@ -412,6 +412,14 @@ not_dependencies:
     reason: XML namespace of the Openbox configuration
   - url: https://example.org
     reason: placeholder kiosk start page
+  - url: https://host.example.org/path
+    reason: example value quoted in a configuration validation message (tasks/validate-config.yml, catalog#31)
+  - url: https://coder.example.org
+    reason: example value quoted in a configuration validation message (tasks/validate-config.yml, catalog#31)
+  - url: https://portal.example.org
+    reason: example value quoted in a configuration validation message (tasks/validate-config.yml, catalog#31)
+  - url: https://jellyfin.example.org
+    reason: example value quoted in a configuration validation message (tasks/validate-config.yml, catalog#31)
   - url: https://watch.
     reason: site media links built from media_folder_web_domain
   - url: https://request.
