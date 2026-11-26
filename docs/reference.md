@@ -249,6 +249,10 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `streamstack_seat_guest_dropin_content` | `developer_workstation` | internal |
 | `t460_console_status_path` | `developer_workstation` | internal |
 | `tmp_hygiene_short_age_config_path` | `developer_workstation` | internal |
+| `workspace_git_auth_helper_script_path` | `developer_workstation` | internal |
+| `workspace_legacy_git_auth_helper_script_path` | `developer_workstation` | internal |
+| `workspace_legacy_login_env_config_path` | `developer_workstation` | internal |
+| `workspace_login_env_config_path` | `developer_workstation` | internal |
 | `workstation_application_contracts` | `developer_workstation` | internal |
 | `workstation_update_artifact_cache_dir` | `developer_workstation` | internal |
 | `workstation_update_manifest_path` | `developer_workstation` | internal |
@@ -284,8 +288,8 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `wifi_nm_uuid` | `developer_workstation` | private-hook |
 | `wifi_psk` | `developer_workstation` | private-hook |
 | `wifi_ssid` | `developer_workstation` | private-hook |
-| `workspace_gitlab_external_auth_provider` | `developer_workstation` | private-hook |
-| `workspace_gitlab_host` | `developer_workstation` | private-hook |
+| `workspace_external_auth_provider` | `developer_workstation` | private-hook |
+| `workspace_git_host` | `developer_workstation` | private-hook |
 | `ziti_etc_hosts_pins` | `developer_workstation` | private-hook |
 | `ziti_health_check_identities` | `developer_workstation` | private-hook |
 | `ziti_health_check_probe_hosts` | `developer_workstation` | private-hook |
@@ -294,7 +298,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-481 variables, from `roles/developer_workstation/defaults/main.yml`.
+490 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -492,8 +496,17 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `ziti_health_check_script_path` | string | `"/usr/local/sbin/curiosity-ziti-health"` |  | internal |  | (undocumented) |
 | `custom_ca_certificates` | list | `[]` |  | private-hook | security | Optional certificates for private lab services. `src` is read from the Ansible controller, which is also the target when using ansible-pull. (...) |
 | `custom_ca_bundle_path` | string | `"/etc/ssl/certs/ca-certificates.crt"` |  | supported |  | (undocumented) |
-| `workspace_gitlab_host` | string | `"gitlab.com"` |  | private-hook |  | Generic GitLab/Coder workspace settings. Point these at a lab's own service in host/group vars instead of baking an organization into the role. |
-| `workspace_gitlab_external_auth_provider` | string | `"gitlab"` |  | private-hook |  | (undocumented) |
+| `workspace_git_auth_helper_enabled` | bool | `false` |  | supported | network | Install a git credential helper that asks the workspace service (Coder, or a service whose client takes the same arguments) for a short-lived token for workspace_git_host on every git request, so no personal access token is handed out or stored. (...) |
+| `workspace_git_host` | string | `""` |  | private-hook |  | The git host the helper answers for, as host or host:port, such as git.example.org (no scheme, no path). The helper is wired for https:// only. |
+| `workspace_external_auth_provider` | string | `""` |  | private-hook |  | The workspace service's id of the external-auth provider for that git host, such as primary-git. The helper runs `&lt;workspace_external_auth_binary&gt; external-auth access-token &lt;workspace_external_auth_provider&gt;`. |
+| `workspace_external_auth_binary` | string | `"coder"` |  | supported |  | Command that prints the token: a name on PATH or an absolute path. It must accept the arguments above. |
+| `workspace_git_auth_username` | string | `"oauth2"` |  | supported |  | HTTPS Basic-auth user name sent with the token. oauth2 suits OAuth tokens of GitLab and most other forges. |
+| `workspace_login_env` | dict | mapping, 0 keys |  | supported |  | Login-shell environment for every user of the workspace, written to /etc/profile.d/curiosity-workspace-env.sh, such as {GITLAB_HOST: git.example.org} for the GitLab CLI. Empty, with workspace_login_env_unset, removes the file. |
+| `workspace_login_env_unset` | list | `[]` |  | supported |  | Environment variable names that login shells unset, such as [GITLAB_TOKEN]. |
+| `workspace_git_auth_helper_script_path` | string | `"/usr/local/bin/git-credential-workspace"` |  | internal |  | Where the role installs the credential helper. |
+| `workspace_login_env_config_path` | string | `"/etc/profile.d/curiosity-workspace-env.sh"` |  | internal |  | Where the role writes the login-shell environment. |
+| `workspace_legacy_git_auth_helper_script_path` | string | `"/usr/local/bin/git-credential-coder-gitlab"` |  | internal |  | The GitLab-named helper of earlier releases, removed on every run. |
+| `workspace_legacy_login_env_config_path` | string | `"/etc/profile.d/coder-gitlab.sh"` |  | internal |  | The GitLab-named profile.d file of earlier releases, removed on every run. |
 | `display_config_enabled` | bool | `false` |  | supported | network, boot | Display configuration (GDM auto-login, x11vnc, dconf no-lock) Enable on iGPU passthrough VMs that need physical display + VNC |
 | `t460_console_diagnostics_enabled` | bool | `true` |  | supported |  | Lenovo T460 raw-console support. The status command is a harmless diagnostic for the two T460 hardware profiles. The horizontal fbcon mode remains explicitly disabled: it requires a separately built/signed kernel containing the experimental patch documented in the T460 image repository. |
 | `t460_console_status_path` | string | `"/usr/local/bin/curiosity-t460-console-status"` |  | internal |  | (undocumented) |

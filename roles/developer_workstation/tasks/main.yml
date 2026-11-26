@@ -421,9 +421,9 @@
       tags: [git]
   tags: [git]
 
-- name: Include Coder workspace helpers (credential helper, profile.d, bash_profile)
+- name: Include remote workspace helpers (opt-in credential helper, login environment, bash_profile)
   ansible.builtin.include_tasks:
-    file: coder-workspace-helpers.yml
+    file: workspace-helpers.yml
     apply:
       tags: [coder, workspace, git]
   tags: [coder, workspace, git]

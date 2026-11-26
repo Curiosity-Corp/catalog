@@ -1,0 +1,10 @@
+# /etc/profile.d/curiosity-workspace-env.sh
+# Login-shell environment for this workspace (docs/workspace-providers.md).
+# Managed by the developer_workstation role from workspace_login_env and
+# workspace_login_env_unset; edit those variables, not this file.
+{% for name, value in workspace_login_env | dictsort %}
+export {{ name }}={{ value | string | quote }}
+{% endfor %}
+{% for name in workspace_login_env_unset %}
+unset {{ name }}
+{% endfor %}

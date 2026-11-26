@@ -51,7 +51,10 @@ It checks three layers:
      catalog-tools need their URL and checksum; Keycloak SSO needs its host,
      realm and client ID; WeeChat Teams needs its client ID; Jellyfin needs its
      web URL; fleetd needs its registry ID and package URL; Wi-Fi needs a PSK of
-     at least 8 characters.
+     at least 8 characters; the workspace credential helper needs its Git host,
+     external-auth provider, client command and user name, each in a form that
+     is safe in a shell script and `/etc/gitconfig`
+     ([remote workspaces](workspace-providers.md)).
    - `pia_tunnel_apps` cannot be combined with a hardware profile that already
      routes everything through PIA.
    - `accessibility_packages` must be empty on the workspace profile, which has

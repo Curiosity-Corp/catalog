@@ -1,6 +1,9 @@
 ---
-# Variables catalog#171 retired, still set on an old host. The role warns that
-# they are ignored (tasks/ai-assistants.yml); validation must not fail on them.
+# Variables catalog#171 and catalog#29 retired, still set on an old host. The
+# role warns that they are ignored (tasks/ai-assistants.yml,
+# tasks/workspace-helpers.yml); validation must not fail on them.
 codex_standalone_installer_url: "https://chatgpt.com/codex/install.sh"
 claude_native_installer_url: "https://claude.ai/install.sh"
 ziti_install_script_url: "https://get.openziti.io/tun/scripts/install-ubuntu.bash"
+workspace_gitlab_host: git.example.org
+workspace_gitlab_external_auth_provider: gitlab

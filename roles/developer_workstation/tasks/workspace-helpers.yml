@@ -1,0 +1,135 @@
+---
+# =============================================================================
+# Remote workspace helpers (catalog#29, docs/workspace-providers.md)
+# =============================================================================
+# Workspace profile only. Nothing here names a deployment, host or provider:
+# every one of them is a variable, and with the defaults nothing is installed
+# that talks to a workspace service. A plain SSH workspace needs none of it.
+#
+#  1. Git credential helper (opt-in: workspace_git_auth_helper_enabled).
+#     /usr/local/bin/git-credential-workspace, wired in /etc/gitconfig for
+#     https://<workspace_git_host> only. It asks the workspace service for a
+#     short-lived token per request (`<workspace_external_auth_binary>
+#     external-auth access-token <workspace_external_auth_provider>`, the
+#     Coder CLI's form), so no personal access token is handed out or stored.
+#     Switched off, the helper and its /etc/gitconfig entry are removed.
+#
+#  2. Login-shell environment (workspace_login_env, workspace_login_env_unset).
+#     /etc/profile.d/curiosity-workspace-env.sh, only while either is set, for
+#     settings such as a CLI's default host.
+#
+#  3. /etc/skel/.bash_profile (+ backfill for the current dev_user), always:
+#     login shells (web terminal, ssh login, code-server) source ~/.bashrc, so
+#     they see the same aliases, functions and environment as interactive ones.
+#
+# Hosts that ran the role before catalog#29 have its earlier, GitLab-named
+# helper and profile.d file; they are removed here. tasks/validate-config.yml
+# stops the run first when the helper is enabled without the values it needs.
+# The earlier opt-in design is Curiosity-Corp/catalog!176 (closed, not merged).
+# =============================================================================
+
+- name: Warn about retired workspace variables
+  ansible.builtin.debug:
+    msg: >-
+      {{ item }} is no longer used and is ignored (catalog#29). Set
+      workspace_git_host and workspace_external_auth_provider instead, and
+      workspace_git_auth_helper_enabled: true to install the credential
+      helper (docs/workspace-providers.md). Remove it from the host variables.
+  loop:
+    - workspace_gitlab_host
+    - workspace_gitlab_external_auth_provider
+  when: lookup('ansible.builtin.vars', item, default='') | length > 0
+
+- name: Install the workspace git credential helper
+  ansible.builtin.template:
+    src: git-credential-workspace.j2
+    dest: "{{ workspace_git_auth_helper_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: workspace_git_auth_helper_enabled | bool
+
+- name: List the credential helpers in the system git configuration
+  ansible.builtin.command:
+    argv: [git, config, --system, --get-regexp, '^credential\..*\.helper$']
+  register: _workspace_gitconfig_helpers
+  changed_when: false
+  # 1: no entry (or no /etc/gitconfig yet).
+  failed_when: _workspace_gitconfig_helpers.rc not in [0, 1]
+  check_mode: false
+
+- name: Remove credential helper entries of this role that are no longer wanted
+  community.general.git_config:
+    scope: system
+    name: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ _workspace_gitconfig_helpers.stdout_lines
+       | map('split', ' ', 1) | selectattr('1', 'defined')
+       | selectattr('1', 'in', _workspace_role_helper_values)
+       | map('first') | reject('eq', _workspace_helper_key) | list }}
+  vars:
+    _workspace_role_helper_values:
+      - "!{{ workspace_git_auth_helper_script_path }}"
+      - "!{{ workspace_legacy_git_auth_helper_script_path }}"
+    # No key is wanted while the helper is off.
+    _workspace_helper_key: >-
+      {{ ('credential.https://' ~ workspace_git_host ~ '.helper')
+         if workspace_git_auth_helper_enabled | bool else '' }}
+
+- name: Wire the credential helper for the workspace git host in /etc/gitconfig
+  community.general.git_config:
+    scope: system
+    name: "credential.https://{{ workspace_git_host }}.helper"
+    value: "!{{ workspace_git_auth_helper_script_path }}"
+  when: workspace_git_auth_helper_enabled | bool
+
+- name: Remove workspace helper files that are switched off or retired
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ [workspace_legacy_git_auth_helper_script_path, workspace_legacy_login_env_config_path]
+       + ([] if workspace_git_auth_helper_enabled | bool else [workspace_git_auth_helper_script_path]) }}
+
+- name: Install the workspace login-shell environment
+  ansible.builtin.template:
+    src: workspace-login-env.sh.j2
+    dest: "{{ workspace_login_env_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: (workspace_login_env | length > 0) or (workspace_login_env_unset | length > 0)
+
+- name: Remove the workspace login-shell environment when none is set
+  ansible.builtin.file:
+    path: "{{ workspace_login_env_config_path }}"
+    state: absent
+  when:
+    - workspace_login_env | length == 0
+    - workspace_login_env_unset | length == 0
+
+- name: Ensure /etc/skel/.bash_profile sources ~/.bashrc for new users
+  ansible.builtin.copy:
+    dest: /etc/skel/.bash_profile
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Source ~/.bashrc on login so login shells (Coder web terminal, ssh
+      # login, code-server) inherit the same env, aliases, and prompt as
+      # interactive shells. Managed by Curiosity-Corp/catalog.
+      [ -f ~/.bashrc ] && . ~/.bashrc
+
+- name: Backfill ~/.bash_profile for the current dev_user (skel only applies to new users)
+  ansible.builtin.copy:
+    dest: "{{ dev_user_home }}/.bash_profile"
+    owner: "{{ dev_user }}"
+    group: "{{ dev_user }}"
+    mode: "0644"
+    content: |
+      # Source ~/.bashrc on login so login shells (Coder web terminal, ssh
+      # login, code-server) inherit the same env, aliases, and prompt as
+      # interactive shells. Managed by Curiosity-Corp/catalog.
+      [ -f ~/.bashrc ] && . ~/.bashrc
+    force: false   # don't clobber an existing user-customized .bash_profile

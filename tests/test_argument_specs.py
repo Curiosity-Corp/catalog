@@ -36,12 +36,16 @@ NOT_IN_SPEC = {
 }
 
 
-# catalog#171 retired these; the role warns that a value set for one is
+# Retired variables (catalog#171, catalog#29); the role warns that a value set for one is
 # ignored. A spec entry would turn that warning into a validation error.
 RETIRED = {
     ("developer_workstation", "codex_standalone_installer_url"),
     ("developer_workstation", "claude_native_installer_url"),
     ("developer_workstation", "ziti_install_script_url"),
+    # catalog#29: provider-neutral workspace_git_host and
+    # workspace_external_auth_provider replace them.
+    ("developer_workstation", "workspace_gitlab_host"),
+    ("developer_workstation", "workspace_gitlab_external_auth_provider"),
 }
 
 

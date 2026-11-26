@@ -146,6 +146,20 @@ verified-downloads:
   script:
     - python -m pytest -q tests/test_verified_download.py tests/test_verified_download_vendors.py
 
+# catalog#29: the opt-in workspace git credential helper
+# (docs/workspace-providers.md). The role's own tasks install it under pytest's
+# tmp_path, and real git clones from a loopback server whose stand-in workspace
+# service grants or refuses the token; every failure must name its cause and
+# never show the token. The full python image ships git and curl; the slim one
+# does not, and the non-root runner cannot apt-get them. It never targets a
+# real host or inventory.
+workspace-helper:
+  extends: .python_setup
+  stage: test
+  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  script:
+    - python -m pytest -q tests/test_workspace_credential_helper.py
+
 # catalog#31: the public configuration check (docs/configuration.md#validation).
 # Every example, every hardware and workstation profile pair and the cases in
 # tests/config_validation/valid/ must pass; every case in invalid/ must stop
