@@ -17,7 +17,15 @@
 # Python 3.13) is unpacked into the job's venv. That stands in for the
 # preinstalled package; it changes nothing the role does.
 #
+# The role's pre-flight checks run under any --tags (catalog#165), and the
+# first of them requires root. Check 0 proves that: without become the guide's
+# preview stops there with the message laptop.md's troubleshooting table
+# quotes. Checks 1 and 2 then skip the pre-flight by name (--skip-tags
+# preflight), as the runner cannot become root and has no `researcher` account.
+#
 # Checks:
+#   0. Without become, the guide's tag set stops at "Verify running as root"
+#      with "This role must run as root", and laptop.md quotes that message.
 #   1. `--tags repos --check --diff` succeeds: every vendor keyring is
 #      reported as "would change" and the whole repos task group previews.
 #   2. With the guide's own tag set the preview runs past the repos group, and
@@ -62,22 +70,47 @@ python -c 'import apt, apt_pkg' || { echo "python3-apt did not import in the ven
 tags=$(grep -m1 -oP '^TAGS=\K\S+' "$GUIDE") || { echo "$GUIDE no longer sets TAGS=" >&2; exit 1; }
 cp examples/laptop.yml "$HOME/laptop-vars.yml"
 
-# preview <log> <tags>: the guide's step 3 preview, become switched off.
+# preview <log> <tags> [extra args...]: the guide's step 3 preview, become
+# switched off.
 preview() {
-  local rc=0
+  local log="$1" tags="$2" rc=0
+  shift 2
   ansible-playbook -i localhost, -c local playbooks/site.yml \
     -e @"$HOME/laptop-vars.yml" -e ansible_become=false \
     -e "ansible_python_interpreter=$(command -v python)" \
-    --tags "$2" --check --diff >"$OUT/$1" 2>&1 || rc=$?
-  echo "== preview --tags $2: exit $rc"
-  grep -A1 'PLAY RECAP' "$OUT/$1" | tail -n 1
+    --tags "$tags" --check --diff "$@" >"$OUT/$log" 2>&1 || rc=$?
+  echo "== preview --tags $tags $*: exit $rc"
+  grep -A1 'PLAY RECAP' "$OUT/$log" | tail -n 1
   return "$rc"
 }
 
 failures=0
 
+# 0. The pre-flight runs under the guide's tags and stops a run without root.
+root_message='This role must run as root'
+if [ "$(id -u)" = 0 ]; then
+  echo "FAIL: this job must run as a non-root uid to check the root pre-flight" >&2
+  failures=$((failures + 1))
+elif preview no-become.log "$tags"; then
+  echo "FAIL: the guide's tag set previewed without root; the root pre-flight did not run" >&2
+  failures=$((failures + 1))
+else
+  first=$(awk '/^TASK \[/ { task = $0 } /^fatal:/ { print task; exit }' "$OUT/no-become.log" \
+    | sed -E 's/^TASK \[([^]:]+ : )?([^]]+)\].*/\2/')
+  if [ "$first" != "Verify running as root" ] || ! grep -qF "$root_message" "$OUT/no-become.log"; then
+    echo "FAIL: without root the guide's tag set stopped at '$first', not at the root pre-flight" >&2
+    grep -B2 -A6 '^fatal' "$OUT/no-become.log" >&2 || tail -n 40 "$OUT/no-become.log" >&2
+    failures=$((failures + 1))
+  elif ! grep -qF "\`$root_message\`" "$GUIDE"; then
+    echo "FAIL: $GUIDE's troubleshooting table no longer quotes '$root_message'" >&2
+    failures=$((failures + 1))
+  else
+    echo "ok: without root the guide's tag set stops at the root pre-flight with '$root_message'"
+  fi
+fi
+
 # 1. The repos task group previews end to end.
-if preview repos.log repos; then
+if preview repos.log repos --skip-tags preflight; then
   keyrings=$(grep -c 'Would download ' "$OUT/repos.log" || true)
   if [ "$keyrings" -gt 0 ]; then
     echo "ok: repos previews to the end; $keyrings vendor keyrings reported as would change"
@@ -93,7 +126,7 @@ fi
 
 # 2. The guide's tag set gets past the repos group, and stops only where the
 #    guide says it does.
-if preview guide-tags.log "$tags"; then
+if preview guide-tags.log "$tags" --skip-tags preflight; then
   echo "ok: the guide's tag set ($tags) previews to the end"
 else
   stop=$(awk '/^TASK \[/ { task = $0 } /^fatal:/ { print task; exit }' "$OUT/guide-tags.log" \

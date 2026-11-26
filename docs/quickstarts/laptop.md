@@ -62,7 +62,9 @@ ansible-playbook -i localhost, -c local playbooks/site.yml \
 ```
 
 `--list-tasks` prints the task groups that would run for those tags and
-changes nothing. `--check --diff` goes further and also changes nothing:
+changes nothing. It starts with the role's pre-flight checks, which run
+whatever tags you give: root, the managed user list, that every managed user
+exists with a home directory, and a valid `workstation_profile`. `--check --diff` goes further and also changes nothing:
 
 ```bash
 ansible-playbook -i localhost, -c local playbooks/site.yml \
@@ -132,6 +134,8 @@ your own backups for those.
 | Symptom | Cause and fix |
 | --- | --- |
 | `This role must run as root` | Run with `--become`, or `sudo -E env "PATH=$PATH" ansible-playbook ...` |
+| **Verify the managed user exists** fails with `One or more supplied key could not be found in the database` | `dev_user` (or a `dev_users` name) is not an account on this laptop. Create the account, or set `dev_user` and `dev_user_home` in `laptop-vars.yml` to your own |
+| `Home directory <path> does not exist for user <name>` | Set `dev_user_home` to the account's real home directory |
 | `Could not resolve a current upstream release for <tool>` | No network, a proxy, or a GitHub rate limit. The role refuses to install a stale or unverified binary. Retry later, or see [restricted networks](restricted-networks.md). Export `GITHUB_TOKEN` to raise the rate limit and never commit it |
 | `GitHub returned no SHA-256 asset digests` | Same family: the run stops rather than install an artifact without a digest |
 | The run says the ring is "holding the newest upstream release(s)" | Working as designed for `early` and `general`; nothing was installed for those tools and the run still succeeds |

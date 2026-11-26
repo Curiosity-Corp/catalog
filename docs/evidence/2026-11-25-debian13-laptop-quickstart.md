@@ -113,7 +113,8 @@ pass the whole `repos` group and stop only where laptop.md step 3 says.
 With the guide's tags, none of the role's pre-flight checks run (the root
 check, the managed-user check and the profile check have no tags), so the
 guide's troubleshooting message `This role must run as root` cannot appear,
-and a missing account is not reported up front (#165).
+and a missing account is not reported up front (#165). Fixed by #165: the
+pre-flight checks are tagged `always`, and `3-list-tasks` lists them.
 
 - Services enabled or disabled: not observable (see below).
 - Files written outside the home directory: not observable, because the apply
