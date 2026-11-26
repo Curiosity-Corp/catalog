@@ -93,13 +93,14 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `integrity` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `jellyfin` | supported | 2 | `managed-updates.yml` | `desktop` |  |
 | `kernel` | supported | 1 | `pro-mimic.yml` |  |  |
-| `keyboard` | supported | 1 | `main.yml` | `thin-client`, `byod-kiosk` |  |
+| `keyboard` | supported | 1 | `main.yml` |  |  |
 | `keycloak` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `kiosk` | supported | 2 | `main.yml` | `byod-kiosk` | Kiosk session (byod-kiosk profile). |
 | `kubernetes` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `languages` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `lightdm` | supported | 3 | `minimal-desktop.yml` |  |  |
 | `litra` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` |  |
+| `locale` | supported | 1 | `main.yml` |  |  |
 | `lockdown` | supported | 2 | `main.yml` | `byod-kiosk` | Kiosk lockdown (byod-kiosk profile). |
 | `locking` | supported | 8 | `main.yml`, `minimal-desktop.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `logging` | supported | 14 | `logrotate.yml`, `main.yml` |  |  |
@@ -146,7 +147,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `streamstack-framing` | supported | 1 | `main.yml` | `desktop` |  |
 | `streamstack-low-latency` | supported | 1 | `main.yml` | `desktop` |  |
 | `sunshine` | supported | 10 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
-| `system` | supported | 5 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
+| `system` | supported | 6 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `system-retirement` | supported | 1 | `main.yml` |  |  |
 | `systemd` | supported | 4 | `main.yml` |  |  |
 | `t460` | experimental | 1 | `main.yml` |  | ThinkPad T460 console workarounds. |
@@ -280,7 +281,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-454 variables, from `roles/developer_workstation/defaults/main.yml`.
+469 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -293,6 +294,14 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `earlyoom_prefer_regex` | string | `""` |  | supported |  | Optional process-name regexes (matched against the kernel comm name, 15 chars). Empty adds no --prefer / --avoid flag. Hosts that run long-lived agent sessions set these so browsers die before the agents do. |
 | `earlyoom_avoid_regex` | string | `""` |  | supported |  | (undocumented) |
 | `workstation_timezone` | string | `""` |  | supported |  | IANA time zone for the system clock (`timedatectl`), e.g. America/New_York. Empty leaves the host's zone untouched. StreamStack's light schedule takes its sunrise and sunset from this zone unless streamstack_latitude/longitude are set. |
+| `keyboard_manage` | string (template) | `"{{ workstation_profile in ['thin-client', 'byod-kiosk'] }}"` |  | supported |  | Keyboard layout and system locale (tasks/keyboard.yml, tasks/locale.yml). (...) |
+| `keyboard_layout` | string | `"us"` |  | supported |  | (undocumented) |
+| `keyboard_model` | string | `"pc105"` |  | supported |  | (undocumented) |
+| `keyboard_variant` | string | `""` |  | supported |  | (undocumented) |
+| `keyboard_options` | string | `""` |  | supported |  | (undocumented) |
+| `locale_manage` | bool | `false` |  | supported |  | (undocumented) |
+| `locale_lang` | string | `""` |  | supported |  | (undocumented) |
+| `locale_extra` | list | `[]` |  | supported |  | (undocumented) |
 | `developer_workstation_local_vars_file` | string | `"/etc/ansible/local-vars.yml"` |  | supported |  | Optional machine-local override file. Keep per-person/user values here on the target host instead of committing host-specific maps to this repo. |
 | `workstation_user_systemd_masked_units` | list | `[]` |  | supported |  | User-scoped systemd units that must remain masked on this workstation. This is intentionally empty for the public baseline: site operators can declare obsolete or superseded user timers in protected inventory without putting private application names in the collection. (...) |
 | `workstation_system_masked_units` | list | `[]` |  | supported |  | System-scoped counterpart: units that must stay stopped and masked, and paths that must not exist, on this host. Empty in the public baseline; site values belong in /etc/ansible/local-vars.yml or protected inventory. (...) |
@@ -340,6 +349,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `bitwarden_browser_extensions_enabled` | bool | `true` |  | supported |  | Force-install the Bitwarden browser extension into the Chromium-family browsers, the way the Firefox policy already does for Firefox (collaboration.yml). (...) |
 | `bitwarden_chromium_extension_targets` | list | list, 3 items |  | supported |  | (undocumented) |
 | `chromium_removed_extensions` | list | `[]` |  | supported |  | Chromium-family extensions a host removes from every profile, by store id (32 letters a-p). (...) |
+| `latest_release_skip_disabled_sources` | bool | `false` |  | supported |  | Set true on a slow, metered or offline-leaning link to skip the release API call for any source whose application contract has an `enabled_when` flag that is false on this host (see docs/low-bandwidth-and-offline.md). Default false: every source is resolved on every run. |
 | `latest_release_contracts` | dict | mapping, 44 keys |  | internal |  | Every API-backed release source also has an explicit application contract. The contract is inventory/provenance data, not a release pin: it says how an application is obtained and how its installed result can be checked. (...) |
 | `workstation_application_contracts` | dict | mapping, 18 keys |  | internal |  | Applications whose native update channel is not a GitHub release API. They still participate in the same health, provenance, and rollback contract. |
 | `workstation_update_transaction_tags` | list | list, 34 items |  | internal |  | Dynamic includes are entered only when their include task carries the selected tag. These tags cover the managed update transaction and its component includes so focused pulls (for example `--tags ai`) still run the foundation, rollback, health, and manifest tasks around the selected app. |
@@ -349,6 +359,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `workstation_update_state_dir` | string | `"/var/lib/curiosity/workstation-updates"` |  | internal |  | (undocumented) |
 | `workstation_update_artifact_cache_dir` | string | `"/var/cache/curiosity/artifacts"` |  | internal |  | (undocumented) |
 | `workstation_update_manifest_path` | string | `"/var/lib/curiosity/workstation-updates/last-run.json"` |  | internal |  | (undocumented) |
+| `workstation_update_summary_dir` | string | `"/var/lib/curiosity/update-summary"` |  | supported |  | World-readable, scrubbed copy of the last run's summary (see docs/maintenance-summary.md). |
 | `workstation_update_sbom_path` | string | `"/var/lib/curiosity/workstation-updates/sbom.cdx.json"` |  | internal |  | (undocumented) |
 | `workstation_update_snapshot_retention` | int | `3` |  | supported |  | (undocumented) |
 | `workstation_update_snapshot_keep` | int | `3` |  | supported |  | Count-based retention for snapshots/&lt;run_id&gt; (each holds a copy of every managed binary, several GB). After a successful update transaction the newest N are kept; the current run's snapshot and any run a quarantine marker names are never removed. Must be at least 1. |
@@ -392,7 +403,12 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `nodesource_key_fingerprint` | string | `"6F71F525282841EEDAF851B42F59B5F99B1BE0B4"` |  | supported | supply-chain | NodeSource repository trust anchor. This authenticates the repository key, not an application release, so it does not constrain bleeding-edge versions. |
 | `openziti_key_fingerprint` | string | `"34CBCF18427D8814B5BDBB0DDE3623EF08C996E5"` |  | supported | supply-chain | (undocumented) |
 | `apt_keyring_staging_dir` | string | `"/var/lib/curiosity/apt-keyrings"` |  | internal |  | Vendor APT signing keys are re-downloaded here on every run and installed to their signed-by path only when the vendor content differs (apt-keyring.yml). |
-| `apt_fallback_release` | string | `"noble"` |  | supported |  | Fallback release for third-party APT repos that don't support bleeding-edge Ubuntu (e.g., Cloudflare, HashiCorp don't have 25.10/questing packages yet) |
+| `apt_fallback_release_by_distribution` | dict | mapping, 1 key |  | supported |  | Release that third-party APT repos are pinned to, chosen per distribution (catalog#163). Ubuntu and its derivatives use noble, because third-party vendors lag bleeding-edge Ubuntu releases. Debian uses its own codename: each vendor's Debian channel is keyed by it. |
+| `apt_fallback_release` | string (template) | template expression |  | supported |  | (undocumented) |
+| `apt_vendor_family` | string (template) | template expression |  | supported |  | Vendor repositories whose path differs between Ubuntu and Debian (catalog#163). The family is debian on Debian and ubuntu everywhere else, so Ubuntu hosts keep exactly their noble lines. (...) |
+| `apt_vendor_repos` | dict | mapping, 3 keys |  | supported |  | (undocumented) |
+| `apt_packages_not_in_distribution` | dict | mapping, 1 key |  | supported |  | Packages in the role's APT lists that a distribution does not ship (catalog#162). software-properties-common is gone from Debian 13, and nothing in the role needs it (apt_repository uses python3-apt). |
+| `apt_packages_excluded` | string (template) | template expression |  | supported |  | Names removed from the APT package lists on this host: the distribution's missing packages, plus mongodb-mongosh when repos.yml skipped the MongoDB repository because MongoDB publishes no channel for the release. |
 | `user_dotfiles_repo` | string | `""` |  | private-hook |  | Chezmoi dotfiles (per-user, zero-PII bootstrap) Set `user_dotfiles_repo` to the user's fork URL to enable; empty = skip. Keep private repositories and personal identity values in host/group vars, Ansible Vault, or another secret store; never commit them here. (...) |
 | `chezmoi_user_name` | string | `""` |  | supported |  | (undocumented) |
 | `chezmoi_user_email` | string | `""` |  | supported |  | (undocumented) |
