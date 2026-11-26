@@ -81,6 +81,10 @@ Ansible's messages and as `(hidden: no_log value)` in the role's own. A login
 part in a URL appears as `***@`. The rules that read a secret run in their own
 `no_log` task, and their messages name the variable without its value.
 
+A retired variable (such as `claude_native_installer_url`, retired by
+catalog#171) is not in the spec: a host that still sets one gets only the
+role's warning that it is ignored, never a validation error.
+
 The later checks inside each feature's tasks stay as a second line of
 defence. A configuration that used to fail half-way through a run now fails at
 the start, before anything changes.

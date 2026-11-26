@@ -13,8 +13,13 @@
 # docs/reference.md, including the ones whose default is a template (listed
 # last). authd_archive_distribution, fleetd_notation_url and
 # fleetd_package_file are left out: their defaults need host facts, which the
-# check runs without (tests/test_argument_specs.py NOT_IN_SPEC). Internal variables are left
-# out. tests/test_argument_specs.py fails when a public variable has no entry.
+# check runs without (tests/test_argument_specs.py NOT_IN_SPEC). Most internal
+# variables are left out; the claude_native_* release settings are typed
+# because an operator mirroring the release may override them.
+# tests/test_argument_specs.py fails when a public variable has no entry.
+#
+# Retired variables (catalog#171) stay out of the spec: a host that still sets
+# one gets only the role's "no longer used" warning, never a validation error.
 #
 # `no_log: true` marks a secret (docs/reference.md safety impact "secret"):
 # Ansible prints $REDACTED$ instead of its value in every validation message.
@@ -117,6 +122,11 @@ argument_specs:
       codex_standalone_release: {type: str}
       claude_native_enabled: {type: bool}
       claude_native_channel: {type: str}
+      claude_native_release_base_url: {type: str}
+      claude_native_release_key_file: {type: str}
+      claude_native_release_key_fingerprint: {type: str}
+      claude_native_release_cache_dir: {type: str}
+      claude_native_platform_map: {type: dict}
       m365_cli_packages: {type: list}
       qwen_provider_enabled: {type: bool}
       qwen_provider_secret_command: {type: str, no_log: true}

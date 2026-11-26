@@ -36,6 +36,15 @@ NOT_IN_SPEC = {
 }
 
 
+# catalog#171 retired these; the role warns that a value set for one is
+# ignored. A spec entry would turn that warning into a validation error.
+RETIRED = {
+    ("developer_workstation", "codex_standalone_installer_url"),
+    ("developer_workstation", "claude_native_installer_url"),
+    ("developer_workstation", "ziti_install_script_url"),
+}
+
+
 class _Loader(yaml.SafeLoader):
     """SafeLoader that reads Ansible's `!unsafe` scalars as plain strings."""
 
@@ -128,3 +137,11 @@ def test_secrets_are_no_log_strings(role: str) -> None:
 def test_the_spec_carries_no_defaults(role: str) -> None:
     with_default = sorted(name for name, option in _spec(role).items() if "default" in option)
     assert not with_default, f"defaults belong in roles/{role}/defaults/main.yml, not the spec: {with_default}"
+
+
+def test_retired_variables_stay_out_of_the_spec() -> None:
+    """A retired variable still set on a host keeps only its warning (catalog#171)."""
+    in_spec = sorted(f"{role}/{name}" for role, name in RETIRED if name in _spec(role))
+    assert not in_spec, f"retired variables must not be in the argument spec: {in_spec}"
+    still_defaulted = sorted(f"{role}/{name}" for role, name in RETIRED if name in _defaults(role))
+    assert not still_defaulted, f"no longer retired, drop them from RETIRED: {still_defaulted}"

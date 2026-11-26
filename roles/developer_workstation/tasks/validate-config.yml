@@ -91,7 +91,7 @@
     _config_http_urls: [jellyfin_web_url, kiosk_target_url]
     _config_path_name_re: '.*_(path|dir|home|bin|executable|python|venv|root|file)$'
     # *_file options that hold a file name, not a path.
-    _config_bare_file_names: [streamstack_framing_model_file]
+    _config_bare_file_names: [streamstack_framing_model_file, claude_native_release_key_file]
 
 - name: Find option combinations that cannot work
   ansible.builtin.set_fact:
