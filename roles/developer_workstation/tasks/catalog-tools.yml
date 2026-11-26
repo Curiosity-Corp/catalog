@@ -1,0 +1,81 @@
+---
+# =============================================================================
+# catalog-tools: the diagnostics a researcher runs after a failed update
+# =============================================================================
+# Installs the catalog's own Rust binary (tools/, decision 0005) from the
+# `catalog-tools` asset a release tag keeps (docs/release-checklist.md), and
+# the check list `catalog-tools diagnostics` reads: which services and disks to
+# check and when the last run's record is stale (catalog#18). The binary never
+# changes the machine: services are only read with `systemctl show`, never
+# started, stopped or restarted, and StreamStack and Sunshine are left out
+# (docs/troubleshooting.md).
+# =============================================================================
+
+- name: Require the catalog-tools release asset URL and its SHA-256
+  ansible.builtin.assert:
+    that:
+      - catalog_tools_install_url | default('') is match('^https://')
+      - catalog_tools_install_sha256 | default('') is match('^[0-9a-fA-F]{64}$')
+    fail_msg: >-
+      Set catalog_tools_install_url to the https URL of the catalog-tools
+      release asset and catalog_tools_install_sha256 to its SHA-256 (the
+      catalog-tools.sha256 file next to it) before enabling catalog-tools.
+
+- name: Require read-only diagnostics targets outside StreamStack and Sunshine
+  ansible.builtin.assert:
+    that:
+      - catalog_tools_diagnostics_services is sequence
+      - catalog_tools_diagnostics_services is not string
+      - >-
+        catalog_tools_diagnostics_services
+        | reject('match', '^[A-Za-z0-9][A-Za-z0-9@_.:-]*[.](service|timer|socket|path|mount)$')
+        | list | length == 0
+      - >-
+        catalog_tools_diagnostics_services
+        | select('search', '(?i)streamstack|sunshine')
+        | list | length == 0
+      - catalog_tools_diagnostics_disk_paths is sequence
+      - catalog_tools_diagnostics_disk_paths is not string
+      - catalog_tools_diagnostics_disk_paths | reject('match', '^/') | list | length == 0
+      - catalog_tools_diagnostics_disk_paths | select('search', '(^|/)[.][.](/|$)') | list | length == 0
+      - catalog_tools_diagnostics_min_free_mib | string is match('^[1-9][0-9]*$')
+      - catalog_tools_diagnostics_stale_after_days | string is match('^[1-9][0-9]*$')
+    fail_msg: >-
+      catalog_tools_diagnostics_services must list systemd unit names (none of
+      them StreamStack or Sunshine), catalog_tools_diagnostics_disk_paths
+      absolute paths, and catalog_tools_diagnostics_min_free_mib and
+      catalog_tools_diagnostics_stale_after_days positive integers.
+
+- name: Install catalog-tools
+  ansible.builtin.get_url:
+    url: "{{ catalog_tools_install_url }}"
+    dest: "{{ catalog_tools_install_path }}"
+    checksum: "sha256:{{ catalog_tools_install_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create the diagnostics check list folder
+  ansible.builtin.file:
+    path: "{{ catalog_tools_diagnostics_checks_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the diagnostics check list
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'schema': 'curiosity.workstation.diagnostics-checks/v1',
+          'services': catalog_tools_diagnostics_services | list,
+          'disk_paths': catalog_tools_diagnostics_disk_paths | list,
+          'disk_min_free_mib': catalog_tools_diagnostics_min_free_mib | int,
+          'stale_after_days': catalog_tools_diagnostics_stale_after_days | int
+        } | to_nice_json
+      }}
+    dest: "{{ catalog_tools_diagnostics_checks_path }}"
+    owner: root
+    group: root
+    mode: "0644"

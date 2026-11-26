@@ -84,6 +84,7 @@ variables:
   pia_login_file: {stability: private-hook, safety: secret}
   hhtest_authorized_keys: {stability: private-hook, safety: account}
   missionctl_install_url: {stability: private-hook, safety: supply-chain}
+  catalog_tools_install_url: {stability: private-hook, safety: supply-chain}
   focuspass_screenlock_install_url: {stability: private-hook, safety: supply-chain}
   weechat_teams_client_id: {stability: private-hook}
   user_dotfiles_repo: {stability: private-hook}

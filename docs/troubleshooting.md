@@ -130,21 +130,44 @@ hours or a day old before installing it.
 When a run fails and the sections above do not cover it, a maintainer needs
 the versions, the profile and the last run's status, but not your machine.
 `catalog-tools diagnostics` (catalog#41, the policy from catalog#25) builds that
-as a small, redacted JSON bundle. It runs on your machine only: it has no
-network code, sends and uploads nothing, and changes no package, service or
-setting (it never starts, stops or restarts StreamStack or anything else). It
-runs three read-only programs, each limited to five seconds: `ansible --version`,
-`ansible-community --version` and `uname -m`.
+as a small, redacted JSON bundle, checks the machine the run left behind, and
+says in plain words what needs attention (catalog#18). It runs on your machine
+only: it has no network code, sends and uploads nothing, and changes no
+package, service or setting (it never starts, stops or restarts StreamStack or
+anything else).
 
-Build the binary from `tools/` (`cargo build --release`, or take it from the
-`tools` CI job), then:
+The role installs it at `/usr/local/bin/catalog-tools` when
+`catalog_tools_enabled` is true, from the `catalog-tools` asset of a catalog
+release (`catalog_tools_install_url`, checked against
+`catalog_tools_install_sha256`), together with its check list
+`/etc/curiosity/diagnostics-checks.json`. Without the role, take the binary
+from the `tools` CI job. Then:
 
 ```bash
-catalog-tools diagnostics preview --tags packages,update   # shows the bundle, writes nothing
+catalog-tools diagnostics summary                          # what failed, as short text for an issue; writes nothing
+catalog-tools diagnostics preview --tags packages,update   # shows the full bundle, writes nothing
 catalog-tools diagnostics write --tags packages,update     # shows it again, asks, then saves it
 catalog-tools diagnostics path                             # the bundle folder and the bundles in it
 catalog-tools diagnostics delete                           # deletes every saved bundle
 ```
+
+**What it checks.** Every check only reads, and each is bounded:
+
+| Check | How | Found when |
+| --- | --- | --- |
+| Managed commands: present, version, release | the manifest's application contracts: the file must exist and be executable; the version comes from the contract's own version query (`--version`, `version`, `-v` and the like, nothing else is run); the release and how it was verified come from the manifest | missing, not executable, or no version answer |
+| Services | `systemctl show` of each unit in the check list (by default `ansible-pull.timer` and `.service` on pulling profiles, `logrotate.timer`, `systemd-tmpfiles-clean.timer`); never `start`, `stop` or `restart` | not installed, failed, or a timer that is not active |
+| Disk space | `df -P -k` of each path in the check list (`/`, `/var`, `/usr/local`, `/tmp`) | less free than `catalog_tools_diagnostics_min_free_mib` (2048 MiB) |
+| Stale files | the SHA-256 of each file the last update recorded, against what it recorded (after a rollback: what the rollback restored) | changed or gone since the update |
+| Stale record | the last run's finish time | older than `catalog_tools_diagnostics_stale_after_days` (14) |
+
+The bounds: five seconds and 64 KiB of output per program, 60 seconds for all
+version queries together, at most 64 commands, 32 services, 8 disks and 256
+files (files over 1 GiB are not hashed); whatever a bound leaves out is listed
+under "Not checked". Anything named after StreamStack or Sunshine is left out
+of every check. Without the check list, services and disk space are not
+checked and the bundle says so. The other programs it runs are `ansible
+--version`, `ansible-community --version` and `uname -m`.
 
 `--tags` is the tag list the failing run used (it is not in the manifest).
 `--profile` overrides the manifest's profile. `--redact WORD`, repeatable,
@@ -175,7 +198,9 @@ Delete the bundle once the issue is closed.
 | Profile | `--profile`, else the manifest's `profile` |
 | Architecture, OS name | `uname -m`, `PRETTY_NAME` in `/etc/os-release` |
 | Selected tags | `--tags` |
-| Last run | the manifest's `status`, start and finish time, update ring, catalog commit and whether it was verified, quarantine and install flags, failed task and failure message, failed health checks and warnings, ring blockers |
+| Last run | the manifest's `status`, start and finish time and age in days, update ring, catalog commit and whether it was verified, quarantine and install flags, failed task and failure message, failed health checks and warnings, ring blockers |
+| Health | per managed command: name, path, present or not, version number, release repository and tag, verification method; per service: load, active and sub state and result; per disk path: free and total MiB; managed files: how many were compared, how many are unchanged, and the path and state of each that is not |
+| Findings | one plain sentence per problem above, built from the redacted values; `summary` prints these |
 
 Structured values (versions, profile, tags, status, times, the commit) are
 kept only when they have the expected shape; anything else becomes
@@ -201,10 +226,12 @@ cannot be linked by their tags. The bundle's `redacted` field counts what was
 replaced.
 
 **Never collected:** the manifest's `host` and `run_id` (the run id includes
-a hash of the host name, which would link bundles), package inventories, the
-before and after file inventories, application contracts, release checksums,
-signer fingerprints, environment variables, and the contents of any file
-other than the manifest and `/etc/os-release`.
+a hash of the host name, which would link bundles), package inventories, any
+checksum (files are compared with the manifest's inventory, and only the
+result is kept), the rest of the application contracts and release records,
+signer fingerprints, environment variables, program output beyond the version
+number, and the contents of any file other than the manifest, the check list
+and `/etc/os-release`.
 
 **Limits.** Redaction is pattern based. It cannot recognise a name it has no
 pattern for, so read the preview, and use `--redact` for any word that still
@@ -212,4 +239,9 @@ identifies you. Long digests of exactly 40 or 64 hex characters, such as
 commits and SHA-256 sums, are public and kept. The tests in
 `tools/catalog-tools/src/diagnostics/` and
 `tools/catalog-tools/tests/diagnostics.rs` run the command against a fixture
-machine with documentation addresses only, never against a real host.
+machine with documentation addresses only, never against a real host: the
+health checks run against an in-memory machine (`FakeHost`) or against fake
+`systemctl` and `df` programs that record every call, which the tests then
+hold to `show`, `df` and version queries. They cover a missing binary, a
+failed service, a stopped timer, low disk space, a stale file and a stale
+record.

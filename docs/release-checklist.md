@@ -20,7 +20,10 @@ Use this checklist for every public collection release.
 - [ ] Publish the GitHub/GitLab release notes and registry artifact.
 - [ ] Link the tag pipeline's `release_assets` artifacts on the release page
       beside the collection: `collection.cdx.json` (the dependency-complete
-      SBOM, `docs/sbom.md`), `collection.sha256` and `ci-toolchain.txt`.
+      SBOM, `docs/sbom.md`), `collection.sha256` and `ci-toolchain.txt`,
+      and the `catalog-tools` diagnostics binary with `catalog-tools.sha256`:
+      hosts install it from that link with `catalog_tools_install_url` and
+      `catalog_tools_install_sha256` (`docs/troubleshooting.md`).
       The `sbom` job has already validated the SBOM against the CycloneDX
       schema and checked that it lists every declared dependency.
 - [ ] Review the dependency register (`docs/dependency-register.md`): re-read

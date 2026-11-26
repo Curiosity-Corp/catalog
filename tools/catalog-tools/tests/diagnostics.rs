@@ -115,9 +115,15 @@ fn machine() -> Machine {
 fn run(machine: &Machine, args: &[&str], state: Option<&str>) -> Output {
     let path = format!("{}:/usr/bin:/bin", machine.root.join("bin").display());
     let mut command = Command::new(env!("CARGO_BIN_EXE_catalog-tools"));
+    command.args(["diagnostics"]).args(args);
+    // Never the real machine's check list: a test that wants one passes it.
+    let builds_a_bundle = matches!(args.first(), Some(&("preview" | "write" | "summary")));
+    if builds_a_bundle && !args.contains(&"--checks") {
+        command
+            .arg("--checks")
+            .arg(machine.root.join("no-check-list.json"));
+    }
     command
-        .args(["diagnostics"])
-        .args(args)
         .env_clear()
         .env("PATH", path)
         .env("HOME", machine.root.join("home/researcher"))
@@ -322,4 +328,201 @@ fn bundle_folder_falls_back_to_home_and_a_missing_manifest_is_reported() {
 
 fn mode(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+/// The health-check fixture: a check list, fake `systemctl` and `df` that log
+/// every call, a managed tool that is present, one that is gone and one whose
+/// file changed since the update. Returns (manifest, check list, call log).
+fn health_fixture(m: &Machine) -> (String, String, PathBuf) {
+    let calls = m.root.join("calls.log");
+    let bin = m.root.join("bin");
+    let script = |path: &Path, body: &str| {
+        fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    script(
+        &bin.join("systemctl"),
+        &format!(
+            r#"echo "systemctl $*" >> '{calls}'
+[ "$1" = show ] || exit 64
+for unit; do :; done
+case "$unit" in
+  ansible-pull.service) printf 'LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\n' ;;
+  *) printf 'LoadState=loaded\nActiveState=active\nSubState=waiting\nResult=success\n' ;;
+esac"#,
+            calls = calls.display()
+        ),
+    );
+    script(
+        &bin.join("df"),
+        &format!(
+            r#"echo "df $*" >> '{calls}'
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 10240000 9728000 512000 95%% /\n'"#,
+            calls = calls.display()
+        ),
+    );
+    let tools = m.root.join("opt/bin");
+    fs::create_dir_all(&tools).unwrap();
+    let present = tools.join("goodtool");
+    script(
+        &present,
+        &format!(r#"echo "goodtool $*" >> '{}'; echo 'goodtool 1.2.3'"#, calls.display()),
+    );
+    let stale = tools.join("staletool");
+    script(&stale, "echo 'staletool 0.9.0'");
+    let sha = |bytes: &[u8]| -> String {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    let present_sum = sha(&fs::read(&present).unwrap());
+    let stale_sum = sha(b"the file the update installed");
+    let gone = tools.join("gonetool");
+    let manifest = serde_json::json!({
+        "status": "success",
+        "finished_at": "2026-01-02T03:04:05Z",
+        "profile": "desktop",
+        "application_contracts": {
+            "goodtool": {"verification": "github-asset-digest", "healthcheck": [present, "--version"]},
+            "gonetool": {"healthcheck": [gone, "--version"]},
+            "staletool": {"healthcheck": [stale, "--version"]},
+            "streamstack": {"healthcheck": [present, "--version"]}
+        },
+        "upstream_releases": {
+            "goodtool": {"repository": "example/goodtool", "tag_name": "v1.2.3"}
+        },
+        "after": [
+            {"path": present, "exists": true, "checksum": present_sum},
+            {"path": stale, "exists": true, "checksum": stale_sum}
+        ]
+    });
+    let manifest_path = m.root.join("health-run.json");
+    fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let checks = m.root.join("checks.json");
+    fs::write(
+        &checks,
+        serde_json::json!({
+            "schema": "curiosity.workstation.diagnostics-checks/v1",
+            "services": ["ansible-pull.timer", "ansible-pull.service", "streamstack-console.service"],
+            "disk_paths": ["/"],
+            "disk_min_free_mib": 2048,
+            "stale_after_days": 14
+        })
+        .to_string(),
+    )
+    .unwrap();
+    (
+        manifest_path.display().to_string(),
+        checks.display().to_string(),
+        calls,
+    )
+}
+
+#[test]
+fn health_checks_find_a_missing_binary_a_failed_service_and_a_stale_artifact() {
+    let m = machine();
+    let (manifest, checks, calls) = health_fixture(&m);
+    let out = run(
+        &m,
+        &["preview", "--manifest", &manifest, "--checks", &checks],
+        Some(&state(&m)),
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bundle = bundle_json(&out.stdout);
+    let health = &bundle["health"];
+    let command = |name: &str| {
+        health["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    assert_eq!(command("goodtool")["version"], "1.2.3");
+    assert_eq!(command("goodtool")["matches_release"], true);
+    assert_eq!(command("goodtool")["repository"], "example/goodtool");
+    assert_eq!(command("gonetool")["status"], "missing");
+    assert_eq!(command("streamstack"), Value::Null, "StreamStack is left out");
+    assert_eq!(health["services"].as_array().unwrap().len(), 2);
+    assert_eq!(health["services"][1]["active"], "failed");
+    assert_eq!(health["disks"][0]["available_mib"], 500);
+    assert_eq!(health["artifacts"]["unchanged"], 1);
+    assert_eq!(health["artifacts"]["problems"][0]["state"], "changed");
+
+    let findings: Vec<String> = bundle["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap().to_string())
+        .collect();
+    let has = |needle: &str| findings.iter().any(|f| f.contains(needle));
+    assert!(has("Command `gonetool` is missing"), "{findings:?}");
+    assert!(
+        has("Service `ansible-pull.service` has failed (result: exit-code)."),
+        "{findings:?}"
+    );
+    assert!(has("Low disk space on /: 500 MiB free"), "{findings:?}");
+    assert!(
+        has("staletool differs from the file the last update installed"),
+        "{findings:?}"
+    );
+    assert!(has("The last update finished"), "{findings:?}");
+
+    // Read-only and bounded: services only `show`n, disks only `df`'d, a
+    // managed tool only asked for its version, nothing about StreamStack.
+    let log = fs::read_to_string(&calls).unwrap();
+    for line in log.lines() {
+        assert!(
+            line.starts_with("systemctl show --no-pager --property=")
+                || line.starts_with("df -P -k -- ")
+                || line == "goodtool --version",
+            "unexpected call: {line}"
+        );
+        assert!(!line.to_ascii_lowercase().contains("streamstack"), "{line}");
+    }
+    assert_eq!(log.lines().count(), 4, "{log}");
+    assert!(
+        !m.root.join("state").exists(),
+        "preview must not create anything"
+    );
+}
+
+#[test]
+fn summary_is_short_redacted_text_for_an_issue() {
+    let m = machine();
+    let (_, checks, _) = health_fixture(&m);
+    let manifest = manifest_arg(&m);
+    let out = run(
+        &m,
+        &["summary", "--manifest", &manifest, "--checks", &checks],
+        Some(&state(&m)),
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_redacted(&m, &text);
+    assert_redacted(&m, &String::from_utf8_lossy(&out.stderr));
+    assert!(text.starts_with("### Workstation diagnostics"), "{text}");
+    assert!(text.contains("- Last update: `rolled_back`"), "{text}");
+    assert!(
+        text.contains("- The last update run ended with status `rolled_back`."),
+        "{text}"
+    );
+    assert!(
+        text.contains("- Service `ansible-pull.service` has failed (result: exit-code)."),
+        "{text}"
+    );
+    assert!(text.contains("Redacted before printing:"), "{text}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Nothing was written"));
+    assert!(!m.root.join("state").exists(), "summary writes nothing");
 }

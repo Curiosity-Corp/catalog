@@ -43,6 +43,8 @@ enum Command {
 enum DiagnosticsCommand {
     /// Print the bundle that `write` would save. Writes nothing.
     Preview(BundleArgs),
+    /// Print a short redacted summary of what failed, to paste into an issue. Writes nothing.
+    Summary(BundleArgs),
     /// Print the bundle, ask, then save it in the bundle folder (mode 0600).
     Write {
         #[command(flatten)]
@@ -62,6 +64,9 @@ struct BundleArgs {
     /// The update manifest the role wrote.
     #[arg(long, default_value = diagnostics::DEFAULT_MANIFEST)]
     manifest: PathBuf,
+    /// The check list the role installed: services and disks to check.
+    #[arg(long, default_value = diagnostics::health::DEFAULT_CHECKS)]
+    checks: PathBuf,
     /// The profile the failing run used (default: the manifest's).
     #[arg(long)]
     profile: Option<String>,
@@ -426,11 +431,25 @@ fn write_file(path: &Path, text: &str) -> Result<()> {
 
 const NOTHING_SENT: &str = "Nothing has been sent anywhere: this command has no network code.";
 
-fn preview(args: &BundleArgs) -> Result<(String, String)> {
-    let inputs = diagnostics::gather(&args.manifest, args.profile.clone(), args.tags.clone());
+/// The bundle for `args` and its file stamp.
+fn bundle(args: &BundleArgs) -> (serde_json::Value, String) {
+    let inputs = diagnostics::gather(
+        &args.manifest,
+        &args.checks,
+        args.profile.clone(),
+        args.tags.clone(),
+    );
     let mut redactor = Redactor::new(&diagnostics::known_from_environment(args.redact.clone()));
     let (created_at, stamp) = diagnostics::utc_now();
-    let text = diagnostics::render(&diagnostics::build(&inputs, &mut redactor, &created_at));
+    (
+        diagnostics::build(&inputs, &mut redactor, &created_at),
+        stamp,
+    )
+}
+
+fn preview(args: &BundleArgs) -> Result<(String, String)> {
+    let (bundle, stamp) = bundle(args);
+    let text = diagnostics::render(&bundle);
     println!("{text}");
     eprintln!(
         "Read the bundle above. Anything that still identifies you, your machine or your research? \
@@ -445,6 +464,15 @@ fn run_diagnostics(command: DiagnosticsCommand) -> Result<ExitCode> {
         DiagnosticsCommand::Preview(args) => {
             preview(&args)?;
             eprintln!("Preview only: nothing was written. {NOTHING_SENT}");
+        }
+        DiagnosticsCommand::Summary(args) => {
+            let (bundle, _) = bundle(&args);
+            print!("{}", diagnostics::summary(&bundle));
+            eprintln!(
+                "Read the summary above before you paste it into an issue; run again with \
+                 --redact WORD for anything that still identifies you. Nothing was written. \
+                 {NOTHING_SENT}"
+            );
         }
         DiagnosticsCommand::Write { bundle, yes } => {
             let (text, stamp) = preview(&bundle)?;

@@ -1,21 +1,26 @@
-//! `catalog-tools diagnostics`: a redacted, local support bundle (catalog#41).
+//! `catalog-tools diagnostics`: a redacted, local support bundle (catalog#41)
+//! that also says why a maintenance run failed (catalog#18).
 //!
 //! It reads the last update manifest the role wrote, asks the local `ansible`
-//! for its version and `uname` for the architecture, and builds a small JSON
-//! bundle in which every free-text value has passed through
-//! [`redact::Redactor`]. It changes nothing on the machine, opens no network
-//! connection, and writes only one file, after the researcher has read it, in
-//! [`bundle_dir`]. The field policy is in docs/troubleshooting.md.
+//! for its version and `uname` for the architecture, runs the read-only
+//! [`health`] checks (managed commands, services, disk space, the files the
+//! last update installed), and builds a small JSON bundle in which every
+//! free-text value has passed through [`redact::Redactor`], plus a list of
+//! findings in plain words that [`summary`] turns into text for an issue. It
+//! changes nothing on the machine, opens no network connection, and writes
+//! only one file, after the researcher has read it, in [`bundle_dir`]. The
+//! field policy is in docs/troubleshooting.md.
 
+pub mod health;
+pub mod host;
 pub mod redact;
 
 use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::LazyLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use regex::Regex;
@@ -30,13 +35,14 @@ pub const SCHEMA: &str = "curiosity.workstation.diagnostics/v1";
 /// Bundle files are named `diagnostics-<UTC time>.json`; `delete` removes only these.
 pub const FILE_PREFIX: &str = "diagnostics-";
 
-/// The only programs the command runs, each read-only and bounded in time.
+/// The fixed programs the command runs, each read-only and bounded in time.
+/// The [`health`] checks add `systemctl show`, `df` and the version queries
+/// of managed commands.
 const PROBES: [(&str, &[&str]); 3] = [
     ("ansible", &["--version"]),
     ("ansible-community", &["--version"]),
     ("uname", &["-m"]),
 ];
-const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// What the bundle describes, before redaction.
 #[derive(Debug, Clone)]
@@ -54,21 +60,60 @@ pub struct Inputs {
     pub profile: Option<String>,
     /// `--tags`, the tags the failing run selected.
     pub tags: Vec<String>,
+    /// What the [`health`] checks found.
+    pub health: health::Health,
 }
 
-/// Reads this machine: runs [`PROBES`], os-release and the manifest. Nothing
-/// is written and no service is touched.
-pub fn gather(manifest_path: &Path, profile: Option<String>, tags: Vec<String>) -> Inputs {
-    let [ansible, community, uname] = PROBES.map(|(program, args)| first_line(program, args));
+/// Reads this machine: runs [`PROBES`], os-release, the manifest and the
+/// [`health`] checks of the check list at `checks_path`. Nothing is written
+/// and no service is started, stopped or changed.
+pub fn gather(
+    manifest_path: &Path,
+    checks_path: &Path,
+    profile: Option<String>,
+    tags: Vec<String>,
+) -> Inputs {
+    let [ansible, community, uname] = PROBES.map(|(program, args)| probe(program, args));
+    let manifest = read_manifest(manifest_path);
+    let parsed = manifest.as_ref().ok().and_then(|text| parse_manifest(text).ok());
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let health = health::gather(
+        &host::Local,
+        parsed.as_ref(),
+        read_checks(checks_path),
+        home.as_deref(),
+        now,
+    );
     Inputs {
         ansible,
         ansible_community: community,
         architecture: Ok(uname.unwrap_or_else(|_| std::env::consts::ARCH.to_string())),
         os: os_pretty_name(Path::new("/etc/os-release")),
-        manifest: read_manifest(manifest_path),
+        manifest,
         manifest_path: manifest_path.to_path_buf(),
         profile,
         tags,
+        health,
+    }
+}
+
+fn read_checks(path: &Path) -> Result<health::Checks, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => health::parse_checks(&text),
+        Err(error) if error.kind() == ErrorKind::NotFound => Err(format!(
+            "no check list at {}: the role installs it with catalog-tools (catalog_tools_enabled), so services and disk space were not checked",
+            path.display()
+        )),
+        Err(error) => Err(format!(
+            "check list {} unreadable: {}",
+            path.display(),
+            error.kind()
+        )),
     }
 }
 
@@ -112,64 +157,12 @@ pub fn known_from_environment(extra: Vec<String>) -> Known {
     }
 }
 
-/// The first non-empty output line of `program args`, within [`PROBE_TIMEOUT`].
-fn first_line(program: &str, args: &[&str]) -> Result<String, String> {
-    let mut child = match Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Err("not installed".to_string());
-        }
-        Err(error) => return Err(format!("cannot run {program}: {error}")),
-    };
-    let Some(mut stdout) = child.stdout.take() else {
-        return Err(format!("no output pipe from {program}"));
-    };
-    let reader = std::thread::spawn(move || {
-        let mut text = String::new();
-        stdout.read_to_string(&mut text).map(|_| text)
-    });
-    let deadline = Instant::now() + PROBE_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let text = reader
-                    .join()
-                    .map_err(|_| format!("reading {program} output failed"))?
-                    .map_err(|error| format!("reading {program} output failed: {error}"))?;
-                if !status.success() {
-                    return Err(format!("{program} exited with {status}"));
-                }
-                return text
-                    .lines()
-                    .map(str::trim)
-                    .find(|line| !line.is_empty())
-                    .map(str::to_string)
-                    .ok_or_else(|| format!("{program} printed nothing"));
-            }
-            Ok(None) if Instant::now() >= deadline => {
-                // Best effort: the child is abandoned either way and the bundle says so.
-                if let Err(error) = child.kill() {
-                    return Err(format!(
-                        "{program} timed out and could not be stopped: {error}"
-                    ));
-                }
-                // Reaping a killed child cannot fail in a way the bundle could report.
-                child.wait().ok();
-                return Err(format!(
-                    "{program} did not answer within {} s",
-                    PROBE_TIMEOUT.as_secs()
-                ));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(error) => return Err(format!("waiting for {program} failed: {error}")),
-        }
-    }
+/// The first non-empty output line of `program args`, within the probe limits.
+fn probe(program: &str, args: &[&str]) -> Result<String, String> {
+    let text = host::run_bounded(program, args)?;
+    host::first_line(&text)
+        .map(str::to_string)
+        .ok_or_else(|| format!("{program} printed nothing"))
 }
 
 fn os_pretty_name(path: &Path) -> Option<String> {
@@ -237,18 +230,49 @@ fn manifest_field<'a>(manifest: &'a Result<Value, String>, name: &str) -> Option
     manifest.as_ref().ok().and_then(|m| m.get(name))
 }
 
+/// The manifest as a JSON object.
+fn parse_manifest(text: &str) -> Result<Value, String> {
+    serde_json::from_str(text)
+        .map_err(|error| format!("not valid JSON: {error}"))
+        .and_then(|value: Value| {
+            if value.is_object() {
+                Ok(value)
+            } else {
+                Err("not a JSON object".to_string())
+            }
+        })
+}
+
+/// Seconds since the epoch for a [`TIMESTAMP`] (`2026-11-24T08:20:11Z`,
+/// `2026-11-24T08:20:11+01:00`).
+fn epoch_seconds(timestamp: &str) -> Option<u64> {
+    let number = |range: std::ops::Range<usize>| timestamp.get(range)?.parse::<i64>().ok();
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
+    // Howard Hinnant's days-from-civil algorithm, the inverse of `utc_from`.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let mut seconds = days * 86_400 + hour * 3600 + minute * 60 + second;
+    let zone = timestamp[19..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    if let Some(sign) = zone.chars().next().filter(|c| *c == '+' || *c == '-') {
+        let digits: String = zone[1..].chars().filter(char::is_ascii_digit).collect();
+        let hours = digits.get(0..2)?.parse::<i64>().ok()?;
+        let minutes = digits.get(2..4)?.parse::<i64>().ok()?;
+        let offset = hours * 3600 + minutes * 60;
+        seconds -= if sign == '+' { offset } else { -offset };
+    }
+    u64::try_from(seconds).ok()
+}
+
 /// The bundle as JSON. Pure: every machine value comes from `inputs`.
 pub fn build(inputs: &Inputs, redactor: &mut Redactor, created_at: &str) -> Value {
     let manifest: Result<Value, String> = match &inputs.manifest {
-        Ok(text) => serde_json::from_str(text)
-            .map_err(|error| format!("not valid JSON: {error}"))
-            .and_then(|value: Value| {
-                if value.is_object() {
-                    Ok(value)
-                } else {
-                    Err("not a JSON object".to_string())
-                }
-            }),
+        Ok(text) => parse_manifest(text),
         Err(reason) => Err(reason.clone()),
     };
     let field = |name: &str| manifest_field(&manifest, name);
@@ -259,7 +283,7 @@ pub fn build(inputs: &Inputs, redactor: &mut Redactor, created_at: &str) -> Valu
         (None, None) => Value::String("unknown".to_string()),
     };
 
-    let last_run = match &manifest {
+    let mut last_run = match &manifest {
         Err(reason) => json!({ "status": "unknown", "error": redactor.redact(reason) }),
         Ok(_) => {
             let mut run = Map::new();
@@ -329,6 +353,10 @@ pub fn build(inputs: &Inputs, redactor: &mut Redactor, created_at: &str) -> Valu
         }
     };
 
+    let mut findings = run_findings(&mut last_run, &inputs.health);
+    let (health, health_findings) = health::render(&inputs.health, redactor);
+    findings.extend(health_findings);
+
     let tags: Vec<Value> = inputs.tags.iter().map(|tag| checked(tag, &TAG)).collect();
     let architecture = match &inputs.architecture {
         Ok(arch) => checked(arch, &WORD),
@@ -354,6 +382,8 @@ pub fn build(inputs: &Inputs, redactor: &mut Redactor, created_at: &str) -> Valu
         "selected_tags": tags,
         "last_run": last_run,
         "manifest_path": manifest_path,
+        "findings": findings,
+        "health": health,
     });
     let counts: Map<String, Value> = redactor
         .counts()
@@ -362,6 +392,153 @@ pub fn build(inputs: &Inputs, redactor: &mut Redactor, created_at: &str) -> Valu
         .collect();
     bundle["redacted"] = Value::Object(counts);
     bundle
+}
+
+/// What the last run's record says went wrong, in plain words, from the
+/// already validated and redacted `last_run`; adds its age in days.
+fn run_findings(last_run: &mut Value, health: &health::Health) -> Vec<String> {
+    let text = |key: &str| last_run.get(key).and_then(Value::as_str).map(str::to_string);
+    let mut findings = Vec::new();
+    if let Some(error) = text("error") {
+        findings.push(format!("The last update's record could not be read: {error}."));
+        return findings;
+    }
+    match text("status").as_deref() {
+        Some("success") | Some("unknown") | None => {}
+        Some(status) => findings.push(format!(
+            "The last update run ended with status `{status}`."
+        )),
+    }
+    if let Some(task) = text("failed_task") {
+        match text("failure_message") {
+            Some(message) => {
+                findings.push(format!("It failed in the task `{task}`: {message}"));
+            }
+            None => findings.push(format!("It failed in the task `{task}`.")),
+        }
+    }
+    let failed: Vec<&str> = last_run
+        .get("healthcheck_failures")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    if !failed.is_empty() {
+        findings.push(format!(
+            "Post-update health checks failed for: {}.",
+            failed.join(", ")
+        ));
+    }
+    let finished = text("finished_at")
+        .filter(|value| TIMESTAMP.is_match(value))
+        .and_then(|value| epoch_seconds(&value));
+    if let Some(finished) = finished.filter(|_| health.now > 0) {
+        let age_days = health.now.saturating_sub(finished) / 86_400;
+        last_run["age_days"] = json!(age_days);
+        if health.stale_after_days > 0 && age_days > health.stale_after_days {
+            findings.push(format!(
+                "The last update finished {age_days} days ago, more than the {} days after which its record is stale: a newer run did not finish, or the update timer is not running.",
+                health.stale_after_days
+            ));
+        }
+    }
+    findings
+}
+
+/// A short Markdown summary of `bundle` to paste into an issue. It uses only
+/// the bundle's already validated and redacted values.
+pub fn summary(bundle: &Value) -> String {
+    let text = |value: &Value| match value {
+        Value::String(text) => text.clone(),
+        Value::Null => "unknown".to_string(),
+        other => other.to_string(),
+    };
+    let run = &bundle["last_run"];
+    let health = &bundle["health"];
+    let count = |key: &str| health[key].as_array().map_or(0, Vec::len);
+    let mut out = String::new();
+    out.push_str("### Workstation diagnostics
+
+");
+    out.push_str(&format!(
+        "- Tool: {}, created {}
+",
+        text(&bundle["tool"]),
+        text(&bundle["created_at"])
+    ));
+    out.push_str(&format!(
+        "- Profile `{}`, architecture `{}`, OS {}, ansible-core {}, Ansible {}
+",
+        text(&bundle["profile"]),
+        text(&bundle["architecture"]),
+        text(&bundle["os"]),
+        text(&bundle["ansible"]["ansible_core"]),
+        text(&bundle["ansible"]["ansible"]),
+    ));
+    let mut last = format!("- Last update: `{}`", text(&run["status"]));
+    if run["finished_at"].is_string() {
+        last.push_str(&format!(", finished {}", text(&run["finished_at"])));
+    }
+    if let Some(days) = run["age_days"].as_u64() {
+        last.push_str(&format!(" ({days} days ago)"));
+    }
+    if run["catalog_commit"].is_string() {
+        let verified = if run["catalog_commit_verified"] == Value::Bool(true) {
+            "verified"
+        } else {
+            "not verified"
+        };
+        last.push_str(&format!(
+            ", catalog commit `{}` ({verified})",
+            text(&run["catalog_commit"])
+        ));
+    }
+    out.push_str(&last);
+    out.push('
+');
+    out.push_str(&format!(
+        "- Checked: {} commands, {} services, {} disks, {} managed files
+",
+        count("commands"),
+        count("services"),
+        count("disks"),
+        health["artifacts"]["checked"].as_u64().unwrap_or(0),
+    ));
+    if let Some(reason) = health["check_list"].as_str() {
+        out.push_str(&format!("- Not checked: {reason}
+"));
+    }
+    for reason in health["not_checked"].as_array().into_iter().flatten() {
+        out.push_str(&format!("- Not checked: {}
+", text(reason)));
+    }
+    out.push_str("
+#### What needs attention
+
+");
+    let findings = bundle["findings"].as_array().map(Vec::as_slice).unwrap_or_default();
+    if findings.is_empty() {
+        out.push_str("Nothing: every check passed.
+");
+    }
+    for finding in findings {
+        out.push_str(&format!("- {}
+", text(finding)));
+    }
+    let redacted: Vec<String> = bundle["redacted"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(kind, count)| format!("{count} {kind}"))
+        .collect();
+    if !redacted.is_empty() {
+        out.push_str(&format!(
+            "
+Redacted before printing: {}.
+",
+            redacted.join(", ")
+        ));
+    }
+    out
 }
 
 /// The bundle exactly as it is shown and written.
@@ -484,6 +661,7 @@ mod tests {
             manifest_path: PathBuf::from(DEFAULT_MANIFEST),
             profile: None,
             tags: vec!["packages".into(), "update".into()],
+            health: health::Health::default(),
         }
     }
 
@@ -589,9 +767,21 @@ mod tests {
 
     #[test]
     fn runs_only_the_listed_read_only_probes() {
-        let source = include_str!("mod.rs");
-        assert_eq!(source.matches(concat!("Command", "::new(")).count(), 1);
-        let redact = include_str!("redact.rs");
+        // One place starts processes: host::run_bounded, behind the Host trait.
+        let sources = [
+            ("mod.rs", include_str!("mod.rs")),
+            ("host.rs", include_str!("host.rs")),
+            ("health.rs", include_str!("health.rs")),
+            ("redact.rs", include_str!("redact.rs")),
+        ];
+        for (name, source) in sources {
+            let expected = usize::from(name == "host.rs");
+            assert_eq!(
+                source.matches(concat!("Command", "::new(")).count(),
+                expected,
+                "{name}"
+            );
+        }
         let networking = [
             concat!("Tcp", "Stream"),
             concat!("Udp", "Socket"),
@@ -600,12 +790,97 @@ mod tests {
             concat!("ur", "eq"),
         ];
         for network in networking {
-            assert!(
-                !source.contains(network) && !redact.contains(network),
-                "{network}"
-            );
+            for (name, source) in sources {
+                assert!(!source.contains(network), "{network} in {name}");
+            }
         }
         let programs: Vec<&str> = PROBES.iter().map(|(program, _)| *program).collect();
         assert_eq!(programs, ["ansible", "ansible-community", "uname"]);
+    }
+
+    fn health_now(now: u64) -> health::Health {
+        health::Health {
+            now,
+            stale_after_days: health::DEFAULT_STALE_AFTER_DAYS,
+            ..health::Health::default()
+        }
+    }
+
+    #[test]
+    fn a_failed_run_is_explained_in_plain_words() {
+        let manifest = r#"{"status":"rolled_back","finished_at":"2026-11-24T08:20:11Z",
+            "catalog_commit":"0743a9d6","catalog_commit_verified":true,
+            "failure":{"task":"Install lazygit","message":"checksum mismatch for /home/researcher/x"},
+            "healthcheck_failures":["delta"]}"#;
+        let mut i = inputs(manifest);
+        // 2026-11-25T09:30:00Z: one day after the run.
+        i.health = health_now(1_795_599_000);
+        let bundle = build(&i, &mut redactor(), "2026-11-25T09:30:00Z");
+        assert_eq!(bundle["last_run"]["age_days"], 1);
+        let findings: Vec<&str> = bundle["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            findings,
+            [
+                "The last update run ended with status `rolled_back`.",
+                "It failed in the task `Install lazygit`: checksum mismatch for /home/[user]/x",
+                "Post-update health checks failed for: delta.",
+            ]
+        );
+        let text = summary(&bundle);
+        assert!(text.contains("- Last update: `rolled_back`, finished 2026-11-24T08:20:11Z (1 days ago), catalog commit `0743a9d6` (verified)"), "{text}");
+        assert!(text.contains("- Post-update health checks failed for: delta."), "{text}");
+        assert!(text.contains("Redacted before printing: 1 user."), "{text}");
+        assert!(!text.contains("researcher"), "{text}");
+    }
+
+    #[test]
+    fn a_stale_manifest_is_found() {
+        let manifest = r#"{"status":"success","finished_at":"2026-10-01T00:00:00+02:00"}"#;
+        let mut i = inputs(manifest);
+        i.health = health_now(1_795_599_000);
+        let bundle = build(&i, &mut redactor(), "t");
+        assert_eq!(bundle["last_run"]["age_days"], 55);
+        let findings = bundle["findings"].as_array().unwrap();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(
+            findings[0]
+                .as_str()
+                .unwrap()
+                .starts_with("The last update finished 55 days ago, more than the 14 days"),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_healthy_bundle_summarises_as_nothing_to_do() {
+        let bundle = build(
+            &inputs(r#"{"status":"success"}"#),
+            &mut redactor(),
+            "2026-11-25T09:30:00Z",
+        );
+        assert_eq!(bundle["findings"], json!([]));
+        let text = summary(&bundle);
+        assert!(text.contains("Nothing: every check passed."), "{text}");
+        assert!(text.contains("- Checked: 0 commands, 0 services, 0 disks, 0 managed files"), "{text}");
+    }
+
+    #[test]
+    fn epoch_conversion_is_the_inverse_of_utc_from() {
+        for seconds in [0, 951_782_400, 1_764_063_000] {
+            assert_eq!(epoch_seconds(&utc_from(seconds).0), Some(seconds));
+        }
+        assert_eq!(
+            epoch_seconds("2026-11-25T10:30:00+01:00"),
+            Some(1_795_599_000)
+        );
+        assert_eq!(
+            epoch_seconds("2026-11-25T09:30:00.123Z"),
+            Some(1_795_599_000)
+        );
     }
 }

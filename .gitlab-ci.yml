@@ -478,9 +478,10 @@ provenance:
       - "*.tar.gz"
     expire_in: 30 days
 
-# A release tag keeps the artifact, its SBOM, the toolchain record and the
-# checksums together and never expires them, so the release page can link all
-# four (catalog#21, docs/release-checklist.md).
+# A release tag keeps the artifact, its SBOM, the toolchain record, the
+# checksums and the catalog-tools binary together and never expires them, so
+# the release page can link them all (catalog#21, catalog#18,
+# docs/release-checklist.md).
 release_assets:
   stage: package
   interruptible: false
@@ -489,8 +490,14 @@ release_assets:
   needs:
     - job: provenance
       artifacts: true
+    # The static catalog-tools binary the role installs for diagnostics
+    # (catalog#18, catalog_tools_install_url and _sha256).
+    - job: tools
+      artifacts: true
   script:
     - sha256sum -c collection.sha256
+    - test -x catalog-tools
+    - sha256sum catalog-tools | tee catalog-tools.sha256
   artifacts:
     name: "curiosity-workstation-${CI_COMMIT_TAG}"
     paths:
@@ -498,6 +505,8 @@ release_assets:
       - ci-toolchain.txt
       - collection.cdx.json
       - "*.tar.gz"
+      - catalog-tools
+      - catalog-tools.sha256
     expire_in: never
 
 secret_hygiene:
