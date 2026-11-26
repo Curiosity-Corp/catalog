@@ -7,8 +7,10 @@
 # =============================================================================
 
 - name: Install workspace APT packages  # noqa: args
-  ansible.builtin.apt:
-    name:
+  # Names a distribution does not ship (software-properties-common on
+  # Debian 13, catalog#162) are filtered by apt_packages_excluded.
+  vars:
+    _apt_packages:
       # --- Build tools ---
       - build-essential
       - gcc
@@ -187,6 +189,8 @@
       # --- Scientific Python system dependencies ---
       - libhdf5-dev
       - libegl1
+  ansible.builtin.apt:
+    name: "{{ _apt_packages | reject('in', apt_packages_excluded) | list }}"
     state: present
     update_cache: true
 
