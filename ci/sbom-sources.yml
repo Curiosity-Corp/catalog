@@ -1,0 +1,436 @@
+---
+# Where the roles install from: the runtime half of the release SBOM
+# (catalog#21, docs/sbom.md). `catalog-tools sbom` turns every entry into a
+# CycloneDX component and refuses to run while this file and the roles
+# disagree:
+#
+#   - every http(s) URL in roles/*/{defaults,tasks,vars,handlers} must start
+#     with an entry's `url`, `url_var` value, `keys` or `covers`, or with a
+#     `not_dependencies` prefix;
+#   - every package-manager module the tasks call must be named by an entry's
+#     `modules`;
+#   - and every entry must still match something (no stale entries).
+#
+# kind (what the SBOM calls it, property curiosity:component-kind):
+#   runtime-package-source  a repository or registry packages are installed
+#                           from (APT repository, Snap Store, npm, PyPI ...)
+#   runtime-package         one artifact downloaded directly (release asset,
+#                           wheel, model, git checkout)
+#   external-installer      a vendor script or installer the role runs
+#
+# url: a literal URL prefix as written in the role ({{ ... }} cuts it off).
+# reference_url: informational only (a registry the modules use by default).
+# url_var / version_var / sha256_var: role default variables; the tool reads
+# their values, so a version bump in the defaults reaches the SBOM unaided.
+# pinned: true when the role checks a version or checksum; false when it
+# takes whatever the vendor serves ("latest").
+
+sources:
+  # --- Distribution and package-manager registries --------------------------
+  - name: distribution-apt-archive
+    kind: runtime-package-source
+    source: apt-repository
+    description: The host distribution's own APT archive (Ubuntu or Debian).
+    modules: [ansible.builtin.apt]
+    declared_in: [roles/developer_workstation/tasks/packages.yml, roles/workstation_storage/tasks/main.yml]
+    pinned: false
+  - name: snap-store
+    kind: runtime-package-source
+    source: snap-store
+    reference_url: https://snapcraft.io/store
+    modules: [community.general.snap]
+    declared_in: [roles/developer_workstation/tasks/slack-desktop.yml, roles/developer_workstation/tasks/repos.yml]
+    pinned: false
+  - name: npm-registry
+    kind: runtime-package-source
+    source: npm-registry
+    reference_url: https://registry.npmjs.org/
+    modules: [community.general.npm]
+    declared_in: [roles/developer_workstation/tasks/node-packages.yml, roles/developer_workstation/tasks/ai-assistants.yml]
+    pinned: false
+  - name: pypi
+    kind: runtime-package-source
+    source: pypi
+    reference_url: https://pypi.org/simple/
+    modules: [community.general.pipx, ansible.builtin.pip]
+    declared_in: [roles/developer_workstation/tasks/python-tools.yml, roles/developer_workstation/tasks/science-venv.yml]
+    pinned: false
+  - name: flathub
+    kind: runtime-package-source
+    source: flatpak-remote
+    url_var: workstation_flatpak_flathub_url
+    modules: [community.general.flatpak]
+    declared_in: [roles/developer_workstation/tasks/flatpak.yml]
+    pinned: false
+
+  # --- Vendor APT repositories ----------------------------------------------
+  - name: apt-microsoft-dotnet
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://packages.microsoft.com/ubuntu/24.04/prod
+    covers: [https://packages.microsoft.com/debian/]
+    keys: [https://packages.microsoft.com/keys/microsoft.asc]
+    declared_in: [roles/developer_workstation/defaults/main.yml (apt_vendor_repos.dotnet)]
+    pinned: false
+  - name: apt-microsoft-azure-cli
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://packages.microsoft.com/repos/azure-cli/
+    declared_in: [roles/developer_workstation/defaults/main.yml (apt_vendor_repos.azure_cli)]
+    pinned: false
+  - name: apt-microsoft-vscode
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://packages.microsoft.com/repos/code
+    declared_in: [roles/developer_workstation/tasks/repos.yml]
+    pinned: false
+  - name: apt-microsoft-edge
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://packages.microsoft.com/repos/edge
+    declared_in: [roles/developer_workstation/tasks/repos.yml]
+    pinned: false
+  - name: apt-mongodb
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://repo.mongodb.org/apt/ubuntu
+    covers:
+      - https://repo.mongodb.org/apt/debian
+      - "https://s3.amazonaws.com/repo.mongodb.org?list-type=2&prefix=apt/"
+    keys: [https://pgp.mongodb.com/server-, https://www.mongodb.org/static/pgp/server-]
+    declared_in: [roles/developer_workstation/defaults/main.yml (apt_vendor_repos.mongodb), roles/developer_workstation/tasks/repos.yml]
+    pinned: false
+  - name: apt-github-cli
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://cli.github.com/packages
+    keys: [https://cli.github.com/packages/githubcli-archive-keyring.gpg]
+    declared_in: [roles/developer_workstation/tasks/repos.yml, roles/developer_workstation/tasks/repos-workspace.yml]
+    pinned: false
+  - name: apt-google-cloud-sdk
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://packages.cloud.google.com/apt
+    keys: [https://packages.cloud.google.com/apt/doc/apt-key.gpg]
+    declared_in: [roles/developer_workstation/tasks/repos.yml, roles/developer_workstation/tasks/repos-workspace.yml]
+    pinned: false
+  - name: apt-google-chrome
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://dl.google.com/linux/chrome/deb/
+    keys: [https://dl.google.com/linux/linux_signing_key.pub]
+    declared_in: [roles/developer_workstation/tasks/repos.yml]
+    pinned: false
+  - name: apt-1password
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://downloads.1password.com/linux/debian/
+    keys: [https://downloads.1password.com/linux/keys/1password.asc]
+    declared_in: [roles/developer_workstation/tasks/repos.yml]
+    pinned: false
+  - name: apt-brave
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://brave-browser-apt-release.s3.brave.com/
+    declared_in: [roles/developer_workstation/tasks/repos.yml]
+    pinned: false
+  - name: apt-nodesource
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://deb.nodesource.com/node_24.x
+    keys: [https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key]
+    declared_in: [roles/developer_workstation/tasks/repos.yml, roles/developer_workstation/tasks/repos-workspace.yml]
+    pinned: false
+  - name: apt-openziti
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://packages.openziti.org/zitipax-openziti-deb-stable
+    keys: [https://get.openziti.io/tun/package-repos.gpg]
+    declared_in: [roles/developer_workstation/tasks/repos.yml, roles/developer_workstation/tasks/ziti.yml]
+    pinned: false
+  - name: apt-mozilla
+    kind: runtime-package-source
+    source: apt-repository
+    url: https://packages.mozilla.org/apt
+    declared_in: [roles/developer_workstation/tasks/repos-thin-client.yml]
+    pinned: false
+  - name: apt-authd-ppa
+    kind: runtime-package-source
+    source: apt-repository
+    url_var: authd_archive_repo_url
+    keys: ["https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x"]
+    declared_in: [roles/developer_workstation/tasks/authd-repo.yml]
+    pinned: false
+
+  # --- Direct downloads -----------------------------------------------------
+  - name: deepfilternet-ladspa
+    kind: runtime-package
+    source: release-download
+    type: library
+    url_var: streamstack_deepfilter_url
+    version_var: streamstack_deepfilter_release
+    sha256_var: streamstack_deepfilter_sha256
+    declared_in: [roles/developer_workstation/tasks/streamstack-low-latency.yml]
+    pinned: true
+  - name: openvino
+    kind: runtime-package
+    source: pypi
+    type: library
+    purl: pkg:pypi/openvino
+    url_var: streamstack_openvino_wheel_url
+    version_var: streamstack_openvino_release
+    sha256_var: streamstack_openvino_wheel_sha256
+    declared_in: [roles/developer_workstation/tasks/streamstack-framing.yml]
+    pinned: true
+  - name: openvino-telemetry
+    kind: runtime-package
+    source: pypi
+    type: library
+    purl: pkg:pypi/openvino-telemetry
+    url_var: streamstack_openvino_telemetry_wheel_url
+    version_var: streamstack_openvino_telemetry_release
+    sha256_var: streamstack_openvino_telemetry_wheel_sha256
+    declared_in: [roles/developer_workstation/tasks/streamstack-framing.yml]
+    pinned: true
+  - name: yunet-face-model
+    kind: runtime-package
+    source: release-download
+    type: machine-learning-model
+    url_var: streamstack_framing_model_url
+    sha256_var: streamstack_framing_model_sha256
+    declared_in: [roles/developer_workstation/tasks/streamstack-framing.yml]
+    pinned: true
+  - name: notation
+    kind: runtime-package
+    source: release-download
+    type: application
+    url_var: fleetd_notation_url
+    version_var: fleetd_notation_release
+    declared_in: [roles/developer_workstation/tasks/fleetd.yml]
+    note: per-architecture SHA-256 in fleetd_notation_sha256
+    pinned: true
+  - name: aws-cli
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+    declared_in: [roles/developer_workstation/tasks/cloud-clis.yml]
+    note: the .zip.sig signature is verified
+    pinned: false
+  - name: gitlab-cli
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest
+    declared_in: [roles/developer_workstation/tasks/cloud-clis.yml]
+    pinned: false
+  - name: hashicorp-packer
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://releases.hashicorp.com/packer/
+    covers: [https://checkpoint-api.hashicorp.com/v1/check/packer]
+    declared_in: [roles/developer_workstation/tasks/devops.yml]
+    pinned: false
+  - name: hashicorp-terraform
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://releases.hashicorp.com/terraform/
+    covers: [https://checkpoint-api.hashicorp.com/v1/check/terraform]
+    declared_in: [roles/developer_workstation/tasks/devops.yml]
+    pinned: false
+  - name: hashicorp-vault
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://releases.hashicorp.com/vault/
+    covers: [https://checkpoint-api.hashicorp.com/v1/check/vault]
+    declared_in: [roles/developer_workstation/tasks/devops.yml]
+    pinned: false
+  - name: rclone
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://downloads.rclone.org/
+    declared_in: [roles/developer_workstation/tasks/devops.yml]
+    pinned: false
+  - name: mattermost-desktop
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://releases.mattermost.com/
+    declared_in: [roles/developer_workstation/tasks/devops.yml]
+    pinned: false
+  - name: kubectl
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://dl.k8s.io/release/
+    declared_in: [roles/developer_workstation/tasks/kubernetes.yml]
+    pinned: false
+  - name: helm
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://get.helm.sh/helm-
+    declared_in: [roles/developer_workstation/tasks/kubernetes.yml]
+    pinned: false
+  - name: go-toolchain
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://go.dev/dl/
+    covers: ["https://go.dev/VERSION?m=text"]
+    declared_in: [roles/developer_workstation/tasks/languages.yml]
+    pinned: false
+  - name: tmux-release
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://github.com/tmux/tmux/releases/download/
+    declared_in: [roles/developer_workstation/tasks/hhtest.yml]
+    pinned: false
+  - name: github-latest-releases
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://api.github.com/repos/
+    declared_in: [roles/developer_workstation/tasks/latest-releases.yml]
+    note: release assets of the GitHub projects listed in latest-releases.yml
+    pinned: false
+  - name: bitwarden-firefox-extension
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi
+    declared_in: [roles/developer_workstation/tasks/collaboration.yml]
+    pinned: false
+  - name: chromium-extension-stores
+    kind: runtime-package-source
+    source: browser-extension-store
+    url: https://clients2.google.com/service/update2/crx
+    covers: [https://edge.microsoft.com/extensionwebstorebase/v1/crx]
+    declared_in: [roles/developer_workstation/defaults/main.yml]
+    pinned: false
+  - name: speedtest-cli
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py
+    declared_in: [roles/developer_workstation/tasks/user-shell-fallback.yml]
+    pinned: false
+  - name: weechat-go-script
+    kind: runtime-package
+    source: release-download
+    type: application
+    url: https://weechat.org/files/scripts/go.py
+    declared_in: [roles/developer_workstation/tasks/weechat.yml]
+    pinned: false
+
+  # --- Git checkouts --------------------------------------------------------
+  - name: git-nvm
+    kind: runtime-package
+    source: git-repository
+    type: application
+    url: https://github.com/nvm-sh/nvm.git
+    declared_in: [roles/developer_workstation/tasks/languages.yml]
+    pinned: false
+  - name: git-pyenv
+    kind: runtime-package
+    source: git-repository
+    type: application
+    url: https://github.com/pyenv/pyenv.git
+    declared_in: [roles/developer_workstation/tasks/languages.yml]
+    pinned: false
+  - name: git-oh-my-zsh
+    kind: runtime-package
+    source: git-repository
+    type: application
+    url: https://github.com/ohmyzsh/ohmyzsh.git
+    declared_in: [roles/developer_workstation/tasks/user-env.yml]
+    pinned: false
+  - name: git-zsh-autosuggestions
+    kind: runtime-package
+    source: git-repository
+    type: application
+    url: https://github.com/zsh-users/zsh-autosuggestions.git
+    declared_in: [roles/developer_workstation/tasks/user-env.yml]
+    pinned: false
+  - name: git-zsh-syntax-highlighting
+    kind: runtime-package
+    source: git-repository
+    type: application
+    url: https://github.com/zsh-users/zsh-syntax-highlighting.git
+    declared_in: [roles/developer_workstation/tasks/user-env.yml]
+    pinned: false
+  - name: git-wee-slack
+    kind: runtime-package
+    source: git-repository
+    type: application
+    url: https://github.com/wee-slack/wee-slack.git
+    declared_in: [roles/developer_workstation/tasks/weechat.yml]
+    pinned: false
+
+  # --- External installers --------------------------------------------------
+  - name: codex-standalone-installer
+    kind: external-installer
+    source: installer-script
+    url_var: codex_standalone_installer_url
+    declared_in: [roles/developer_workstation/tasks/ai-assistants.yml]
+    pinned: false
+  - name: claude-native-installer
+    kind: external-installer
+    source: installer-script
+    url_var: claude_native_installer_url
+    declared_in: [roles/developer_workstation/tasks/claude-code-user.yml]
+    pinned: false
+  - name: openziti-installer
+    kind: external-installer
+    source: installer-script
+    url_var: ziti_install_script_url
+    declared_in: [roles/developer_workstation/tasks/ziti.yml]
+    pinned: false
+  - name: composer-installer
+    kind: external-installer
+    source: installer-script
+    url: https://getcomposer.org/installer
+    keys: [https://composer.github.io/installer.sig]
+    declared_in: [roles/developer_workstation/tasks/languages.yml]
+    note: the installer's SHA-384 is checked against installer.sig before it runs
+    pinned: false
+  - name: sdkman-installer
+    kind: external-installer
+    source: installer-script
+    url: https://github.com/sdkman/sdkman-cli.git
+    covers: [https://api.sdkman.io/2]
+    declared_in: [roles/developer_workstation/tasks/languages.yml]
+    pinned: false
+  - name: pia-installer
+    kind: external-installer
+    source: installer-script
+    url: https://installers.privateinternetaccess.com/download/pia-linux-
+    covers: [https://www.privateinternetaccess.com/download]
+    declared_in: [roles/developer_workstation/tasks/hardware-drivers.yml]
+    pinned: false
+
+# URLs in the roles that nothing is installed from, each with the reason.
+not_dependencies:
+  - url: https://github.com/Curiosity-Corp/catalog.git
+    reason: this collection's own repository (ansible_pull_repo)
+  - url: http://openbox.org/3.4/rc
+    reason: XML namespace of the Openbox configuration
+  - url: https://example.org
+    reason: placeholder kiosk start page
+  - url: https://watch.
+    reason: site media links built from media_folder_web_domain
+  - url: https://request.
+    reason: site media links built from media_folder_web_domain
+  - url: https://books.
+    reason: site media links built from media_folder_web_domain
+  - url: https://music.
+    reason: site media links built from media_folder_web_domain
+  - url: https://integrate.api.nvidia.com/v1
+    reason: model API endpoint the Qwen CLI is configured for
+  - url: https://login.microsoftonline.com/
+    reason: Entra ID sign-in endpoint

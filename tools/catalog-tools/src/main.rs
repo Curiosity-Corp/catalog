@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use catalog_tools::diagnostics::{self, redact::Redactor};
 use catalog_tools::packages::{self, Evidence, PlatformResult};
-use catalog_tools::{find_root, reference};
+use catalog_tools::{find_root, reference, sbom};
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -25,6 +25,9 @@ struct Cli {
 enum Command {
     /// Generate docs/reference.md, the supported variable and tag reference.
     Reference(ReferenceArgs),
+    /// Write the release SBOM (CycloneDX 1.6) for a built collection artifact,
+    /// or check a published one against what the checkout declares.
+    Sbom(SbomArgs),
     /// Which of the role's apt packages each platform's archive provides.
     #[command(subcommand)]
     Packages(PackagesCommand),
@@ -72,6 +75,22 @@ struct RootArg {
     /// Catalog checkout (default: found from the current directory).
     #[arg(long, global = true)]
     root: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct SbomArgs {
+    #[command(flatten)]
+    root: RootArg,
+    /// The collection artifact built by `ansible-galaxy collection build`.
+    #[arg(long)]
+    archive: PathBuf,
+    /// SBOM file to write, or with --check to verify.
+    #[arg(long)]
+    output: PathBuf,
+    /// Exit 1 when the SBOM lacks or misdescribes a declared component
+    /// instead of writing it.
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Args)]
@@ -140,6 +159,7 @@ fn main() -> ExitCode {
         Command::Reference(args) => run_reference(&args),
         Command::Packages(command) => run_packages(command),
         Command::Diagnostics(command) => run_diagnostics(command),
+        Command::Sbom(args) => run_sbom(&args),
     };
     match outcome {
         Ok(code) => code,
@@ -155,6 +175,40 @@ fn resolve_root(arg: &RootArg) -> Result<PathBuf> {
         Some(root) => Ok(root.clone()),
         None => find_root(&std::env::current_dir().context("cannot read the current directory")?),
     }
+}
+
+fn run_sbom(args: &SbomArgs) -> Result<ExitCode> {
+    let root = resolve_root(&args.root)?;
+    if args.check {
+        let text = std::fs::read_to_string(&args.output)
+            .with_context(|| format!("cannot read {}", args.output.display()))?;
+        let published: serde_json::Value = serde_json::from_str(&text)
+            .with_context(|| format!("{} is not JSON", args.output.display()))?;
+        let problems = sbom::check(&root, &args.archive, &published)?;
+        if problems.is_empty() {
+            println!(
+                "{} lists every declared component of {}",
+                args.output.display(),
+                args.archive.display()
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        eprintln!(
+            "{} is incomplete or out of date ({} problems):",
+            args.output.display(),
+            problems.len()
+        );
+        for problem in &problems {
+            eprintln!("  - {problem}");
+        }
+        return Ok(ExitCode::from(1));
+    }
+    let document = sbom::generate(&root, &args.archive)?;
+    let text = serde_json::to_string_pretty(&document).context("cannot serialise the SBOM")?;
+    std::fs::write(&args.output, text + "\n")
+        .with_context(|| format!("cannot write {}", args.output.display()))?;
+    println!("wrote {}", args.output.display());
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_reference(args: &ReferenceArgs) -> Result<ExitCode> {

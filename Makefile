@@ -55,5 +55,10 @@ collection:
 	ansible-galaxy collection build --force
 	$(PYTHON) scripts/normalize_collection_artifact.py "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
 
+# The release SBOM (docs/sbom.md); CI runs the same in the `sbom` job.
+SBOM_SCHEMA = ci/schemas/cyclonedx-1.6/bom-1.6.schema.json
 sbom: collection
-	python3 scripts/build_collection_sbom.py "$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" collection.cdx.json
+	archive="$$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)" && \
+	$(CATALOG_TOOLS) sbom --archive "$$archive" --output collection.cdx.json && \
+	check-jsonschema --base-uri "file://$(CURDIR)/$(SBOM_SCHEMA)" --schemafile $(SBOM_SCHEMA) collection.cdx.json && \
+	$(CATALOG_TOOLS) sbom --archive "$$archive" --output collection.cdx.json --check

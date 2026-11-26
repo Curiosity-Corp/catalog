@@ -13,6 +13,11 @@ Use this checklist for every public collection release.
 - [ ] Sign the Git tag and collection artifact when the release key is
       available; publish provenance/attestation metadata.
 - [ ] Publish the GitHub/GitLab release notes and registry artifact.
+- [ ] Link the tag pipeline's `release_assets` artifacts on the release page
+      beside the collection: `collection.cdx.json` (the dependency-complete
+      SBOM, `docs/sbom.md`), `collection.sha256` and `ci-toolchain.txt`.
+      The `sbom` job has already validated the SBOM against the CycloneDX
+      schema and checked that it lists every declared dependency.
 - [ ] Record the release URL, artifact checksum, CI pipeline, documentation
       URL, and compatibility evidence in the dated evidence log.
 - [ ] Copy the `provenance` job's `ci-toolchain.txt` (image digest, Python,

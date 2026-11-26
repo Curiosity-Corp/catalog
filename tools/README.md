@@ -9,6 +9,7 @@ collection itself does not depend on it and does not ship it.
 | `reference` | Writes `docs/reference.md`, the supported variable and tag reference, from the role defaults, the role tasks and `docs/reference-annotations.yml`. `--check` exits 1 when the committed file is out of date. | #27 |
 | `packages` | `list` prints the role's apt packages. `probe` runs inside a distro image and records which of them its archives provide, which a virtual name installs through, and which are missing. `assemble` writes the dated evidence file. `check` exits 1 when the newest `docs/evidence/platform-packages-*.json` no longer matches the role's package list. See [docs/platform-differences.md](../docs/platform-differences.md). | #14, #15 |
 | `diagnostics` | `preview`, `write`, `path`, `delete`: a redacted, local support bundle (versions, profile, architecture, selected tags, last run). No network code; writes only to `~/.local/state/curiosity/diagnostics/`. Policy and usage: [docs/troubleshooting.md](../docs/troubleshooting.md#sending-a-maintainer-a-diagnostic-bundle). | #41, #25 |
+| `sbom` | Writes the release SBOM (CycloneDX 1.6) for a built collection artifact: source files, collection dependencies, the locked CI toolchain and the runtime sources of `ci/sbom-sources.yml`, which it holds to the roles. `--check` exits 1 when a given SBOM lacks or misdescribes a declared component ([docs/sbom.md](../docs/sbom.md), [decision 0006](../docs/decisions/0006-release-sbom.md)). | #21 |
 
 ## Using it
 
@@ -57,6 +58,9 @@ Generated, never edited by hand:
   (`apt.rs`, no root: apt's lists and caches go to a private directory), the
   evidence files and dates.
 - `catalog-tools/src/diagnostics/`: the support bundle (`mod.rs`) and its redaction (`redact.rs`).
+- `catalog-tools/src/sbom/`: the artifact's files, the collection
+  dependencies and CI toolchain, the checked runtime source inventory and the
+  CycloneDX rendering.
 - `catalog-tools/tests/`: end-to-end tests on a temporary checkout.
 
 Add a tool as a new module and subcommand, with unit tests in the module and an
