@@ -375,6 +375,18 @@ collection:
       - "*.tar.gz"
     expire_in: 30 days
 
+third_party:
+  extends: .python_setup
+  stage: package
+  needs:
+    - job: collection
+      artifacts: true
+  script:
+    # Licence scan of the built artifact, not the checkout (catalog#48,
+    # THIRD_PARTY.md): reuse, locked in ci/requirements.txt, against the
+    # REUSE.toml inventory that ships inside the tarball.
+    - scripts/check-third-party.sh "$(find . -maxdepth 1 -name '*.tar.gz' -print -quit)"
+
 sbom:
   extends: .python_setup
   stage: package

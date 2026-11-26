@@ -1,0 +1,7 @@
+Public verification material
+
+This file is a public key or public CA certificate that its owner publishes so
+that anyone can verify signatures or servers. It carries no licence grant and
+no secret. The collection redistributes it unmodified, only so that the role
+that uses it can verify the owner's servers or signatures. Do not modify it;
+any other use is subject to the owner's own terms.

@@ -21,6 +21,7 @@ attrs==26.1.0 \
     # via
     #   jsonschema
     #   referencing
+    #   reuse
 black==26.10.1 \
     --hash=sha256:03c0ddd93bb392e71209903a691767eb366fe1a76deb9509ccbaae9e1f14bb52 \
     --hash=sha256:0ce08b367307b0fd91c9dd1d4084e62b05b3055475f951f0f34a46b6e2393b64 \
@@ -50,6 +51,10 @@ black==26.10.1 \
     --hash=sha256:fe85fc4019bee59bc495c0f2a8ee76c5cd02c7015508d94a967ba2376f39a52c \
     --hash=sha256:ff57f63029aa1353fa8b1b0c8971fd88a6c92dc766608d2eee33ad2deb23270e
     # via ansible-lint
+boolean-py==5.0 \
+    --hash=sha256:60cbc4bad079753721d32649545505362c754e121570ada4658b852a3a318d95 \
+    --hash=sha256:ef28a70bd43115208441b53a045d1549e2f0ec6e3d08a9d142cbc41c1938e8d9
+    # via license-expression
 bracex==3.2.4 \
     --hash=sha256:82e9e738b63fca213c33211d30b0b1ca330896a1091736e78da2c1bcda93ab30 \
     --hash=sha256:c1e67eb59f81445dee15b2c588b7c81352b697cfbd6c4931a2943ea6b71eb5ea
@@ -335,7 +340,9 @@ charset-normalizer==3.5.3 \
     --hash=sha256:fc540d1618c5638fcf5aea97060cf011467918b010bf682a84ecc0c9474e6cd0 \
     --hash=sha256:fcb17f1d40c38912a2cdb56ea47aadac3527cd0b06fe24f3a0c4896febbea063 \
     --hash=sha256:fd0341b9dea133d187d7c5a2cd7e21ae6449a7b68ea8c2454f9cf77def11ec1b
-    # via requests
+    # via
+    #   -r ci/requirements.in
+    #   requests
 check-jsonschema==0.39.0 \
     --hash=sha256:14ce5c94871c551268ea948ffe21e9f1464dc48fb20bf9a4c13deeaaf756cf9b \
     --hash=sha256:33340a2f885e207411c7a7d1db0a052ba24a4e58c92a47f54231e4a128af2764
@@ -346,6 +353,7 @@ click==8.5.1 \
     # via
     #   black
     #   check-jsonschema
+    #   reuse
 colorama==0.4.6 ; sys_platform == 'win32' \
     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
@@ -432,7 +440,9 @@ iniconfig==2.3.1 \
 jinja2==3.1.6 \
     --hash=sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d \
     --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
-    # via ansible-core
+    # via
+    #   ansible-core
+    #   reuse
 jsonschema==4.26.0 \
     --hash=sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326 \
     --hash=sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce
@@ -444,6 +454,10 @@ jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe \
     --hash=sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d
     # via jsonschema
+license-expression==30.4.4 \
+    --hash=sha256:421788fdcadb41f049d2dc934ce666626265aeccefddd25e162a26f23bcbf8a4 \
+    --hash=sha256:73448f0aacd8d0808895bdc4b2c8e01a8d67646e4188f887375398c761f340fd
+    # via reuse
 markupsafe==3.0.4 \
     --hash=sha256:007e1ffd9bf65bb6ee96df7b258fc632a4868dd5566037986c64781f35a36e98 \
     --hash=sha256:02fa4acbc6a3fc5c693c34d4dd8c1130b7fe99cc915181b0ddd6f72aeb296002 \
@@ -637,6 +651,14 @@ pytest==9.2.0 \
     --hash=sha256:07acdcf88ec174f907dc01af70bf52d49b014bbab03faeeade31c96b18c2e588 \
     --hash=sha256:97c4f3b1f3c7414aa36465e09b8220f1d03627993bd51b1282e193753c80557b
     # via -r ci/requirements.in
+python-debian==1.1.1 \
+    --hash=sha256:f98ae013e8e5310e49041cc3860a7105df73af73d4ff1d8afb474770d328a6ad \
+    --hash=sha256:fe4fc3dc798dbf1f0ef5865e2b1b4f7cc0352b6a511b25ab7594906c64a73629
+    # via reuse
+python-magic==0.4.27 \
+    --hash=sha256:c1ba14b08e4a5f5c31a302b7721239695b2f0f058d125bd5ce1ee36b9d9d3c3b \
+    --hash=sha256:c212960ad306f700aa0d01e5d7a325d20548ff97eb9920dcd29513174f0294d3
+    # via reuse
 pytokens==0.4.1 \
     --hash=sha256:0fc71786e629cef478cbf29d7ea1923299181d0699dbe7c3c0f4a583811d9fc1 \
     --hash=sha256:11edda0942da80ff58c4408407616a310adecae1ddd22eef8c692fe266fa5009 \
@@ -896,6 +918,10 @@ resolvelib==1.2.1 \
     --hash=sha256:7d08a2022f6e16ce405d60b68c390f054efcfd0477d4b9bd019cc941c28fad1c \
     --hash=sha256:fb06b66c8da04172d9e72a21d7d06186d8919e32ae5ab5cdf5b9d920be805ac2
     # via ansible-core
+reuse==6.3.0 \
+    --hash=sha256:5a6ca437057c07ca22a67256520e2783ab03b5524d3a4535603c3d49e3d4b001 \
+    --hash=sha256:be6b598aa6d5cdf44af0da265572a72f0adcd30033857af874fd8607188259c1
+    # via -r ci/requirements.in
 rpds-py==2026.9.1 \
     --hash=sha256:00ba2d8c7dd4ee537978ddf4b3fbd712bef2d8751603f7f3146b3f4287768e25 \
     --hash=sha256:01445c8d194aa032a08e944f16567672da1c62dbdbefd8b6d0693032e290cf68 \
@@ -1040,6 +1066,10 @@ subprocess-tee==0.4.2 \
     # via
     #   ansible-compat
     #   ansible-lint
+tomlkit==0.15.3 \
+    --hash=sha256:a83ce6de3b648e68dd9b50aabadad749ba823eb58b1d026f3c0a283c4767a9c1 \
+    --hash=sha256:b3c3020ec1a4bd469d12e31fb4da938e7f6ba758cdbec3fd9047db63120eaf81
+    # via reuse
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
     --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63

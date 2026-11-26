@@ -10,7 +10,7 @@ and moved only by a reviewed merge request.
 | --- | --- | --- | --- |
 | Job images (`python:3.13`, `-slim`, `-trixie`) | `.gitlab-ci.yml` | tag plus `@sha256:` digest of the multi-arch index, pulled from ECR Public's Docker Library mirror (catalog#97) | Renovate `docker` manager: digest bumps grouped as "container image digests", tag bumps one MR each |
 | Rust image for `tools` (`rust:1-bookworm`) | `.gitlab-ci.yml` | tag plus `@sha256:` digest; the crates are pinned by `tools/Cargo.lock` (`cargo --locked`) | Renovate `docker` manager (digest) and `cargo` manager |
-| Python tooling (ansible-core, ansible-lint, check-jsonschema, yamllint, PyYAML, pytest, uv) | `ci/requirements.in` | exact `==` for each direct dependency | Renovate `pip-compile` manager: bumps the pin and regenerates the lock in the same MR |
+| Python tooling (ansible-core, ansible-lint, check-jsonschema, yamllint, PyYAML, pytest, uv, reuse with charset-normalizer) | `ci/requirements.in` | exact `==` for each direct dependency | Renovate `pip-compile` manager: bumps the pin and regenerates the lock in the same MR |
 | Their transitive dependencies | `ci/requirements.txt` | full lock with SHA-256 hashes, installed with `pip install --require-hashes` | Renovate lock file maintenance (weekly MR) |
 | pip | the job image | the image digest | the image digest bump |
 | Ansible collections (community.general) | `ci/requirements.yml` | exact version | Renovate `ansible-galaxy` manager |
