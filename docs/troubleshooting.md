@@ -122,3 +122,92 @@ hours or a day old before installing it.
 
 **Next.** Nothing; a later run installs it. Move a test machine to
 `workstation_update_ring: canary` to take releases at once.
+
+## Sending a maintainer a diagnostic bundle
+
+When a run fails and the sections above do not cover it, a maintainer needs
+the versions, the profile and the last run's status, but not your machine.
+`catalog-tools diagnostics` (catalog#41, the policy from catalog#25) builds that
+as a small, redacted JSON bundle. It runs on your machine only: it has no
+network code, sends and uploads nothing, and changes no package, service or
+setting (it never starts, stops or restarts StreamStack or anything else). It
+runs three read-only programs, each limited to five seconds: `ansible --version`,
+`ansible-community --version` and `uname -m`.
+
+Build the binary from `tools/` (`cargo build --release`, or take it from the
+`tools` CI job), then:
+
+```bash
+catalog-tools diagnostics preview --tags packages,update   # shows the bundle, writes nothing
+catalog-tools diagnostics write --tags packages,update     # shows it again, asks, then saves it
+catalog-tools diagnostics path                             # the bundle folder and the bundles in it
+catalog-tools diagnostics delete                           # deletes every saved bundle
+```
+
+`--tags` is the tag list the failing run used (it is not in the manifest).
+`--profile` overrides the manifest's profile. `--redact WORD`, repeatable,
+hides one more word wherever it appears, such as a project or colleague name
+that no pattern can know. The manifest
+(`/var/lib/curiosity/workstation-updates/last-run.json`) is readable by root
+only. Copy it first (`sudo cp … ~/last-run.json && sudo chown $USER ~/last-run.json`)
+and pass `--manifest ~/last-run.json`. Without it, the bundle says why the
+last run's status is unknown.
+
+**Where it is stored.** `write` saves one file,
+`diagnostics-<UTC time>.json`, readable by you only (mode 0600), in
+`$XDG_STATE_HOME/curiosity/diagnostics/`, or
+`~/.local/state/curiosity/diagnostics/` when `XDG_STATE_HOME` is not set. The
+folder is mode 0700. It saves nothing anywhere else and never overwrites a
+file. Without a terminal to ask on, it refuses unless you pass `--yes`, after
+it has printed the bundle.
+
+**Deleting it.** `catalog-tools diagnostics delete` removes every
+`diagnostics-*.json` in that folder and nothing else; `rm <file>` removes one.
+Delete the bundle once the issue is closed.
+
+**What it contains.**
+
+| Collected | Source |
+| --- | --- |
+| Ansible and ansible-core versions | `ansible-community --version`, `ansible --version` (version numbers only) |
+| Profile | `--profile`, else the manifest's `profile` |
+| Architecture, OS name | `uname -m`, `PRETTY_NAME` in `/etc/os-release` |
+| Selected tags | `--tags` |
+| Last run | the manifest's `status`, start and finish time, update ring, catalog commit and whether it was verified, quarantine and install flags, failed task and failure message, failed health checks and warnings, ring blockers |
+
+Structured values (versions, profile, tags, status, times, the commit) are
+kept only when they have the expected shape; anything else becomes
+`[redacted: unexpected format]`. Every free-text value (the failure message,
+health checks, OS name) is redacted:
+
+| Redacted | Becomes |
+| --- | --- |
+| IPv4 and IPv6 addresses | `ip-<tag>` |
+| Host names (this machine's, and any domain name) | `host-<tag>` |
+| E-mail addresses | `email-<tag>` |
+| User names (yours, and the name in any `/home/<name>` or `/Users/<name>` path) | `[user]` |
+| Tokens (GitLab, GitHub, Slack, AWS, JWT, `Bearer …`, any long mixed letters-and-digits string), credentials in URLs, and values of keys named `token`, `secret`, `password`, `pass`, `psk`, `api_key`, `auth`, `credentials` | `[token]`, `[credentials]`, `[redacted]` |
+| Certificates and private keys (any PEM block) | `[certificate or key]` |
+| Research data: paths under `/srv/research-data`, `/srv/data`, `/data`, `/mnt`, `/media` and `~/data`, `~/datasets`, `~/research`, `~/Documents`, `~/Desktop`, `~/Downloads`, and data files (`.csv`, `.parquet`, `.h5`, `.fastq`, `.bam`, `.vcf`, `.npy`, `.xlsx` and similar) | `[research data path]`, `[research data file]` |
+| MAC addresses | `[mac]` |
+| Words passed with `--redact` | `[redacted]` |
+
+A `<tag>` is a short hash. Within one bundle, the same address or host always
+gets the same tag, so a maintainer can still tell that two lines name the same
+machine. The hash key is random for each run and never stored, so two bundles
+cannot be linked by their tags. The bundle's `redacted` field counts what was
+replaced.
+
+**Never collected:** the manifest's `host` and `run_id` (the run id includes
+a hash of the host name, which would link bundles), package inventories, the
+before and after file inventories, application contracts, release checksums,
+signer fingerprints, environment variables, and the contents of any file
+other than the manifest and `/etc/os-release`.
+
+**Limits.** Redaction is pattern based. It cannot recognise a name it has no
+pattern for, so read the preview, and use `--redact` for any word that still
+identifies you. Long digests of exactly 40 or 64 hex characters, such as
+commits and SHA-256 sums, are public and kept. The tests in
+`tools/catalog-tools/src/diagnostics/` and
+`tools/catalog-tools/tests/diagnostics.rs` run the command against a fixture
+machine with documentation addresses only, never against a real host.
