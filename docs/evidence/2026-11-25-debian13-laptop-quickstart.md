@@ -47,7 +47,7 @@ user-owned directories, shown here as `<apt-user-dirs>`):
 | 2 copy `examples/laptop.yml` | as typed | exit 0 |
 | role APT steps (`repos`, `packages`) | `apt-get install --simulate` of the 146 names in `packages.yml`, first on the Debian archive, then with the role's 13 vendor repositories added | see [Packages](#packages) |
 | 3 `--syntax-check`, `--list-tasks` | as typed | exit 0 |
-| 3 `--check --diff` | as typed, plus `-e ansible_become=false` (no sudo) | exit 2: stops at the first APT keyring, see [Preview](#preview) |
+| 3 `--check --diff` | as typed, plus `-e ansible_become=false` (no sudo) | exit 2: stops at the first APT keyring; after #164, at the first repository task, see [Preview](#preview) |
 | 4 apply with `--become` | not run | the runner cannot become root |
 
 - Preview output kept at: job 3077667 artifacts, `debian-quickstart/`
@@ -98,6 +98,18 @@ fails, but a Debian machine gets builds made for Ubuntu 24.04 (#163):
 the role never creates its keyring staging directory, so on any clean machine
 the preview the guide recommends ends at the first keyring (#164).
 
+After #164 (catalog!240, pipeline 170998, job 3081753) the same step ran 32
+tasks (5 changed, 13 skipped): the github-cli keyring shows as a change
+("Would download ...") and the preview stops at the next task,
+`Add GitHub CLI repository`, with `python3-apt must be installed to use check
+mode`. That stop belongs to this job, not to the guide: the job points
+`ansible_python_interpreter` at its own venv, which cannot import
+`python3-apt`, while on a laptop Ansible uses the system Python, which
+imports the distribution's `python3-apt` once that package is installed
+(Ubuntu installs it by default). The `quickstart-check-preview` job, which adds
+`python3-apt` to its venv, gates the rest of the guide's preview: it must
+pass the whole `repos` group and stop only where laptop.md step 3 says.
+
 With the guide's tags, none of the role's pre-flight checks run (the root
 check, the managed-user check and the profile check have no tags), so the
 guide's troubleshooting message `This role must run as root` cannot appear,
@@ -144,8 +156,9 @@ anything stronger than "experimental". This container could not show:
 
 ## Result
 
-- Guide steps that were wrong or unclear: step 3 (`--check --diff` stops at
-  the first keyring on a clean machine, #164); step 4 on Debian 13 would fail
+- Guide steps that were wrong or unclear: step 3 (`--check --diff` stopped
+  at the first keyring on a clean machine; fixed by #164, see
+  [Preview](#preview)); step 4 on Debian 13 would fail
   at `Install all APT packages` (#162) and would add Ubuntu repositories
   (#163); the troubleshooting table names a message the guide's tags never
   produce (#165).
