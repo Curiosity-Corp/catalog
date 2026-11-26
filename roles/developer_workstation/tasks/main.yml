@@ -45,10 +45,13 @@
 # up later as unrelated errors (catalog#165). The extra `preflight` tag lets a
 # preview that cannot become root skip them by name (--skip-tags preflight).
 # tests/test_preflight_tags.py fails if a check loses either tag.
+# Fails closed when the user facts are missing (a uid with no passwd entry,
+# as on the CI runner): the run cannot prove it is root, so it says so here
+# instead of failing on an undefined variable.
 - name: Verify running as root
   ansible.builtin.assert:
     that:
-      - ansible_user_id == 'root'
+      - ansible_user_id | default('') == 'root'
     fail_msg: "This role must run as root (use --become or run with sudo)"
   tags: [always, preflight]
 

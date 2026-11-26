@@ -120,3 +120,10 @@ def test_always_is_reserved_for_the_preflight_and_its_inputs() -> None:
     }
     tagged = {task["name"] for task in _load(MAIN) if "always" in _tags(task)}
     assert tagged == allowed
+
+
+def test_root_check_fails_closed_without_user_facts() -> None:
+    """A uid with no passwd entry gathers no user facts; the check must still print its message."""
+    root = next(task for task in PREFLIGHT if task["name"] == "Verify running as root")
+    assert root["ansible.builtin.assert"]["that"] == ["ansible_user_id | default('') == 'root'"]
+    assert "This role must run as root" in root["ansible.builtin.assert"]["fail_msg"]
