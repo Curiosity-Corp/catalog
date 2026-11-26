@@ -1,11 +1,11 @@
-.PHONY: validate syntax lint yaml test research-profile accessibility-summary collection sbom tools reference reference-check
+.PHONY: validate syntax lint yaml test research-profile accessibility-summary collection sbom tools reference reference-check packages-check
 
 PYTHON ?= python3
 ANSIBLE_ROLES_PATH ?= roles
 SOURCE_DATE_EPOCH ?= 0
 export SOURCE_DATE_EPOCH
 
-validate: yaml syntax lint test tools reference-check collection sbom
+validate: yaml syntax lint test tools reference-check packages-check collection sbom
 
 yaml:
 	yamllint -f parsable .
@@ -42,6 +42,10 @@ reference:
 
 reference-check:
 	$(CATALOG_TOOLS) reference --check
+
+# Fail when docs/evidence/platform-packages-*.json no longer matches the role's packages.
+packages-check:
+	$(CATALOG_TOOLS) packages check
 
 # Real install of examples/python-research.yml in a temp dir (needs PyPI, uv).
 research-profile:

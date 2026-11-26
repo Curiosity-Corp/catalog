@@ -7,12 +7,14 @@ collection itself does not depend on it and does not ship it.
 | Subcommand | What it does | Issue |
 | --- | --- | --- |
 | `reference` | Writes `docs/reference.md`, the supported variable and tag reference, from the role defaults, the role tasks and `docs/reference-annotations.yml`. `--check` exits 1 when the committed file is out of date. | #27 |
+| `packages` | `list` prints the role's apt packages. `probe` runs inside a distro image and records which of them its archives provide, which a virtual name installs through, and which are missing. `assemble` writes the dated evidence file. `check` exits 1 when the newest `docs/evidence/platform-packages-*.json` no longer matches the role's package list. See [docs/platform-differences.md](../docs/platform-differences.md). | #14, #15 |
 
 ## Using it
 
 ```bash
 make reference          # regenerate docs/reference.md
 make reference-check    # what CI checks
+make packages-check     # evidence still matches the role's package list
 make tools              # rustfmt, clippy and the tests
 ```
 
@@ -21,7 +23,7 @@ it). Exit codes: `0` done or up to date, `1` out of date, `2` error (a parse
 error, or an annotation that names a variable or tag the roles no longer have).
 
 Without a local Rust toolchain, take the files from the `tools` CI job instead:
-its artifacts always hold `reference.generated.md` (copy it to
+its artifacts always hold the static `catalog-tools` binary (musl), `reference.generated.md` (copy it to
 `docs/reference.md`), `tools/Cargo.lock`, and `tools-fmt.patch` when
 formatting is off (`git apply tools-fmt.patch`).
 
@@ -50,6 +52,9 @@ Generated, never edited by hand:
 - `catalog-tools/src/lib.rs`: checkout discovery and the modules.
 - `catalog-tools/src/yaml.rs`: YAML loading and value helpers.
 - `catalog-tools/src/reference/`: defaults, tasks, annotations and rendering.
+- `catalog-tools/src/packages/`: the role's package list, the apt probe
+  (`apt.rs`, no root: apt's lists and caches go to a private directory), the
+  evidence files and dates.
 - `catalog-tools/tests/`: end-to-end tests on a temporary checkout.
 
 Add a tool as a new module and subcommand, with unit tests in the module and an

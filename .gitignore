@@ -28,6 +28,10 @@ tools/target/
 .cargo-home/
 reference.generated.md
 tools-fmt.patch
+/catalog-tools
+/platform-packages/
+/evidence/
+.apt-probe/
 
 # Editors and OS files
 .DS_Store

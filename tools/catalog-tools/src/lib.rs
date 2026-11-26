@@ -3,6 +3,7 @@
 //! The collection itself stays Ansible; this crate holds the tooling around it,
 //! one subcommand per tool (docs/adr/0001-rust-tool-crate.md).
 
+pub mod packages;
 pub mod reference;
 pub mod yaml;
 
