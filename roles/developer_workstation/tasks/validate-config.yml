@@ -183,6 +183,17 @@
           {{ focuspass_screenlock_install_url | default('') | regex_replace('://[^/@\s]*@', '://***@') | to_json }} and
           {{ focuspass_screenlock_install_sha256 | default('') | to_json }}.
       - ok: >-
+          {{ not (catalog_tools_enabled | default(false) | bool)
+             or (catalog_tools_install_url | default('') | length > 0
+                 and catalog_tools_install_sha256 | default('') | length > 0) }}
+        msg: >-
+          catalog_tools_enabled is true, so catalog_tools_install_url (the
+          https:// link to a release's catalog-tools asset) and
+          catalog_tools_install_sha256 (the SHA-256 in its catalog-tools.sha256)
+          must both be set; got
+          {{ catalog_tools_install_url | default('') | regex_replace('://[^/@\s]*@', '://***@') | to_json }} and
+          {{ catalog_tools_install_sha256 | default('') | to_json }}.
+      - ok: >-
           {{ workstation_profile | default('') not in ['desktop', 'thin-client', 'byod-kiosk']
              or not (keycloak_sso_enabled | default(false) | bool)
              or [keycloak_host | default(''), keycloak_realm | default(''), keycloak_desktop_client_id | default('')]

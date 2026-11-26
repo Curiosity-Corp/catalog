@@ -47,10 +47,11 @@ It checks three layers:
    - `catalog_integrity_mode: enforce` needs a 40-digit fingerprint.
    - An enabled integration needs the values it uses: `coder_cli_enabled` needs
      `coder_deployment_url`; the byod-kiosk profile needs `kiosk_target_url`;
-     missionctl needs its URL and checksum on thin-client; focuspass needs its
-     URL and checksum; Keycloak SSO needs its host, realm and client ID;
-     WeeChat Teams needs its client ID; Jellyfin needs its web URL; fleetd needs
-     its registry ID and package URL; Wi-Fi needs a PSK of at least 8 characters.
+     missionctl needs its URL and checksum on thin-client; focuspass and
+     catalog-tools need their URL and checksum; Keycloak SSO needs its host,
+     realm and client ID; WeeChat Teams needs its client ID; Jellyfin needs its
+     web URL; fleetd needs its registry ID and package URL; Wi-Fi needs a PSK of
+     at least 8 characters.
    - `pia_tunnel_apps` cannot be combined with a hardware profile that already
      routes everything through PIA.
 
