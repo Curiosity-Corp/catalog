@@ -399,10 +399,12 @@ sources:
   - name: pia-installer
     kind: external-installer
     source: installer-script
-    url: https://installers.privateinternetaccess.com/download/pia-linux-
+    url: https://installers.privateinternetaccess.com/download/
     covers: [https://www.privateinternetaccess.com/download]
+    version_var: pia_installer_build
+    sha256_var: pia_installer_x86_64_sha256
     declared_in: [roles/developer_workstation/tasks/hardware-drivers.yml]
-    pinned: false
+    pinned: true
 
 # URLs in the roles that nothing is installed from, each with the reason.
 not_dependencies:

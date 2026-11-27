@@ -1,0 +1,9 @@
+---
+# The PIA installer runs as root and PIA publishes no checksum, so a host with
+# pia_vpn needs a pinned build and a well-formed SHA-256 (catalog#171).
+# expect: pia_installer_x86_64_sha256 must be empty or a SHA-256 checksum of 64 hexadecimal characters
+# expect: got "latest"
+# expect: sets pia_vpn: true, so pia_installer_build must name a PIA build such as "3.8-08539"
+hardware_profile: z590
+pia_installer_build: latest
+pia_installer_x86_64_sha256: latest

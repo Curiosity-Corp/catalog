@@ -2522,6 +2522,20 @@ grub_autoboot_dropin_path: /etc/default/grub.d/90-curiosity-autoboot.cfg
 # =============================================================================
 # PIA VPN daemon settings (applied when the hardware profile sets pia_vpn: true)
 # =============================================================================
+# The PIA installer runs as root, and PIA publishes no checksum or signature
+# for it (catalog#171), so the role installs one pinned build and checks it
+# against the SHA-256 recorded here before it runs. A mismatch or an empty
+# digest stops the run with nothing executed. Each digest was recorded from the
+# vendor download and matches the one the AUR piavpn-bin package pins.
+# To move to a newer build (the run warns when PIA's download page names one),
+# follow docs/pia-vpn-and-wifi.md#updating-the-pinned-installer.
+pia_installer_build: "3.8-08539"
+pia_installer_x86_64_sha256: a3cf2e2b50d29693ba58f0ae232e52c5785f0244a56e6ed005b684b18767399f
+pia_installer_aarch64_sha256: 612d278eaadd123f9fed7f016924e7d25a32a33273d2dbbb690faaee14a6ebb3
+# Records the SHA-256 of the installer that last ran to completion, so the
+# installer runs again only when the pinned build changes.
+pia_installer_state_file: /var/lib/curiosity/pia-installer.sha256
+
 # Only the listed executables are routed through the VPN (PIA "include" split
 # tunnel); everything else on the host stays on the normal link. See
 # docs/pia-vpn-and-wifi.md.
