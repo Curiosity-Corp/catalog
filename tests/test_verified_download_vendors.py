@@ -9,10 +9,11 @@ its checksum or signature turns this red, which is the point. CI runs it in the
 `verified-downloads-vendors` job, apart from the offline fixture tests; it
 needs network access, gpg and git.
 
-Every network step is bounded (catalog#174): the test's own lookups through
-`_urlopen` (a connect and read timeout, three tries with backoff), and each
-ansible-playbook run through a time budget. A vendor that is down or slow fails
-its test with the endpoint named, instead of holding the job.
+Every network step is bounded (catalog#174, catalog#177): the test's own
+lookups through `_fetch` (a connect and read timeout, three tries with backoff,
+the whole body read inside each try), and each ansible-playbook run by a
+progress watchdog. A vendor that has stopped answering fails its test with the
+endpoint named; a slow runner that is still receiving does not.
 
 GitHub API calls are kept to three (anonymous limit: 60 an hour); a
 GITHUB_TOKEN in the environment is used when present, through a vars file.
@@ -20,6 +21,7 @@ GITHUB_TOKEN in the environment is used when present, through a vars file.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -27,9 +29,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
-from contextlib import contextmanager
-from http.client import HTTPResponse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -52,12 +52,19 @@ SHA256_SUFFIX = re.compile(r"-[0-9a-f]{64}$")
 # between them. Worst case for one lookup: 3 x 20 s + 2 s + 4 s.
 URL_TIMEOUT = 20
 URL_TRIES = 3
-# Seconds a playbook run against a vendor may take. The slowest normal run is
-# about 20 s (pipeline 174670, --durations); egress was about 6 times slower
-# on 2026-11-27 (catalog#174). The role retries each lookup and download.
-PLAY_BUDGET = 120
+# A playbook run fails once nothing under its directory has grown for STALL
+# seconds. That is a stopped vendor, not a slow runner: the role's get_url
+# already gives up on a read after 60 s, three tries, so STALL only has to
+# outlast one of those tries and a lookup between downloads (catalog#177).
+STALL = 150
+# The ceiling on one run, for a transfer that trickles without ever stalling.
+# The slowest normal run is about 20 s (pipeline 174670, --durations); on
+# 2026-11-27 a run took more than 180 s while still downloading (pipeline
+# 175187, catalog#177). The job's 45-minute timeout is the backstop for all
+# runs together.
+PLAY_BUDGET = 480
 # The Claude Code binary is the largest download.
-CLAUDE_PLAY_BUDGET = 180
+CLAUDE_PLAY_BUDGET = 900
 
 
 def _cached(directory: Path, prefix: str) -> Path:
@@ -67,36 +74,40 @@ def _cached(directory: Path, prefix: str) -> Path:
     return found[0]
 
 
-@contextmanager
-def _urlopen(request: urllib.request.Request | str) -> Iterator[HTTPResponse]:
-    """urlopen, bounded: URL_TIMEOUT to connect and per read, URL_TRIES tries.
+@dataclass(frozen=True)
+class _Fetched:
+    url: str
+    body: bytes
 
-    The role retries every upstream lookup, so a single slow read is not a
-    vendor change; this helper gives the test's own lookups a like allowance,
-    backing off 2 s, then 4 s. Only a timeout, a refused or reset connection or
-    a 5xx is retried; any other HTTP error fails at once. Either way the failure
-    names the URL.
+
+def _fetch(request: urllib.request.Request | str) -> _Fetched:
+    """GET `request`, bounded: URL_TIMEOUT to connect and per read, URL_TRIES tries.
+
+    The role retries every upstream lookup, so a single slow or cut-off read is
+    not a vendor change; this helper gives the test's own lookups a like
+    allowance, backing off 2 s, then 4 s. The body is read inside each try, so a
+    response cut short (IncompleteRead) is retried like a timeout, a refused or
+    reset connection or a 5xx; any other HTTP error fails at once. Either way
+    the failure names the URL. `url` is the address after redirects.
     """
     url = request.full_url if isinstance(request, urllib.request.Request) else request
     for attempt in range(1, URL_TRIES + 1):
         try:
-            response = urllib.request.urlopen(request, timeout=URL_TIMEOUT)
+            with urllib.request.urlopen(request, timeout=URL_TIMEOUT) as response:
+                return _Fetched(response.geturl(), response.read())
         except urllib.error.HTTPError as error:
             if error.code < 500 or attempt == URL_TRIES:
                 message = f"{url}: HTTP {error.code} {error.reason} (try {attempt} of {URL_TRIES})"
                 raise AssertionError(message) from error
             failure: Exception = error
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ConnectionError) as error:
             if attempt == URL_TRIES:
-                message = f"{url}: {error} (try {attempt} of {URL_TRIES}, {URL_TIMEOUT} s timeout)"
+                message = f"{url}: {error!r} (try {attempt} of {URL_TRIES}, {URL_TIMEOUT} s timeout)"
                 raise AssertionError(message) from error
             failure = error
-        else:
-            with response:
-                yield response
-            return
-        print(f"{url}: {failure}; retrying in {2 ** attempt} s")
+        print(f"{url}: {failure!r}; retrying in {2 ** attempt} s")
         time.sleep(2 ** attempt)
+    raise AssertionError(f"{url}: no try made")  # URL_TRIES is at least 1
 
 
 def _github_token_vars() -> dict[str, Any]:
@@ -114,14 +125,12 @@ def _github_latest_release(repository: str) -> dict[str, Any]:
             **({"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}"} if os.environ.get("GITHUB_TOKEN") else {}),
         },
     )
-    with _urlopen(request) as response:
-        return json.load(response)
+    return json.loads(_fetch(request).body)
 
 
 def _latest_tag_from_redirect(repository: str) -> str:
     """The latest release tag, from github.com's redirect (no API quota)."""
-    with _urlopen(f"https://github.com/{repository}/releases/latest") as response:
-        final = response.geturl()
+    final = _fetch(f"https://github.com/{repository}/releases/latest").url
     match = re.search(r"/releases/tag/([^/?#]+)$", final)
     assert match, f"github.com/{repository}/releases/latest redirected to {final}"
     return match.group(1)
@@ -129,7 +138,7 @@ def _latest_tag_from_redirect(repository: str) -> str:
 
 def test_kubectl_resolves_and_verifies(tmp_path: Path) -> None:
     tasks = role_tasks(TASKS / "kubernetes.yml", "Resolve latest kubectl release", "Download and verify latest kubectl")
-    result = run_playbook(tmp_path, tasks, {}, timeout=PLAY_BUDGET, endpoint="dl.k8s.io")
+    result = run_playbook(tmp_path, tasks, {}, timeout=PLAY_BUDGET, stall=STALL, endpoint="dl.k8s.io")
     assert result.returncode == 0, output(result)
     binary = _cached(tmp_path / "cache", "kubectl-v")
     assert binary.stat().st_mode & 0o777 == 0o755
@@ -140,7 +149,7 @@ def test_helm_resolves_and_verifies(tmp_path: Path) -> None:
     tasks = role_tasks(TASKS / "kubernetes.yml", "Download and verify latest Helm")
     result = run_playbook(
         tmp_path, tasks, {"latest_github_releases": {"helm": {"tag_name": tag}}},
-        timeout=PLAY_BUDGET, endpoint="get.helm.sh",
+        timeout=PLAY_BUDGET, stall=STALL, endpoint="get.helm.sh",
     )
     assert result.returncode == 0, output(result)
     _cached(tmp_path / "cache", f"helm-{tag}-linux-amd64.tar.gz")
@@ -158,7 +167,7 @@ def test_go_resolves_and_verifies(tmp_path: Path) -> None:
         [task["name"] for task in tasks].index("Set Go update state") + 1,
         {"name": "Download regardless of an installed Go", "ansible.builtin.set_fact": {"go_needs_update": True}},
     )
-    result = run_playbook(tmp_path, tasks, {}, timeout=PLAY_BUDGET, endpoint="go.dev")
+    result = run_playbook(tmp_path, tasks, {}, timeout=PLAY_BUDGET, stall=STALL, endpoint="go.dev")
     assert result.returncode == 0, output(result)
     _cached(tmp_path / "cache", "go")
 
@@ -178,7 +187,7 @@ def test_codex_installer_resolves_and_verifies(tmp_path: Path) -> None:
         "codex_standalone_release": "latest",
         "_codex_standalone_check": {"rc": 1},
         "latest_github_releases": {"codex": {"tag_name": release["tag_name"], "assets": release["assets"]}},
-    }, timeout=PLAY_BUDGET, endpoint="github.com (openai/codex release assets)")
+    }, timeout=PLAY_BUDGET, stall=STALL, endpoint="github.com (openai/codex release assets)")
     assert result.returncode == 0, output(result)
     installer = _cached(Path(user["home"]) / ".cache/curiosity-corp/downloads", "codex-install.sh")
     assert installer.read_bytes().startswith(b"#!"), "the release install.sh is a script"
@@ -206,7 +215,7 @@ def test_claude_code_release_signature_and_binary_verify(tmp_path: Path) -> None
             "dw_user": user,
         },
         gather_facts=True,
-        timeout=CLAUDE_PLAY_BUDGET,
+        timeout=CLAUDE_PLAY_BUDGET, stall=STALL,
         endpoint="downloads.claude.ai",
     )
     assert result.returncode == 0, output(result)
@@ -216,13 +225,11 @@ def test_claude_code_release_signature_and_binary_verify(tmp_path: Path) -> None
 def test_claude_code_release_check_rejects_an_altered_real_manifest(tmp_path: Path) -> None:
     """The real signature does not cover a manifest with a changed checksum."""
     base = DEFAULTS["claude_native_release_base_url"]
-    with _urlopen(f"{base}/stable") as response:
-        version = response.read().decode().strip()
+    version = _fetch(f"{base}/stable").body.decode().strip()
     site = tmp_path / "site" / version
     site.mkdir(parents=True)
     for name in ("manifest.json", "manifest.json.sig"):
-        with _urlopen(f"{base}/{version}/{name}") as response:
-            (site / name).write_bytes(response.read())
+        (site / name).write_bytes(_fetch(f"{base}/{version}/{name}").body)
     (tmp_path / "site/stable").write_text(version)
     manifest = (site / "manifest.json").read_text()
     altered = re.sub(r'"checksum":\s*"[0-9a-f]{64}"', '"checksum": "' + "0" * 64 + '"', manifest, count=1)
@@ -242,7 +249,7 @@ def test_claude_code_release_check_rejects_an_altered_real_manifest(tmp_path: Pa
                 "claude_native_platform_map": DEFAULTS["claude_native_platform_map"],
             },
             gather_facts=True,
-            timeout=PLAY_BUDGET,
+            timeout=PLAY_BUDGET, stall=STALL,
             endpoint="the local copy of downloads.claude.ai's manifest",
         )
     assert result.returncode != 0
@@ -264,7 +271,7 @@ def test_sdkman_release_commit_resolves_and_checks_out(tmp_path: Path) -> None:
         **_github_token_vars(),
     }
     result = run_playbook(
-        tmp_path, tasks, play_vars, timeout=PLAY_BUDGET,
+        tmp_path, tasks, play_vars, timeout=PLAY_BUDGET, stall=STALL,
         endpoint="api.github.com and github.com (sdkman/sdkman-cli)",
     )
     assert result.returncode == 0, output(result)

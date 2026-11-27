@@ -615,3 +615,33 @@ def test_pinned_claude_release_key_has_the_pinned_fingerprint(tmp_path: Path) ->
     primary = [line for line in shown.splitlines() if line.startswith(("pub:", "fpr:"))]
     assert primary[0].startswith("pub:") and primary[1].startswith("fpr:"), shown
     assert primary[1].split(":")[9] == DEFAULTS["claude_native_release_key_fingerprint"]
+
+
+# catalog#177: run_playbook judges a network run by progress. These stand-ins
+# write into the test's directory the way a download does, without a network.
+def _writer(tmp_path: Path, seconds: int, every: float) -> list[dict[str, Any]]:
+    target = tmp_path / "trickle"
+    script = f"for i in $(seq {int(seconds / every)}); do printf x >> {target}; sleep {every}; done"
+    return [{"name": "Trickle into the test directory", "ansible.builtin.shell": script}]
+
+
+def test_a_run_that_keeps_writing_outlives_its_stall_window(tmp_path: Path) -> None:
+    result = run_playbook(tmp_path, _writer(tmp_path, 12, 1), {}, timeout=60, stall=6, endpoint="a stand-in")
+    assert result.returncode == 0, output(result)
+    assert (tmp_path / "trickle").stat().st_size == 12
+
+
+def test_a_run_that_stops_writing_fails_naming_endpoint_and_task(tmp_path: Path) -> None:
+    stuck = [{"name": "Hang without writing", "ansible.builtin.command": "sleep 300"}]
+    with pytest.raises(AssertionError) as raised:
+        run_playbook(tmp_path, stuck, {}, timeout=120, stall=6, endpoint="a stand-in")
+    message = str(raised.value)
+    assert "made no progress for 6 s" in message, message
+    assert "reaching a stand-in" in message and "TASK [Hang without writing]" in message, message
+    assert "MB written under the test directory" in message, message
+
+
+def test_a_run_past_its_ceiling_fails_even_while_writing(tmp_path: Path) -> None:
+    with pytest.raises(AssertionError) as raised:
+        run_playbook(tmp_path, _writer(tmp_path, 60, 1), {}, timeout=8, stall=6, endpoint="a stand-in")
+    assert "did not finish within 8 s" in str(raised.value), str(raised.value)
