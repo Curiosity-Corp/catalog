@@ -87,6 +87,7 @@ alone:
 | `accessibility_packages` | `[]` | Install reviewed assistive technology ([accessibility](accessibility-and-localization.md)) |
 | `user_dotfiles_repo` | `""` | Apply a dotfiles repository; `user_dotfiles_apply: review` gates it on the repository's own review command ([user dotfiles](configuration.md#user-dotfiles)) |
 | `workspace_git_auth_helper_enabled` | `false` | Install the workspace Git credential helper ([remote workspaces](workspace-providers.md)) |
+| `agent_cpu_policy_enabled` | `false` | Bound the combined CPU of coding agents and IDE processes ([agent CPU policy](agent-cpu-policy.md)) |
 | `profile_cleanup_enabled`, `tmp_hygiene_enabled` | `false` | Delete old profile and `/tmp` data on shared machines |
 | `ziti_enabled`, `keycloak_sso_enabled`, `entra_id_enabled`, `coder_cli_enabled`, `fleetd_enabled` | `false` | Join private networks, identity providers or fleet services |
 | `workstation_timezone` | `""` | Set the time zone |
