@@ -59,6 +59,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | Tag | Status | Tasks | Task files | Profiles | Description |
 | --- | --- | --- | --- | --- | --- |
 | `accessibility` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` | Opt-in assistive technology packages (accessibility_packages); packages only, see accessibility-and-localization.md. |
+| `agent-cpu-policy` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `ai` | supported | 12 | `ai-assistants.yml`, `main.yml` | `desktop`, `workspace` |  |
 | `always` | supported | 13 | `main.yml`, `update-transaction.yml` |  | Runs on every invocation, even with --tags. Skip it only with --skip-tags always. |
 | `ansible-pull` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
@@ -153,7 +154,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `streamstack-framing` | supported | 1 | `main.yml` | `desktop` |  |
 | `streamstack-low-latency` | supported | 1 | `main.yml` | `desktop` |  |
 | `sunshine` | supported | 10 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
-| `system` | supported | 6 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
+| `system` | supported | 7 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `system-retirement` | supported | 1 | `main.yml` |  |  |
 | `systemd` | supported | 4 | `main.yml` |  |  |
 | `t460` | experimental | 1 | `main.yml` |  | ThinkPad T460 console workarounds. |
@@ -302,7 +303,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-501 variables, from `roles/developer_workstation/defaults/main.yml`.
+514 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -562,6 +563,19 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `tmp_hygiene_pressure_config_path` | string | `"/etc/curiosity/tmp-pressure-tmpfiles.conf"` |  | supported |  | (undocumented) |
 | `tmp_hygiene_nr_inodes` | string | `"auto"` |  | supported |  | Inode cap for the tmpfs /tmp (systemd's tmp.mount defaults to nr_inodes=1m). (...) |
 | `tmp_hygiene_nr_inodes_dropin_path` | string | `"/etc/systemd/system/tmp.mount.d/50-curiosity-inodes.conf"` |  | supported |  | (undocumented) |
+| `agent_cpu_policy_enabled` | bool | `false` |  | supported |  | Agent CPU policy (opt-in): bound the aggregate CPU of coding agents and IDE processes (Claude Code, Codex, language servers, test runs they start) so a fleet of concurrent sessions cannot starve interactive work or latency- sensitive services (networking, DNS). (...) |
+| `agent_cpu_policy_quota` | string | `"auto"` |  | supported |  | Per-user ceiling. (...) |
+| `agent_cpu_policy_share_percent` | int | `75` |  | supported |  | Share of all vCPUs an auto quota may give the agents, in percent (1-100). |
+| `agent_cpu_policy_reserve_cpus` | int | `1` |  | supported |  | Whole CPUs an auto quota always leaves free, whatever the share. |
+| `agent_cpu_policy_split_across_users` | bool | `true` |  | supported |  | Divide an auto quota by the number of dev_users, so the sum over users stays inside the budget. |
+| `agent_cpu_policy_min_quota_percent` | int | `50` |  | supported |  | Lower bound for an auto quota, in percent of one CPU (100 = one full CPU). |
+| `agent_cpu_policy_weight` | int | `50` |  | supported |  | CPUWeight of the slice (1-10000, systemd default 100). It only matters among siblings in the same user manager (for example app.slice); the quota is what bounds the agents against everything else. |
+| `agent_cpu_policy_wrapped_commands` | list | `["claude"]` |  | supported |  | Commands that get a shell function sending them through curiosity-agent-run (installed as /etc/profile.d/curiosity-agent-cpu.sh, read by login shells). Plain shell identifiers only. Empty installs no function; run `curiosity-agent-run &lt;command&gt;` explicitly instead. |
+| `agent_cpu_policy_slice` | string | `"curiosity-agents.slice"` |  | supported |  | Name of the systemd user slice the launcher starts commands in. |
+| `agent_cpu_policy_slice_path` | string | `"/etc/systemd/user/curiosity-agents.slice"` |  | supported |  | Where the slice unit is installed; every user's systemd --user reads it. |
+| `agent_cpu_policy_runner_path` | string | `"/usr/local/bin/curiosity-agent-run"` |  | supported |  | The launcher, curiosity-agent-run (fails open when the slice is unusable). |
+| `agent_cpu_policy_bench_path` | string | `"/usr/local/bin/curiosity-agent-cpu-bench"` |  | supported |  | The before/after measurement tool (docs/agent-cpu-policy.md). |
+| `agent_cpu_policy_shell_path` | string | `"/etc/profile.d/curiosity-agent-cpu.sh"` |  | supported |  | The shell functions for agent_cpu_policy_wrapped_commands. |
 | `minimal_desktop_enabled` | bool | `false` |  | supported | boot | Minimal desktop (Openbox + LightDM + Firefox) Lightweight GUI for machines that only need a browser and terminal. Mutually exclusive with display_config_enabled (GDM/GNOME). |
 | `minimal_desktop_autologin` | bool | `true` |  | supported | security, account | (undocumented) |
 | `minimal_desktop_firefox_tweaks` | bool | `true` |  | supported |  | (undocumented) |

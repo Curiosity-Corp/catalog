@@ -248,6 +248,21 @@ argument_specs:
       tmp_hygiene_pressure_config_path: {type: str}
       tmp_hygiene_nr_inodes: {type: str}
       tmp_hygiene_nr_inodes_dropin_path: {type: str}
+      # Agent CPU policy (catalog#2, docs/agent-cpu-policy.md). Ranges, the
+      # quota format and the shell-safe names are rules in validate-config.yml.
+      agent_cpu_policy_enabled: {type: bool}
+      agent_cpu_policy_quota: {type: str}
+      agent_cpu_policy_share_percent: {type: int}
+      agent_cpu_policy_reserve_cpus: {type: int}
+      agent_cpu_policy_split_across_users: {type: bool}
+      agent_cpu_policy_min_quota_percent: {type: int}
+      agent_cpu_policy_weight: {type: int}
+      agent_cpu_policy_wrapped_commands: {type: list, elements: str}
+      agent_cpu_policy_slice: {type: str}
+      agent_cpu_policy_slice_path: {type: str}
+      agent_cpu_policy_runner_path: {type: str}
+      agent_cpu_policy_bench_path: {type: str}
+      agent_cpu_policy_shell_path: {type: str}
       minimal_desktop_enabled: {type: bool}
       minimal_desktop_autologin: {type: bool}
       minimal_desktop_firefox_tweaks: {type: bool}
