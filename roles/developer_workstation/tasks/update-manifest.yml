@@ -145,6 +145,7 @@
           'healthcheck_failures': workstation_update_healthcheck_failures | default([]),
           'healthcheck_warnings': workstation_update_healthcheck_warnings | default([]),
           'skipped_integrations': workstation_update_skipped_integrations | default([]),
+          'component_failures': workstation_update_component_failures | default([]),
           'failure': workstation_update_failure | default({}),
           'package_inventory': {
             'dpkg': _workstation_dpkg_inventory.stdout | default(''),

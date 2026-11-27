@@ -257,6 +257,9 @@ def main() -> None:
     if "file: claude-code-user.yml" not in ai_assistants_text or 'loop: "{{ dev_users }}"' not in ai_assistants_text:
         raise SystemExit("Claude Code must be converged for every dev_users account")
     ai_assistants_text += (ROLE / "tasks/claude-code-user.yml").read_text()
+    # catalog#178: Codex installs from codex-standalone.yml, after release discovery.
+    ai_assistants_text += (ROLE / "tasks/codex-standalone.yml").read_text()
+    ai_assistants_text += (ROLE / "tasks/codex-standalone-install.yml").read_text()
     for required_fragment in (
         "Remove legacy npm-managed Codex",
         "Install standalone Codex CLI",

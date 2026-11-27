@@ -438,7 +438,7 @@ def test_unexpected_channel_version_is_refused(tmp_path: Path, site, keys, value
 
 def _codex_tasks() -> list[dict[str, Any]]:
     return role_tasks(
-        TASKS / "ai-assistants.yml",
+        TASKS / "codex-standalone-install.yml",
         "Select the Codex installer from the latest release",
         "Download and verify the Codex standalone installer",
     )
@@ -480,6 +480,56 @@ def test_codex_installer_fails_closed(tmp_path: Path, site, digest: str | None, 
     result = run_playbook(tmp_path, _codex_tasks(), _codex_vars(tmp_path, base, digest))
     assert result.returncode != 0
     assert re.search(message, output(result), re.IGNORECASE), output(result)
+    downloads = tmp_path / "home/.cache/curiosity-corp/downloads"
+    assert not downloads.exists() or list(downloads.iterdir()) == []
+
+
+def _main_task_index(name: str) -> int:
+    tasks = yaml.safe_load((TASKS / "main.yml").read_text())
+    names = [task.get("name") for task in tasks]
+    assert name in names, f"main.yml has no top-level task named {name!r}"
+    return names.index(name)
+
+
+def test_codex_installs_after_upstream_release_discovery() -> None:
+    # catalog#178: the Codex tasks ran before latest-releases.yml, so a fresh
+    # host had no openai/codex release to take the installer from and the
+    # whole baseline stopped at the gate.
+    discovery = _main_task_index("Resolve upstream releases and evaluate the update ring")
+    codex = _main_task_index("Include the standalone Codex CLI install")
+    transaction = _main_task_index("Run workstation software update transaction")
+    assert discovery < codex < transaction
+    ai_tasks = yaml.safe_load((TASKS / "ai-assistants.yml").read_text())
+    assert not [task["name"] for task in ai_tasks if "Codex" in task.get("name", "")]
+
+
+def _codex_guarded_install(vars_: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    tasks = role_tasks(TASKS / "codex-standalone.yml", "Install the verified Codex release without aborting the baseline")
+    tasks[0]["block"][0]["ansible.builtin.include_tasks"] = str(TASKS / "codex-standalone-install.yml")
+    tasks.append({
+        "name": "Show the recorded component failures",
+        "ansible.builtin.debug": {"msg": "COMPONENT_FAILURES={{ workstation_update_component_failures | default([]) | to_json }}"},
+    })
+    return tasks, vars_
+
+
+@pytest.mark.parametrize("release", ["unresolved", "no-installer"])
+def test_codex_failure_warns_without_aborting_the_baseline(tmp_path: Path, site, release: str) -> None:
+    root, base, requests = site
+    (root / "install.sh").write_bytes(PAYLOAD)
+    vars_ = _codex_vars(tmp_path, base, None)
+    if release == "unresolved":
+        del vars_["latest_github_releases"]
+    tasks, vars_ = _codex_guarded_install(vars_)
+    result = run_playbook(tmp_path, tasks, vars_)
+    text = output(result)
+    assert result.returncode == 0, text
+    assert "WARNING: the standalone Codex CLI was not installed" in text, text
+    assert "refusing to run an unverified installer" in text, text
+    assert 'COMPONENT_FAILURES=[{\\"component\\": \\"codex\\"' in text, text
+    expected = "No openai/codex release was resolved" if release == "unresolved" else "has no install.sh asset"
+    assert expected in text, text
+    assert not any("install.sh" in path for path in requests)
     downloads = tmp_path / "home/.cache/curiosity-corp/downloads"
     assert not downloads.exists() or list(downloads.iterdir()) == []
 
@@ -576,7 +626,7 @@ def _include_vars(task_file: str, name: str) -> dict[str, Any]:
             "verified_download_sha256", "{{ _go_latest_asset.sha256 }}",
         ),
         (
-            "ai-assistants.yml", "Download and verify the Codex standalone installer",
+            "codex-standalone-install.yml", "Download and verify the Codex standalone installer",
             "{{ _codex_installer_asset.browser_download_url }}",
             "verified_download_sha256", "{{ _codex_installer_asset.digest }}",
         ),
@@ -597,7 +647,7 @@ def test_role_downloads_use_the_vendor_digest(
 
 
 def test_installers_run_only_the_verified_file() -> None:
-    text = "\n".join((TASKS / name).read_text() for name in ("ai-assistants.yml", "claude-code-user.yml", "kubernetes.yml", "languages.yml"))
+    text = "\n".join((TASKS / name).read_text() for name in ("ai-assistants.yml", "codex-standalone.yml", "codex-standalone-install.yml", "claude-code-user.yml", "kubernetes.yml", "languages.yml"))
     for retired in ("https://claude.ai/install.sh", "https://chatgpt.com/codex/install.sh", "/tmp/codex", "/tmp/claude"):
         assert retired not in text, f"{retired} is still downloaded or run"
     for retired in ("codex_standalone_installer_url", "claude_native_installer_url", "ziti_install_script_url"):
