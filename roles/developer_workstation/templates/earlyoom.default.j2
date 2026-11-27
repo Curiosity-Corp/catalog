@@ -1,0 +1,16 @@
+{#- /etc/default/earlyoom, read by earlyoom.service (EnvironmentFile=). systemd
+    splits the unquoted $EARLYOOM_ARGS into words and honours the single
+    quotes, so a regex may hold spaces ("Web Content"). validate-config.yml
+    keeps quotes and backslashes out of the regexes. -#}
+{%- set _args = ['-r', earlyoom_report_interval | int | string,
+                 '-m', earlyoom_mem_percent | string,
+                 '-s', earlyoom_swap_percent | string] -%}
+{%- if earlyoom_prefer_regex | length > 0 -%}
+{%-   set _args = _args + ['--prefer', earlyoom_prefer_regex | quote] -%}
+{%- endif -%}
+{%- if earlyoom_avoid_regex | length > 0 -%}
+{%-   set _args = _args + ['--avoid', earlyoom_avoid_regex | quote] -%}
+{%- endif -%}
+# Managed by Ansible — developer-workstation role (docs/memory-resilience.md)
+# Report every {{ earlyoom_report_interval | int }}s (0: never). Memory {{ earlyoom_mem_percent }}% and swap {{ earlyoom_swap_percent }}% (TERM[,KILL]); earlyoom acts when both are below.
+EARLYOOM_ARGS="{{ _args | join(' ') }}"

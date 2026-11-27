@@ -1,0 +1,74 @@
+---
+# =============================================================================
+# Memory-capped browser launcher — one user (loop_var dw_user)
+# =============================================================================
+# Included by browser-memory-cap.yml once per item of dev_users, with
+# _bmc_browsers (installed browsers to cap) and _bmc_desktop_entries (browser
+# name -> system desktop entry text) already set. Removes this role's
+# launchers and overrides that are no longer wanted, so turning the feature
+# off undoes it.
+
+- name: Create the user's launcher and desktop entry directories
+  ansible.builtin.file:
+    path: "{{ dw_user.home }}/{{ item }}"
+    state: directory
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.group | default(dw_user.name) }}"
+    mode: "0755"
+  loop: [.local, .local/bin, .local/share, .local/share/applications]
+  when: _bmc_browsers | length > 0
+
+- name: Install the memory-capped browser launchers
+  ansible.builtin.template:
+    src: browser-memory-cap-launcher.j2
+    dest: "{{ dw_user.home }}/.local/bin/{{ bmc.name }}-capped"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.group | default(dw_user.name) }}"
+    mode: "0755"
+  loop: "{{ _bmc_browsers }}"
+  loop_control:
+    loop_var: bmc
+    label: "{{ bmc.name }}"
+
+# The system entry with every Exec= command replaced by the launcher; its
+# arguments (%U, --incognito, ...) and every other line are kept.
+- name: Install the desktop entry overrides that start the capped launchers
+  ansible.builtin.copy:
+    dest: "{{ dw_user.home }}/.local/share/applications/{{ bmc.desktop_id }}"
+    owner: "{{ dw_user.name }}"
+    group: "{{ dw_user.group | default(dw_user.name) }}"
+    mode: "0644"
+    content: >-
+      {{ _bmc_desktop_entries[bmc.name]
+         | regex_replace('(?m)^Exec=("[^"]*"|\S+)', 'Exec=' ~ dw_user.home ~ '/.local/bin/' ~ bmc.name ~ '-capped')
+         | regex_replace('(?m)^\[Desktop Entry\]$', _bmc_header) }}
+  vars:
+    _bmc_header: |-
+      [Desktop Entry]
+      # Managed by Ansible (developer_workstation curiosity-browser-memory-cap, docs/memory-resilience.md)
+      X-Curiosity-Browser-Memory-Cap={{ bmc.name }}
+  loop: "{{ _bmc_browsers | selectattr('name', 'in', _bmc_desktop_entries) | list }}"
+  loop_control:
+    loop_var: bmc
+    label: "{{ bmc.desktop_id }}"
+
+- name: Find the user's memory-capped launchers and overrides
+  ansible.builtin.find:
+    paths:
+      - "{{ dw_user.home }}/.local/bin"
+      - "{{ dw_user.home }}/.local/share/applications"
+    file_type: file
+    contains: '.*curiosity-browser-memory-cap.*'
+  register: _bmc_found
+
+- name: Remove the launchers and overrides that are no longer wanted
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _bmc_found.files | map(attribute='path') | reject('in', _bmc_wanted_paths) | list }}"
+  vars:
+    _bmc_wanted_paths: >-
+      {{ (_bmc_browsers | map(attribute='name')
+          | map('regex_replace', '^(.*)$', dw_user.home ~ '/.local/bin/\1-capped') | list)
+         + (_bmc_browsers | selectattr('name', 'in', _bmc_desktop_entries) | map(attribute='desktop_id')
+            | map('regex_replace', '^(.*)$', dw_user.home ~ '/.local/share/applications/\1') | list) }}

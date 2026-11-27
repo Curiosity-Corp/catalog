@@ -19,6 +19,9 @@
 #   3. playbooks/preview-vars.yml with tests/config_validation/preview-vars.yml
 #      prints every `# expect:` line, changes nothing and, at -vvv, prints no
 #      SENTIN marker.
+#   4. tests/memory_resilience/play-fixture.yml renders the memory resilience
+#      templates and converges the capped browser launcher in a fixture home
+#      under $OUT.
 # A report of every case goes to $OUT/report.md, with each run's output.
 set -euo pipefail
 
@@ -156,6 +159,18 @@ if ansible-playbook -i localhost, -c local -vvv "$ROOT/playbooks/preview-vars.ym
   fi
 else
   record "playbooks/preview-vars.yml" "prints redacted variables" "the run failed, see runs/preview-vars.log"
+fi
+
+# 4. Memory resilience (catalog#95, docs/memory-resilience.md): the earlyoom,
+#    sysctl, zram and launcher templates render as documented, and
+#    tasks/browser-memory-cap.yml writes, skips and removes the capped browser
+#    launchers of a throwaway fixture home under $OUT. Nothing is started.
+memres_log="$OUT/runs/memory-resilience.log"
+if ansible-playbook -i localhost, -c local "$ROOT/tests/memory_resilience/play-fixture.yml" \
+    -e "memres_out=$OUT/memory-resilience" > "$memres_log" 2>&1; then
+  record "tests/memory_resilience/play-fixture.yml" "renders and converges the fixture" "ok"
+else
+  record "tests/memory_resilience/play-fixture.yml" "renders and converges the fixture" "the run failed, see runs/memory-resilience.log"
 fi
 
 echo

@@ -13,16 +13,28 @@ dev_users:
 # Accounts whose systemd user manager must keep running without a login session
 # (`loginctl enable-linger`). Empty leaves lingering untouched.
 workstation_user_linger: []
-# earlyoom thresholds (percent of available memory / free swap). earlyoom acts
-# only when BOTH memory and swap are below their limits. Defaults keep the
-# historical 5% memory and 50% swap behavior (SIGKILL at half of each).
-earlyoom_mem_percent: "5"
-earlyoom_swap_percent: "50"
-# Optional process-name regexes (matched against the kernel comm name, 15 chars).
-# Empty adds no --prefer / --avoid flag. Hosts that run long-lived agent
-# sessions set these so browsers die before the agents do.
-earlyoom_prefer_regex: ""
-earlyoom_avoid_regex: ""
+# earlyoom thresholds (percent of available memory / free swap), each "TERM"
+# or "TERM,KILL": SIGTERM at the first level, SIGKILL at the second (earlyoom
+# uses half of TERM when KILL is left out). earlyoom acts only when BOTH memory
+# and swap are below their levels. 8,4 / 15,8 act before the kernel OOM killer
+# on a host whose swap fills fast (zram), which 5 / 50 did not (catalog#95);
+# docs/memory-resilience.md.
+earlyoom_mem_percent: "8,4"
+earlyoom_swap_percent: "15,8"
+# Seconds between earlyoom's memory reports in the journal; 0 turns them off.
+earlyoom_report_interval: 300
+# Process-name regexes (POSIX extended, matched against the kernel comm name,
+# at most 15 characters). Empty adds no --prefer / --avoid flag. The defaults
+# make a browser the first choice and keep agent sessions, terminals, the
+# desktop session and the media and streaming services (so a live call) out of
+# earlyoom's choice; docs/memory-resilience.md lists every name.
+earlyoom_prefer_regex: "^(brave|chrome|chromium|msedge|vivaldi-bin|opera|firefox|firefox-bin|\
+  Web Content|WebExtensions|Isolated Web Co|Privileged Cont|RDD Process|Utility Process|headless_shell)$"
+earlyoom_avoid_regex: "^(claude|codex|hyperharness.*|hh-.*|tmux.*|screen|sshd.*|mosh-server|alacritty|kitty|\
+  foot|wezterm.*|gnome-terminal.*|xfce4-terminal|konsole|xterm|urxvt|terminator|tilix|ptyxis.*|\
+  systemd.*|dbus-.*|Xorg|Xwayland|gnome-shell|openbox|lightdm|gdm.*|sddm.*|tint2|\
+  picom|dunst|pipewire.*|wireplumber|pulseaudio|streamstack.*|sunshine|gst-launch-1.0|ffmpeg|mediamtx|\
+  obs|zoom|ZoomWebviewHost|teams-for-linux|ziti-edge-tunn.*|earlyoom)$"
 # IANA time zone for the system clock (`timedatectl`), e.g. America/New_York.
 # Empty leaves the host's zone untouched. StreamStack's light schedule takes its
 # sunrise and sunset from this zone unless streamstack_latitude/longitude are set.
@@ -918,6 +930,29 @@ vm_swappiness: "{{ 100 if zram_swap_enabled | bool else 10 }}"
 # readahead only decompresses pages nobody asked for, so 0 with zram. Empty
 # leaves the kernel default (3) and writes no line.
 vm_page_cluster: "{{ 0 if zram_swap_enabled | bool else '' }}"
+# Memory-capped browser launcher (opt-in; docs/memory-resilience.md). For each
+# of dev_users and each installed browser below, writes
+# ~/.local/bin/<name>-capped, which starts the browser in its own systemd user
+# scope with MemoryHigh (the kernel slows it with reclaim) and MemoryMax (the
+# kernel stops it inside the scope, nothing else), and a
+# ~/.local/share/applications/<desktop_id> override whose Exec lines use it.
+# A browser that the PIA tunnel routes (pia_tunnel_apps) is skipped: the
+# tunnel launcher already caps it and owns its entries. false removes the
+# launchers and overrides this role wrote. Per launch, BROWSER_MEMORY_HIGH and
+# BROWSER_MEMORY_MAX override the two limits.
+browser_memory_cap_enabled: false
+browser_memory_cap_slice: app-browser.slice
+# Each entry: name (launcher name), command (absolute path of the browser's
+# own launcher), desktop_id (the system .desktop file to override),
+# memory_high and memory_max (systemd sizes such as 16G, a percentage of RAM
+# such as 25%, or infinity). Snap browsers start in a scope of their own, so
+# a cap around them does not hold; list deb or tarball installs.
+browser_memory_cap_browsers:
+  - name: brave-browser
+    command: /usr/bin/brave-browser-stable
+    desktop_id: brave-browser.desktop
+    memory_high: 16G
+    memory_max: 24G
 
 # Entra ID SSO — SUNSET, replaced by Keycloak SSO
 entra_id_enabled: false

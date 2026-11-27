@@ -138,8 +138,13 @@ variables:
   swap_size_gb: {safety: boot}
   hardware_profile: {note: "Selects an entry of hardware_profiles."}
   wifi_psk: {note: "The pre-shared key of wifi_ssid."}
-  earlyoom_mem_percent: {values: "integer percent, 1 to 100, written as a string"}
-  earlyoom_swap_percent: {values: "integer percent, 1 to 100, written as a string"}
+  earlyoom_mem_percent: {values: "percent 1 to 100, or a SIGTERM,SIGKILL pair such as 8,4 (KILL not above TERM), written as a string"}
+  earlyoom_swap_percent: {values: "percent 1 to 100, or a SIGTERM,SIGKILL pair such as 15,8 (KILL not above TERM), written as a string"}
+  earlyoom_report_interval: {values: "whole number of seconds; 0 turns the journal reports off"}
+  earlyoom_prefer_regex: {values: "POSIX extended regex over process names, without quotes, backslashes or line breaks; empty adds no --prefer"}
+  earlyoom_avoid_regex: {values: "POSIX extended regex over process names, without quotes, backslashes or line breaks; empty adds no --avoid"}
+  browser_memory_cap_slice: {values: "a systemd slice name ending in .slice"}
+  browser_memory_cap_browsers: {values: "list of {name, command, desktop_id, memory_high, memory_max}; sizes such as 16G, 25% or infinity, memory_high not above memory_max"}
   minimal_desktop_display_scale: {values: "number from 1 to 4 in steps of 0.25"}
   accessibility_packages: {values: "list of orca, espeak-ng, brltty, onboard, xkbset (decision record 0003)"}
 

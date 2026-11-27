@@ -41,6 +41,7 @@ argument_specs:
       workstation_user_linger: {type: list}
       earlyoom_mem_percent: {type: str}
       earlyoom_swap_percent: {type: str}
+      earlyoom_report_interval: {type: int}
       earlyoom_prefer_regex: {type: str}
       earlyoom_avoid_regex: {type: str}
       workstation_timezone: {type: str}
@@ -185,6 +186,9 @@ argument_specs:
       zram_swap_size_expression: {type: str}
       zram_swap_algorithm: {type: str}
       zram_swap_priority: {type: int}
+      browser_memory_cap_enabled: {type: bool}
+      browser_memory_cap_slice: {type: str}
+      browser_memory_cap_browsers: {type: list, elements: dict}
       entra_id_enabled: {type: bool}
       keycloak_sso_enabled: {type: bool}
       keycloak_host: {type: str}
