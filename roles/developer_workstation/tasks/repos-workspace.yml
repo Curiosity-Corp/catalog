@@ -63,12 +63,25 @@
     apt_keyring_url: "https://packages.microsoft.com/keys/microsoft.asc"
     apt_keyring_dest: /usr/share/keyrings/microsoft-archive-keyring.gpg
 
+# Microsoft signs its newer channels (Debian 13, Ubuntu 26.04) with a 2025 key;
+# its other repositories still use microsoft.asc (catalog#180). Only the
+# Debian .NET channel needs it here.
+- name: Converge microsoft-2025 APT keyring
+  ansible.builtin.include_tasks: apt-keyring.yml
+  vars:
+    apt_keyring_name: microsoft-2025
+    apt_keyring_url: "https://packages.microsoft.com/keys/microsoft-2025.asc"
+    apt_keyring_dest: /usr/share/keyrings/microsoft-2025-archive-keyring.gpg
+    apt_keyring_fingerprint: AA86F75E427A19DD33346403EE4D7792F748182B
+  when: apt_vendor_family == 'debian'
+
 - name: Add Microsoft .NET SDK repository
   ansible.builtin.include_tasks: apt-vendor-repo.yml
   vars:
     apt_vendor_repo_key: dotnet
     apt_vendor_repo_filename: microsoft-dotnet
     apt_vendor_repo_signed_by: /usr/share/keyrings/microsoft-archive-keyring.gpg
+    apt_vendor_repo_signed_by_debian: /usr/share/keyrings/microsoft-2025-archive-keyring.gpg
 
 # --- Azure CLI ---
 - name: Add Microsoft Azure CLI repository

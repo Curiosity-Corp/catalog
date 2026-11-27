@@ -299,6 +299,8 @@ debian13-vm-run:
   tags:
     - cpu-heavy
   timeout: 4h
+  # A push must not end a run that takes hours (default interruptible: true).
+  interruptible: false
   variables:
     KUBERNETES_CPU_REQUEST: "4"
     KUBERNETES_CPU_LIMIT: "4"

@@ -143,9 +143,11 @@ def test_every_signed_by_keyring_converges_through_the_shared_flow() -> None:
         # Vendor repositories whose channel depends on the distribution are
         # written by apt-vendor-repo.yml, which takes the keyring as a var.
         vendor_repos = [
-            task["vars"]["apt_vendor_repo_signed_by"]
+            task["vars"][key]
             for task in _walk(_load(TASKS / filename))
             if task.get("ansible.builtin.include_tasks") == "apt-vendor-repo.yml"
+            for key in ("apt_vendor_repo_signed_by", "apt_vendor_repo_signed_by_debian")
+            if key in task["vars"]
         ]
         signed_by = {
             match
@@ -166,6 +168,7 @@ def test_keyring_destinations_and_sources_are_stable() -> None:
     assert desktop == {
         "github-cli": "/usr/share/keyrings/githubcli-archive-keyring.gpg",
         "microsoft": "/usr/share/keyrings/microsoft-archive-keyring.gpg",
+        "microsoft-2025": "/usr/share/keyrings/microsoft-2025-archive-keyring.gpg",
         "google-cloud": "/usr/share/keyrings/cloud-google-archive-keyring.gpg",
         "mongodb": "/usr/share/keyrings/mongodb-archive-keyring.gpg",
         "google-chrome": "/usr/share/keyrings/google-chrome-archive-keyring.gpg",
