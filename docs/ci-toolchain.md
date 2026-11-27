@@ -22,6 +22,15 @@ is missing from the lock, or when a CI collection is not pinned exactly.
 The collection's own dependency range for users stays in `galaxy.yml` and
 `requirements.yml`; `ci/requirements.yml` pins only what CI tests with.
 
+CI fetches those pinned collections from Galaxy once per pipeline (catalog#174).
+The first-stage `galaxy-collections` job installs them into `.ci-collections`
+and passes that directory on as an artifact. Every job that extends
+`.python_setup` uses the copy when `ansible-galaxy collection verify --offline`
+finds the pinned versions with every file matching its manifest. A job that
+got no copy (one that `needs` other jobs) installs them itself: each try is
+bounded to 30 s per Galaxy request and 150 s in all, with four tries 10, 20 and
+40 s apart, and a timeout says galaxy.ansible.com did not answer.
+
 Because every other job tests the exact pin, the `collection-floor` job
 (`scripts/check-collection-floor.sh`) tests the other end of the range: it
 installs exactly the `galaxy.yml` floor of community.general (by version from

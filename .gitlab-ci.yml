@@ -11,6 +11,7 @@ include:
 image: public.ecr.aws/docker/library/python:3.13-slim@sha256:7249d5587b78209a006dc4a3b5340678f84ea729239193aa559962cd8c1fce50
 
 stages:
+  - prepare
   - validate
   - test
   - security
@@ -37,20 +38,48 @@ variables:
     # Hash-checked lock of the CI tooling (catalog#22, docs/ci-toolchain.md).
     # pip itself comes from the digest-pinned image, so it is not upgraded here.
     - python -m pip install --require-hashes -r ci/requirements.txt
-    # galaxy.ansible.com occasionally resets the connection mid-download, and a
-    # single failed job cancels the rest of the pipeline, so retry a few times.
+    # Ansible collections (catalog#174). galaxy.ansible.com resets connections
+    # in bursts, and with every job installing on its own one reset failed the
+    # pipeline. The galaxy-collections job installs the pinned collections once
+    # into .ci-collections and passes them on as an artifact. A job uses them
+    # when `verify --offline` finds the pinned versions with every file matching
+    # its manifest; otherwise (a job that `needs` others and so got no copy) it
+    # installs them itself. Each try: 30 s per Galaxy request, 150 s in all;
+    # four tries, 10, 20 and 40 s apart.
+    - export ANSIBLE_COLLECTIONS_PATH="$CI_PROJECT_DIR/.ci-collections:$HOME/.ansible/collections:/usr/share/ansible/collections"
     - |
-      attempt=1
-      until ansible-galaxy collection install -r ci/requirements.yml; do
-        rc=$?
-        if [ "$attempt" -ge 3 ]; then
-          echo "ansible-galaxy collection install failed after $attempt attempts (exit $rc)" >&2
-          exit "$rc"
-        fi
-        echo "ansible-galaxy collection install attempt $attempt failed (exit $rc); retrying in 10s" >&2
-        attempt=$((attempt + 1))
-        sleep 10
-      done
+      if ansible-galaxy collection verify --offline -r ci/requirements.yml >/dev/null 2>&1; then
+        echo "Using the collections from the galaxy-collections job (verified offline)"
+      else
+        attempt=1
+        until timeout 150 ansible-galaxy collection install -r ci/requirements.yml --timeout 30 -p "$CI_PROJECT_DIR/.ci-collections"; do
+          rc=$?
+          why="exit $rc"
+          [ "$rc" -eq 124 ] && why="no answer from galaxy.ansible.com within 150 s"
+          if [ "$attempt" -ge 4 ]; then
+            echo "ansible-galaxy collection install failed after $attempt attempts ($why)" >&2
+            exit "$rc"
+          fi
+          wait=$((10 * (1 << (attempt - 1))))
+          echo "ansible-galaxy collection install attempt $attempt failed ($why); retrying in ${wait}s" >&2
+          attempt=$((attempt + 1))
+          sleep "$wait"
+        done
+      fi
+
+# catalog#174: the pinned collections, once per pipeline, for every job that
+# extends .python_setup (see its before_script). Its own run installs them, as
+# nothing is there yet, then proves the copy it passes on.
+galaxy-collections:
+  extends: .python_setup
+  stage: prepare
+  timeout: 15m
+  script:
+    - ansible-galaxy collection verify --offline -r ci/requirements.yml
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - .ci-collections/
 
 # One pipeline per change: merge request pipelines for feature branches, branch
 # pipelines only for the default branch. A plain push to a branch that has (or
@@ -135,16 +164,38 @@ resume-standin:
 
 # catalog#171: the vendor-verified downloads (verified-download.yml, the signed
 # Claude Code manifest, the Codex release digest, the SDKMAN! release commit).
-# The fixture tests show each one fails closed; the vendor tests run the role's
-# own task slices against dl.k8s.io, get.helm.sh, go.dev, GitHub and
-# downloads.claude.ai. The full python image ships gpg and git; the slim
-# one does not, and the non-root runner cannot apt-get them.
+# The full python image ships gpg and git; the slim one does not, and the
+# non-root runner cannot apt-get them.
+#
+# catalog#174: two jobs, each with a 15-minute timeout: a few times the normal
+# runtime (pipeline 174670: 242 s and 120 s, setup included), with room for the
+# pip setup alone to take 6 minutes, as it did when egress slowed on 2026-11-27.
+# verified-downloads runs the fixture tests offline, which shows each path fails
+# closed: a proxy on a closed loopback port refuses any request that leaves the
+# host, so a test that reaches the internet by mistake fails at once, naming the
+# URL. verified-downloads-vendors runs the role's own task slices against
+# dl.k8s.io, get.helm.sh, go.dev, GitHub and downloads.claude.ai; every lookup and
+# playbook run there is bounded, so a vendor outage fails the named test instead
+# of holding the pipeline. -v and --durations show which test took the time.
 verified-downloads:
   extends: .python_setup
   stage: test
   image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  timeout: 15m
   script:
-    - python -m pytest -q tests/test_verified_download.py tests/test_verified_download_vendors.py
+    - >-
+      HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+      http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9
+      NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
+      python -m pytest -v --durations=10 tests/test_verified_download.py
+
+verified-downloads-vendors:
+  extends: .python_setup
+  stage: test
+  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  timeout: 15m
+  script:
+    - python -m pytest -v --durations=0 tests/test_verified_download_vendors.py
 
 # catalog#29: the opt-in workspace git credential helper
 # (docs/workspace-providers.md). The role's own tasks install it under pytest's
@@ -436,6 +487,8 @@ third_party:
   extends: .python_setup
   stage: package
   needs:
+    - job: galaxy-collections
+      artifacts: true
     - job: collection
       artifacts: true
   script:
@@ -449,6 +502,8 @@ sbom:
   stage: package
   interruptible: false
   needs:
+    - job: galaxy-collections
+      artifacts: true
     - job: collection
       artifacts: true
     - job: tools
@@ -476,6 +531,8 @@ provenance:
   stage: package
   interruptible: false
   needs:
+    - job: galaxy-collections
+      artifacts: true
     - job: collection
       artifacts: true
     - job: sbom
