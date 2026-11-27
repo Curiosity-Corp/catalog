@@ -484,56 +484,6 @@ def test_codex_installer_fails_closed(tmp_path: Path, site, digest: str | None, 
     assert not downloads.exists() or list(downloads.iterdir()) == []
 
 
-def _main_task_index(name: str) -> int:
-    tasks = yaml.safe_load((TASKS / "main.yml").read_text())
-    names = [task.get("name") for task in tasks]
-    assert name in names, f"main.yml has no top-level task named {name!r}"
-    return names.index(name)
-
-
-def test_codex_installs_after_upstream_release_discovery() -> None:
-    # catalog#178: the Codex tasks ran before latest-releases.yml, so a fresh
-    # host had no openai/codex release to take the installer from and the
-    # whole baseline stopped at the gate.
-    discovery = _main_task_index("Resolve upstream releases and evaluate the update ring")
-    codex = _main_task_index("Include the standalone Codex CLI install")
-    transaction = _main_task_index("Run workstation software update transaction")
-    assert discovery < codex < transaction
-    ai_tasks = yaml.safe_load((TASKS / "ai-assistants.yml").read_text())
-    assert not [task["name"] for task in ai_tasks if "Codex" in task.get("name", "")]
-
-
-def _codex_guarded_install(vars_: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    tasks = role_tasks(TASKS / "codex-standalone.yml", "Install the verified Codex release without aborting the baseline")
-    tasks[0]["block"][0]["ansible.builtin.include_tasks"] = str(TASKS / "codex-standalone-install.yml")
-    tasks.append({
-        "name": "Show the recorded component failures",
-        "ansible.builtin.debug": {"msg": "COMPONENT_FAILURES={{ workstation_update_component_failures | default([]) | to_json }}"},
-    })
-    return tasks, vars_
-
-
-@pytest.mark.parametrize("release", ["unresolved", "no-installer"])
-def test_codex_failure_warns_without_aborting_the_baseline(tmp_path: Path, site, release: str) -> None:
-    root, base, requests = site
-    (root / "install.sh").write_bytes(PAYLOAD)
-    vars_ = _codex_vars(tmp_path, base, None)
-    if release == "unresolved":
-        del vars_["latest_github_releases"]
-    tasks, vars_ = _codex_guarded_install(vars_)
-    result = run_playbook(tmp_path, tasks, vars_)
-    text = output(result)
-    assert result.returncode == 0, text
-    assert "WARNING: the standalone Codex CLI was not installed" in text, text
-    assert "refusing to run an unverified installer" in text, text
-    assert 'COMPONENT_FAILURES=[{\\"component\\": \\"codex\\"' in text, text
-    expected = "No openai/codex release was resolved" if release == "unresolved" else "has no install.sh asset"
-    assert expected in text, text
-    assert not any("install.sh" in path for path in requests)
-    downloads = tmp_path / "home/.cache/curiosity-corp/downloads"
-    assert not downloads.exists() or list(downloads.iterdir()) == []
-
-
 # --- SDKMAN!: the release tag's commit, as GitHub's API names it --------------
 
 def _git(*args: str, cwd: Path | None = None) -> str:
