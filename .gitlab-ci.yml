@@ -251,6 +251,17 @@ lint:
   script:
     - ANSIBLE_ROLES_PATH=roles ansible-lint playbooks/site.yml playbooks/preview-vars.yml roles
 
+# galaxy.yml lets users resolve any community.general from its floor upward,
+# while every other job uses the exact pin in ci/requirements.yml. This job
+# installs the floor alone and fails when a community.general module, filter,
+# test or lookup the roles name is missing or deprecated there (catalog#171,
+# docs/ci-toolchain.md).
+collection-floor:
+  extends: .python_setup
+  stage: validate
+  script:
+    - scripts/check-collection-floor.sh "$CI_PROJECT_DIR/.ci-collections-floor"
+
 policy:
   extends: .python_setup
   stage: test
