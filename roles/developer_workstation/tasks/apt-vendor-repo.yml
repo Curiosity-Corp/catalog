@@ -23,7 +23,10 @@
   ansible.builtin.uri:
     url: "{{ _apt_vendor_repo.uri | regex_replace('/+$', '') }}/dists/{{ _apt_vendor_repo.suite }}/Release"
     method: GET
-    status_code: [200, 404]
+    # Ask past caches (Cache-Control: no-cache). A cache may still answer 304 Not
+    # Modified, which also proves the Release file exists.
+    force: true
+    status_code: [200, 304, 404]
   register: _apt_vendor_repo_release
   # A read-only GET: run it under --check too, so a preview shows the real choice.
   check_mode: false
@@ -33,7 +36,7 @@
 
 - name: Record whether the vendor channel exists for {{ apt_vendor_repo_key }}
   ansible.builtin.set_fact:
-    _apt_vendor_repo_published: "{{ _apt_vendor_repo_release.status == 200 }}"
+    _apt_vendor_repo_published: "{{ _apt_vendor_repo_release.status in [200, 304] }}"
     _apt_vendor_repo_reason: >-
       {{ _apt_vendor_repo.uri }} dists/{{ _apt_vendor_repo.suite }} returned
       HTTP {{ _apt_vendor_repo_release.status }}
