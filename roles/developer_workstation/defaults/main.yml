@@ -193,10 +193,12 @@ latest_github_repositories:
   deno: denoland/deno
   bun: oven-sh/bun
   starship: starship/starship
-  talhelper: budimanjojo/talhelper
   yq: mikefarah/yq
   chezmoi: twpayne/chezmoi
-  filebrowser: filebrowser/filebrowser
+  # FileBrowser Quantum, the maintained fork; the original filebrowser/filebrowser
+  # is archived (catalog#171).
+  filebrowser: gtsteffaniak/filebrowser
+  librespeed: librespeed/speedtest-cli
   talos: siderolabs/talos
   k9s: derailed/k9s
   argocd: argoproj/argo-cd
@@ -368,10 +370,10 @@ latest_release_contracts:
   deno: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/deno, --version]}
   bun: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/bun, --version]}
   starship: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/starship, --version]}
-  talhelper: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/talhelper, --version]}
   yq: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/yq, --version]}
   chezmoi: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/chezmoi, --version]}
-  filebrowser: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/filebrowser, version]}
+  filebrowser: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/filebrowser, version]}
+  librespeed: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/librespeed-cli, --version]}
   talos: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/talosctl, version, --client]}
   k9s: {installer: github-archive, verification: github-asset-digest, healthcheck: [/usr/local/bin/k9s, version]}
   argocd: {installer: github-binary, verification: github-asset-digest, healthcheck: [/usr/local/bin/argocd, version, --client]}
@@ -511,10 +513,10 @@ workstation_update_managed_paths:
   - /usr/local/bin/bun
   - /usr/local/bin/bunx
   - /usr/local/bin/starship
-  - /usr/local/bin/talhelper
   - /usr/local/bin/yq
   - /usr/local/bin/chezmoi
   - /usr/local/bin/filebrowser
+  - /usr/local/bin/librespeed-cli
   - /usr/local/bin/talosctl
   - /usr/local/bin/k9s
   - /usr/local/bin/argocd

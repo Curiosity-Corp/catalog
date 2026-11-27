@@ -321,13 +321,6 @@ sources:
     covers: [https://edge.microsoft.com/extensionwebstorebase/v1/crx]
     declared_in: [roles/developer_workstation/defaults/main.yml]
     pinned: false
-  - name: speedtest-cli
-    kind: runtime-package
-    source: release-download
-    type: application
-    url: https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py
-    declared_in: [roles/developer_workstation/tasks/user-shell-fallback.yml]
-    pinned: false
   - name: weechat-go-script
     kind: runtime-package
     source: release-download

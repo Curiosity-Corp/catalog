@@ -108,12 +108,16 @@
              | first }}
         include: [starship]
         extra_opts: []
-      - name: talhelper
+      # librespeed-cli backs the `speedtest` shell alias; it replaces the
+      # archived sivel/speedtest-cli script (catalog#171).
+      - name: librespeed
         asset: >-
-          {{ latest_github_releases.talhelper.assets
-             | selectattr('name', 'equalto', 'talhelper_linux_amd64.tar.gz')
-             | first }}
-        include: [talhelper]
+          {{
+            latest_github_releases.librespeed.assets
+            | selectattr('name', 'match', '^librespeed-cli_.*_linux_amd64[.]tar[.]gz$')
+            | first
+          }}
+        include: [librespeed-cli]
         extra_opts: []
 
 - name: Assert latest CLI asset resolution
@@ -234,29 +238,61 @@
   loop:
     - "{{ dev_user_home }}/go/bin/golangci-lint"
     - "{{ dev_user_home }}/go/bin/gum"
-    - "{{ dev_user_home }}/go/bin/talhelper"
 
-- name: Download latest filebrowser for workspace profile
-  ansible.builtin.get_url:
-    url: >-
+# FileBrowser Quantum (gtsteffaniak/filebrowser), the maintained fork of the
+# archived filebrowser/filebrowser (catalog#171). It ships a single binary per
+# platform, still named `filebrowser`. Its `config.yaml` replaces the original's
+# command-line flags, and it imports an original BoltDB database
+# (docs/configuration.md#replaced-and-deprecated-tools).
+- name: Resolve latest FileBrowser Quantum binary for workspace profile
+  ansible.builtin.set_fact:
+    _latest_filebrowser_asset: >-
       {{
-        (latest_github_releases.filebrowser.assets
-          | selectattr('name', 'equalto', 'linux-amd64-filebrowser.tar.gz')
-          | first).browser_download_url
+        latest_github_releases.filebrowser.assets
+        | selectattr('name', 'equalto', 'linux-amd64-filebrowser')
+        | first
       }}
-    dest: "{{ workstation_update_artifact_cache_dir }}/filebrowser-{{ (latest_github_releases.filebrowser.assets | selectattr('name', 'equalto', 'linux-amd64-filebrowser.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
-    checksum: >-
-      {{ (latest_github_releases.filebrowser.assets
-          | selectattr('name', 'equalto', 'linux-amd64-filebrowser.tar.gz')
-          | first).digest }}
+  when: workstation_profile == 'workspace'
+
+- name: Require a verified FileBrowser Quantum binary
+  ansible.builtin.assert:
+    that:
+      - _latest_filebrowser_asset | default({}) | length > 0
+      - _latest_filebrowser_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "FileBrowser Quantum did not publish a current Linux amd64 binary with a SHA-256 digest"
+  when: workstation_profile == 'workspace'
+
+- name: Download latest FileBrowser Quantum for workspace profile
+  ansible.builtin.get_url:
+    url: "{{ _latest_filebrowser_asset.browser_download_url }}"
+    dest: "{{ workstation_update_artifact_cache_dir }}/filebrowser-{{ _latest_filebrowser_asset.digest | regex_replace('^sha256:', '') }}.binary"
+    checksum: "{{ _latest_filebrowser_asset.digest }}"
     mode: "0644"
     force: false
   when: workstation_profile == 'workspace'
 
-- name: Install latest filebrowser for workspace profile
-  ansible.builtin.unarchive:
-    src: "{{ workstation_update_artifact_cache_dir }}/filebrowser-{{ (latest_github_releases.filebrowser.assets | selectattr('name', 'equalto', 'linux-amd64-filebrowser.tar.gz') | first).digest | regex_replace('^sha256:', '') }}.archive"
-    dest: /usr/local/bin
+- name: Atomically install latest FileBrowser Quantum for workspace profile
+  ansible.builtin.copy:
+    src: "{{ workstation_update_artifact_cache_dir }}/filebrowser-{{ _latest_filebrowser_asset.digest | regex_replace('^sha256:', '') }}.binary"
+    dest: /usr/local/bin/filebrowser
     remote_src: true
-    include: [filebrowser]
+    mode: "0755"
   when: workstation_profile == 'workspace'
+
+# talhelper is deprecated (catalog#171): budimanjojo/talhelper is archived, so
+# the role no longer installs or updates it. A binary an earlier run installed
+# is left in place for its user to retire; talosctl, which the role installs,
+# generates Talos configuration itself.
+- name: Check for a talhelper binary left by an earlier run
+  ansible.builtin.stat:
+    path: /usr/local/bin/talhelper
+  register: _deprecated_talhelper
+
+- name: Warn that talhelper is deprecated
+  ansible.builtin.debug:
+    msg: >-
+      /usr/local/bin/talhelper is no longer installed or updated by this role:
+      its upstream (budimanjojo/talhelper) is archived. Generate Talos
+      configuration with `talosctl gen config` and `--config-patch`, then
+      delete the binary (docs/configuration.md#replaced-and-deprecated-tools).
+  when: _deprecated_talhelper.stat.exists
