@@ -74,6 +74,7 @@ path = [
   "roles/developer_workstation/files/minimal-desktop/autostart",
   "roles/developer_workstation/files/minimal-desktop/dunstrc",
   "roles/developer_workstation/files/minimal-desktop/lightdm-xserver-wrapper",
+  "roles/developer_workstation/files/minimal-desktop/screens-off",
   "roles/developer_workstation/files/minimal-desktop/tint2-volume-status",
 ]
 precedence = "aggregate"

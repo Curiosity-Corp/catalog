@@ -115,7 +115,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `maintenance` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `media` | supported | 3 | `main.yml`, `managed-updates.yml` | `desktop` |  |
 | `media-folder` | supported | 1 | `main.yml` | `desktop` |  |
-| `minimal-desktop` | supported | 26 | `main.yml`, `minimal-desktop.yml` | `desktop`, `thin-client`, `byod-kiosk` | The minimal Openbox desktop and its display, lock and greeter pieces. |
+| `minimal-desktop` | supported | 27 | `main.yml`, `minimal-desktop.yml` | `desktop`, `thin-client`, `byod-kiosk` | The minimal Openbox desktop and its display, lock and greeter pieces. |
 | `missionctl` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client` |  |
 | `monitor-sleep` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `mosh` | supported | 2 | `main.yml` | `workspace` |  |
@@ -159,7 +159,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `t460` | experimental | 1 | `main.yml` |  | ThinkPad T460 console workarounds. |
 | `testing` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `timezone` | supported | 1 | `main.yml` |  | System time zone (workstation_timezone). |
-| `tint2` | supported | 2 | `minimal-desktop.yml` |  |  |
+| `tint2` | supported | 3 | `minimal-desktop.yml` |  |  |
 | `tmp-hygiene` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `touchpad` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `tuning` | supported | 1 | `main.yml` | `desktop` |  |

@@ -115,6 +115,15 @@
     mode: "0755"
   tags: [minimal-desktop, tint2]
 
+- name: Install the tint2 screens-off helper
+  ansible.builtin.copy:
+    src: minimal-desktop/screens-off
+    dest: /usr/local/bin/screens-off
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [minimal-desktop, tint2]
+
 - name: Render the display scale X resources
   ansible.builtin.include_tasks:
     file: minimal-desktop-display-scale.yml

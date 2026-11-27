@@ -28,6 +28,8 @@ TINT2_17_OPTIONS = frozenset(
     autohide autohide_height autohide_hide_timeout autohide_show_timeout
     background_color background_color_hover background_color_pressed
     border_color border_color_hover border_color_pressed border_sides border_width
+    button button_background_id button_centered button_font button_font_color
+    button_lclick_command button_padding button_text button_tooltip
     clock_background_id clock_dwheel_command clock_font_color clock_lclick_command
     clock_mclick_command clock_padding clock_rclick_command clock_tooltip
     clock_tooltip_timezone clock_uwheel_command
@@ -130,9 +132,9 @@ def test_only_tint2_17_options_are_used(path: Path) -> None:
 def test_layout_shapes() -> None:
     bottom = dict(_options(LAYOUT_DIR / "bottom.tint2rc"))
     top = dict(_options(LAYOUT_DIR / "top.tint2rc"))
-    assert bottom["panel_items"] == "TSC" and bottom["panel_size"] == "100% 32"
+    assert bottom["panel_items"] == "TSCP" and bottom["panel_size"] == "100% 32"
     assert bottom["panel_position"].startswith("bottom")
-    assert top["panel_items"] == "LTSEC" and top["panel_size"] == "100% 36"
+    assert top["panel_items"] == "LTSECP" and top["panel_size"] == "100% 36"
     assert top["panel_position"].startswith("top")
     assert top["execp_command"] == "/usr/local/bin/tint2-volume-status"
     # Only orage-less, battery-less panels ship; zenity backs the calendar.
@@ -243,6 +245,88 @@ def test_volume_helper_reports_volume_and_mute() -> None:
     assert _run_volume_helper("Mute: no", quiet) == "Sound 5%"
     assert _run_volume_helper("Mute: yes", volume) == "Muted"
     assert _run_volume_helper("Mute: no", "") == "Sound unavailable"
+
+
+def test_screens_off_helper_is_installed_root_owned_and_executable() -> None:
+    install = _named(_tasks("minimal-desktop.yml"), "Install the tint2 screens-off helper")
+    copy = install["ansible.builtin.copy"]
+    assert copy["src"] == "minimal-desktop/screens-off"
+    assert copy["dest"] == "/usr/local/bin/screens-off"
+    assert (copy["owner"], copy["group"], copy["mode"]) == ("root", "root", "0755")
+    assert install["tags"] == ["minimal-desktop", "tint2"]
+    helper = FILES / "screens-off"
+    assert "Managed by Ansible" in helper.read_text()
+    assert helper.stat().st_mode & stat.S_IXUSR
+    assert subprocess.run(["sh", "-n", str(helper)], capture_output=True).returncode == 0
+
+
+def test_both_layouts_carry_the_same_screens_off_button() -> None:
+    # catalog#161: every deskmeet shows the same button whichever layout it uses.
+    buttons = []
+    for path in _layout_files():
+        options = _options(path)
+        keys = [key for key, _ in options]
+        assert keys.count("button") == 1, path.name
+        assert dict(options)["button"] == "new"
+        # Every button_* option belongs to the button opened above it.
+        assert all(keys.index("button") < index for index, key in enumerate(keys) if key.startswith("button_")), path.name
+        settings = dict(options)
+        assert settings["panel_items"].endswith("P"), path.name
+        buttons.append((settings["button_text"], settings["button_tooltip"], settings["button_lclick_command"]))
+    assert len(set(buttons)) == 1, buttons
+    text, tooltip, command = buttons[0]
+    assert text == "Screens off"
+    assert "wakes" in tooltip
+    assert command == "/usr/local/bin/screens-off"
+
+
+def _run_screens_off(xset_query: str | None, display: str | None = ":0") -> tuple[int, list[str], str]:
+    """Run the helper against a stub xset; returns (exit code, xset calls, stderr)."""
+    with tempfile.TemporaryDirectory(prefix="screens-off-") as temp_dir:
+        bin_dir = Path(temp_dir)
+        log = bin_dir / "xset.log"
+        xset = bin_dir / "xset"
+        query = "exit 1" if xset_query is None else f"printf '%s\\n' '{xset_query}'"
+        xset.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$*\" >> '{log}'\n"
+            f'if [ "$1" = q ]; then {query}; fi\n'
+        )
+        xset.chmod(0o755)
+        environment = {key: value for key, value in os.environ.items() if key != "DISPLAY"}
+        environment["PATH"] = f"{bin_dir}:{environment['PATH']}"
+        environment["SCREENS_OFF_DELAY"] = "0"
+        if display is not None:
+            environment["DISPLAY"] = display
+        result = subprocess.run(
+            ["sh", str(FILES / "screens-off")], text=True, capture_output=True, env=environment, timeout=10
+        )
+        calls = log.read_text().splitlines() if log.exists() else []
+        return result.returncode, calls, result.stderr
+
+
+def test_screens_off_keeps_declared_dpms_timeouts_when_dpms_is_enabled() -> None:
+    # XScreenSaver's dpmsEnabled (monitor_off_minutes) owns the timeouts: only force off.
+    query = "DPMS (Display Power Management Signaling):\n  Standby: 3600    Suspend: 3600    Off: 3600\n  DPMS is Enabled"
+    code, calls, _ = _run_screens_off(query)
+    assert code == 0
+    assert calls == ["q", "dpms force off"]
+
+
+def test_screens_off_enables_dpms_without_automatic_blanking_when_disabled() -> None:
+    query = "DPMS (Display Power Management Signaling):\n  Standby: 600    Suspend: 600    Off: 600\n  DPMS is Disabled"
+    code, calls, _ = _run_screens_off(query)
+    assert code == 0
+    assert calls == ["q", "dpms 0 0 0", "+dpms", "dpms force off"]
+
+
+def test_screens_off_fails_clearly_without_dpms_or_display() -> None:
+    code, calls, stderr = _run_screens_off("Keyboard Control:\n  auto repeat:  on")
+    assert code == 1 and calls == ["q"] and "no DPMS extension" in stderr
+    code, calls, stderr = _run_screens_off(None)
+    assert code == 1 and calls == ["q"] and "cannot query" in stderr
+    code, calls, stderr = _run_screens_off("DPMS is Enabled", display=None)
+    assert code == 2 and calls == [] and "DISPLAY is not set" in stderr
 
 
 def test_xdg_autostart_overrides_are_configurable_and_cover_the_required_ids() -> None:

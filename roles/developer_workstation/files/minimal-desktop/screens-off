@@ -1,0 +1,42 @@
+#!/bin/sh
+# Managed by Ansible (roles/developer_workstation, minimal desktop). Local edits
+# are overwritten on the next run.
+#
+# Turns every monitor of this X display off through DPMS (catalog#161). This
+# is not suspend: the session, its programs and its network keep running, and
+# any key press or mouse move wakes the monitors. The tint2 "Screens off"
+# button runs it.
+#
+# DPMS has to be enabled for "force off" to act; an X server with DPMS
+# disabled ignores it. When it is disabled, its timeouts are set to 0 first so
+# that switching it on does not add an automatic blanking nobody declared. When
+# it is already enabled (XScreenSaver's dpmsEnabled, monitor_off_minutes), its
+# timeouts are left exactly as they are.
+set -eu
+
+if [ -z "${DISPLAY:-}" ]; then
+    echo "screens-off: DISPLAY is not set; run it from the graphical session" >&2
+    exit 2
+fi
+
+state=$(xset q 2>/dev/null) || {
+    echo "screens-off: cannot query X display $DISPLAY with xset" >&2
+    exit 1
+}
+
+case "$state" in
+    *"DPMS is Enabled"*) ;;
+    *"DPMS is Disabled"*)
+        xset dpms 0 0 0
+        xset +dpms
+        ;;
+    *)
+        echo "screens-off: X display $DISPLAY has no DPMS extension" >&2
+        exit 1
+        ;;
+esac
+
+# Let the click's button release reach the server first; an input event after
+# "force off" wakes the monitors again at once.
+sleep "${SCREENS_OFF_DELAY:-1}"
+exec xset dpms force off

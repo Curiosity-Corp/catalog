@@ -2,7 +2,7 @@
 # are overwritten on the next run.
 #
 # Layout "bottom": dark 32px bottom bar with the desktop-name taskbar, system
-# tray and clock. Select it with minimal_desktop_tint2_layout or a per-user
+# tray, clock and a "Screens off" button. Select it with minimal_desktop_tint2_layout or a per-user
 # tint2_layout. Every *_background_id below refers to a background block that
 # is defined EARLIER in this file; tint2 17 crashes on an undefined id.
 #
@@ -89,7 +89,7 @@ border_color_pressed = #777777 30
 
 #-------------------------------------
 # Panel
-panel_items = TSC
+panel_items = TSCP
 panel_size = 100% 32
 panel_margin = 0 0
 panel_padding = 4 2 4
@@ -184,6 +184,19 @@ clock_rclick_command =
 clock_mclick_command = 
 clock_uwheel_command = 
 clock_dwheel_command = 
+
+#-------------------------------------
+# Button: turns every monitor off (DPMS, not suspend); any key or mouse move
+# wakes them (catalog#161).
+button = new
+button_text = Screens off
+button_tooltip = Turn all monitors off. Any key or mouse move wakes them.
+button_font = sans bold 8
+button_font_color = #eeeeee 100
+button_padding = 6 3
+button_background_id = 2
+button_centered = 1
+button_lclick_command = /usr/local/bin/screens-off
 
 #-------------------------------------
 # Tooltip
