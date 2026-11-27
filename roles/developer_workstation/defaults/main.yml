@@ -164,6 +164,7 @@ catalog_tools_diagnostics_stale_after_days: 14
 # GPU driver, CUDA, ROCm or oneAPI. With this on, the role also installs the
 # short command at catalog_tools_gpu_status_command_path; off removes it.
 catalog_tools_gpu_status_enabled: true
+# Where the role installs the short command that runs `catalog-tools gpu-status`.
 catalog_tools_gpu_status_command_path: /usr/local/bin/curiosity-gpu-status
 
 # Coder CLI tracks the deployment's own server version at install time

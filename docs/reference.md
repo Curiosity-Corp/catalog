@@ -313,7 +313,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-558 variables, from `roles/developer_workstation/defaults/main.yml`.
+560 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -362,6 +362,8 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `catalog_tools_diagnostics_disk_paths` | list | `["/", "/var", "/usr/local", "/tmp"]` |  | supported |  | (undocumented) |
 | `catalog_tools_diagnostics_min_free_mib` | int | `2048` |  | supported |  | Free space below which a file system is reported, in MiB. |
 | `catalog_tools_diagnostics_stale_after_days` | int | `14` |  | supported |  | Days after which the last update's record counts as stale. |
+| `catalog_tools_gpu_status_enabled` | bool | `true` |  | supported |  | `catalog-tools gpu-status` (catalog#33, docs/gpu-accelerators.md) says which GPU or accelerator the machine has (NVIDIA, AMD, Intel or none), whether its kernel driver and the vendor's user-space tools are present, and what to do when they are not. (...) |
+| `catalog_tools_gpu_status_command_path` | string | `"/usr/local/bin/curiosity-gpu-status"` |  | supported |  | Where the role installs the short command that runs `catalog-tools gpu-status`. |
 | `coder_deployment_url` | string | `""` |  | private-hook |  | Coder CLI tracks the deployment's own server version at install time (see tasks/coder-cli.yml) rather than a static pin — the client must match the server exactly for `coder ssh` and other RPC-driven commands to work. |
 | `coder_cli_install_script_url` | string (template) | template expression |  | supported |  | (undocumented) |
 | `coder_cli_buildinfo_url` | string (template) | template expression |  | supported |  | (undocumented) |

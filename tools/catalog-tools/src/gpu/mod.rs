@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn the_most_capable_device_decides_the_machine() {
-        let mut states = vec![State::VirtualOnly, State::Ready, State::NeedsDriver];
+        let mut states = [State::VirtualOnly, State::Ready, State::NeedsDriver];
         states.sort();
         assert_eq!(states.last(), Some(&State::Ready));
         assert!(State::Unsupported > State::VirtualOnly);
