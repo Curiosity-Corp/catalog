@@ -160,6 +160,18 @@
       {{ agent_cpu_policy_wrapped_commands
          if agent_cpu_policy_wrapped_commands | default([]) is sequence and agent_cpu_policy_wrapped_commands is not string
          else [] }}
+    # hypersystem-desktop (catalog#142): the identity name becomes a file name,
+    # the service names are matched against the tunnel's own list.
+    _hsd_on: "{{ hypersystem_desktop_enabled | default(false) | bool }}"
+    _hsd_name_re: '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+    _hsd_services: >-
+      {{ hypersystem_desktop_ziti_services
+         if hypersystem_desktop_ziti_services | default([]) is sequence and hypersystem_desktop_ziti_services is not string
+         else [] }}
+    _hsd_apps_given: >-
+      {{ hypersystem_desktop_apps | default([]) is sequence and hypersystem_desktop_apps is not string
+         and hypersystem_desktop_apps | default([]) | length > 0 }}
+    _hsd_targets: "{{ hypersystem_desktop_browser_targets if hypersystem_desktop_browser_targets | default({}) is mapping else {} }}"
     _config_rules:
       - ok: "{{ hardware_profile | default('') in _hardware_profile_names }}"
         msg: >-
@@ -314,6 +326,87 @@
           agent_cpu_policy_slice must be a systemd slice unit name without a
           path, such as curiosity-agents.slice; got
           {{ agent_cpu_policy_slice | default(none) | to_json }}.
+      # hypersystem-desktop (catalog#142, docs/hypersystem-desktop.md).
+      - ok: >-
+          {{ hypersystem_desktop_catalog_src | default('') | string | length == 0
+             or hypersystem_desktop_catalog_src | string is match('^(https://[^/@\s]+(/\S*)?|/\S+)$') }}
+        msg: >-
+          hypersystem_desktop_catalog_src must be empty, an https:// URL without
+          login details before an @ (put a token in hypersystem_desktop_catalog_headers),
+          or an absolute path on the host, such as
+          https://suite.example.org/catalog/v1/catalog.json; got
+          {{ hypersystem_desktop_catalog_src | default('') | regex_replace('://[^/@\s]*@', '://***@') | to_json }}.
+      - ok: "{{ not (_hsd_on | bool) or (hypersystem_desktop_catalog_src | default('') | string | length > 0) != (_hsd_apps_given | bool) }}"
+        msg: >-
+          hypersystem_desktop_enabled is true, so exactly one source of apps must be
+          set: hypersystem_desktop_catalog_src (the suite catalog document) or
+          hypersystem_desktop_apps (the apps themselves); got catalog_src
+          {{ hypersystem_desktop_catalog_src | default('') | regex_replace('://[^/@\s]*@', '://***@') | to_json }}
+          and {{ hypersystem_desktop_apps | default([]) | length }} app(s).
+      - ok: "{{ not (_hsd_on | bool) or workstation_profile | default('') in ['desktop', 'thin-client'] }}"
+        msg: >-
+          hypersystem_desktop_enabled is true, but suite web apps install only on the
+          desktop and thin-client profiles (they need a desktop session and a browser);
+          workstation_profile is {{ workstation_profile | default(none) | to_json }}.
+      - ok: "{{ hypersystem_desktop_statuses | default(['beta', 'ga']) | length > 0 }}"
+        msg: >-
+          hypersystem_desktop_statuses must list beta, ga or both (planned and retired
+          apps are never usable); it is empty.
+      - ok: "{{ hypersystem_desktop_browser | default('auto') in ['auto'] + _hsd_targets | list }}"
+        msg: >-
+          hypersystem_desktop_browser must be auto or a key of
+          hypersystem_desktop_browser_targets ({{ _hsd_targets | list | join(', ') }}); got
+          {{ hypersystem_desktop_browser | default(none) | to_json }}.
+      - ok: "{{ hypersystem_desktop_policy_file_name | default('30-hypersystem-desktop.json') | string is match('^[A-Za-z0-9._-]+[.]json$') }}"
+        msg: >-
+          hypersystem_desktop_policy_file_name must be a file name ending in .json
+          without a path, such as 30-hypersystem-desktop.json (browsers read only
+          *.json from their managed policy folder); got
+          {{ hypersystem_desktop_policy_file_name | default(none) | to_json }}.
+      - ok: >-
+          {{ not (_hsd_on | bool)
+             or not (hypersystem_desktop_hyperharness_enabled | default(false) | bool)
+             or (hypersystem_desktop_hyperharness_install_argv | default([]) | length > 0
+                 and hypersystem_desktop_hyperharness_creates | default('') | string is match('^/\S+$')) }}
+        msg: >-
+          hypersystem_desktop_hyperharness_enabled is true, so
+          hypersystem_desktop_hyperharness_install_argv (the installer command as a
+          list) and hypersystem_desktop_hyperharness_creates (an absolute path that
+          exists once hyperharness is installed) must both be set; got
+          {{ hypersystem_desktop_hyperharness_install_argv | default([]) | to_json }} and
+          {{ hypersystem_desktop_hyperharness_creates | default('') | to_json }}.
+      - ok: >-
+          {{ hypersystem_desktop_ziti_identity_name | default('') | string | length == 0
+             or hypersystem_desktop_ziti_identity_name | string is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') }}
+        msg: >-
+          hypersystem_desktop_ziti_identity_name must be empty or a file-safe name of
+          at most 128 letters, digits, dots, dashes and underscores (it names
+          <identity_dir>/<name>.json), such as laptop-17; got
+          {{ hypersystem_desktop_ziti_identity_name | default(none) | to_json }}.
+      - ok: "{{ _hsd_services | map('string') | reject('match', _hsd_name_re) | list | length == 0 }}"
+        msg: >-
+          hypersystem_desktop_ziti_services entries must be Ziti service names
+          (letters, digits, dot, dash, underscore), such as notebooks.hypersystem; got
+          {{ _hsd_services | map('string') | reject('match', _hsd_name_re) | list | to_json }}.
+      - ok: >-
+          {{ hypersystem_desktop_ziti_service_wait | default(30) | string is match(_whole_number_re)
+             and hypersystem_desktop_catalog_timeout | default(30) | string is match(_whole_number_re)
+             and hypersystem_desktop_catalog_timeout | default(30) | int >= 1 }}
+        msg: >-
+          hypersystem_desktop_ziti_service_wait must be a whole number of seconds (0 or
+          more) and hypersystem_desktop_catalog_timeout one of at least 1; got
+          {{ hypersystem_desktop_ziti_service_wait | default(none) | to_json }} and
+          {{ hypersystem_desktop_catalog_timeout | default(none) | to_json }}.
+      - ok: "{{ hypersystem_desktop_ziti_tunnel_command | default('ziti-edge-tunnel') | string is match('^([A-Za-z0-9._+-]+|/[A-Za-z0-9._+/-]+)$') }}"
+        msg: >-
+          hypersystem_desktop_ziti_tunnel_command must be a command name on PATH, such
+          as ziti-edge-tunnel, or an absolute path, without spaces or shell characters; got
+          {{ hypersystem_desktop_ziti_tunnel_command | default(none) | to_json }}.
+      - ok: "{{ hypersystem_desktop_ziti_dns_ip_range | default('100.64.0.0/10') | string is match('^[0-9]{1,3}([.][0-9]{1,3}){3}/[0-9]{1,2}$') }}"
+        msg: >-
+          hypersystem_desktop_ziti_dns_ip_range must be the tunnel's IPv4 DNS range in
+          CIDR form, such as 100.64.0.0/10; got
+          {{ hypersystem_desktop_ziti_dns_ip_range | default(none) | to_json }}.
       - ok: >-
           {{ catalog_integrity_mode | default('warn') != 'enforce'
              or catalog_signing_key_fingerprint | default('') | string | trim is match('^[0-9A-Fa-f]{40}$') }}
@@ -496,6 +589,14 @@
           wifi_ssid is set, so wifi_psk (the network's passphrase) must have at
           least 8 characters; its value is not shown. Keep it in Ansible Vault
           or protected host variables.
+      - ok: >-
+          {{ hypersystem_desktop_ziti_enrollment_jwt | default('') | string | length == 0
+             or hypersystem_desktop_ziti_identity_name | default('') | string | length > 0 }}
+        msg: >-
+          hypersystem_desktop_ziti_enrollment_jwt is set, so
+          hypersystem_desktop_ziti_identity_name must name the identity it enrols
+          (<identity_dir>/<name>.json); the token is not shown. Keep it in Ansible
+          Vault or pass it with -e @file, never in Git.
   no_log: true
 
 - name: Stop before any change when the public configuration is invalid

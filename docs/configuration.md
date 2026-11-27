@@ -74,6 +74,16 @@ It checks three layers:
      the slice is a `.slice` unit name and each browser has a unique lowercase
      `name`, an absolute `command`, a `.desktop` `desktop_id` and systemd sizes
      with `memory_high` not above `memory_max`.
+   - [hypersystem-desktop](hypersystem-desktop.md), when enabled, needs exactly
+     one source of apps (`hypersystem_desktop_catalog_src`, an https URL
+     without a login or an absolute path, or `hypersystem_desktop_apps`), the
+     desktop or thin-client profile, at least one of `beta` and `ga` in
+     `hypersystem_desktop_statuses`, a browser that is `auto` or a key of
+     `hypersystem_desktop_browser_targets`, and, with the hyperharness hook, its
+     argv and an absolute `creates` path. Whether it is on or off, the Ziti
+     identity and service names must be file-safe names, the tunnel command a
+     command name or absolute path, the DNS range an IPv4 CIDR, and an
+     enrollment token needs an identity name (checked without printing it).
 
    Each rule uses the same profile condition as the task it protects, so a
    setting a profile ignores is never required.

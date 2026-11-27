@@ -294,6 +294,25 @@ hypersystem_desktop_hyperharness_install_argv: [/opt/hyperharness/install.sh, --
 hypersystem_desktop_hyperharness_creates: "{{ dev_user_home }}/.local/bin/hyperharness"
 ```
 
+## Validation and diagnostics
+
+The role's configuration check (`tasks/validate-config.yml`, see
+[configuration](configuration.md#validation)) types every
+`hypersystem_desktop_*` variable and applies this package's rules before any
+change, whatever `--tags` are given: one source of apps, a supported profile,
+usable statuses, browser, identity and service names, and the hyperharness
+hook's values. An invalid setting stops the run with nothing changed, naming the
+variable and the value it has. `hypersystem_desktop_ziti_enrollment_jwt` and
+`hypersystem_desktop_catalog_headers` are `no_log`: no message or log shows them.
+The checks in `tasks/hypersystem-desktop.yml` stay as a second line of defence,
+together with the ones that need the host (Debian family, the tunnel unit).
+
+With `catalog_tools_enabled`, `catalog-tools diagnostics summary` also reports
+the state of the Ziti tunnel unit (`ziti_service_name`) on a laptop where this
+package is on and Ziti is required: a stopped tunnel is the first reason suite
+apps stop opening. It only reads the unit's state and never starts or stops it.
+`hypersystem-desktop doctor` checks the apps themselves.
+
 ## Turning it off
 
 With `hypersystem_desktop_enabled: false` a host that had the feature loses the

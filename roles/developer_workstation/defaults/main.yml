@@ -139,6 +139,8 @@ missionctl_install_path: /usr/local/bin/missionctl
 # `catalog-tools` asset of the catalog release you run
 # (docs/release-checklist.md) before enabling it. The check list says which
 # services (read only, never started or stopped) and file systems it checks.
+# With hypersystem-desktop on (and Ziti required) it also reports the Ziti
+# tunnel unit, which every suite app on the laptop is reached through.
 catalog_tools_enabled: false
 catalog_tools_install_url: ""
 catalog_tools_install_sha256: ""
@@ -147,7 +149,9 @@ catalog_tools_diagnostics_checks_path: /etc/curiosity/diagnostics-checks.json
 catalog_tools_diagnostics_services: >-
   {{ (['ansible-pull.timer', 'ansible-pull.service']
       if workstation_profile in ['desktop', 'thin-client', 'byod-kiosk'] else [])
-     + ['logrotate.timer', 'systemd-tmpfiles-clean.timer'] }}
+     + ['logrotate.timer', 'systemd-tmpfiles-clean.timer']
+     + ([ziti_service_name]
+        if hypersystem_desktop_enabled | bool and hypersystem_desktop_require_ziti | bool else []) }}
 catalog_tools_diagnostics_disk_paths: [/, /var, /usr/local, /tmp]
 # Free space below which a file system is reported, in MiB.
 catalog_tools_diagnostics_min_free_mib: 2048
@@ -1059,11 +1063,12 @@ hypersystem_desktop_enabled: false
 # document ({"schema": "hypersystem-catalog/v1", "apps": [...]}), given as an https
 # URL or an absolute path on the managed host. The public role names no catalog.
 hypersystem_desktop_catalog_src: ""
-# Optional lowercase hex SHA-256 the fetched document must match.
+# Optional SHA-256 (64 hex characters) the fetched document must match.
 hypersystem_desktop_catalog_sha256: ""
 # Extra request headers for a URL source, for example a registry token read from
 # Ansible Vault. Never logged.
 hypersystem_desktop_catalog_headers: {}
+# Seconds the catalog GET may take.
 hypersystem_desktop_catalog_timeout: 30
 # The catalog source already filtered the apps by the person's realm roles (HyperSystem
 # Home's GET /suite/v1/catalog with the person's token): skip the role test.
@@ -1101,8 +1106,11 @@ hypersystem_desktop_ziti_dns_ip_range: 100.64.0.0/10
 # elsewhere (OIDC identities of the ziti task group, or by hand).
 hypersystem_desktop_ziti_identity_name: ""
 hypersystem_desktop_ziti_enrollment_jwt: ""
+# Where ziti-edge-tunnel loads identities from (the ziti task group's directory).
 hypersystem_desktop_ziti_identity_dir: /opt/openziti/etc/identities
+# Group that owns an enrolled identity file (root:<group> 0660), as the tunnel expects.
 hypersystem_desktop_ziti_group: ziti
+# The tunnel's command, a name on PATH or an absolute path; used for enroll and tunnel_status.
 hypersystem_desktop_ziti_tunnel_command: ziti-edge-tunnel
 # Ziti service names the identity must offer (the suite catalog's ziti_services of the
 # selected apps). The run asks the running tunnel and fails when one is missing, unless
@@ -1115,6 +1123,7 @@ hypersystem_desktop_ziti_service_wait: 30
 # Browser: auto picks chromium (Debian's .deb) on Debian and chromium-snap on Ubuntu,
 # where Chromium ships only as a snap. google-chrome uses an existing Chrome install.
 hypersystem_desktop_browser: auto
+# Install the chosen browser (apt or snap) when it is missing.
 hypersystem_desktop_install_browser: true
 # user_data_dir is the suite profile, relative to each user's home. The snap can
 # write only below ~/snap/chromium, so its profile lives there.
@@ -1138,9 +1147,13 @@ hypersystem_desktop_browser_targets:
     binary: /opt/google/chrome/chrome
     policy_dir: /etc/opt/chrome/policies/managed
     user_data_dir: .config/hypersystem-desktop/google-chrome
+# The managed policy file in the browser's policy_dir (WebAppInstallForceList only).
 hypersystem_desktop_policy_file_name: 30-hypersystem-desktop.json
+# The helper's configuration (the selected apps); its presence marks an install to retire.
 hypersystem_desktop_config_dir: /etc/hypersystem-desktop
+# The helper: hypersystem-desktop open|browser|list|doctor.
 hypersystem_desktop_helper_path: /usr/local/bin/hypersystem-desktop
+# Where the per-app and suite launchers (hypersystem-desktop*.desktop) go.
 hypersystem_desktop_applications_dir: /usr/local/share/applications
 # ssh_config fragment with `Host <app id>` for every selected app with an `ssh` host;
 # empty disables it. Debian and Ubuntu include /etc/ssh/ssh_config.d/*.conf.
@@ -1150,6 +1163,7 @@ hypersystem_desktop_suite_name: HyperSystem
 # Catalog `icon` names are the bar's symbolic names; map them to icon theme names
 # or absolute image paths. Unmapped icons use the default.
 hypersystem_desktop_icon_map: {}
+# Icon of an app whose catalog icon is not in hypersystem_desktop_icon_map.
 hypersystem_desktop_default_icon: web-browser
 # Optional hyperharness install for dev_user, off by default. The public role knows
 # no installer, so supply the command as an argv list and a path that exists once

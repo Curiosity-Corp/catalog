@@ -85,7 +85,7 @@
           - _hsd_browser_name in hypersystem_desktop_browser_targets
           - (hypersystem_desktop_catalog_src | length > 0) != (hypersystem_desktop_apps | length > 0)
           - hypersystem_desktop_catalog_src | length == 0 or hypersystem_desktop_catalog_src is match('^(https://|/)')
-          - hypersystem_desktop_catalog_sha256 | length == 0 or hypersystem_desktop_catalog_sha256 is match('^[0-9a-f]{64}$')
+          - hypersystem_desktop_catalog_sha256 | length == 0 or hypersystem_desktop_catalog_sha256 is match('^[0-9A-Fa-f]{64}$')
           - hypersystem_desktop_catalog_headers is mapping
           - hypersystem_desktop_apps is sequence and hypersystem_desktop_apps is not string
           - hypersystem_desktop_roles is sequence and hypersystem_desktop_roles is not string
@@ -103,7 +103,7 @@
           {{ hypersystem_desktop_browser_targets.keys() | list | join(', ') }} (got
           {{ hypersystem_desktop_browser }}); exactly one of hypersystem_desktop_catalog_src
           (an https URL or an absolute path) and hypersystem_desktop_apps; an optional
-          64-character lowercase hex hypersystem_desktop_catalog_sha256; lists for
+          64-character hex hypersystem_desktop_catalog_sha256; lists for
           hypersystem_desktop_apps, _roles, _statuses and _local_apps, where _statuses
           holds only beta and/or ga (planned and retired apps are not usable); a boolean
           hypersystem_desktop_catalog_prefiltered; and an absolute (or empty)
@@ -159,7 +159,7 @@
     - name: Verify the catalog checksum
       ansible.builtin.assert:
         that:
-          - (_hsd_catalog_text | hash('sha256')) == hypersystem_desktop_catalog_sha256
+          - (_hsd_catalog_text | hash('sha256')) == hypersystem_desktop_catalog_sha256 | lower
         fail_msg: >-
           The catalog from {{ hypersystem_desktop_catalog_src }} has SHA-256
           {{ _hsd_catalog_text | hash('sha256') }}, not the pinned

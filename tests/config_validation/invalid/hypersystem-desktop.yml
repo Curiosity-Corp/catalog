@@ -1,0 +1,37 @@
+---
+# hypersystem-desktop values the browser policy, launchers, identity file or
+# tunnel cannot use (catalog#142). A login in the catalog URL never appears.
+# expect: or an absolute path on the host, such as https://suite.example.org/catalog/v1/catalog.json; got "http://***@suite.example.org/catalog.json".
+# expect: hypersystem_desktop_enabled is true, so exactly one source of apps must be set
+# expect: and 1 app(s).
+# expect: hypersystem_desktop_enabled is true, but suite web apps install only on the desktop and thin-client profiles (they need a desktop session and a browser); workstation_profile is "workspace".
+# expect: hypersystem_desktop_statuses must list beta, ga or both (planned and retired apps are never usable); it is empty.
+# expect: hypersystem_desktop_browser must be auto or a key of hypersystem_desktop_browser_targets (chromium, chromium-snap, google-chrome); got "firefox".
+# expect: such as 30-hypersystem-desktop.json (browsers read only *.json from their managed policy folder); got "../evil.json".
+# expect: exists once hyperharness is installed) must both be set; got [] and "bin/hyperharness".
+# expect: such as laptop-17; got "../laptop".
+# expect: such as notebooks.hypersystem; got ["bad name", "$(x)", ""].
+# expect: hypersystem_desktop_catalog_timeout one of at least 1; got -1 and 0.
+# expect: without spaces or shell characters; got "ziti-edge-tunnel; rm -rf /".
+# expect: hypersystem_desktop_ziti_dns_ip_range must be the tunnel's IPv4 DNS range in CIDR form, such as 100.64.0.0/10; got "100.64.0.0".
+# expect: hypersystem_desktop_config_dir must be empty or an absolute path without spaces
+workstation_profile: workspace
+hypersystem_desktop_enabled: true
+hypersystem_desktop_catalog_src: http://SENTINEL-login@suite.example.org/catalog.json
+hypersystem_desktop_apps:
+  - id: notebooks
+    name: Notebooks
+    urls: {web: "https://notebooks.example.org/"}
+hypersystem_desktop_statuses: []
+hypersystem_desktop_browser: firefox
+hypersystem_desktop_policy_file_name: ../evil.json
+hypersystem_desktop_hyperharness_enabled: true
+hypersystem_desktop_hyperharness_install_argv: []
+hypersystem_desktop_hyperharness_creates: bin/hyperharness
+hypersystem_desktop_ziti_identity_name: ../laptop
+hypersystem_desktop_ziti_services: [notebooks.hypersystem, "bad name", "$(x)", ""]
+hypersystem_desktop_ziti_service_wait: -1
+hypersystem_desktop_catalog_timeout: 0
+hypersystem_desktop_ziti_tunnel_command: "ziti-edge-tunnel; rm -rf /"
+hypersystem_desktop_ziti_dns_ip_range: 100.64.0.0
+hypersystem_desktop_config_dir: etc/hypersystem-desktop

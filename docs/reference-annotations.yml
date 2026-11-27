@@ -82,6 +82,16 @@ variables:
   ziti_health_check_identities: {stability: private-hook}
   ziti_health_check_probe_hosts: {stability: private-hook}
   ziti_oidc_provider: {stability: private-hook}
+  # hypersystem-desktop (catalog#142): the site's catalog, the person's roles and
+  # the Ziti names are per laptop, from protected host variables.
+  hypersystem_desktop_catalog_src: {stability: private-hook, safety: supply-chain}
+  hypersystem_desktop_catalog_headers: {stability: private-hook, safety: security, note: "Never logged (no_log)."}
+  hypersystem_desktop_roles: {stability: private-hook}
+  hypersystem_desktop_ziti_identity_name: {stability: private-hook, safety: network}
+  hypersystem_desktop_ziti_enrollment_jwt: {stability: private-hook, safety: secret}
+  hypersystem_desktop_ziti_services: {stability: private-hook, safety: network}
+  hypersystem_desktop_ssh_config_path: {stability: supported}
+  hypersystem_desktop_hyperharness_install_argv: {stability: private-hook, safety: supply-chain}
   samsung_tv_key_vault: {stability: private-hook}
   samsung_tv_key_vault_secret: {stability: private-hook, safety: secret}
   pia_login_file: {stability: private-hook, safety: secret}
@@ -169,6 +179,7 @@ tags:
   pro-mimic: {description: "Free equivalents of Ubuntu Pro hardening."}
   streamstack: {description: "StreamStack camera and audio chain."}
   ziti: {description: "OpenZiti tunnel and its health check."}
+  hypersystem-desktop: {description: "Opt-in suite web apps per role on a laptop, reached through the Ziti tunnel; see hypersystem-desktop.md."}
   kiosk: {description: "Kiosk session (byod-kiosk profile)."}
   lockdown: {description: "Kiosk lockdown (byod-kiosk profile)."}
   timezone: {description: "System time zone (workstation_timezone)."}

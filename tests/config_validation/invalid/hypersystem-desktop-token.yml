@@ -1,0 +1,10 @@
+---
+# A hypersystem-desktop enrollment token without an identity to enrol into
+# (catalog#142). Neither the token nor the catalog's request headers appear in
+# any output, even at -vvv.
+# expect: hypersystem_desktop_ziti_enrollment_jwt is set, so hypersystem_desktop_ziti_identity_name must name the identity it enrols (<identity_dir>/<name>.json); the token is not shown.
+hypersystem_desktop_enabled: true
+hypersystem_desktop_catalog_src: https://suite.example.org/catalog/v1/catalog.json
+hypersystem_desktop_catalog_headers:
+  Authorization: Bearer SENTINEL-catalog-token
+hypersystem_desktop_ziti_enrollment_jwt: SENTINEL-enrollment-jwt
