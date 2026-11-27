@@ -110,7 +110,9 @@ if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
   ACCEL=(-accel kvm -cpu host)
   echo "- Accelerator: KVM" >>"$REPORT"
 else
-  ACCEL=(-accel "tcg,thread=multi" -cpu max)
+  # QEMU's default CPU model (qemu64): Debian 13 needs only baseline x86-64.
+  # With -cpu max the guest kernel printed nothing after GRUB for 18 minutes.
+  ACCEL=(-accel "tcg,thread=multi")
   echo "- Accelerator: TCG (no /dev/kvm in the job; software emulation)" >>"$REPORT"
 fi
 echo "- QEMU: $(head -n 1 "$OUT/0-qemu-version.log")" >>"$REPORT"
@@ -216,7 +218,7 @@ step() {
 qemu-img create -q -f qcow2 -F qcow2 -b "$WORK/$IMAGE_NAME" "$WORK/clean.qcow2" "$VM_DISK_SIZE" \
   || die "qemu-img could not create the clean overlay"
 boot "$WORK/clean.qcow2" "$OUT/serial-0-first-boot.log"
-first_boot=$(wait_ssh) || die "the guest did not answer SSH within ${BOOT_TIMEOUT}s (serial-0-first-boot.log)"
+first_boot=$(wait_ssh) || { tail -n 60 "$OUT/serial-0-first-boot.log"; die "the guest did not answer SSH within ${BOOT_TIMEOUT}s (serial-0-first-boot.log)"; }
 {
   echo "- First boot to SSH and cloud-init done: ${first_boot}s"
   echo "- Guest os-release: $("${SSH[@]}" '. /etc/os-release; echo "$PRETTY_NAME"')"

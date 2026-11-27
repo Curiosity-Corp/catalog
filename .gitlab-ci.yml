@@ -288,8 +288,10 @@ debian13-quickstart:
 # started as the runner's ordinary uid inside this container, with user-mode
 # networking and throwaway qcow2 overlays; the VM and its disks are discarded
 # with the job. Without /dev/kvm the guest runs under TCG, so the run takes
-# one to three hours: it runs on merge requests that change the harness and is
-# a manual button on every other merge request. The report feeds
+# one to three hours. It is a manual button on every merge request, and runs
+# on its own in a web or API pipeline started with DEBIAN13_VM_RUN=1 (merge
+# request pipelines cancel every job when one fails, which would end a
+# three-hour run on any unrelated flake). The report feeds
 # docs/evidence/2026-11-27-debian13-laptop-vm-run.md.
 debian13-vm-run:
   stage: test
@@ -303,9 +305,7 @@ debian13-vm-run:
     KUBERNETES_MEMORY_REQUEST: "6Gi"
     KUBERNETES_MEMORY_LIMIT: "12Gi"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      changes:
-        - scripts/debian13_vm_run.sh
+    - if: $CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $DEBIAN13_VM_RUN == "1"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: manual
       allow_failure: true
