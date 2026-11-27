@@ -439,7 +439,7 @@ def test_unexpected_channel_version_is_refused(tmp_path: Path, site, keys, value
 def _codex_tasks() -> list[dict[str, Any]]:
     return role_tasks(
         TASKS / "ai-assistants.yml",
-        "Select the Codex installer from the latest release",
+        "Select the Codex installer from the release",
         "Download and verify the Codex standalone installer",
     )
 
@@ -455,7 +455,7 @@ def _codex_vars(tmp_path: Path, base: str, digest: str | None) -> dict[str, Any]
         "codex_standalone_enabled": True,
         "codex_standalone_release": "latest",
         "_codex_standalone_check": {"rc": 1},
-        "latest_github_releases": {"codex": {"tag_name": "rust-v0.99.0", "assets": [asset]}},
+        "_codex_release": {"json": {"tag_name": "rust-v0.99.0", "assets": [asset]}},
     }
 
 
@@ -594,6 +594,18 @@ def test_role_downloads_use_the_vendor_digest(
     task_vars = _include_vars(task_file, name)
     assert task_vars["verified_download_url"] == url
     assert task_vars[digest_key] == digest
+
+
+def test_codex_installer_resolves_its_own_release() -> None:
+    # main.yml runs ai-assistants.yml before latest-releases.yml, so
+    # latest_github_releases is still empty there on a host's first converge.
+    main = (TASKS / "main.yml").read_text()
+    assert main.index("file: ai-assistants.yml") < main.index("file: latest-releases.yml")
+    tasks = yaml.safe_load((TASKS / "ai-assistants.yml").read_text())
+    assert "latest_github_releases" not in str(tasks), "ai-assistants.yml runs before release discovery"
+    query = next(task for task in tasks if task.get("name") == "Resolve the Codex release")
+    assert query["register"] == "_codex_release"
+    assert "{{ latest_github_repositories.codex }}" in query["ansible.builtin.uri"]["url"]
 
 
 def test_installers_run_only_the_verified_file() -> None:

@@ -88,19 +88,53 @@
   failed_when: false
   when: codex_standalone_enabled | default(true)
 
-# The installer comes from the latest openai/codex GitHub release (the same
-# install.sh chatgpt.com/codex/install.sh serves), verified against the digest
-# GitHub records for the asset, and installs that same release; the script
-# then checks every binary it fetches against the release digests (catalog#171).
-- name: Select the Codex installer from the latest release
+# The installer comes from the openai/codex GitHub release (the same install.sh
+# chatgpt.com/codex/install.sh serves), verified against the digest GitHub
+# records for the asset, and installs that same release; the script then checks
+# every binary it fetches against the release digests (catalog#171).
+#
+# This file runs before latest-releases.yml (see main.yml), so the release is
+# queried here rather than read from latest_github_releases, which is still
+# empty on a host's first converge. The headers and retries are the same as
+# latest-releases.yml; a pinned codex_standalone_release reads that tag.
+- name: Resolve the Codex release
+  ansible.builtin.uri:
+    url: >-
+      https://api.github.com/repos/{{ latest_github_repositories.codex }}/releases/{{
+        (codex_standalone_release == 'latest')
+        | ternary('latest', 'tags/rust-v' ~ codex_standalone_release) }}
+    headers: >-
+      {{
+        {
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'curiosity-catalog-workstation-updater'
+        }
+        | combine(
+            ({'Authorization': 'Bearer ' ~ _github_api_token}
+             if (_github_api_token | default('') | length > 0) else {})
+          )
+      }}
+    return_content: true
+    status_code: [200]
+  register: _codex_release
+  retries: 3
+  delay: 2
+  until: (_codex_release.status | default(0)) == 200
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when:
+    - codex_standalone_enabled | default(true)
+    - _codex_standalone_check.rc != 0
+
+- name: Select the Codex installer from the release
   ansible.builtin.set_fact:
     _codex_installer_asset: >-
-      {{ latest_github_releases.codex.assets | default([])
+      {{ _codex_release.json.assets | default([])
          | selectattr('name', 'equalto', 'install.sh') | first | default({}) }}
     _codex_release_version: >-
-      {{ (codex_standalone_release == 'latest')
-         | ternary(latest_github_releases.codex.tag_name | default('') | regex_replace('^rust-v', ''),
-                   codex_standalone_release) }}
+      {{ _codex_release.json.tag_name | default('') | regex_replace('^rust-v', '') }}
   when:
     - codex_standalone_enabled | default(true)
     - _codex_standalone_check.rc != 0
@@ -111,8 +145,8 @@
       - _codex_installer_asset.digest | default('') is match('^sha256:[0-9a-f]{64}$')
       - _codex_release_version is match('^[0-9]+[.][0-9]+[.][0-9]+')
     fail_msg: >-
-      The latest openai/codex release has no install.sh asset with a SHA-256
-      digest; refusing to run an unverified installer.
+      The openai/codex release has no install.sh asset with a SHA-256 digest;
+      refusing to run an unverified installer.
     quiet: true
   when:
     - codex_standalone_enabled | default(true)
