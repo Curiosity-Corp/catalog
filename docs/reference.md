@@ -248,6 +248,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `minimal_desktop_greeter_effective` | `developer_workstation` | internal |
 | `monitor_sleep_console_dropin_path` | `developer_workstation` | internal |
 | `npm_global_command_links` | `developer_workstation` | internal |
+| `pia_installer_state_file` | `developer_workstation` | internal |
 | `retired_modprobe_options` | `developer_workstation` | internal |
 | `streamstack_seat_guest_dropin_content` | `developer_workstation` | internal |
 | `t460_console_status_path` | `developer_workstation` | internal |
@@ -304,7 +305,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-518 variables, from `roles/developer_workstation/defaults/main.yml`.
+522 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -772,6 +773,10 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `hardware_profiles` | dict | mapping, 6 keys |  | supported |  | (undocumented) |
 | `grub_autoboot_enabled` | bool | `true` |  | supported | boot | Boot the default GRUB entry without waiting at the menu. Ubuntu keeps the menu open after a boot it considers failed because GRUB_RECORDFAIL_TIMEOUT is unset. Installs a drop-in under /etc/default/grub.d (never edits /etc/default/grub) and runs update-grub when it changes. (...) |
 | `grub_autoboot_dropin_path` | string | `"/etc/default/grub.d/90-curiosity-autoboot.cfg"` |  | internal |  | (undocumented) |
+| `pia_installer_build` | string | `"3.8-08539"` |  | supported | supply-chain | The PIA installer runs as root, and PIA publishes no checksum or signature for it (catalog#171), so the role installs one pinned build and checks it against the SHA-256 recorded here before it runs. A mismatch or an empty digest stops the run with nothing executed. (...) |
+| `pia_installer_x86_64_sha256` | string | string, 64 characters |  | supported | supply-chain | (undocumented) |
+| `pia_installer_aarch64_sha256` | string | string, 64 characters |  | supported | supply-chain | (undocumented) |
+| `pia_installer_state_file` | string | `"/var/lib/curiosity/pia-installer.sha256"` |  | internal |  | Records the SHA-256 of the installer that last ran to completion, so the installer runs again only when the pinned build changes. |
 | `pia_split_tunnel_apps` | list | `["/opt/brave.com/brave/brave"]` |  | supported | network | Only the listed executables are routed through the VPN (PIA "include" split tunnel); everything else on the host stays on the normal link. See docs/pia-vpn-and-wifi.md. |
 | `pia_split_tunnel_dns` | bool | `true` |  | supported | network | Keep the PIA DNS override for the tunnelled apps only, so Ziti/internal names still resolve for the rest of the host. |
 | `pia_killswitch` | string | `"auto"` |  | supported | network | "auto" blocks tunnelled apps when the VPN drops and never blocks the host. |

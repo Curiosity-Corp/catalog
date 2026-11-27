@@ -18,7 +18,7 @@
 # support.status: maintained | archived | moved | unmaintained | end-of-life
 # Dates are YYYY-MM-DD, or YYYY-MM for "the end of that month" when the vendor
 # publishes only a month.
-reviewed: '2026-11-26'
+reviewed: '2026-11-27'
 review_interval_days: 31
 warn_days: 180
 owner_roles:
@@ -878,19 +878,19 @@ entries:
     upstream: Private Internet Access (Kape Technologies)
     source: https://www.privateinternetaccess.com/download
     declarations:
-      source:pia-installer: https://installers.privateinternetaccess.com/download/pia-linux-
+      source:pia-installer: https://installers.privateinternetaccess.com/download/
     licence: proprietary (client) with MIT-licensed desktop source
     licence_source: https://github.com/pia-foss/desktop/blob/master/LICENSE.txt
     owner: role-maintainer
-    update_channel: the newest Linux installer the download page names, on each run
-    verification: tls-only
+    update_channel: the build pinned in pia_installer_build; each run warns when the download page names
+      a newer one, and a maintainer moves the pin (docs/pia-vpn-and-wifi.md#updating-the-pinned-installer)
+    verification: pinned-checksum
     security_critical: true
     support:
       status: maintained
       evidence: https://www.privateinternetaccess.com/download
-      checked: '2026-11-26'
+      checked: '2026-11-27'
     replacement: WireGuard or OpenVPN from the distribution with PIA's own configuration (docs/pia-tunnel.md).
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
   - name: community-general
     upstream: Ansible community (ansible-collections)
     source: https://github.com/ansible-collections/community.general

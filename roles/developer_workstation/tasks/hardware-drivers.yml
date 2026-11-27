@@ -135,74 +135,120 @@
   when: hardware_profiles[hardware_profile].pipx_packages | default([]) | length > 0
 
 # ---- Private Internet Access VPN ----
-# PIA publishes versioned installers from its download page, so resolve the
-# current URL there instead of embedding a release number in the catalog.
+# The installer runs as root and PIA publishes no checksum or signature for it
+# (catalog#171). The role installs the build pinned in pia_installer_build,
+# verified against pia_installer_<arch>_sha256 through verified-download.yml,
+# and refuses to run anything else. PIA's download page is read only to warn
+# that a newer build exists (docs/pia-vpn-and-wifi.md#updating-the-pinned-installer).
 
-- name: Query latest PIA Linux installer page
-  ansible.builtin.uri:
-    url: https://www.privateinternetaccess.com/download
-    return_content: true
-  register: _pia_download_page
-  changed_when: false
-  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
-
-- name: Select latest PIA Linux installer for the target architecture
+- name: Resolve the pinned PIA Linux installer for the target architecture
   ansible.builtin.set_fact:
-    _pia_latest_installers: >-
-      {{
-        _pia_download_page.content
-        | regex_findall('https://installers\\.privateinternetaccess\\.com/download/pia-linux-[^" ]+\\.run')
-      }}
+    _pia_installer_file: >-
+      pia-linux-{{ 'arm64-' if ansible_architecture == 'aarch64' else '' }}{{ pia_installer_build }}.run
+    _pia_installer_sha256: >-
+      {{ (pia_installer_aarch64_sha256 if ansible_architecture == 'aarch64'
+          else pia_installer_x86_64_sha256 if ansible_architecture == 'x86_64'
+          else '') | trim | lower }}
   when: hardware_profiles[hardware_profile].pia_vpn | default(false)
 
-- name: Choose latest PIA Linux installer for the target architecture
-  ansible.builtin.set_fact:
-    _pia_latest_installer_url: >-
-      {{
-        (
-          _pia_latest_installers
-          | select('search', 'pia-linux-arm64-')
-          | first
-        )
-        if ansible_architecture == 'aarch64'
-        else (
-          _pia_latest_installers
-          | reject('search', 'pia-linux-arm')
-          | first
-        )
-      }}
-  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
-
-- name: Require a current PIA Linux installer
+- name: Require a pinned PIA installer build and SHA-256
   ansible.builtin.assert:
-    that: _pia_latest_installer_url | default('') | length > 0
-    fail_msg: "PIA did not publish a current installer for {{ ansible_architecture }}"
+    that:
+      - pia_installer_build is match('^[0-9]+([.][0-9]+)*-[0-9]+$')
+      - _pia_installer_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      PIA is enabled (pia_vpn) but no installer is pinned for
+      {{ ansible_architecture }}: pia_installer_build must be a build such as
+      3.8-08539 (got {{ pia_installer_build | to_json }}) and
+      pia_installer_{{ ansible_architecture }}_sha256 its SHA-256. PIA publishes
+      no checksum, so the role will not run an unpinned installer as root
+      (docs/pia-vpn-and-wifi.md#updating-the-pinned-installer).
+    quiet: true
   when: hardware_profiles[hardware_profile].pia_vpn | default(false)
 
-- name: Ensure PIA installer cache directory exists
+- name: Download and verify the pinned PIA installer
+  ansible.builtin.include_tasks:
+    file: verified-download.yml
+  vars:
+    verified_download_name: "{{ _pia_installer_file }}"
+    verified_download_url: "https://installers.privateinternetaccess.com/download/{{ _pia_installer_file }}"
+    verified_download_sha256: "{{ _pia_installer_sha256 }}"
+    verified_download_mode: "0755"
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Read the SHA-256 of the PIA installer that last ran
+  ansible.builtin.slurp:
+    src: "{{ pia_installer_state_file }}"
+  register: _pia_installer_state
+  failed_when: >-
+    _pia_installer_state is failed
+    and 'file not found' not in (_pia_installer_state.msg | default('') | lower)
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Install or update PIA VPN from the verified installer
+  ansible.builtin.command: "{{ verified_download_path }}"
+  when:
+    - hardware_profiles[hardware_profile].pia_vpn | default(false)
+    - (_pia_installer_state.content | default('') | b64decode | trim) != _pia_installer_sha256
+  changed_when: true
+
+- name: Ensure the PIA installer state directory exists
   ansible.builtin.file:
-    path: /var/cache/curiosity
+    path: "{{ pia_installer_state_file | dirname }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
   when: hardware_profiles[hardware_profile].pia_vpn | default(false)
 
-- name: Download latest PIA VPN installer
-  ansible.builtin.get_url:
-    url: "{{ _pia_latest_installer_url }}"
-    dest: "/var/cache/curiosity/{{ _pia_latest_installer_url | basename }}"
-    mode: "0755"
-    force: false
-  register: _pia_installer_download
+- name: Record the PIA installer that ran
+  ansible.builtin.copy:
+    content: "{{ _pia_installer_sha256 }}\n"
+    dest: "{{ pia_installer_state_file }}"
+    owner: root
+    group: root
+    mode: "0644"
   when: hardware_profiles[hardware_profile].pia_vpn | default(false)
 
-- name: Install or update PIA VPN
-  ansible.builtin.command: "/var/cache/curiosity/{{ _pia_latest_installer_url | basename }}"
+- name: Read PIA's download page for a newer installer
+  ansible.builtin.uri:
+    url: https://www.privateinternetaccess.com/download
+    return_content: true
+  register: _pia_download_page
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: hardware_profiles[hardware_profile].pia_vpn | default(false)
+
+- name: Warn when PIA's download page cannot be read
+  ansible.builtin.debug:
+    msg: >-
+      Could not read https://www.privateinternetaccess.com/download
+      ({{ _pia_download_page.status | default('no response') }}:
+      {{ _pia_download_page.msg | default('') }}), so whether PIA has published
+      a newer installer than {{ pia_installer_build }} is unknown. The pinned,
+      verified build was used.
   when:
     - hardware_profiles[hardware_profile].pia_vpn | default(false)
-    - _pia_installer_download.changed
-  changed_when: true
+    - (_pia_download_page.status | default(0)) != 200
+
+- name: Warn when PIA publishes a different installer than the pinned one
+  ansible.builtin.debug:
+    msg: >-
+      PIA's download page names {{ _pia_published | join(', ') }}, not the pinned
+      {{ _pia_installer_file }}. The pinned build stays installed until
+      pia_installer_build and its SHA-256 are updated
+      (docs/pia-vpn-and-wifi.md#updating-the-pinned-installer).
+  vars:
+    _pia_published: >-
+      {{ _pia_download_page.content | default('')
+         | regex_findall('pia-linux-' ~ ('arm64-' if ansible_architecture == 'aarch64' else '') ~ '[0-9][0-9.]*-[0-9]+[.]run')
+         | unique | list }}
+  when:
+    - hardware_profiles[hardware_profile].pia_vpn | default(false)
+    - (_pia_download_page.status | default(0)) == 200
+    - _pia_published | length > 0
+    - _pia_installer_file not in _pia_published
 
 - name: Enable PIA VPN daemon
   ansible.builtin.systemd:

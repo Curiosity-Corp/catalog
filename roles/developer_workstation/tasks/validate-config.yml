@@ -468,6 +468,17 @@
           PIA desktop app split tunnel) and pia_tunnel_apps lists
           {{ pia_tunnel_apps | default([]) | to_json }}. Use one mechanism per host: empty
           pia_tunnel_apps, or a hardware profile without pia_vpn.
+      - ok: >-
+          {{ not ((hardware_profiles | default({})).get(hardware_profile | default(''), {}).get('pia_vpn', false) | bool)
+             or (pia_installer_build | default('') | string is match('^[0-9]+([.][0-9]+)*-[0-9]+$')
+                 and (pia_installer_x86_64_sha256 | default('') | length > 0
+                      or pia_installer_aarch64_sha256 | default('') | length > 0)) }}
+        msg: >-
+          hardware profile {{ hardware_profile | default('') | to_json }} sets pia_vpn: true, so
+          pia_installer_build must name a PIA build such as "3.8-08539" and
+          pia_installer_x86_64_sha256 or pia_installer_aarch64_sha256 its SHA-256 (PIA publishes
+          no checksum; docs/pia-vpn-and-wifi.md#updating-the-pinned-installer); got
+          {{ pia_installer_build | default('') | to_json }}.
 
 # Rules that read a secret. no_log keeps the values out of every output
 # (tests/test_no_log_policy.py); only the messages, which name the variable and

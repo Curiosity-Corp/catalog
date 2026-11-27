@@ -42,6 +42,49 @@ Login and autostart:
   If the VPN is not up, Brave has no connectivity (killswitch) while the rest of
   the host works.
 
+### The installer is pinned
+
+PIA's Linux installer (`pia-linux-<build>.run`, `pia-linux-arm64-<build>.run`
+on aarch64) runs as root, and PIA publishes no checksum or signature for it:
+nothing sits next to the installer, and the pia-foss/desktop GitHub releases
+carry no assets (checked 2026-11-27, catalog#171). So the role installs one
+pinned build, `pia_installer_build`, and runs it only after
+`tasks/verified-download.yml` has checked it against
+`pia_installer_x86_64_sha256` or `pia_installer_aarch64_sha256`. A wrong file,
+an empty or malformed digest, or an architecture without a digest stops the
+run before anything executes; the download is deleted and nothing is cached.
+The installer runs again only when the pinned digest differs from the one
+recorded in `pia_installer_state_file` after the last successful run.
+
+Each run also reads PIA's download page and prints a warning when it names a
+different build than the pinned one. The pinned build stays installed until a
+maintainer updates the pin.
+
+### Updating the pinned installer
+
+1. Take the new build from the warning or from the download page, for example
+   `3.9-08700`.
+2. Download both installers on a workstation, without running them, and
+   record their SHA-256:
+
+   ```sh
+   for f in pia-linux-3.9-08700.run pia-linux-arm64-3.9-08700.run; do
+     curl -fsSLO "https://installers.privateinternetaccess.com/download/$f"
+   done
+   sha256sum pia-linux-*.run
+   ```
+
+3. Compare each digest with an independent record of the same file before you
+   trust it. The AUR `piavpn-bin` package pins both
+   (`sha256sums_x86_64`, `sha256sums_aarch64` in its PKGBUILD,
+   https://aur.archlinux.org/packages/piavpn-bin). If they differ, or the AUR
+   has not caught up, do not update: wait, and record what you saw on
+   catalog#171.
+4. Set `pia_installer_build` and both `pia_installer_*_sha256` in
+   `roles/developer_workstation/defaults/main.yml` in one merge request. A host
+   can override them in `/etc/ansible/local-vars.yml`, but the pin belongs in
+   the collection so every host runs the reviewed file.
+
 ### Verify
 
 ```sh

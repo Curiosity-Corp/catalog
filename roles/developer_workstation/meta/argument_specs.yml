@@ -424,6 +424,10 @@ argument_specs:
       pia_autoconnect_on_daemon_start: {type: bool}
       pia_daemon_oom_score_adjust: {type: int}
       pia_login_file: {type: str, no_log: true}
+      pia_installer_build: {type: str}
+      pia_installer_x86_64_sha256: {type: str}
+      pia_installer_aarch64_sha256: {type: str}
+      pia_installer_state_file: {type: str}
       pia_tunnel_netns: {type: str}
       pia_tunnel_interface: {type: str}
       pia_tunnel_region: {type: str}

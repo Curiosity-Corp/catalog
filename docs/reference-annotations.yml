@@ -85,6 +85,10 @@ variables:
   samsung_tv_key_vault: {stability: private-hook}
   samsung_tv_key_vault_secret: {stability: private-hook, safety: secret}
   pia_login_file: {stability: private-hook, safety: secret}
+  pia_installer_build: {stability: supported, safety: supply-chain}
+  pia_installer_x86_64_sha256: {stability: supported, safety: supply-chain}
+  pia_installer_aarch64_sha256: {stability: supported, safety: supply-chain}
+  pia_installer_state_file: {stability: internal}
   hhtest_authorized_keys: {stability: private-hook, safety: account}
   missionctl_install_url: {stability: private-hook, safety: supply-chain}
   catalog_tools_install_url: {stability: private-hook, safety: supply-chain}
