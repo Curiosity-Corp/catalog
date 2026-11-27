@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKER = re.compile(r"^(?:(?:<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)(?: |$)|======= )")
 
 
-SKIP_DIRS = {".git", ".ci-venv", ".venv", "node_modules", "__pycache__", ".pytest_cache"}
+SKIP_DIRS = {".git", ".ci-venv", ".ci-collections", ".venv", "node_modules", "__pycache__", ".pytest_cache"}
 
 
 def tracked_files() -> list[Path]:

@@ -52,11 +52,12 @@ SHA256_SUFFIX = re.compile(r"-[0-9a-f]{64}$")
 # between them. Worst case for one lookup: 3 x 20 s + 2 s + 4 s.
 URL_TIMEOUT = 20
 URL_TRIES = 3
-# Seconds a playbook run against a vendor may take, a few times a normal run:
-# the role retries each lookup and download itself (60 s socket timeout).
-PLAY_BUDGET = 240
+# Seconds a playbook run against a vendor may take. The slowest normal run is
+# about 20 s (pipeline 174670, --durations); egress was about 6 times slower
+# on 2026-11-27 (catalog#174). The role retries each lookup and download.
+PLAY_BUDGET = 120
 # The Claude Code binary is the largest download.
-CLAUDE_PLAY_BUDGET = 420
+CLAUDE_PLAY_BUDGET = 180
 
 
 def _cached(directory: Path, prefix: str) -> Path:
