@@ -60,7 +60,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | --- | --- | --- | --- | --- | --- |
 | `accessibility` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` | Opt-in assistive technology packages (accessibility_packages); packages only, see accessibility-and-localization.md. |
 | `agent-cpu-policy` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
-| `ai` | supported | 12 | `ai-assistants.yml`, `main.yml` | `desktop`, `workspace` |  |
+| `ai` | supported | 13 | `ai-assistants.yml`, `main.yml` | `desktop`, `workspace` |  |
 | `always` | supported | 13 | `main.yml`, `update-transaction.yml` |  | Runs on every invocation, even with --tags. Skip it only with --skip-tags always. |
 | `ansible-pull` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `bitwarden` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
@@ -127,7 +127,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `networking` | supported | 6 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `node` | supported | 11 | `main.yml` | `desktop`, `workspace` |  |
 | `openbox` | supported | 3 | `minimal-desktop.yml` | `byod-kiosk` |  |
-| `packages` | supported | 19 | `ai-assistants.yml`, `main.yml`, `managed-updates.yml`, `minimal-desktop.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Package installation across the role. |
+| `packages` | supported | 20 | `ai-assistants.yml`, `main.yml`, `managed-updates.yml`, `minimal-desktop.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Package installation across the role. |
 | `pia-tunnel` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `picom` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `pinned-vt` | supported | 1 | `minimal-desktop.yml` |  |  |
@@ -166,7 +166,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `tmp-hygiene` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `touchpad` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `tuning` | supported | 3 | `browser-memory-cap.yml`, `main.yml`, `system-tuning.yml` | `desktop` |  |
-| `updates` | supported | 14 | `main.yml`, `managed-updates.yml`, `pro-mimic.yml` | `desktop`, `workspace` | The managed update transaction: foundation, rings, rollback, health and manifest. |
+| `updates` | supported | 15 | `main.yml`, `managed-updates.yml`, `pro-mimic.yml` | `desktop`, `workspace` | The managed update transaction: foundation, rings, rollback, health and manifest. |
 | `user` | supported | 4 | `main.yml` | `thin-client` |  |
 | `user-git-timers` | supported | 1 | `main.yml` |  |  |
 | `user-systemd` | supported | 2 | `main.yml` |  |  |

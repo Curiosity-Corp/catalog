@@ -1,0 +1,97 @@
+---
+# =============================================================================
+# Standalone Codex CLI
+# =============================================================================
+# Codex is deliberately NOT part of the npm refresh. The nightly registry
+# refresh used to place a second `codex` in ~/.npm-global/bin next to the
+# standalone binary, and whichever install PATH reached first was the one that
+# ran — so a failed or missing npm copy broke the user's `codex` command on
+# every pull. The official standalone installer owns the user-scoped launcher,
+# and a user-level codex-auto-update timer keeps the release current between
+# ansible-pull runs.
+#
+# main.yml includes this file right after upstream release discovery
+# (latest-releases.yml), because the installer is taken from the resolved
+# openai/codex release with its GitHub asset digest. It used to run before
+# discovery, so a fresh host with no Codex yet always found no installer and
+# failed the whole baseline (catalog#178). It still runs before the binary
+# update transaction, so an unrelated binary installer cannot leave the
+# user's Codex command stale.
+#
+# The install is one block: any failure in it (no verified installer, a
+# digest mismatch, a failed install or launcher check) is reported as a
+# warning and recorded in the update manifest, and the rest of the baseline
+# goes on. Nothing unverified ever runs; a missing Codex is fixed by the next
+# pull. update-health.yml checks the launcher only where it exists.
+# =============================================================================
+
+- name: Check standalone Codex launcher
+  ansible.builtin.command: "{{ codex_standalone_install_dir }}/codex --version"
+  register: _codex_standalone_check
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+  when: codex_standalone_enabled | default(true)
+
+- name: Remove legacy npm-managed Codex
+  community.general.npm:
+    name: "@openai/codex"
+    global: true
+    state: absent
+    executable: "{{ npm_global_executable }}"
+  become: true
+  become_user: "{{ dev_user }}"
+  environment:
+    HOME: "{{ dev_user_home }}"
+    NPM_CONFIG_PREFIX: "{{ npm_global_prefix }}"
+    PATH: "{{ npm_global_prefix }}/bin:{{ dev_user_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  register: _codex_npm_removal
+  failed_when: false
+  when: codex_standalone_enabled | default(true)
+
+- name: Install the verified Codex release without aborting the baseline
+  when: codex_standalone_enabled | default(true)
+  block:
+    - name: Install and verify the standalone Codex CLI
+      ansible.builtin.include_tasks: codex-standalone-install.yml
+  rescue:
+    - name: Record the Codex install failure for the update manifest
+      ansible.builtin.set_fact:
+        workstation_update_component_failures: >-
+          {{ workstation_update_component_failures | default([]) + [{
+               'component': 'codex',
+               'task': ansible_failed_task.name | default('Codex install'),
+               'message': ansible_failed_result.msg | default('Codex install failed')
+             }] }}
+
+    - name: Warn that Codex was not installed
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: the standalone Codex CLI was not installed or updated on
+          this run ({{ ansible_failed_task.name | default('Codex install') }}:
+          {{ ansible_failed_result.msg | default('failed') }}). No unverified
+          installer was run; the rest of the baseline continues and the next
+          pull retries.
+
+- name: Stat system-level Codex shim
+  ansible.builtin.stat:
+    path: /usr/local/bin/codex
+  register: _codex_system_shim
+  when: codex_standalone_enabled | default(true)
+
+- name: Remove broken system-level Codex symlink
+  # Some base images ship a dangling /usr/local/bin/codex (pointing at a
+  # /usr/bin/codex that is never installed). In shells without the user bin
+  # directories on PATH it shadows the working launcher and makes `codex`
+  # fail with "No such file or directory". Only symlinks are removed; a real
+  # file is left for the operator to review.
+  ansible.builtin.file:
+    path: /usr/local/bin/codex
+    state: absent
+  when:
+    - codex_standalone_enabled | default(true)
+    - _codex_system_shim.stat.exists
+    - _codex_system_shim.stat.islnk

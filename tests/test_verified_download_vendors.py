@@ -176,7 +176,7 @@ def test_codex_installer_resolves_and_verifies(tmp_path: Path) -> None:
     release = _github_latest_release(DEFAULTS["latest_github_repositories"]["codex"])
     user = current_user(tmp_path)
     tasks = role_tasks(
-        TASKS / "ai-assistants.yml",
+        TASKS / "codex-standalone-install.yml",
         "Select the Codex installer from the latest release",
         "Download and verify the Codex standalone installer",
     )

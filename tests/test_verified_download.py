@@ -438,7 +438,7 @@ def test_unexpected_channel_version_is_refused(tmp_path: Path, site, keys, value
 
 def _codex_tasks() -> list[dict[str, Any]]:
     return role_tasks(
-        TASKS / "ai-assistants.yml",
+        TASKS / "codex-standalone-install.yml",
         "Select the Codex installer from the latest release",
         "Download and verify the Codex standalone installer",
     )
@@ -576,7 +576,7 @@ def _include_vars(task_file: str, name: str) -> dict[str, Any]:
             "verified_download_sha256", "{{ _go_latest_asset.sha256 }}",
         ),
         (
-            "ai-assistants.yml", "Download and verify the Codex standalone installer",
+            "codex-standalone-install.yml", "Download and verify the Codex standalone installer",
             "{{ _codex_installer_asset.browser_download_url }}",
             "verified_download_sha256", "{{ _codex_installer_asset.digest }}",
         ),
@@ -597,7 +597,7 @@ def test_role_downloads_use_the_vendor_digest(
 
 
 def test_installers_run_only_the_verified_file() -> None:
-    text = "\n".join((TASKS / name).read_text() for name in ("ai-assistants.yml", "claude-code-user.yml", "kubernetes.yml", "languages.yml"))
+    text = "\n".join((TASKS / name).read_text() for name in ("ai-assistants.yml", "codex-standalone.yml", "codex-standalone-install.yml", "claude-code-user.yml", "kubernetes.yml", "languages.yml"))
     for retired in ("https://claude.ai/install.sh", "https://chatgpt.com/codex/install.sh", "/tmp/codex", "/tmp/claude"):
         assert retired not in text, f"{retired} is still downloaded or run"
     for retired in ("codex_standalone_installer_url", "claude_native_installer_url", "ziti_install_script_url"):

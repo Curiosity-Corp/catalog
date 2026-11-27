@@ -385,6 +385,21 @@
       ansible.builtin.fail:
         msg: "Upstream release resolution failed; no stale fallback was installed"
 
+# Codex installs from the openai/codex release resolved just above, so it runs
+# after discovery (a fresh host found no release before, catalog#178) and
+# before the update transaction, so no unrelated binary installer can leave
+# the user's Codex command stale. A Codex failure warns; it never aborts the
+# baseline (codex-standalone.yml).
+- name: Include the standalone Codex CLI install
+  ansible.builtin.include_tasks:
+    file: codex-standalone.yml
+    apply:
+      tags: [updates, packages, ai]
+  tags: [updates, packages, ai]
+  when:
+    - workstation_profile in ['desktop', 'workspace']
+    - workstation_update_install_allowed | default(true)
+
 - name: Include internal CA trust
   ansible.builtin.include_tasks:
     file: internal-cas.yml
