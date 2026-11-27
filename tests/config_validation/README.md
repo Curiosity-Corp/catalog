@@ -14,6 +14,8 @@ docs/configuration.md#validation describes the checks they exercise.
   marker that starts every secret of these files) appears, even at `-vvv`.
 - `invalid/*.yml` with a `# role: <name>` line run that role instead of
   developer_workstation.
+- `preview-vars.yml`: extra vars with secrets for `playbooks/preview-vars.yml`;
+  its output must hold every `# expect:` line and no `SENTIN` value.
 - `play-role.yml` runs a whole role; `play-validate.yml` runs only
   `validate-config.yml`.
 

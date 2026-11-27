@@ -1,0 +1,13 @@
+---
+# Input for the playbooks/preview-vars.yml check in
+# scripts/config_validation_check.sh (catalog#10): a valid configuration with
+# secrets. Every `# expect:` line must appear in the output, and no value
+# containing SENTIN (the marker of every secret here) may appear, even at -vvv.
+# expect: "workstation_profile": "workspace"
+# expect: "github_api_token": "$REDACTED$"
+# expect: "wifi_psk": "$REDACTED$"
+# expect: "ubuntu_pro_token": ""
+workstation_profile: workspace
+github_api_token: SENTINEL-github-token
+wifi_ssid: lab-example
+wifi_psk: SENTINEL-wifi-passphrase

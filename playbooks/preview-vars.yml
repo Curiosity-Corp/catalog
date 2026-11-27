@@ -1,0 +1,62 @@
+---
+# Print the developer_workstation role's public variables as a host resolves
+# them, with every secret replaced (docs/dry-run-and-preview.md, catalog#10).
+#
+# It reads variables only: no become, no facts, and no package, file or service
+# task. It loads the host-local variables file the way the role does, then runs
+# the role's configuration check (tasks/validate-config.yml, catalog#31), so an
+# invalid configuration stops it with the messages a real run would print.
+#
+# What it prints: every variable of meta/argument_specs.yml (the public ones),
+# with Ansible's own precedence and templates resolved. A variable the spec
+# marks no_log (tests/test_argument_specs.py requires that of every secret)
+# shows as $REDACTED$ unless it is empty; a login part of a URL shows as ***@.
+#
+#   ansible-playbook -i localhost, -c local playbooks/preview-vars.yml
+#   ansible-playbook -i localhost, -c local playbooks/preview-vars.yml \
+#     -e @vm-vars.yml -e preview_match='profile|user|timezone'
+#
+# CI runs it in the config-validation job (scripts/config_validation_check.sh)
+# with secrets that must not appear in its output.
+- name: Preview the workstation variables with secrets redacted
+  hosts: all
+  gather_facts: false
+  become: false
+  vars:
+    # A regular expression; only variable names that contain a match are shown.
+    preview_match: ""
+  tasks:
+    - name: Check for the host-local workstation vars file
+      ansible.builtin.stat:
+        path: "{{ developer_workstation_local_vars_file | default('/etc/ansible/local-vars.yml') }}"
+      register: _preview_local_vars
+
+    - name: Load the host-local workstation vars, as the role does
+      ansible.builtin.include_vars:
+        file: "{{ developer_workstation_local_vars_file | default('/etc/ansible/local-vars.yml') }}"
+      when: _preview_local_vars.stat.exists
+
+    # Loads the role defaults at their own precedence (public: true keeps them
+    # visible to the next task) and checks them; it changes nothing.
+    - name: Check the configuration with the role's own validation
+      ansible.builtin.include_role:
+        name: developer_workstation
+        tasks_from: validate-config
+        public: true
+
+    - name: Print the public variables with secrets redacted
+      ansible.builtin.debug:
+        msg: "{{ _preview_vars }}"
+      vars:
+        _preview_vars: >-
+          {%- set ns = namespace(out={}) -%}
+          {%- for name in _config_spec | sort if name is search(preview_match) -%}
+          {%- set value = lookup('ansible.builtin.vars', name, default=none) -%}
+          {%- if _config_spec[name].no_log | default(false) and value not in [none, ''] -%}
+          {%- set value = '$REDACTED$' -%}
+          {%- else -%}
+          {%- set value = value | to_json | regex_replace('://[^/@\s"]*@', '://***@') | from_json -%}
+          {%- endif -%}
+          {%- set ns.out = ns.out | combine({name: value}) -%}
+          {%- endfor -%}
+          {{ ns.out }}

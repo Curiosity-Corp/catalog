@@ -249,7 +249,7 @@ lint:
   extends: .python_setup
   stage: validate
   script:
-    - ANSIBLE_ROLES_PATH=roles ansible-lint playbooks/site.yml roles
+    - ANSIBLE_ROLES_PATH=roles ansible-lint playbooks/site.yml playbooks/preview-vars.yml roles
 
 policy:
   extends: .python_setup
