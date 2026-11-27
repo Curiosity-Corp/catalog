@@ -77,6 +77,8 @@ variables:
   workspace_git_auth_helper_enabled: {safety: network}
   ziti_etc_hosts_pins: {stability: private-hook}
   ziti_intercept_domains: {stability: private-hook}
+  ziti_pin_env_path: {stability: internal}
+  ziti_pin_resolver: {safety: network}
   ziti_health_check_identities: {stability: private-hook}
   ziti_health_check_probe_hosts: {stability: private-hook}
   ziti_oidc_provider: {stability: private-hook}

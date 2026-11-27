@@ -1,0 +1,7 @@
+# Managed by curiosity.workstation (ziti_pin_lifecycle_enabled). Do not edit.
+# Every start of {{ ziti_service_name }}, including systemd's automatic restart
+# after a crash, re-resolves the Ziti /etc/hosts pins: the tunnel may have
+# reallocated its overlay addresses. The leading "-" and --no-block mean a
+# failure or a slow resolver can never delay or fail the tunnel itself.
+[Service]
+ExecStartPost=-/usr/bin/systemctl --no-block restart curiosity-ziti-pins.service
