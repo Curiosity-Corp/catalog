@@ -399,6 +399,11 @@ tools:
     - cargo fmt --all --check || { cargo fmt --all && git diff -- . > ../tools-fmt.patch; exit 1; }
     - cargo run --locked --quiet -- reference --root .. --check
     - cargo run --locked --quiet -- packages check --root ..
+    # A real read (catalog#33): the runner pod sees its node's PCI devices
+    # (an Intel iGPU without a driver on 2026-11-27); the fixture tests in
+    # tests/gpu_status.rs cover every vendor and state.
+    - cargo run --locked --quiet -- gpu-status
+    - cargo run --locked --quiet -- gpu-status --json
     # The dependency register (catalog#51, docs/dependency-register.md): fails
     # when a declared dependency is missing from ci/dependency-register.yml or
     # an entry no longer matches its declaration. Alerts print on every

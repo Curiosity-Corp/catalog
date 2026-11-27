@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use catalog_tools::diagnostics::{self, redact::Redactor};
 use catalog_tools::packages::{self, Evidence, PlatformResult};
-use catalog_tools::{find_root, reference, register, sbom};
+use catalog_tools::{find_root, gpu, reference, register, sbom};
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -37,6 +37,22 @@ enum Command {
     /// Build a redacted support bundle on this machine; read docs/troubleshooting.md.
     #[command(subcommand)]
     Diagnostics(DiagnosticsCommand),
+    /// Which GPU or accelerator this machine has and whether its driver and
+    /// tools are present. Read-only; read docs/gpu-accelerators.md.
+    GpuStatus(GpuStatusArgs),
+}
+
+#[derive(Args)]
+struct GpuStatusArgs {
+    /// Print the report as JSON (schema curiosity.workstation.gpu-status/v1).
+    #[arg(long)]
+    json: bool,
+    /// Exit 1 unless the state is `ready`, so a script can gate on a usable GPU.
+    #[arg(long)]
+    require_gpu: bool,
+    /// Read /sys, /dev and /proc under this directory instead of / (fixture trees).
+    #[arg(long, default_value = "/")]
+    sysroot: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -191,6 +207,7 @@ fn main() -> ExitCode {
         Command::Diagnostics(command) => run_diagnostics(command),
         Command::Sbom(args) => run_sbom(&args),
         Command::Register(command) => run_register(command),
+        Command::GpuStatus(args) => run_gpu_status(&args),
     };
     match outcome {
         Ok(code) => code,
@@ -416,6 +433,26 @@ fn run_packages(command: PackagesCommand) -> Result<ExitCode> {
             Ok(ExitCode::from(1))
         }
     }
+}
+
+fn run_gpu_status(args: &GpuStatusArgs) -> Result<ExitCode> {
+    let report = gpu::report(&gpu::Inputs {
+        sysroot: args.sysroot.clone(),
+        path: std::env::var_os("PATH"),
+    })?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).context("cannot serialise the GPU report")?
+        );
+    } else {
+        print!("{}", gpu::render(&report));
+    }
+    Ok(if args.require_gpu && report.state != gpu::State::Ready {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 fn write_file(path: &Path, text: &str) -> Result<()> {
