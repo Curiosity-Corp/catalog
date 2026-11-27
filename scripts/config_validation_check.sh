@@ -16,6 +16,9 @@
 #   2. Every tests/config_validation/invalid/ file fails, only validation tasks
 #      ran, every `# expect:` line appears in the output and no SENTIN marker
 #      (a secret value) appears, at -vvv.
+#   3. playbooks/preview-vars.yml with tests/config_validation/preview-vars.yml
+#      prints every `# expect:` line, changes nothing and, at -vvv, prints no
+#      SENTIN marker.
 # A report of every case goes to $OUT/report.md, with each run's output.
 set -euo pipefail
 
@@ -133,6 +136,27 @@ for file in "$CASES"/invalid/*.yml; do
     record "$name" "fails in validation" "$(IFS='; '; echo "${problems[*]}"), see runs/$(basename "$log")"
   fi
 done
+
+# 3. playbooks/preview-vars.yml (docs/dry-run-and-preview.md, catalog#10)
+#    prints the resolved public variables and must not print a secret.
+preview_case="$CASES/preview-vars.yml"
+preview_log="$OUT/runs/preview-vars.log"
+if ansible-playbook -i localhost, -c local -vvv "$ROOT/playbooks/preview-vars.yml" \
+    -e "@$preview_case" > "$preview_log" 2>&1; then
+  problems=()
+  while IFS= read -r expected; do
+    grep -qF -- "$expected" "$preview_log" || problems+=("missing output: $expected")
+  done < <(sed -n 's/^# expect: //p' "$preview_case")
+  grep -q "SENTIN" "$preview_log" && problems+=("a secret value (SENTIN marker) appears in the output")
+  grep -q "^localhost *: .*changed=0 " "$preview_log" || problems+=("a task reported a change")
+  if [ "${#problems[@]}" -eq 0 ]; then
+    record "playbooks/preview-vars.yml" "prints redacted variables" "ok"
+  else
+    record "playbooks/preview-vars.yml" "prints redacted variables" "$(IFS='; '; echo "${problems[*]}"), see runs/preview-vars.log"
+  fi
+else
+  record "playbooks/preview-vars.yml" "prints redacted variables" "the run failed, see runs/preview-vars.log"
+fi
 
 echo
 echo "$failures failing case(s); report: $REPORT"

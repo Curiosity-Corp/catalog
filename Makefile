@@ -14,7 +14,7 @@ syntax:
 	ANSIBLE_ROLES_PATH=$(ANSIBLE_ROLES_PATH) ansible-playbook --syntax-check -i localhost, playbooks/site.yml
 
 lint:
-	ANSIBLE_ROLES_PATH=$(ANSIBLE_ROLES_PATH) ansible-lint playbooks/site.yml roles
+	ANSIBLE_ROLES_PATH=$(ANSIBLE_ROLES_PATH) ansible-lint playbooks/site.yml playbooks/preview-vars.yml roles
 
 governance:
 	$(PYTHON) -m pytest -q tests/test_governance_docs.py tests/test_telemetry_policy.py
