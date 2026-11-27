@@ -1105,6 +1105,7 @@ hypersystem_desktop_ziti_dns_ip_range: 100.64.0.0/10
 # Vault or `-e @file`, never from Git. Empty name: the tunnel's identities are managed
 # elsewhere (OIDC identities of the ziti task group, or by hand).
 hypersystem_desktop_ziti_identity_name: ""
+# One-time Ziti enrollment token for that identity; a secret, never logged and never in Git.
 hypersystem_desktop_ziti_enrollment_jwt: ""
 # Where ziti-edge-tunnel loads identities from (the ziti task group's directory).
 hypersystem_desktop_ziti_identity_dir: /opt/openziti/etc/identities
@@ -1117,6 +1118,7 @@ hypersystem_desktop_ziti_tunnel_command: ziti-edge-tunnel
 # hypersystem_desktop_ziti_require_services is false; `hypersystem-desktop doctor`
 # checks them on the laptop either way.
 hypersystem_desktop_ziti_services: []
+# Fail the run when the tunnel does not offer a listed service; false only warns.
 hypersystem_desktop_ziti_require_services: true
 # Seconds to wait for the tunnel to offer the services (it may still be loading).
 hypersystem_desktop_ziti_service_wait: 30
@@ -1171,7 +1173,9 @@ hypersystem_desktop_default_icon: web-browser
 #   hypersystem_desktop_hyperharness_install_argv: [/opt/hyperharness/install.sh, --release]
 #   hypersystem_desktop_hyperharness_creates: "{{ dev_user_home }}/.local/bin/hyperharness"
 hypersystem_desktop_hyperharness_enabled: false
+# The install command as an argv list; its first item is an absolute path.
 hypersystem_desktop_hyperharness_install_argv: []
+# Absolute path the install creates; the install runs only while it is missing.
 hypersystem_desktop_hyperharness_creates: ""
 
 # Optional certificates for private lab services. `src` is read from the

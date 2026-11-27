@@ -73,6 +73,11 @@
 
 - name: Install hypersystem-desktop
   when: hypersystem_desktop_enabled | bool
+  vars:
+    # The profiles the package supports. A named list, not an inline one, so the
+    # reference generator does not read this narrower check as the full set of
+    # workstation_profile values.
+    _hsd_profiles: [desktop, thin-client]
   block:
     # -------------------------------------------------------------------------
     # Inputs
@@ -81,7 +86,7 @@
       ansible.builtin.assert:
         that:
           - ansible_os_family == 'Debian'
-          - workstation_profile in ['desktop', 'thin-client']
+          - workstation_profile in _hsd_profiles
           - _hsd_browser_name in hypersystem_desktop_browser_targets
           - (hypersystem_desktop_catalog_src | length > 0) != (hypersystem_desktop_apps | length > 0)
           - hypersystem_desktop_catalog_src | length == 0 or hypersystem_desktop_catalog_src is match('^(https://|/)')

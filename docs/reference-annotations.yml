@@ -85,7 +85,7 @@ variables:
   # hypersystem-desktop (catalog#142): the site's catalog, the person's roles and
   # the Ziti names are per laptop, from protected host variables.
   hypersystem_desktop_catalog_src: {stability: private-hook, safety: supply-chain}
-  hypersystem_desktop_catalog_headers: {stability: private-hook, safety: security, note: "Never logged (no_log)."}
+  hypersystem_desktop_catalog_headers: {stability: private-hook, safety: security}
   hypersystem_desktop_roles: {stability: private-hook}
   hypersystem_desktop_ziti_identity_name: {stability: private-hook, safety: network}
   hypersystem_desktop_ziti_enrollment_jwt: {stability: private-hook, safety: secret}
