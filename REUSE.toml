@@ -67,6 +67,7 @@ path = [
   "roles/*/files/hh-*",
   "roles/developer_workstation/files/hhtest-cleanup",
   "roles/developer_workstation/files/hyper-workspace",
+  "roles/developer_workstation/files/hypersystem-desktop",
   "roles/developer_workstation/files/i915-pcon-frl-444/i915-pcon-frl-444-build",
   "roles/developer_workstation/files/i915-pcon-frl-444/i915-reload",
   "roles/developer_workstation/files/i915-pcon-frl-444/zz-i915-pcon-frl-444",
