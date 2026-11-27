@@ -877,21 +877,21 @@ entries:
     upstream: Ansible community (ansible-collections)
     source: https://github.com/ansible-collections/community.general
     declarations:
-      collection:community.general: '>=9.0.0'
+      collection:community.general: '>=12.0.0'
       ci-collection:community.general: https://galaxy.ansible.com/ui/repo/published/community/general/
     licence: GPL-3.0-or-later
     licence_source: https://github.com/ansible-collections/community.general/blob/main/COPYING
     owner: release-approver
     update_channel: users resolve galaxy.yml's range; CI tests the exact version in ci/requirements.yml,
-      bumped by Renovate
+      bumped by Renovate, and the collection-floor job checks the roles against the range's floor
     verification: pinned-checksum
     security_critical: false
     support:
       status: maintained
-      evidence: https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html
-      checked: '2026-11-26'
-    replacement: Raise galaxy.yml's floor to a maintained major (14.x is current; 9.x is long past end
-      of life); vendor the few modules used if the collection stalls.
+      evidence: https://github.com/ansible-collections/community.general/issues/582
+      checked: '2026-11-27'
+    replacement: Keep galaxy.yml's floor on the oldest major that still gets backports (the three latest
+      stable-x branches; 12.x on 2026-11-27); vendor the few modules used if the collection stalls.
   - name: ansible-core
     upstream: Ansible project (Red Hat)
     source: https://github.com/ansible/ansible

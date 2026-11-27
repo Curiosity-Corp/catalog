@@ -22,6 +22,17 @@ is missing from the lock, or when a CI collection is not pinned exactly.
 The collection's own dependency range for users stays in `galaxy.yml` and
 `requirements.yml`; `ci/requirements.yml` pins only what CI tests with.
 
+Because every other job tests the exact pin, the `collection-floor` job
+(`scripts/check-collection-floor.sh`) tests the other end of the range: it
+installs exactly the `galaxy.yml` floor of community.general (by version from
+Galaxy, alone on the collection path) and fails when a community.general
+module, filter, test or lookup the roles name is missing or deprecated there,
+or when `requirements.yml` states a different floor. Keep the floor on the
+oldest major that still receives backports (community.general backports to its
+three latest `stable-x` branches, ansible-collections/community.general#582);
+raise it in `galaxy.yml` and `requirements.yml` together. Run it locally with
+`scripts/check-collection-floor.sh "$(mktemp -d)"`.
+
 ## Exceptions
 
 - `research-profile` runs `python:${PYTHON_VERSION}-slim` across a matrix of
