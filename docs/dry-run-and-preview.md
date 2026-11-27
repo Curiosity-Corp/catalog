@@ -86,9 +86,9 @@ behave differently than they would in a real run.
 - The role does handle this in other places. Of its roughly 195 `command` and
   `shell` tasks and handlers, all but a few set `changed_when` (so a real run
   reports honest "changed" results and read-only probes report `ok`), and the
-  rest use `creates` or `removes`. Four tasks set `check_mode: false` so a
-  read-only probe still runs during a preview (`pro-mimic-ssh`,
-  `wifi-netplan`, `i915-pcon-frl-444` and `bitwarden-desktop`), and a handful of
+  rest use `creates` or `removes`. Some tasks in four task files set
+  `check_mode: false` so a read-only probe still runs during a preview
+  (`pro-mimic-ssh`, `wifi-netplan`, `i915-pcon-frl-444` and `bitwarden-desktop`), and a handful of
   tasks use `when: not ansible_check_mode` to skip steps that depend on a file
   an earlier, simulated task never created (`console-video`, `grub-autoboot`,
   `wifi-netplan`, `i915-pcon-frl-444`, `bitwarden-desktop`, `minimal-desktop`).
@@ -141,9 +141,9 @@ release will install cleanly, pass its health check, or be rolled back.
   (are you root, does `dev_user` exist, is the profile valid) are skipped in a
   tag-scoped run, so a preview with `--tags` does not validate your variables.
   Run a full-play preview too (see below) to get those checks.
-- I did not verify which network tasks (GitHub release lookups, downloads)
-  contact the network during a preview. Assume they may, and preview only on a
-  machine where that is acceptable.
+- This guide has not checked which network tasks (GitHub release lookups,
+  downloads) contact the network during a preview. Assume they may, and preview
+  only on a machine where that is acceptable.
 
 ## Tag-scoped preview commands
 
@@ -230,7 +230,7 @@ python3 scripts/preview_vars.py
 python3 scripts/preview_vars.py --vars-file /etc/ansible/local-vars.yml \
   -e workstation_profile=workspace --match 'profile|user|timezone'
 
-# Redact the variables your inventory resolves for a host
+# Layer the variables your inventory resolves for a host over the role defaults, redacted
 ansible-inventory -i hosts.ini --host myvm | python3 scripts/preview_vars.py --stdin --format json
 ```
 
