@@ -88,7 +88,7 @@ apt-get "${apt_user[@]}" update >"$OUT/0-qemu-apt.log" 2>&1 \
 # --download-only resolves against this container's dpkg status, so only what
 # the image lacks is fetched; dpkg-deb unpacks each file into $QROOT.
 apt-get "${apt_user[@]}" install --download-only --no-install-recommends \
-  qemu-system-x86 qemu-utils seabios ipxe-qemu >>"$OUT/0-qemu-apt.log" 2>&1 \
+  qemu-system-x86 qemu-utils seabios ipxe-qemu libnss-wrapper >>"$OUT/0-qemu-apt.log" 2>&1 \
   || die "downloading QEMU packages failed (0-qemu-apt.log)"
 for deb in "$WORK"/apt/cache/archives/*.deb; do
   dpkg-deb -x "$deb" "$QROOT" || die "dpkg-deb could not unpack $deb"
@@ -96,6 +96,14 @@ done
 export PATH="$QROOT/usr/bin:$PATH"
 export LD_LIBRARY_PATH="$QROOT/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export QEMU_MODULE_DIR="$QROOT/usr/lib/x86_64-linux-gnu/qemu"
+# The runner uid has no passwd entry, and ssh and ssh-keygen refuse to run
+# without one ("No user exists for uid 1000"). nss_wrapper (Debian's
+# libnss-wrapper) gives this process tree one, without root.
+printf 'runner:x:%s:%s:runner:%s:/bin/bash\n' "$(id -u)" "$(id -g)" "$WORK" >"$WORK/passwd"
+printf 'runner:x:%s:\n' "$(id -g)" >"$WORK/group"
+export NSS_WRAPPER_PASSWD="$WORK/passwd" NSS_WRAPPER_GROUP="$WORK/group"
+export LD_PRELOAD="$QROOT/usr/lib/x86_64-linux-gnu/libnss_wrapper.so"
+[ -r "$LD_PRELOAD" ] || die "libnss_wrapper.so is missing from the unpacked packages"
 qemu-system-x86_64 --version >"$OUT/0-qemu-version.log" 2>&1 \
   || die "qemu-system-x86_64 does not start ($(head -n 3 "$OUT/0-qemu-version.log"))"
 if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
