@@ -305,7 +305,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-518 variables, from `roles/developer_workstation/defaults/main.yml`.
+522 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
