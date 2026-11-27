@@ -12,6 +12,7 @@ import functools
 import getpass
 import http.server
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -74,8 +75,15 @@ def run_playbook(
     *,
     gather_facts: bool = False,
     timeout: int = 600,
+    endpoint: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run `tasks` on localhost; variables go in a file, never on the command line."""
+    """Run `tasks` on localhost; variables go in a file, never on the command line.
+
+    `timeout` bounds the whole run. A run that exceeds it fails with the
+    `endpoint` it was reaching (a vendor host, for the network tests) and the
+    task it was in, instead of holding the CI job until the job's own timeout
+    (catalog#174).
+    """
     work = tmp_path / "ansible"
     work.mkdir(exist_ok=True)
     playbook = work / f"play-{len(list(work.glob('play-*.yml')))}.yml"
@@ -97,14 +105,44 @@ def run_playbook(
         ANSIBLE_REMOTE_TMP=str(work / "remote-tmp"),
         ANSIBLE_RETRY_FILES_ENABLED="0",
     )
-    return subprocess.run(
-        [
-            "ansible-playbook", "-i", "localhost,", "-c", "local",
-            "-e", f"ansible_python_interpreter={sys.executable}",
-            str(playbook),
-        ],
-        capture_output=True, text=True, env=env, timeout=timeout, check=False,
-    )
+    # git (the SDKMAN! checkout) has no timeout of its own: abort a transfer
+    # that stays under 1 KiB/s for 30 s, so a stalled remote fails the task.
+    env.setdefault("GIT_HTTP_LOW_SPEED_LIMIT", "1024")
+    env.setdefault("GIT_HTTP_LOW_SPEED_TIME", "30")
+    command = [
+        "ansible-playbook", "-i", "localhost,", "-c", "local",
+        "-e", f"ansible_python_interpreter={sys.executable}",
+        str(playbook),
+    ]
+    # Its own process group: on a timeout the module processes ansible forked
+    # still hold the output pipes, so killing ansible-playbook alone would leave
+    # the read waiting on them.
+    with subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as expired:
+            os.killpg(process.pid, signal.SIGKILL)
+            expired.stdout, expired.stderr = process.communicate()
+            raise AssertionError(_timeout_message(expired, timeout, endpoint)) from None
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def _text(captured: str | bytes | None) -> str:
+    if captured is None:
+        return ""
+    return captured.decode(errors="replace") if isinstance(captured, bytes) else captured
+
+
+def _timeout_message(expired: subprocess.TimeoutExpired, timeout: int, endpoint: str | None) -> str:
+    stdout = _text(expired.stdout)
+    tasks = [line for line in stdout.splitlines() if line.startswith("TASK [")]
+    where = f" reaching {endpoint}" if endpoint else ""
+    last = tasks[-1] if tasks else "(no task started)"
+    tail = "\n".join((stdout + _text(expired.stderr)).splitlines()[-20:])
+    return f"ansible-playbook did not finish within {timeout} s{where}; it was in {last}\n{tail}"
 
 
 def output(result: subprocess.CompletedProcess[str]) -> str:

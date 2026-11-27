@@ -41,13 +41,16 @@ variables:
     # single failed job cancels the rest of the pipeline, so retry a few times.
     - |
       attempt=1
-      until ansible-galaxy collection install -r ci/requirements.yml; do
+      # Each try is bounded (catalog#174): 30 s per Galaxy request, 150 s in all.
+      until timeout 150 ansible-galaxy collection install --timeout 30 -r ci/requirements.yml; do
         rc=$?
+        why="exit $rc"
+        [ "$rc" -eq 124 ] && why="no answer from galaxy.ansible.com within 150 s"
         if [ "$attempt" -ge 3 ]; then
-          echo "ansible-galaxy collection install failed after $attempt attempts (exit $rc)" >&2
+          echo "ansible-galaxy collection install failed after $attempt attempts ($why)" >&2
           exit "$rc"
         fi
-        echo "ansible-galaxy collection install attempt $attempt failed (exit $rc); retrying in 10s" >&2
+        echo "ansible-galaxy collection install attempt $attempt failed ($why); retrying in 10s" >&2
         attempt=$((attempt + 1))
         sleep 10
       done
@@ -135,16 +138,36 @@ resume-standin:
 
 # catalog#171: the vendor-verified downloads (verified-download.yml, the signed
 # Claude Code manifest, the Codex release digest, the SDKMAN! release commit).
-# The fixture tests show each one fails closed; the vendor tests run the role's
-# own task slices against dl.k8s.io, get.helm.sh, go.dev, GitHub and
-# downloads.claude.ai. The full python image ships gpg and git; the slim
-# one does not, and the non-root runner cannot apt-get them.
+# The full python image ships gpg and git; the slim one does not, and the
+# non-root runner cannot apt-get them.
+#
+# catalog#174: two jobs, each with a timeout a few times its normal runtime.
+# verified-downloads runs the fixture tests offline, which shows each path fails
+# closed: a proxy on a closed loopback port refuses any request that leaves the
+# host, so a test that reaches the internet by mistake fails at once, naming the
+# URL. verified-downloads-vendors runs the role's own task slices against
+# dl.k8s.io, get.helm.sh, go.dev, GitHub and downloads.claude.ai; every lookup and
+# playbook run there is bounded, so a vendor outage fails the named test instead
+# of holding the pipeline. -v and --durations show which test took the time.
 verified-downloads:
   extends: .python_setup
   stage: test
   image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  timeout: 15m
   script:
-    - python -m pytest -q tests/test_verified_download.py tests/test_verified_download_vendors.py
+    - >-
+      HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+      http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9
+      NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost
+      python -m pytest -v --durations=10 tests/test_verified_download.py
+
+verified-downloads-vendors:
+  extends: .python_setup
+  stage: test
+  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  timeout: 20m
+  script:
+    - python -m pytest -v --durations=0 tests/test_verified_download_vendors.py
 
 # catalog#29: the opt-in workspace git credential helper
 # (docs/workspace-providers.md). The role's own tasks install it under pytest's
