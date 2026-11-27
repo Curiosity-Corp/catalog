@@ -1,0 +1,9 @@
+---
+# hypersystem-desktop values of the wrong type or outside the allowed values
+# (catalog#142): a word for a boolean or a number, a status no person can use.
+# expect: The value 'yes please' is not a valid boolean
+# expect: argument 'hypersystem_desktop_ziti_service_wait' is of type str and we were unable to convert to int
+# expect: hypersystem_desktop_statuses must be one or more of: beta, ga
+hypersystem_desktop_enabled: yes please
+hypersystem_desktop_ziti_service_wait: soon
+hypersystem_desktop_statuses: [beta, planned]

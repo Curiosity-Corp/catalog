@@ -1,0 +1,13 @@
+[Desktop Entry]
+# Managed by the curiosity.workstation role (hypersystem-desktop); do not edit.
+Type=Application
+Version=1.5
+Name={{ _hsd_entry.name | hypersystem_desktop_entry_value }}
+{% if _hsd_entry.comment | length > 0 %}
+Comment={{ _hsd_entry.comment | hypersystem_desktop_entry_value }}
+{% endif %}
+Exec={{ hypersystem_desktop_helper_path }} {{ _hsd_entry.args }}
+Icon={{ _hsd_entry.icon | hypersystem_desktop_entry_value }}
+Terminal=false
+StartupNotify=true
+Categories=Network;X-HyperSystem;

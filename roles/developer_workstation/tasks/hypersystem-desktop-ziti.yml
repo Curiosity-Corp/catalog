@@ -1,0 +1,253 @@
+---
+# =============================================================================
+# hypersystem-desktop: the laptop's Ziti device identity and the suite services
+# =============================================================================
+# Included by hypersystem-desktop.yml when Ziti is required. The ziti task group
+# owns the tunnel (package, OIDC hooks, split DNS, health guard); this file only:
+#
+#   1. enrols the laptop's device identity from a one-time enrollment token
+#      (hypersystem_desktop_ziti_enrollment_jwt) into
+#      hypersystem_desktop_ziti_identity_dir/<hypersystem_desktop_ziti_identity_name>.json
+#      when that file does not exist yet, and asks for the guarded tunnel restart
+#      (handler "Restart ziti-edge-tunnel", which defers while an ssh session is
+#      live) so the tunnel loads it;
+#   2. checks, through the tunnel's own `tunnel_status`, that the identity is
+#      loaded and offers every service in hypersystem_desktop_ziti_services.
+#
+# The token and the service names are inputs: the role names no controller, no
+# service and no credential. The token is used once, written only to a root-only
+# temporary file that is always removed, and never logged.
+# =============================================================================
+
+- name: Validate the Ziti identity settings
+  ansible.builtin.assert:
+    that:
+      - hypersystem_desktop_ziti_identity_name | length == 0 or hypersystem_desktop_ziti_identity_name is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
+      - hypersystem_desktop_ziti_identity_dir is match('^/')
+      - hypersystem_desktop_ziti_services is sequence and hypersystem_desktop_ziti_services is not string
+      - hypersystem_desktop_ziti_services | select('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == hypersystem_desktop_ziti_services | length
+      - hypersystem_desktop_ziti_enrollment_jwt | length == 0 or hypersystem_desktop_ziti_identity_name | length > 0
+      - hypersystem_desktop_ziti_service_wait | int >= 0
+    fail_msg: >-
+      hypersystem_desktop_ziti_identity_name must be a file-safe name (letters, digits,
+      dot, dash, underscore; it names <identity_dir>/<name>.json),
+      hypersystem_desktop_ziti_identity_dir an absolute path,
+      hypersystem_desktop_ziti_services a list of Ziti service names, and an enrollment
+      token (hypersystem_desktop_ziti_enrollment_jwt) needs an identity name to enrol into.
+    quiet: true
+
+- name: Set the Ziti identity file
+  ansible.builtin.set_fact:
+    _hsd_ziti_identity_file: >-
+      {{
+        (hypersystem_desktop_ziti_identity_dir ~ '/' ~ hypersystem_desktop_ziti_identity_name ~ '.json')
+        if hypersystem_desktop_ziti_identity_name | length > 0 else ''
+      }}
+    _hsd_ziti_enrolled_now: false
+
+- name: Look for the enrolled Ziti identity
+  ansible.builtin.stat:
+    path: "{{ _hsd_ziti_identity_file }}"
+  register: _hsd_ziti_identity
+  when: _hsd_ziti_identity_file | length > 0
+
+- name: Require an enrollment token for a missing identity
+  ansible.builtin.assert:
+    that:
+      - hypersystem_desktop_ziti_enrollment_jwt | length > 0
+    fail_msg: >-
+      The Ziti identity {{ _hsd_ziti_identity_file }} is not enrolled yet. Supply the
+      one-time enrollment token the Ziti administrator issued for this laptop as
+      hypersystem_desktop_ziti_enrollment_jwt (from Ansible Vault or `-e @file`, never a
+      file in Git), or enrol the identity by hand and re-run.
+    quiet: true
+  when:
+    - _hsd_ziti_identity_file | length > 0
+    - not _hsd_ziti_identity.stat.exists
+
+- name: Enrol the laptop's Ziti identity
+  when:
+    - _hsd_ziti_identity_file | length > 0
+    - not _hsd_ziti_identity.stat.exists
+  block:
+    - name: Check that the Ziti tunnel is installed  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        argv:
+          - "{{ hypersystem_desktop_ziti_tunnel_command }}"
+          - version
+      register: _hsd_ziti_version
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Require the Ziti tunnel binary for enrollment
+      ansible.builtin.assert:
+        that:
+          - _hsd_ziti_version.rc | default(1) == 0
+        fail_msg: >-
+          Cannot enrol {{ _hsd_ziti_identity_file }}: `{{ hypersystem_desktop_ziti_tunnel_command }}
+          version` failed ({{ _hsd_ziti_version.msg | default(_hsd_ziti_version.stderr | default('no output')) | trim }}).
+          Install the tunnel first (ziti_enabled: true, tag ziti), or point
+          hypersystem_desktop_ziti_tunnel_command at it.
+        quiet: true
+
+    - name: Report the enrollment a real run would do
+      ansible.builtin.debug:
+        msg: >-
+          Check mode: would enrol {{ _hsd_ziti_identity_file }} from the supplied token and
+          restart {{ ziti_service_name }} when no ssh session is live.
+      when: ansible_check_mode
+
+    - name: Enrol from the one-time token
+      when: not ansible_check_mode
+      block:
+        - name: Create a root-only file for the enrollment token
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .jwt
+          register: _hsd_ziti_jwt_file
+
+        - name: Write the enrollment token
+          ansible.builtin.copy:
+            content: "{{ hypersystem_desktop_ziti_enrollment_jwt | trim }}\n"
+            dest: "{{ _hsd_ziti_jwt_file.path }}"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+
+        - name: Ensure the Ziti identity directory exists
+          ansible.builtin.file:
+            path: "{{ hypersystem_desktop_ziti_identity_dir }}"
+            state: directory
+            owner: root
+            group: "{{ hypersystem_desktop_ziti_group }}"
+            mode: "0770"
+
+        - name: Enrol the identity with the Ziti controller
+          ansible.builtin.command:
+            argv:
+              - "{{ hypersystem_desktop_ziti_tunnel_command }}"
+              - enroll
+              - --jwt
+              - "{{ _hsd_ziti_jwt_file.path }}"
+              - --identity
+              - "{{ _hsd_ziti_identity_file }}"
+            creates: "{{ _hsd_ziti_identity_file }}"
+          register: _hsd_ziti_enroll
+          notify: Restart ziti-edge-tunnel
+
+        - name: Let the tunnel service read and renew the identity
+          ansible.builtin.file:
+            path: "{{ _hsd_ziti_identity_file }}"
+            owner: root
+            group: "{{ hypersystem_desktop_ziti_group }}"
+            mode: "0660"
+
+        - name: Remember that the identity was enrolled in this run
+          ansible.builtin.set_fact:
+            _hsd_ziti_enrolled_now: "{{ _hsd_ziti_enroll is changed }}"
+      rescue:
+        - name: Report the failed enrollment
+          ansible.builtin.fail:
+            msg: >-
+              Enrolling {{ _hsd_ziti_identity_file }} failed:
+              {{ (_hsd_ziti_enroll.stderr | default('') or _hsd_ziti_enroll.stdout | default('')
+                  or ansible_failed_result.msg | default('unknown error')) | trim }}.
+              A token works once and expires; if it was used or is old, ask the Ziti
+              administrator for a new one. No partial identity file is kept.
+      always:
+        - name: Remove the enrollment token
+          ansible.builtin.file:
+            path: "{{ _hsd_ziti_jwt_file.path }}"
+            state: absent
+          when: _hsd_ziti_jwt_file.path is defined
+
+        - name: Remove a partial identity file after a failed enrollment
+          ansible.builtin.file:
+            path: "{{ _hsd_ziti_identity_file }}"
+            state: absent
+          when:
+            - _hsd_ziti_enroll is defined
+            - _hsd_ziti_enroll is failed
+
+# -----------------------------------------------------------------------------
+# Services: read-only, through the running tunnel.
+# -----------------------------------------------------------------------------
+- name: Check the suite services through the tunnel
+  when:
+    - hypersystem_desktop_ziti_services | length > 0
+    - not (_hsd_ziti_enrolled_now | bool)
+  block:
+    - name: Read the Ziti tunnel state  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: "systemctl is-active -- {{ ziti_service_name }}"
+      register: _hsd_ziti_active
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Ask the tunnel which services it offers  # noqa: command-instead-of-module
+      ansible.builtin.command:
+        argv:
+          - "{{ hypersystem_desktop_ziti_tunnel_command }}"
+          - tunnel_status
+      register: _hsd_ziti_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      retries: "{{ (hypersystem_desktop_ziti_service_wait | int / 5) | round(0, 'ceil') | int }}"
+      delay: 5
+      until: >-
+        (_hsd_ziti_status.rc | default(1) == 0)
+        and (_hsd_ziti_status.stdout | hypersystem_desktop_ziti_check(_hsd_ziti_identity_file,
+             hypersystem_desktop_ziti_services)).ok
+      when: _hsd_ziti_active.stdout | default('') | trim == 'active'
+
+    - name: Read the tunnel status
+      ansible.builtin.set_fact:
+        _hsd_ziti_result: >-
+          {{
+            (_hsd_ziti_status.stdout | hypersystem_desktop_ziti_check(_hsd_ziti_identity_file, hypersystem_desktop_ziti_services))
+            if (_hsd_ziti_status.rc | default(1)) == 0
+            else {'ok': false, 'loaded': false, 'missing': hypersystem_desktop_ziti_services,
+                  'error': (_hsd_ziti_status.stderr | default('') or _hsd_ziti_status.msg | default('') or 'tunnel_status failed') | trim}
+          }}
+      when: _hsd_ziti_active.stdout | default('') | trim == 'active'
+
+    - name: Require the suite services
+      ansible.builtin.assert:
+        that:
+          - _hsd_ziti_result.ok
+        fail_msg: >-
+          {% if _hsd_ziti_result.error %}The Ziti tunnel could not report its services:
+          {{ _hsd_ziti_result.error }}.
+          {% elif not _hsd_ziti_result.loaded %}No Ziti identity
+          {{ ('from ' ~ _hsd_ziti_identity_file) if _hsd_ziti_identity_file else '' }} is loaded
+          in {{ ziti_service_name }}; check `journalctl -u {{ ziti_service_name }}`.
+          {% else %}The Ziti identity {{ _hsd_ziti_identity_file or '(any loaded)' }} does not
+          offer these services: {{ _hsd_ziti_result.missing | join(', ') }}. The Ziti
+          administrator must create them and grant this laptop a dial policy for them.
+          {% endif %}Set hypersystem_desktop_ziti_require_services: false to install the apps
+          anyway and check later with `hypersystem-desktop doctor`.
+        quiet: true
+      when:
+        - _hsd_ziti_active.stdout | default('') | trim == 'active'
+        - hypersystem_desktop_ziti_require_services | bool
+
+    - name: Report a stopped tunnel
+      ansible.builtin.debug:
+        msg: >-
+          {{ ziti_service_name }} is {{ _hsd_ziti_active.stdout | default('') | trim or 'not running' }},
+          so the suite services were not checked. Start it and run `hypersystem-desktop doctor`.
+      when: _hsd_ziti_active.stdout | default('') | trim != 'active'
+
+- name: Report the services check after a new enrollment
+  ansible.builtin.debug:
+    msg: >-
+      {{ _hsd_ziti_identity_file }} was enrolled in this run; the tunnel loads it after the
+      guarded restart at the end of the run (or the next idle run or boot). Then check the
+      services with `hypersystem-desktop doctor`.
+  when:
+    - _hsd_ziti_enrolled_now | bool
+    - hypersystem_desktop_ziti_services | length > 0

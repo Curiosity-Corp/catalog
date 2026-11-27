@@ -415,6 +415,8 @@ not_dependencies:
     reason: example value quoted in a configuration validation message (tasks/validate-config.yml, catalog#31)
   - url: https://jellyfin.example.org
     reason: example value quoted in a configuration validation message (tasks/validate-config.yml, catalog#31)
+  - url: https://suite.example.org/catalog/v1/catalog.json
+    reason: example value quoted in a configuration validation message (tasks/validate-config.yml, catalog#142)
   - url: https://watch.
     reason: site media links built from media_folder_web_domain
   - url: https://request.

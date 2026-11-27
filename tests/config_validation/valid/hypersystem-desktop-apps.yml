@@ -1,0 +1,12 @@
+---
+# hypersystem-desktop with the apps given as variables instead of a catalog,
+# for every role, without Ziti (catalog#142).
+workstation_profile: thin-client
+hypersystem_desktop_enabled: true
+hypersystem_desktop_apps:
+  - id: notebooks
+    name: Notebooks
+    roles: []
+    urls: {web: "https://notebooks.example.org/"}
+hypersystem_desktop_require_ziti: false
+hypersystem_desktop_ssh_config_path: ""

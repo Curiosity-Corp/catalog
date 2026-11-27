@@ -212,6 +212,45 @@ argument_specs:
       ziti_health_check_min_interval: {type: int}
       ziti_health_check_timeout: {type: int}
       ziti_health_check_tunnel_bin: {type: str}
+      # hypersystem-desktop (catalog#142, docs/hypersystem-desktop.md). The
+      # catalog source, the browser target, the statuses, the identity and
+      # service names and the rules between them are in validate-config.yml.
+      hypersystem_desktop_enabled: {type: bool}
+      hypersystem_desktop_catalog_src: {type: str}
+      hypersystem_desktop_catalog_sha256: {type: str}
+      hypersystem_desktop_catalog_headers: {type: dict, no_log: true}
+      hypersystem_desktop_catalog_timeout: {type: int}
+      hypersystem_desktop_catalog_prefiltered: {type: bool}
+      hypersystem_desktop_apps: {type: list, elements: dict}
+      hypersystem_desktop_catalog_strict: {type: bool}
+      hypersystem_desktop_roles: {type: list, elements: str}
+      hypersystem_desktop_statuses: {type: list, elements: str, choices: ["beta", "ga"]}
+      hypersystem_desktop_allow_empty: {type: bool}
+      hypersystem_desktop_local_apps: {type: list, elements: str}
+      hypersystem_desktop_require_ziti: {type: bool}
+      hypersystem_desktop_ziti_dns_ip_range: {type: str}
+      hypersystem_desktop_ziti_identity_name: {type: str}
+      hypersystem_desktop_ziti_enrollment_jwt: {type: str, no_log: true}
+      hypersystem_desktop_ziti_identity_dir: {type: str}
+      hypersystem_desktop_ziti_group: {type: str}
+      hypersystem_desktop_ziti_tunnel_command: {type: str}
+      hypersystem_desktop_ziti_services: {type: list, elements: str}
+      hypersystem_desktop_ziti_require_services: {type: bool}
+      hypersystem_desktop_ziti_service_wait: {type: int}
+      hypersystem_desktop_browser: {type: str}
+      hypersystem_desktop_install_browser: {type: bool}
+      hypersystem_desktop_browser_targets: {type: dict}
+      hypersystem_desktop_policy_file_name: {type: str}
+      hypersystem_desktop_config_dir: {type: str}
+      hypersystem_desktop_helper_path: {type: str}
+      hypersystem_desktop_applications_dir: {type: str}
+      hypersystem_desktop_ssh_config_path: {type: str}
+      hypersystem_desktop_suite_name: {type: str}
+      hypersystem_desktop_icon_map: {type: dict}
+      hypersystem_desktop_default_icon: {type: str}
+      hypersystem_desktop_hyperharness_enabled: {type: bool}
+      hypersystem_desktop_hyperharness_install_argv: {type: list, elements: str}
+      hypersystem_desktop_hyperharness_creates: {type: str}
       custom_ca_certificates: {type: list}
       custom_ca_bundle_path: {type: str}
       workspace_git_auth_helper_enabled: {type: bool}

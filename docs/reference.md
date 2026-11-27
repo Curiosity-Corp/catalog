@@ -96,6 +96,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `gtk` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `hardware` | supported | 23 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Hardware profile packages, services, udev rules and device helpers. |
 | `hhtest` | supported | 1 | `main.yml` |  |  |
+| `hypersystem-desktop` | supported | 1 | `main.yml` |  | Opt-in suite web apps per role on a laptop, reached through the Ziti tunnel; see hypersystem-desktop.md. |
 | `i915` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `integrity` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `jellyfin` | supported | 2 | `managed-updates.yml` | `desktop` |  |
@@ -274,6 +275,13 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `failed_sweep_webhook_url` | `developer_workstation` | private-hook |
 | `focuspass_screenlock_install_url` | `developer_workstation` | private-hook |
 | `hhtest_authorized_keys` | `developer_workstation` | private-hook |
+| `hypersystem_desktop_catalog_headers` | `developer_workstation` | private-hook |
+| `hypersystem_desktop_catalog_src` | `developer_workstation` | private-hook |
+| `hypersystem_desktop_hyperharness_install_argv` | `developer_workstation` | private-hook |
+| `hypersystem_desktop_roles` | `developer_workstation` | private-hook |
+| `hypersystem_desktop_ziti_enrollment_jwt` | `developer_workstation` | private-hook |
+| `hypersystem_desktop_ziti_identity_name` | `developer_workstation` | private-hook |
+| `hypersystem_desktop_ziti_services` | `developer_workstation` | private-hook |
 | `keycloak_allowed_users` | `developer_workstation` | private-hook |
 | `keycloak_desktop_client_id` | `developer_workstation` | private-hook |
 | `keycloak_host` | `developer_workstation` | private-hook |
@@ -305,7 +313,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-522 variables, from `roles/developer_workstation/defaults/main.yml`.
+558 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -516,6 +524,42 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `ziti_health_check_timeout` | int | `15` |  | supported |  | (undocumented) |
 | `ziti_health_check_tunnel_bin` | string | `"/opt/openziti/bin/ziti-edge-tunnel"` |  | supported |  | The tunneler the check queries. The OpenZiti package installs it under /opt, which is not on systemd's PATH, so the unit is given the full path. Empty lets the script search PATH and then this same package path. |
 | `ziti_health_check_script_path` | string | `"/usr/local/sbin/curiosity-ziti-health"` |  | internal |  | (undocumented) |
+| `hypersystem_desktop_enabled` | bool | `false` |  | supported |  | hypersystem-desktop: a suite's web apps on a laptop (tasks/hypersystem-desktop.yml, tag hypersystem-desktop, docs/hypersystem-desktop.md). OFF by default. (...) |
+| `hypersystem_desktop_catalog_src` | string | `""` |  | private-hook | supply-chain | Exactly one source of apps. The catalog is the compiled `hypersystem-catalog/v1` document ({"schema": "hypersystem-catalog/v1", "apps": [...]}), given as an https URL or an absolute path on the managed host. The public role names no catalog. |
+| `hypersystem_desktop_catalog_sha256` | string | `""` |  | supported | supply-chain | Optional SHA-256 (64 hex characters) the fetched document must match. |
+| `hypersystem_desktop_catalog_headers` | dict | mapping, 0 keys |  | private-hook | security | Extra request headers for a URL source, for example a registry token read from Ansible Vault. Never logged. |
+| `hypersystem_desktop_catalog_timeout` | int | `30` |  | supported |  | Seconds the catalog GET may take. |
+| `hypersystem_desktop_catalog_prefiltered` | bool | `false` |  | supported |  | The catalog source already filtered the apps by the person's realm roles (HyperSystem Home's GET /suite/v1/catalog with the person's token): skip the role test. |
+| `hypersystem_desktop_apps` | list | `[]` |  | supported |  | Or the apps themselves, in the catalog entry shape: id, name, urls.web (http or https; only https and loopback addresses install as web apps) required; roles (default [] = everyone), status (default ga), purpose, icon, urls.local and ssh optional. (...) |
+| `hypersystem_desktop_catalog_strict` | bool | `true` |  | supported |  | Fail on any malformed or duplicate catalog entry (true), or skip it with a warning. |
+| `hypersystem_desktop_roles` | list | `[]` |  | private-hook |  | The person's suite roles on this laptop. |
+| `hypersystem_desktop_statuses` | list | `["beta", "ga"]` |  | supported |  | Statuses that get installed. planned and retired apps are never usable. |
+| `hypersystem_desktop_allow_empty` | bool | `false` |  | supported |  | An install that selects no app is almost always a roles typo; fail unless allowed. |
+| `hypersystem_desktop_local_apps` | string (template) | template expression |  | supported |  | Ids of per-machine apps (urls.web on the loopback, such as hyperharness on the person's own laptop) to install. Others are skipped: their service is not here. |
+| `hypersystem_desktop_require_ziti` | bool | `true` |  | supported |  | Require the Ziti tunnel and that ziti_intercept_domains covers every app host. Set false only for apps that are reachable without Ziti. |
+| `hypersystem_desktop_ziti_dns_ip_range` | string | `"100.64.0.0/10"` |  | supported |  | ziti-edge-tunnel's DNS range; `hypersystem-desktop doctor` fails an app host that resolves outside it while Ziti is required. |
+| `hypersystem_desktop_ziti_identity_name` | string | `""` |  | private-hook | network | The laptop's Ziti device identity: &lt;identity_dir&gt;/&lt;identity_name&gt;.json. When the file is missing, the run enrols it from hypersystem_desktop_ziti_enrollment_jwt, a one-time token the Ziti administrator issues for this laptop; supply it from Ansible Vault or `-e @file`, never from Git. (...) |
+| `hypersystem_desktop_ziti_enrollment_jwt` | string | `""` |  | private-hook | secret | One-time Ziti enrollment token for that identity; a secret, never logged and never in Git. |
+| `hypersystem_desktop_ziti_identity_dir` | string | `"/opt/openziti/etc/identities"` |  | supported |  | Where ziti-edge-tunnel loads identities from (the ziti task group's directory). |
+| `hypersystem_desktop_ziti_group` | string | `"ziti"` |  | supported |  | Group that owns an enrolled identity file (root:&lt;group&gt; 0660), as the tunnel expects. |
+| `hypersystem_desktop_ziti_tunnel_command` | string | `"ziti-edge-tunnel"` |  | supported |  | The tunnel's command, a name on PATH or an absolute path; used for enroll and tunnel_status. |
+| `hypersystem_desktop_ziti_services` | list | `[]` |  | private-hook | network | Ziti service names the identity must offer (the suite catalog's ziti_services of the selected apps). The run asks the running tunnel and fails when one is missing, unless hypersystem_desktop_ziti_require_services is false; `hypersystem-desktop doctor` checks them on the laptop either way. |
+| `hypersystem_desktop_ziti_require_services` | bool | `true` |  | supported |  | Fail the run when the tunnel does not offer a listed service; false only warns. |
+| `hypersystem_desktop_ziti_service_wait` | int | `30` |  | supported |  | Seconds to wait for the tunnel to offer the services (it may still be loading). |
+| `hypersystem_desktop_browser` | string | `"auto"` |  | supported |  | Browser: auto picks chromium (Debian's .deb) on Debian and chromium-snap on Ubuntu, where Chromium ships only as a snap. google-chrome uses an existing Chrome install. |
+| `hypersystem_desktop_install_browser` | bool | `true` |  | supported |  | Install the chosen browser (apt or snap) when it is missing. |
+| `hypersystem_desktop_browser_targets` | dict | mapping, 3 keys |  | supported |  | user_data_dir is the suite profile, relative to each user's home. The snap can write only below ~/snap/chromium, so its profile lives there. |
+| `hypersystem_desktop_policy_file_name` | string | `"30-hypersystem-desktop.json"` |  | supported |  | The managed policy file in the browser's policy_dir (WebAppInstallForceList only). |
+| `hypersystem_desktop_config_dir` | string | `"/etc/hypersystem-desktop"` |  | supported |  | The helper's configuration (the selected apps); its presence marks an install to retire. |
+| `hypersystem_desktop_helper_path` | string | `"/usr/local/bin/hypersystem-desktop"` |  | supported |  | The helper: hypersystem-desktop open\|browser\|list\|doctor. |
+| `hypersystem_desktop_applications_dir` | string | `"/usr/local/share/applications"` |  | supported |  | Where the per-app and suite launchers (hypersystem-desktop*.desktop) go. |
+| `hypersystem_desktop_ssh_config_path` | string | `"/etc/ssh/ssh_config.d/30-hypersystem-desktop.conf"` |  | supported |  | ssh_config fragment with `Host &lt;app id&gt;` for every selected app with an `ssh` host; empty disables it. Debian and Ubuntu include /etc/ssh/ssh_config.d/*.conf. |
+| `hypersystem_desktop_suite_name` | string | `"HyperSystem"` |  | supported |  | Menu name of the launcher that opens the suite browser profile itself. |
+| `hypersystem_desktop_icon_map` | dict | mapping, 0 keys |  | supported |  | Catalog `icon` names are the bar's symbolic names; map them to icon theme names or absolute image paths. Unmapped icons use the default. |
+| `hypersystem_desktop_default_icon` | string | `"web-browser"` |  | supported |  | Icon of an app whose catalog icon is not in hypersystem_desktop_icon_map. |
+| `hypersystem_desktop_hyperharness_enabled` | bool | `false` |  | supported |  | Optional hyperharness install for dev_user, off by default. (...) |
+| `hypersystem_desktop_hyperharness_install_argv` | list | `[]` |  | private-hook | supply-chain | The install command as an argv list; its first item is an absolute path. |
+| `hypersystem_desktop_hyperharness_creates` | string | `""` |  | supported |  | Absolute path the install creates; the install runs only while it is missing. |
 | `custom_ca_certificates` | list | `[]` |  | private-hook | security | Optional certificates for private lab services. `src` is read from the Ansible controller, which is also the target when using ansible-pull. (...) |
 | `custom_ca_bundle_path` | string | `"/etc/ssl/certs/ca-certificates.crt"` |  | supported |  | (undocumented) |
 | `workspace_git_auth_helper_enabled` | bool | `false` |  | supported | network | Install a git credential helper that asks the workspace service (Coder, or a service whose client takes the same arguments) for a short-lived token for workspace_git_host on every git request, so no personal access token is handed out or stored. (...) |

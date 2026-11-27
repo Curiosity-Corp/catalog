@@ -1,0 +1,18 @@
+---
+# hypersystem-desktop switched on for a person's laptop (catalog#142,
+# docs/hypersystem-desktop.md): the compiled suite catalog over https with a
+# pinned checksum, the person's roles, the laptop's Ziti identity and the suite
+# services it must offer, and the optional hyperharness hook.
+workstation_profile: desktop
+hypersystem_desktop_enabled: true
+hypersystem_desktop_catalog_src: https://suite.example.org/catalog/v1/catalog.json
+hypersystem_desktop_catalog_sha256: 9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08
+hypersystem_desktop_roles: [suite-engineer, suite-comms]
+hypersystem_desktop_statuses: [ga]
+hypersystem_desktop_browser: chromium-snap
+hypersystem_desktop_ziti_identity_name: laptop-17.example.org
+hypersystem_desktop_ziti_services: [notebooks.hypersystem, docs-ziti]
+hypersystem_desktop_ziti_service_wait: 0
+hypersystem_desktop_hyperharness_enabled: true
+hypersystem_desktop_hyperharness_install_argv: [/opt/example/install-hyperharness, --release]
+hypersystem_desktop_hyperharness_creates: /home/researcher/.local/bin/hyperharness
