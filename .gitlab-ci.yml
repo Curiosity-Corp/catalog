@@ -399,6 +399,10 @@ tools:
     - cargo fmt --all --check || { cargo fmt --all && git diff -- . > ../tools-fmt.patch; exit 1; }
     - cargo run --locked --quiet -- reference --root .. --check
     - cargo run --locked --quiet -- packages check --root ..
+    # The real no-GPU path (catalog#33): the runner pod has no GPU; the
+    # fixture tests in tests/gpu_status.rs cover every vendor and state.
+    - cargo run --locked --quiet -- gpu-status
+    - cargo run --locked --quiet -- gpu-status --json
     # The dependency register (catalog#51, docs/dependency-register.md): fails
     # when a declared dependency is missing from ci/dependency-register.yml or
     # an entry no longer matches its declaration. Alerts print on every

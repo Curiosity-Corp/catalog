@@ -9,6 +9,10 @@
 # changes the machine: services are only read with `systemctl show`, never
 # started, stopped or restarted, and StreamStack and Sunshine are left out
 # (docs/troubleshooting.md).
+#
+# The same binary answers `gpu-status` (catalog#33, docs/gpu-accelerators.md):
+# a read-only report of the GPU, its driver and the vendor tools. The role
+# installs it under a short name and installs no GPU driver or runtime.
 # =============================================================================
 
 - name: Require the catalog-tools release asset URL and its SHA-256
@@ -79,3 +83,22 @@
     owner: root
     group: root
     mode: "0644"
+
+- name: Install the curiosity-gpu-status command
+  ansible.builtin.copy:
+    content: |
+      #!/bin/sh
+      # Managed by Curiosity-Corp/catalog (developer_workstation, catalog-tools.yml).
+      # Read-only GPU and accelerator report (docs/gpu-accelerators.md).
+      exec {{ catalog_tools_install_path | quote }} gpu-status "$@"
+    dest: "{{ catalog_tools_gpu_status_command_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: catalog_tools_gpu_status_enabled | bool
+
+- name: Remove the curiosity-gpu-status command when it is turned off
+  ansible.builtin.file:
+    path: "{{ catalog_tools_gpu_status_command_path }}"
+    state: absent
+  when: not (catalog_tools_gpu_status_enabled | bool)

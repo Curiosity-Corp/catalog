@@ -9,6 +9,7 @@ collection itself does not depend on it and does not ship it.
 | `reference` | Writes `docs/reference.md`, the supported variable and tag reference, from the role defaults, the role tasks and `docs/reference-annotations.yml`. `--check` exits 1 when the committed file is out of date. | #27 |
 | `packages` | `list` prints the role's apt packages. `probe` runs inside a distro image and records which of them its archives provide, which a virtual name installs through, and which are missing. `assemble` writes the dated evidence file. `check` exits 1 when the newest `docs/evidence/platform-packages-*.json` no longer matches the role's package list. See [docs/platform-differences.md](../docs/platform-differences.md). | #14, #15 |
 | `diagnostics` | `preview`, `write`, `path`, `delete`: a redacted, local support bundle (versions, profile, architecture, selected tags, last run). No network code; writes only to `~/.local/state/curiosity/diagnostics/`. Policy and usage: [docs/troubleshooting.md](../docs/troubleshooting.md#sending-a-maintainer-a-diagnostic-bundle). | #41, #25 |
+| `gpu-status` | Which GPU or accelerator the machine has (NVIDIA, AMD, Intel or none), whether its kernel driver, compute device nodes and vendor tools are present, and what to do when they are not. Reads `/sys`, `/dev`, `/proc/cpuinfo` and `PATH` only; runs nothing. `--json`, `--require-gpu`, `--sysroot` for fixture trees. The role installs it as `curiosity-gpu-status` ([docs/gpu-accelerators.md](../docs/gpu-accelerators.md)). | #33 |
 | `sbom` | Writes the release SBOM (CycloneDX 1.6) for a built collection artifact: source files, collection dependencies, the locked CI toolchain and the runtime sources of `ci/sbom-sources.yml`, which it holds to the roles. `--check` exits 1 when a given SBOM lacks or misdescribes a declared component ([docs/sbom.md](../docs/sbom.md), [decision 0006](../docs/decisions/0006-release-sbom.md)). | #21 |
 | `register` | `check` exits 1 when a dependency declared in `ci/sbom-sources.yml`, `galaxy.yml`, `ci/requirements.{in,yml}`, `apt_vendor_repos` or `latest_github_repositories` is missing from `ci/dependency-register.yml`, or an entry no longer matches its declaration. `alerts` lists abandoned, moved, ending and unverified dependencies and an overdue review; `--strict` exits 1 on an untracked alert ([docs/dependency-register.md](../docs/dependency-register.md)). | #51 |
 
@@ -60,6 +61,7 @@ Generated, never edited by hand:
   evidence files and dates.
 - `catalog-tools/src/register/`: the dependency register, its declarations and alerts.
 - `catalog-tools/src/diagnostics/`: the support bundle (`mod.rs`) and its redaction (`redact.rs`).
+- `catalog-tools/src/gpu/`: the GPU and accelerator report, read under a system root.
 - `catalog-tools/src/sbom/`: the artifact's files, the collection
   dependencies and CI toolchain, the checked runtime source inventory and the
   CycloneDX rendering.

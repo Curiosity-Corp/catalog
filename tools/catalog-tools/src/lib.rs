@@ -4,6 +4,7 @@
 //! one subcommand per tool (docs/decisions/0005-rust-tool-crate.md).
 
 pub mod diagnostics;
+pub mod gpu;
 pub mod packages;
 pub mod reference;
 pub mod register;

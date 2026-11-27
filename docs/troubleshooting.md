@@ -151,6 +151,10 @@ catalog-tools diagnostics path                             # the bundle folder a
 catalog-tools diagnostics delete                           # deletes every saved bundle
 ```
 
+For a GPU or accelerator problem, `curiosity-gpu-status` (the same binary's
+`gpu-status`) says which GPU the machine has and whether its driver and vendor
+tools are present; see [GPU and accelerator support](gpu-accelerators.md).
+
 **What it checks.** Every check only reads, and each is bounded:
 
 | Check | How | Found when |
