@@ -1,0 +1,17 @@
+---
+# Ziti pin settings that cannot work (catalog#1): a unit name without the
+# .service suffix would put the pin drop-in where systemd never reads it, and a
+# pin, resolver or wait the refresh helper cannot use.
+# expect: ziti_service_name must be the tunnel's full systemd unit name ending in .service
+# expect: got "ziti-edge-tunnel"
+# expect: ziti_etc_hosts_pins entries must be bare host names
+# expect: got ["registry.lab.example.edu; true"]
+# expect: ziti_pin_resolver must be the tunnel resolver's IPv4 address
+# expect: got "resolver.example.test"
+# expect: ziti_pin_wait must be a whole number of seconds
+ziti_service_name: ziti-edge-tunnel
+ziti_etc_hosts_pins:
+  - registry.lab.example.edu
+  - "registry.lab.example.edu; true"
+ziti_pin_resolver: resolver.example.test
+ziti_pin_wait: -5

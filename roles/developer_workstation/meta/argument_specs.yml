@@ -197,6 +197,9 @@ argument_specs:
       ziti_oidc_provider: {type: str}
       ziti_etc_hosts_pins: {type: list}
       ziti_intercept_domains: {type: list}
+      ziti_pin_lifecycle_enabled: {type: bool}
+      ziti_pin_resolver: {type: str}
+      ziti_pin_wait: {type: int}
       ziti_health_check_enabled: {type: bool}
       ziti_health_check_interval: {type: str}
       ziti_health_check_identities: {type: list}

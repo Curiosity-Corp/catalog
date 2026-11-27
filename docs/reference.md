@@ -263,6 +263,8 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `workstation_update_state_dir` | `developer_workstation` | internal |
 | `workstation_update_transaction_tags` | `developer_workstation` | internal |
 | `ziti_health_check_script_path` | `developer_workstation` | internal |
+| `ziti_pin_env_path` | `developer_workstation` | internal |
+| `ziti_pin_script_path` | `developer_workstation` | internal |
 | `catalog_tools_install_url` | `developer_workstation` | private-hook |
 | `coder_deployment_url` | `developer_workstation` | private-hook |
 | `custom_ca_certificates` | `developer_workstation` | private-hook |
@@ -300,7 +302,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-496 variables, from `roles/developer_workstation/defaults/main.yml`.
+501 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -493,6 +495,11 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `ziti_oidc_provider` | string | `""` |  | private-hook | network | (undocumented) |
 | `ziti_etc_hosts_pins` | list | `[]` |  | private-hook | network | Ziti-only hostnames pinned in /etc/hosts. Each name is resolved against Ziti's internal DNS at 100.64.0.2 and pinned to its assigned intercept IP. Names are supplied by the operator because private service topology is different for every lab. (...) |
 | `ziti_intercept_domains` | list | `[]` |  | private-hook | network | (undocumented) |
+| `ziti_pin_lifecycle_enabled` | bool | `true` |  | supported |  | Keep the pins correct across tunnel restarts (curiosity-ziti-pins). ziti-edge-tunnel can reallocate its overlay addresses whenever it restarts, so a pin written earlier can point at nothing or at a different service. (...) |
+| `ziti_pin_resolver` | string | `"100.64.0.2"` |  | supported | network | The tunnel's own DNS listener, which answers each pinned name with its overlay address (ziti-edge-tunnel's default; split DNS uses the same one). |
+| `ziti_pin_wait` | int | `120` |  | supported |  | Seconds the refresh after a tunnel start waits for the identities to load and answer before it drops the pins that still do not resolve. |
+| `ziti_pin_script_path` | string | `"/usr/local/sbin/curiosity-ziti-pins"` |  | internal |  | Where the role installs the pin helper and the host-local pin list. |
+| `ziti_pin_env_path` | string | `"/etc/curiosity/ziti-pins.env"` |  | internal |  | (undocumented) |
 | `ziti_health_check_enabled` | bool | `true` |  | supported |  | Tunnel health check (curiosity-ziti-health.service + timer, root). After a crash ziti-edge-tunnel can restart with an identity Active but not Loaded, which silently kills ziti0 DNS until the unit is restarted by hand. (...) |
 | `ziti_health_check_interval` | string | `"2min"` |  | supported |  | (undocumented) |
 | `ziti_health_check_identities` | list | `[]` |  | private-hook |  | Identity names to watch; empty watches every identity the system tunnel reports. |

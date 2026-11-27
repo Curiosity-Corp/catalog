@@ -51,8 +51,11 @@ helper, the list and the hooks.
 ## Unit name and opt-out
 
 `ziti_service_name` (default `ziti-edge-tunnel.service`) names the tunnel unit for the
-drop-in, the service ordering, the health check and the split-DNS drop-ins. It is checked
-against `^[A-Za-z0-9:_.@-]+$` before it reaches a path.
+drop-in, the service ordering, the health check and the split-DNS drop-ins. It must be
+the full unit name with its `.service` suffix (systemd reads `<name>.d` drop-ins only
+under that name), and the configuration validation stops the run before any change when
+it does not match `^[A-Za-z0-9:_.@-]+[.]service$`
+([configuration.md#validation](configuration.md#validation)).
 
 To keep a tunnel unit (for example an operator-managed identity unit) free of this
 role's drop-in, set in that host's vars:

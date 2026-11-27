@@ -965,8 +965,13 @@ ziti_intercept_domains: []
 # must keep its own drop-ins: the role then removes only its own drop-in and
 # service, and still refreshes the pins during each run.
 ziti_pin_lifecycle_enabled: true
+# The tunnel's own DNS listener, which answers each pinned name with its
+# overlay address (ziti-edge-tunnel's default; split DNS uses the same one).
 ziti_pin_resolver: "100.64.0.2"
+# Seconds the refresh after a tunnel start waits for the identities to load
+# and answer before it drops the pins that still do not resolve.
 ziti_pin_wait: 120
+# Where the role installs the pin helper and the host-local pin list.
 ziti_pin_script_path: /usr/local/sbin/curiosity-ziti-pins
 ziti_pin_env_path: /etc/curiosity/ziti-pins.env
 
