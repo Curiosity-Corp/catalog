@@ -75,7 +75,9 @@ Intel ready, each without its tools, on `nouveau`, `radeon` and `vfio-pci`,
 without `/dev/nvidiactl`, `/dev/kfd` or a render node, virtual adapters in a
 VM, an ASPEED and an unknown adapter, and a mixed Intel and NVIDIA machine. It
 also checks that a vendor tool is found but never run. The job then runs
-`catalog-tools gpu-status` on its own runner pod: the real no-GPU path.
+`catalog-tools gpu-status` on its own runner pod, a real read of whatever the
+node exposes: on 2026-11-27 the node's Intel iGPU with no driver bound
+(`needs-driver`). The command exits 0 whatever the state.
 
 Validation on physical GPUs needs a person with the hardware, once per vendor
 (NVIDIA, AMD, Intel) and again after a driver or catalog major change:
