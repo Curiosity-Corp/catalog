@@ -1,0 +1,22 @@
+#!/bin/sh
+# Managed by Ansible (developer_workstation curiosity-browser-memory-cap: {{ bmc.name }}).
+# docs/memory-resilience.md. Starts {{ bmc.command }} in its own systemd user
+# scope in {{ browser_memory_cap_slice }}: at MemoryHigh the kernel reclaims the
+# browser's memory (it slows down), at MemoryMax it OOM-kills inside this scope
+# only. BROWSER_MEMORY_HIGH and BROWSER_MEMORY_MAX override the limits for one
+# launch. Without a reachable user manager (no login session) the browser
+# starts uncapped and the journal says so.
+high="${BROWSER_MEMORY_HIGH:-{{ bmc.memory_high }}}"
+max="${BROWSER_MEMORY_MAX:-{{ bmc.memory_max }}}"
+browser={{ bmc.command | quote }}
+
+if ! systemctl --user show-environment >/dev/null 2>&1; then
+  logger -t {{ (bmc.name ~ '-capped') | quote }} "no systemd user manager; starting $browser without a memory cap"
+  exec "$browser" "$@"
+fi
+
+exec systemd-run --user --scope --quiet --collect \
+  --slice={{ browser_memory_cap_slice | quote }} \
+  --unit="{{ bmc.name }}-capped-$$" \
+  -p MemoryHigh="$high" -p MemoryMax="$max" \
+  -- "$browser" "$@"

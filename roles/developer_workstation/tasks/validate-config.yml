@@ -103,6 +103,28 @@
     _ring_ages: "{{ workstation_update_ring_min_age_seconds | default({}) }}"
     _ring_delays: "{{ workstation_update_ring_randomized_delay_seconds | default({}) }}"
     _whole_number_re: '^[0-9]+$'
+    # earlyoom: a percent 1-100, or TERM,KILL; quotes, backslashes and line
+    # breaks would break the quoting of /etc/default/earlyoom.
+    _earlyoom_levels: "{{ [earlyoom_mem_percent | default('8,4'), earlyoom_swap_percent | default('15,8')] | map('string') | list }}"
+    _earlyoom_level_re: '^([1-9][0-9]?|100)(,([1-9][0-9]?|100))?$'
+    _earlyoom_level_pairs: >-
+      {{ _earlyoom_levels | select('match', '^[0-9]+,[0-9]+$')
+         | map('split', ',') | map('map', 'int') | map('list') | list }}
+    _earlyoom_regex_bad_re: '[''"\\]|\n'
+    # The memory-capped browser launcher's entries.
+    _bmc_list: >-
+      {{ browser_memory_cap_browsers
+         if browser_memory_cap_browsers | default([]) is sequence and browser_memory_cap_browsers is not string
+         else [] }}
+    _bmc_maps: "{{ _bmc_list | select('mapping') | list }}"
+    _bmc_names: "{{ _bmc_maps | map(attribute='name', default='') | map('string') | list }}"
+    _bmc_highs: "{{ _bmc_maps | map(attribute='memory_high', default='') | map('string') | list }}"
+    _bmc_maxes: "{{ _bmc_maps | map(attribute='memory_max', default='') | map('string') | list }}"
+    _bmc_size_re: '^([1-9][0-9]*[KMGT]?|([1-9][0-9]?|100)%|infinity)$'
+    # [memory_high, memory_max] in bytes, for the entries that give both as sizes.
+    _bmc_byte_pairs: >-
+      {{ _bmc_highs | zip(_bmc_maxes) | map('join', ' ') | select('match', '^[0-9]+[KMGT]? [0-9]+[KMGT]?$')
+         | map('split', ' ') | map('map', 'human_to_bytes') | map('list') | list }}
     # Values the workspace credential helper puts into a shell script and
     # /etc/gitconfig: a host[:port], provider and user names, a command name
     # or absolute path, environment variable names.
@@ -191,13 +213,67 @@
         msg: >-
           workstation_update_quarantine_seconds must be a whole number of
           seconds, 0 or more; got {{ workstation_update_quarantine_seconds | default(none) | to_json }}.
-      - ok: >-
-          {{ [earlyoom_mem_percent | default('5'), earlyoom_swap_percent | default('50')]
-             | map('string') | select('match', '^[0-9]{1,3}$') | map('int') | select('ge', 1) | select('le', 100) | list | length == 2 }}
+      # earlyoom and the memory-capped browser launcher (docs/memory-resilience.md).
+      - ok: "{{ _earlyoom_levels | select('match', _earlyoom_level_re) | list | length == 2 }}"
         msg: >-
           earlyoom_mem_percent and earlyoom_swap_percent must each be a whole
-          percent from 1 to 100; got {{ earlyoom_mem_percent | default(none) | to_json }} and
+          percent from 1 to 100, or a SIGTERM,SIGKILL pair of them such as 8,4;
+          got {{ earlyoom_mem_percent | default(none) | to_json }} and
           {{ earlyoom_swap_percent | default(none) | to_json }}.
+      - ok: "{{ _earlyoom_level_pairs | map('sort', reverse=true) | list == _earlyoom_level_pairs }}"
+        msg: >-
+          earlyoom_mem_percent and earlyoom_swap_percent must not put the
+          SIGKILL level above the SIGTERM level (8,4, not 4,8); got
+          {{ earlyoom_mem_percent | default(none) | to_json }} and
+          {{ earlyoom_swap_percent | default(none) | to_json }}.
+      - ok: "{{ earlyoom_report_interval | default(300) | string is match(_whole_number_re) }}"
+        msg: >-
+          earlyoom_report_interval must be a whole number of seconds, 0 (no
+          reports) or more; got {{ earlyoom_report_interval | default(none) | to_json }}.
+      - ok: >-
+          {{ [earlyoom_prefer_regex | default(''), earlyoom_avoid_regex | default('')]
+             | map('string') | select('search', _earlyoom_regex_bad_re) | list | length == 0 }}
+        msg: >-
+          earlyoom_prefer_regex and earlyoom_avoid_regex must not contain quotes,
+          backslashes or line breaks (they are passed to earlyoom through
+          /etc/default/earlyoom); got {{ earlyoom_prefer_regex | default(none) | to_json }} and
+          {{ earlyoom_avoid_regex | default(none) | to_json }}.
+      - ok: "{{ browser_memory_cap_slice | default('app-browser.slice') | string is match('^[A-Za-z0-9_.-]+[.]slice$') }}"
+        msg: >-
+          browser_memory_cap_slice must be a systemd slice name such as
+          app-browser.slice; got {{ browser_memory_cap_slice | default(none) | to_json }}.
+      - ok: >-
+          {{ _bmc_list | length == _bmc_maps | length
+             and _bmc_names | select('match', '^[a-z0-9][a-z0-9._-]*$') | list | length == _bmc_maps | length
+             and _bmc_names | unique | list | length == _bmc_names | length }}
+        msg: >-
+          browser_memory_cap_browsers must list mappings, each with a unique
+          name of lower-case letters, digits, dot, dash or underscore (the
+          launcher is ~/.local/bin/NAME-capped); got
+          {{ browser_memory_cap_browsers | default(none) | to_json }}.
+      - ok: >-
+          {{ _bmc_maps | map(attribute='command', default='') | map('string')
+             | select('match', '^/[A-Za-z0-9._+/-]+$') | list | length == _bmc_maps | length
+             and _bmc_maps | map(attribute='desktop_id', default='') | map('string')
+             | select('match', '^[A-Za-z0-9._-]+[.]desktop$') | list | length == _bmc_maps | length }}
+        msg: >-
+          each browser_memory_cap_browsers entry needs command (the absolute
+          path of the browser's own launcher, such as /usr/bin/brave-browser-stable)
+          and desktop_id (a desktop file name such as brave-browser.desktop); got
+          {{ _bmc_maps | map(attribute='command', default=none) | list | to_json }} and
+          {{ _bmc_maps | map(attribute='desktop_id', default=none) | list | to_json }}.
+      - ok: "{{ (_bmc_highs + _bmc_maxes) | select('match', _bmc_size_re) | list | length == (_bmc_highs + _bmc_maxes) | length }}"
+        msg: >-
+          each browser_memory_cap_browsers entry needs memory_high and
+          memory_max as a systemd memory size (16G, 512M), a percentage of RAM
+          (25%) or infinity; got memory_high {{ _bmc_highs | to_json }} and
+          memory_max {{ _bmc_maxes | to_json }}.
+      - ok: "{{ _bmc_byte_pairs | map('sort') | list == _bmc_byte_pairs }}"
+        msg: >-
+          memory_high of a browser_memory_cap_browsers entry must not be above
+          its memory_max (the browser is slowed at memory_high, stopped at
+          memory_max); got memory_high {{ _bmc_highs | to_json }} and memory_max
+          {{ _bmc_maxes | to_json }}.
       - ok: "{{ agent_cpu_policy_quota | default('auto') | string | trim is match('^(auto|[1-9][0-9]*%)$') }}"
         msg: >-
           agent_cpu_policy_quota must be auto (derived from the CPU count) or a

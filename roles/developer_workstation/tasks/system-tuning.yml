@@ -139,8 +139,10 @@
 # killer triggers too late (after the system is already thrashing). earlyoom
 # watches memory pressure and sends SIGTERM/SIGKILL before it's unrecoverable.
 #
-# Thresholds: SIGTERM at mem<=5% AND swap<=50%, SIGKILL at mem<=2.5% AND swap<=25%
-# Reports every 60s to journal for monitoring.
+# Thresholds and prefer/avoid regexes are role variables (earlyoom_*); the
+# defaults (8,4 / 15,8, browsers preferred, sessions and media avoided) and
+# why are in docs/memory-resilience.md. A changed setting restarts earlyoom
+# and nothing else.
 # =============================================================================
 
 - name: Install earlyoom
@@ -149,15 +151,8 @@
     state: present
 
 - name: Configure earlyoom thresholds
-  vars:
-    _earlyoom_prefer: "{{ (' --prefer ' ~ (earlyoom_prefer_regex | quote)) if earlyoom_prefer_regex | length > 0 else '' }}"
-    _earlyoom_avoid: "{{ (' --avoid ' ~ (earlyoom_avoid_regex | quote)) if earlyoom_avoid_regex | length > 0 else '' }}"
-    _earlyoom_args: "-r 60 -m {{ earlyoom_mem_percent }} -s {{ earlyoom_swap_percent }}{{ _earlyoom_prefer }}{{ _earlyoom_avoid }}"
-  ansible.builtin.copy:
-    content: |
-      # Managed by Ansible — developer-workstation role
-      # Report every 60s; SIGTERM at {{ earlyoom_mem_percent }}% mem + {{ earlyoom_swap_percent }}% swap (SIGKILL at half of each).
-      EARLYOOM_ARGS="{{ _earlyoom_args }}"
+  ansible.builtin.template:
+    src: earlyoom.default.j2
     dest: /etc/default/earlyoom
     owner: root
     group: root
@@ -169,6 +164,17 @@
     name: earlyoom
     enabled: true
     state: started
+
+# =============================================================================
+# Memory-capped browser launcher (opt-in: browser_memory_cap_enabled)
+# =============================================================================
+
+- name: Include the memory-capped browser launcher
+  ansible.builtin.include_tasks:
+    file: browser-memory-cap.yml
+    apply:
+      tags: [tuning, system, browser-memory-cap]
+  tags: [tuning, system, browser-memory-cap]
 
 # =============================================================================
 # fstrim — SSD/NVMe TRIM

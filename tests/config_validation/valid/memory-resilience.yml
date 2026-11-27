@@ -1,0 +1,29 @@
+---
+# Memory resilience switched on (catalog#95, docs/memory-resilience.md): zram,
+# earlyoom levels as TERM,KILL pairs or one percent, regexes with spaces, no
+# journal reports, and the capped browser launcher with sizes, a percentage
+# of RAM and infinity.
+zram_swap_enabled: true
+earlyoom_mem_percent: "8,4"
+earlyoom_swap_percent: "50"
+earlyoom_report_interval: 0
+earlyoom_prefer_regex: '^(brave|firefox|Web Content|Isolated Web Co)$'
+earlyoom_avoid_regex: '^(claude|tmux.*|streamstack.*|sunshine)$'
+browser_memory_cap_enabled: true
+browser_memory_cap_slice: app-browser.slice
+browser_memory_cap_browsers:
+  - name: brave-browser
+    command: /usr/bin/brave-browser-stable
+    desktop_id: brave-browser.desktop
+    memory_high: 16G
+    memory_max: 24G
+  - name: google-chrome
+    command: /usr/bin/google-chrome-stable
+    desktop_id: google-chrome.desktop
+    memory_high: 25%
+    memory_max: 40%
+  - name: chromium
+    command: /usr/local/bin/chromium
+    desktop_id: chromium.desktop
+    memory_high: 8192M
+    memory_max: infinity

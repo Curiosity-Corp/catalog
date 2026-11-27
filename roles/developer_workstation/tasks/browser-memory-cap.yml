@@ -1,0 +1,94 @@
+---
+# =============================================================================
+# Memory-capped browser launcher (opt-in: browser_memory_cap_enabled)
+# =============================================================================
+# On 2026-10-17 a browser grew to 257 processes and ~46 GB on a 61 GB
+# workstation and the kernel OOM killer ran seven times (catalog#95). A cap on
+# the browser alone stops it before the whole machine runs out: MemoryHigh
+# makes the kernel reclaim the browser's own memory (it slows down), and
+# MemoryMax makes the kernel OOM-kill inside the browser's scope only.
+#
+# For each user in dev_users and each installed browser of
+# browser_memory_cap_browsers this writes ~/.local/bin/<name>-capped (a
+# systemd user scope around the browser's own launcher) and a
+# ~/.local/share/applications/<desktop_id> override that starts it, so the
+# menu and xdg-open use the cap. Both carry the marker
+# curiosity-browser-memory-cap; files with that marker that are no longer
+# wanted (feature off, browser removed from the list, browser uninstalled or
+# routed by the PIA tunnel) are deleted. Nothing is started or stopped: a
+# running browser keeps running uncapped until it is next started.
+#
+# A browser routed by the PIA tunnel (pia_tunnel_apps) is skipped: the tunnel
+# launcher caps it in its own scope and rewrites the same entries, so a second
+# writer would flap and could start the browser outside the tunnel.
+# docs/memory-resilience.md has the details.
+# =============================================================================
+
+# Where the system desktop entries are read. Only the fixture test
+# (tests/memory_resilience/) points it elsewhere, with extra vars.
+- name: Set where the system desktop entries are read
+  ansible.builtin.set_fact:
+    _bmc_applications_dir: "{{ _bmc_applications_dir | default('/usr/share/applications') }}"
+
+- name: Work out which browsers get a memory-capped launcher
+  ansible.builtin.set_fact:
+    _bmc_candidates: >-
+      {{ (browser_memory_cap_browsers
+          | rejectattr('desktop_id', 'in', _bmc_routed_desktop_ids)
+          | rejectattr('command', 'in', _bmc_routed_commands)
+          | list)
+         if browser_memory_cap_enabled | bool else [] }}
+  vars:
+    _bmc_routed_specs: >-
+      {{ pia_tunnel_apps | default([])
+         | select('in', pia_tunnel_app_definitions | default({}))
+         | map('extract', pia_tunnel_app_definitions) | list }}
+    _bmc_routed_desktop_ids: "{{ _bmc_routed_specs | map(attribute='desktop_ids', default=[]) | flatten }}"
+    _bmc_routed_commands: >-
+      {{ (_bmc_routed_specs | map(attribute='diverted', default=[]) | flatten)
+         + (_bmc_routed_specs | map(attribute='desktop_commands', default=[]) | flatten) }}
+
+- name: Check which of those browsers are installed
+  ansible.builtin.stat:
+    path: "{{ item.command }}"
+    get_checksum: false
+  loop: "{{ _bmc_candidates }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _bmc_command_stat
+
+- name: Check for the system desktop entries of the installed browsers
+  ansible.builtin.stat:
+    path: "{{ _bmc_applications_dir }}/{{ item.item.desktop_id }}"
+    get_checksum: false
+  loop: "{{ _bmc_command_stat.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  register: _bmc_desktop_stat
+
+- name: Read the system desktop entries of the installed browsers
+  ansible.builtin.slurp:
+    src: "{{ _bmc_applications_dir }}/{{ item.item.item.desktop_id }}"
+  loop: "{{ _bmc_desktop_stat.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item.item.name }}"
+  register: _bmc_desktop_source
+
+- name: Collect the capped browsers and their desktop entries
+  ansible.builtin.set_fact:
+    _bmc_browsers: "{{ _bmc_command_stat.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+    _bmc_desktop_entries: >-
+      {{ dict(_bmc_desktop_source.results
+              | map(attribute='item.item.item.name')
+              | zip(_bmc_desktop_source.results | map(attribute='content') | map('b64decode'))) }}
+
+- name: Converge the memory-capped browser launchers of each user
+  ansible.builtin.include_tasks:
+    file: browser-memory-cap-user.yml
+    apply:
+      tags: [tuning, system, browser-memory-cap]
+  loop: "{{ dev_users }}"
+  loop_control:
+    loop_var: dw_user
+    label: "{{ dw_user.name }}"
+  tags: [tuning, system, browser-memory-cap]

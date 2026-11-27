@@ -1,0 +1,31 @@
+---
+# Memory resilience values earlyoom or the capped browser launcher cannot use
+# (catalog#95, docs/memory-resilience.md). A quote in a regex would break the
+# quoting of /etc/default/earlyoom; a bad launcher name, path or size would
+# reach a shell script and a systemd scope.
+# expect: earlyoom_mem_percent and earlyoom_swap_percent must each be a whole percent from 1 to 100, or a SIGTERM,SIGKILL pair of them such as 8,4; got "4,8" and "150".
+# expect: earlyoom_mem_percent and earlyoom_swap_percent must not put the SIGKILL level above the SIGTERM level (8,4, not 4,8); got "4,8" and "150".
+# expect: earlyoom_report_interval must be a whole number of seconds, 0 (no reports) or more; got -5.
+# expect: earlyoom_prefer_regex and earlyoom_avoid_regex must not contain quotes, backslashes or line breaks (they are passed to earlyoom through /etc/default/earlyoom); got
+# expect: browser_memory_cap_slice must be a systemd slice name such as app-browser.slice; got "browsers".
+# expect: (the launcher is ~/.local/bin/NAME-capped); got
+# expect: and desktop_id (a desktop file name such as brave-browser.desktop); got ["brave", "/usr/bin/x"] and ["brave", "x.desktop"].
+# expect: (25%) or infinity; got memory_high ["30G", "lots"] and memory_max ["24G", "1G"].
+# expect: must not be above its memory_max (the browser is slowed at memory_high, stopped at memory_max); got memory_high ["30G", "lots"]
+earlyoom_mem_percent: "4,8"
+earlyoom_swap_percent: "150"
+earlyoom_report_interval: -5
+earlyoom_avoid_regex: "^(it's)$"
+browser_memory_cap_enabled: true
+browser_memory_cap_slice: browsers
+browser_memory_cap_browsers:
+  - name: Brave
+    command: brave
+    desktop_id: brave
+    memory_high: 30G
+    memory_max: 24G
+  - name: x
+    command: /usr/bin/x
+    desktop_id: x.desktop
+    memory_high: lots
+    memory_max: 1G

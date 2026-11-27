@@ -1,0 +1,261 @@
+---
+# Memory resilience (catalog#95, docs/memory-resilience.md): renders the role's
+# earlyoom, sysctl, zram and launcher templates and runs
+# tasks/browser-memory-cap.yml against a throwaway fixture home, then checks
+# the files. scripts/config_validation_check.sh runs it in the
+# config-validation CI job with -e memres_out=<directory in the job's
+# workspace>; every path it writes is under that directory. It needs no root,
+# starts and stops nothing and never targets a real host or inventory.
+- name: Memory resilience templates and the capped browser launcher
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../roles/developer_workstation/defaults/main.yml
+  vars:
+    templates: "{{ playbook_dir }}/../../roles/developer_workstation/templates"
+    fixture: "{{ memres_out }}/fixture"
+    home: "{{ fixture }}/home"
+    launcher: "{{ home }}/.local/bin/fakebrowser-capped"
+    override: "{{ home }}/.local/share/applications/fakebrowser.desktop"
+    fake_browser:
+      name: fakebrowser
+      command: "{{ fixture }}/bin/fakebrowser"
+      desktop_id: fakebrowser.desktop
+      memory_high: 3G
+      memory_max: 4G
+    # A browser listed but not installed: it gets no launcher.
+    absent_browser:
+      name: absentbrowser
+      command: "{{ fixture }}/bin/absentbrowser"
+      desktop_id: absentbrowser.desktop
+      memory_high: 1G
+      memory_max: 2G
+    # Process names (kernel comm, 15 characters) the default regexes must sort.
+    must_avoid: [claude, codex, hyperharness, "tmux: server", sshd, gnome-terminal-, alacritty, kitty, Xorg,
+                 Xwayland, gnome-shell, openbox, lightdm, pipewire, pipewire-pulse, wireplumber, pulseaudio,
+                 streamstack, streamstack-con, streamstack-aut, sunshine, gst-launch-1.0, ffmpeg, zoom,
+                 teams-for-linux, systemd, earlyoom]
+    must_prefer: [brave, chrome, chromium, msedge, firefox, Web Content, Isolated Web Co, WebExtensions]
+  tasks:
+    - name: Refuse to run without a throwaway output directory
+      ansible.builtin.assert:
+        that:
+          - memres_out is defined
+          - memres_out is match('^/')
+          - memres_out is not match('^/(home|root|etc|usr|var|opt)?/?$')
+        fail_msg: Pass -e memres_out=<absolute throwaway directory>.
+        quiet: true
+
+    - name: Read the runner's numeric user and group ids
+      ansible.builtin.command:
+        argv: [id, "{{ item }}"]
+      loop: [-u, -g]
+      register: _ids
+      changed_when: false
+
+    - name: Start from an empty fixture
+      ansible.builtin.file:
+        path: "{{ fixture }}"
+        state: absent
+
+    - name: Create the fixture directories
+      ansible.builtin.file:
+        path: "{{ fixture }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [bin, apps, render, home/.local/bin, home/.local/share/applications]
+
+    # ---------------------------------------------------------------- earlyoom
+    - name: Render /etc/default/earlyoom with the defaults
+      ansible.builtin.template:
+        src: "{{ templates }}/earlyoom.default.j2"
+        dest: "{{ fixture }}/render/earlyoom.default"
+        mode: "0644"
+
+    - name: Render /etc/default/earlyoom without regexes and with the old levels
+      ansible.builtin.template:
+        src: "{{ templates }}/earlyoom.default.j2"
+        dest: "{{ fixture }}/render/earlyoom.plain"
+        mode: "0644"
+      vars:
+        earlyoom_mem_percent: "5"
+        earlyoom_swap_percent: "50"
+        earlyoom_report_interval: 60
+        earlyoom_prefer_regex: ""
+        earlyoom_avoid_regex: ""
+
+    - name: Check the earlyoom arguments
+      ansible.builtin.assert:
+        that:
+          - _default is search('(?m)^EARLYOOM_ARGS="-r 300 -m 8,4 -s 15,8 --prefer ' ~ (earlyoom_prefer_regex | quote | regex_escape) ~ ' --avoid ' ~ (earlyoom_avoid_regex | quote | regex_escape) ~ '"$')
+          - _plain is search('(?m)^EARLYOOM_ARGS="-r 60 -m 5 -s 50"$')
+          - must_avoid | reject('match', earlyoom_avoid_regex) | list == []
+          - must_prefer | reject('match', earlyoom_prefer_regex) | list == []
+          - must_prefer | select('match', earlyoom_avoid_regex) | list == []
+          - must_avoid | select('match', earlyoom_prefer_regex) | list == []
+        fail_msg: |-
+          defaults: {{ _default }}
+          plain: {{ _plain }}
+          not avoided: {{ must_avoid | reject('match', earlyoom_avoid_regex) | list }}
+          not preferred: {{ must_prefer | reject('match', earlyoom_prefer_regex) | list }}
+      vars:
+        _default: "{{ lookup('ansible.builtin.file', fixture ~ '/render/earlyoom.default') }}"
+        _plain: "{{ lookup('ansible.builtin.file', fixture ~ '/render/earlyoom.plain') }}"
+
+    # ------------------------------------------------------------ sysctl, zram
+    - name: Render the swap sysctls without and with zram
+      ansible.builtin.template:
+        src: "{{ templates }}/workstation-tuning-sysctl.conf.j2"
+        dest: "{{ fixture }}/render/sysctl-{{ item }}.conf"
+        mode: "0644"
+      loop: [false, true]
+      vars:
+        zram_swap_enabled: "{{ item }}"
+
+    - name: Render the zram generator config
+      ansible.builtin.template:
+        src: "{{ templates }}/zram-generator.conf.j2"
+        dest: "{{ fixture }}/render/zram-generator.conf"
+        mode: "0644"
+
+    - name: Check swappiness, page-cluster and the zram device
+      ansible.builtin.assert:
+        that:
+          - zram_swap_enabled is false
+          - _off is search('(?m)^vm.swappiness=10$')
+          - _off is not search('page-cluster')
+          - _on is search('(?m)^vm.swappiness=100$')
+          - _on is search('(?m)^vm.page-cluster=0$')
+          - _zram is search('(?m)^zram-size = min\(ram / 2, 32768\)$')
+          - _zram is search('(?m)^compression-algorithm = zstd$')
+          - _zram is search('(?m)^swap-priority = 100$')
+        fail_msg: |-
+          zram off: {{ _off }}
+          zram on: {{ _on }}
+          generator: {{ _zram }}
+      vars:
+        _off: "{{ lookup('ansible.builtin.file', fixture ~ '/render/sysctl-False.conf') }}"
+        _on: "{{ lookup('ansible.builtin.file', fixture ~ '/render/sysctl-True.conf') }}"
+        _zram: "{{ lookup('ansible.builtin.file', fixture ~ '/render/zram-generator.conf') }}"
+
+    # ------------------------------------------------- capped browser launcher
+    - name: Create the fake browser and its system desktop entry
+      ansible.builtin.copy:
+        dest: "{{ item.dest }}"
+        content: "{{ item.content }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - dest: "{{ fixture }}/bin/fakebrowser"
+          mode: "0755"
+          content: "#!/bin/sh\nexit 0\n"
+        - dest: "{{ fixture }}/apps/fakebrowser.desktop"
+          mode: "0644"
+          content: |
+            [Desktop Entry]
+            Name=Fake Browser
+            Exec={{ fixture }}/bin/fakebrowser %U
+            Actions=new-private-window;
+
+            [Desktop Action new-private-window]
+            Name=New Private Window
+            Exec={{ fixture }}/bin/fakebrowser --incognito
+      loop_control:
+        label: "{{ item.dest | basename }}"
+
+    - name: Create a stale launcher of this role and an unrelated user entry
+      ansible.builtin.copy:
+        dest: "{{ item.dest }}"
+        content: "{{ item.content }}"
+        mode: "0644"
+      loop:
+        - dest: "{{ home }}/.local/bin/retired-capped"
+          content: "#!/bin/sh\n# Managed by Ansible (developer_workstation curiosity-browser-memory-cap: retired).\n"
+        - dest: "{{ home }}/.local/share/applications/mine.desktop"
+          content: "[Desktop Entry]\nName=Mine\nExec=/bin/true\n"
+      loop_control:
+        label: "{{ item.dest | basename }}"
+
+    - name: Run browser-memory-cap.yml with the cap on
+      ansible.builtin.include_role:
+        name: developer_workstation
+        tasks_from: browser-memory-cap.yml
+      vars:
+        dev_users: [{name: "{{ _ids.results[0].stdout }}", group: "{{ _ids.results[1].stdout }}", home: "{{ home }}"}]
+        browser_memory_cap_enabled: true
+        browser_memory_cap_browsers: ["{{ fake_browser }}", "{{ absent_browser }}"]
+        pia_tunnel_apps: []
+        _bmc_applications_dir: "{{ fixture }}/apps"
+
+    - name: Check the launcher syntax
+      ansible.builtin.command:
+        argv: [sh, -n, "{{ launcher }}"]
+      changed_when: false
+
+    - name: Check the launcher, the override and the clean-up
+      ansible.builtin.assert:
+        that:
+          - _launcher is search('--slice=app-browser.slice')
+          - _launcher is search('-p MemoryHigh="\$high" -p MemoryMax="\$max"')
+          - _launcher is search('(?m)^high="\$\{BROWSER_MEMORY_HIGH:-3G\}"$')
+          - _launcher is search('(?m)^max="\$\{BROWSER_MEMORY_MAX:-4G\}"$')
+          - _launcher is search('(?m)^browser=' ~ (fixture ~ '/bin/fakebrowser') | regex_escape ~ '$')
+          - _override is search('(?m)^X-Curiosity-Browser-Memory-Cap=fakebrowser$')
+          - _override is search('(?m)^Exec=' ~ launcher | regex_escape ~ ' %U$')
+          - _override is search('(?m)^Exec=' ~ launcher | regex_escape ~ ' --incognito$')
+          - _override is not search('bin/fakebrowser ')
+          - _override is search('(?m)^Name=New Private Window$')
+          - (home ~ '/.local/bin/retired-capped') is not exists
+          - (home ~ '/.local/share/applications/mine.desktop') is exists
+          - (home ~ '/.local/bin/absentbrowser-capped') is not exists
+        fail_msg: |-
+          launcher: {{ _launcher }}
+          override: {{ _override }}
+          (or the stale launcher was kept, the unrelated entry removed, or the
+          browser that is not installed got a launcher)
+      vars:
+        _launcher: "{{ lookup('ansible.builtin.file', launcher) }}"
+        _override: "{{ lookup('ansible.builtin.file', override) }}"
+
+    - name: Run browser-memory-cap.yml with the browser routed by the PIA tunnel
+      ansible.builtin.include_role:
+        name: developer_workstation
+        tasks_from: browser-memory-cap.yml
+      vars:
+        dev_users: [{name: "{{ _ids.results[0].stdout }}", group: "{{ _ids.results[1].stdout }}", home: "{{ home }}"}]
+        browser_memory_cap_enabled: true
+        browser_memory_cap_browsers: ["{{ fake_browser }}"]
+        pia_tunnel_apps: [fakebrowser]
+        pia_tunnel_app_definitions: {fakebrowser: {desktop_ids: [fakebrowser.desktop], diverted: []}}
+        _bmc_applications_dir: "{{ fixture }}/apps"
+
+    - name: Check that the PIA tunnel's browser has no launcher of this role
+      ansible.builtin.assert:
+        that:
+          - launcher is not exists
+          - override is not exists
+          - (home ~ '/.local/share/applications/mine.desktop') is exists
+        fail_msg: The routed browser kept a launcher or override, or an unrelated entry was removed.
+
+    - name: Run browser-memory-cap.yml with the cap on again, then off
+      ansible.builtin.include_role:
+        name: developer_workstation
+        tasks_from: browser-memory-cap.yml
+      loop: [true, false]
+      loop_control:
+        loop_var: memres_cap_on
+      vars:
+        dev_users: [{name: "{{ _ids.results[0].stdout }}", group: "{{ _ids.results[1].stdout }}", home: "{{ home }}"}]
+        browser_memory_cap_enabled: "{{ memres_cap_on }}"
+        browser_memory_cap_browsers: ["{{ fake_browser }}"]
+        pia_tunnel_apps: []
+        _bmc_applications_dir: "{{ fixture }}/apps"
+
+    - name: Check that turning the cap off removes what it wrote, and only that
+      ansible.builtin.assert:
+        that:
+          - launcher is not exists
+          - override is not exists
+          - (home ~ '/.local/share/applications/mine.desktop') is exists
+          - (fixture ~ '/apps/fakebrowser.desktop') is exists
+        fail_msg: Turning browser_memory_cap_enabled off left a file or removed one it did not write.

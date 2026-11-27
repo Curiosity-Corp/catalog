@@ -67,6 +67,13 @@ It checks three layers:
    - `user_dotfiles_apply: review` with a `user_dotfiles_repo` needs
      `user_dotfiles_review_argv`, the repo's own review gate as an argv list
      starting with an absolute path ([user dotfiles](#user-dotfiles)).
+   - The [memory resilience](memory-resilience.md) values must be usable:
+     each earlyoom level is 1 to 100 or a `TERM,KILL` pair with KILL not above
+     TERM, the report interval a whole number, and the prefer/avoid regexes
+     carry no quote, backslash or line break; with `browser_memory_cap_enabled`,
+     the slice is a `.slice` unit name and each browser has a unique lowercase
+     `name`, an absolute `command`, a `.desktop` `desktop_id` and systemd sizes
+     with `memory_high` not above `memory_max`.
 
    Each rule uses the same profile condition as the task it protects, so a
    setting a profile ignores is never required.
@@ -862,7 +869,8 @@ workstation_user_linger: [user-a]
 ```
 
 The default is a one-item list built from `dev_user` and `dev_user_home`, so
-single-user hosts are unchanged. Per-user home checks, ownership repair, the
+single-user hosts are unchanged. An entry may add `group` when the account's
+primary group is not named after the account. Per-user home checks, ownership repair, the
 user-systemd mask policy, the Openbox, picom, tint2, dunst, rofi, GTK and
 Firefox configuration, and the XScreenSaver settings (including the unlockable
 password check) run once for each listed account. Everything else, including
@@ -1320,14 +1328,23 @@ other means.
 | `zram_swap_priority` | `100` (the swap file is `-1`) |
 | `vm_swappiness` | `100` with zram, else `10` |
 | `vm_page_cluster` | `0` with zram (no swap-in readahead), else empty (kernel default, no line written) |
-| `earlyoom_mem_percent` / `earlyoom_swap_percent` | `5` / `50`; a pair like `8,4` sets the SIGTERM and SIGKILL levels |
-| `earlyoom_prefer_regex` / `earlyoom_avoid_regex` | empty (no `--prefer` / `--avoid`) |
+| `earlyoom_mem_percent` / `earlyoom_swap_percent` | `"8,4"` / `"15,8"` (SIGTERM,SIGKILL percent; a single number means SIGKILL at half) |
+| `earlyoom_report_interval` | `300` (seconds between memory reports in the journal; `0` none) |
+| `earlyoom_prefer_regex` | browsers and their helper processes |
+| `earlyoom_avoid_regex` | agent sessions, terminals, the desktop session, media and streaming services |
+| `browser_memory_cap_enabled` | `false` |
+| `browser_memory_cap_slice` | `app-browser.slice` |
+| `browser_memory_cap_browsers` | Brave, `MemoryHigh` 16G, `MemoryMax` 24G |
 
 earlyoom acts only when both available memory and free swap are below their
-levels. A host with many long-running sessions sets the prefer/avoid regexes
-so a browser is killed before a session. Per-app memory caps for Brave come
-from the PIA tunnel app definition (`pia_tunnel_app_definitions`, scope
-`MemoryHigh`/`MemoryMax`).
+levels; it then picks a browser before a session, a terminal or a live call.
+A changed earlyoom setting restarts `earlyoom.service` only.
+`browser_memory_cap_enabled` gives each `dev_users` account a
+`~/.local/bin/<name>-capped` launcher (a systemd user scope with
+`MemoryHigh`/`MemoryMax`) and a desktop entry override that starts it;
+browsers routed by the [PIA tunnel](pia-tunnel.md) keep the tunnel's own cap
+(`pia_tunnel_app_definitions`). [Memory resilience](memory-resilience.md) has
+the reasoning, every regex name and how to check a host.
 
 ## /tmp hygiene
 

@@ -65,6 +65,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `ansible-pull` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `bitwarden` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
 | `boot` | supported | 3 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
+| `browser-memory-cap` | supported | 2 | `browser-memory-cap.yml`, `system-tuning.yml` |  |  |
 | `browser-video-decode` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `catalog-tools` | supported | 1 | `managed-updates.yml` |  |  |
 | `certificates` | supported | 1 | `main.yml` | `thin-client`, `byod-kiosk` |  |
@@ -154,7 +155,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `streamstack-framing` | supported | 1 | `main.yml` | `desktop` |  |
 | `streamstack-low-latency` | supported | 1 | `main.yml` | `desktop` |  |
 | `sunshine` | supported | 10 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
-| `system` | supported | 7 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
+| `system` | supported | 9 | `browser-memory-cap.yml`, `main.yml`, `system-tuning.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `system-retirement` | supported | 1 | `main.yml` |  |  |
 | `systemd` | supported | 4 | `main.yml` |  |  |
 | `t460` | experimental | 1 | `main.yml` |  | ThinkPad T460 console workarounds. |
@@ -163,7 +164,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `tint2` | supported | 3 | `minimal-desktop.yml` |  |  |
 | `tmp-hygiene` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `touchpad` | supported | 1 | `minimal-desktop.yml` |  |  |
-| `tuning` | supported | 1 | `main.yml` | `desktop` |  |
+| `tuning` | supported | 3 | `browser-memory-cap.yml`, `main.yml`, `system-tuning.yml` | `desktop` |  |
 | `updates` | supported | 14 | `main.yml`, `managed-updates.yml`, `pro-mimic.yml` | `desktop`, `workspace` | The managed update transaction: foundation, rings, rollback, health and manifest. |
 | `user` | supported | 4 | `main.yml` | `thin-client` |  |
 | `user-git-timers` | supported | 1 | `main.yml` |  |  |
@@ -303,7 +304,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-514 variables, from `roles/developer_workstation/defaults/main.yml`.
+518 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -311,10 +312,11 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `dev_user_home` | string | `"/home/curiosity"` |  | supported |  | (undocumented) |
 | `dev_users` | list | `[{"name": "{{ dev_user }}", "home": "{{ dev_user_home }}"}]` |  | supported | account | Interactive accounts that receive per-user desktop and systemd convergence. `dev_user` stays the primary account for every other user-scoped task and must be listed here. (...) |
 | `workstation_user_linger` | list | `[]` |  | supported |  | Accounts whose systemd user manager must keep running without a login session (`loginctl enable-linger`). Empty leaves lingering untouched. |
-| `earlyoom_mem_percent` | string | `"5"` | integer percent, 1 to 100, written as a string | supported |  | earlyoom thresholds (percent of available memory / free swap). earlyoom acts only when BOTH memory and swap are below their limits. Defaults keep the historical 5% memory and 50% swap behavior (SIGKILL at half of each). |
-| `earlyoom_swap_percent` | string | `"50"` | integer percent, 1 to 100, written as a string | supported |  | (undocumented) |
-| `earlyoom_prefer_regex` | string | `""` |  | supported |  | Optional process-name regexes (matched against the kernel comm name, 15 chars). Empty adds no --prefer / --avoid flag. Hosts that run long-lived agent sessions set these so browsers die before the agents do. |
-| `earlyoom_avoid_regex` | string | `""` |  | supported |  | (undocumented) |
+| `earlyoom_mem_percent` | string | `"8,4"` | percent 1 to 100, or a SIGTERM,SIGKILL pair such as 8,4 (KILL not above TERM), written as a string | supported |  | earlyoom thresholds (percent of available memory / free swap), each "TERM" or "TERM,KILL": SIGTERM at the first level, SIGKILL at the second (earlyoom uses half of TERM when KILL is left out). earlyoom acts only when BOTH memory and swap are below their levels. (...) |
+| `earlyoom_swap_percent` | string | `"15,8"` | percent 1 to 100, or a SIGTERM,SIGKILL pair such as 15,8 (KILL not above TERM), written as a string | supported |  | (undocumented) |
+| `earlyoom_report_interval` | int | `300` | whole number of seconds; 0 turns the journal reports off | supported |  | Seconds between earlyoom's memory reports in the journal; 0 turns them off. |
+| `earlyoom_prefer_regex` | string | string, 171 characters | POSIX extended regex over process names, without quotes, backslashes or line breaks; empty adds no --prefer | supported |  | Process-name regexes (POSIX extended, matched against the kernel comm name, at most 15 characters). Empty adds no --prefer / --avoid flag. (...) |
+| `earlyoom_avoid_regex` | string | string, 425 characters | POSIX extended regex over process names, without quotes, backslashes or line breaks; empty adds no --avoid | supported |  | (undocumented) |
 | `workstation_timezone` | string | `""` |  | supported |  | IANA time zone for the system clock (`timedatectl`), e.g. America/New_York. Empty leaves the host's zone untouched. StreamStack's light schedule takes its sunrise and sunset from this zone unless streamstack_latitude/longitude are set. |
 | `keyboard_manage` | string (template) | `"{{ workstation_profile in ['thin-client', 'byod-kiosk'] }}"` |  | supported |  | Keyboard layout and system locale (tasks/keyboard.yml, tasks/locale.yml). (...) |
 | `keyboard_layout` | string | `"us"` |  | supported |  | (undocumented) |
@@ -484,6 +486,9 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `zram_swap_priority` | int | `100` |  | supported |  | (undocumented) |
 | `vm_swappiness` | string (template) | `"{{ 100 if zram_swap_enabled \| bool else 10 }}"` |  | supported |  | With swap compressed in RAM, anonymous pages are as cheap to reclaim as page cache, so 100 weighs them equally; 10 keeps a disk swap file mostly idle. |
 | `vm_page_cluster` | string (template) | `"{{ 0 if zram_swap_enabled \| bool else '' }}"` |  | supported |  | vm.page-cluster: swap-in readahead of 2^n pages. zram has no seek cost, and readahead only decompresses pages nobody asked for, so 0 with zram. Empty leaves the kernel default (3) and writes no line. |
+| `browser_memory_cap_enabled` | bool | `false` |  | supported |  | Memory-capped browser launcher (opt-in; docs/memory-resilience.md). (...) |
+| `browser_memory_cap_slice` | string | `"app-browser.slice"` | a systemd slice name ending in .slice | supported |  | (undocumented) |
+| `browser_memory_cap_browsers` | list | list, 1 item | list of {name, command, desktop_id, memory_high, memory_max}; sizes such as 16G, 25% or infinity, memory_high not above memory_max | supported |  | Each entry: name (launcher name), command (absolute path of the browser's own launcher), desktop_id (the system .desktop file to override), memory_high and memory_max (systemd sizes such as 16G, a percentage of RAM such as 25%, or infinity). (...) |
 | `entra_id_enabled` | bool | `false` |  | supported |  | Entra ID SSO — SUNSET, replaced by Keycloak SSO |
 | `keycloak_sso_enabled` | bool | `false` |  | supported | security, account | Keycloak SSO (authd + authd-oidc broker). Configure these in host/group variables for a research lab's own identity provider. |
 | `keycloak_host` | string | `""` |  | private-hook | security | (undocumented) |
