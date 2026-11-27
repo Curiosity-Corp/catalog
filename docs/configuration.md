@@ -794,6 +794,41 @@ workstation_removed_paths:
   - /etc/old-helper/credentials.json
 ```
 
+## Replaced and deprecated tools
+
+The role installs no tool from an archived upstream (catalog#171,
+`ci/dependency-register.yml`). When an upstream is archived, the role moves to
+a maintained replacement or deprecates the tool, and this section says what
+changed for a user.
+
+* **FileBrowser** (`workspace` profile). `/usr/local/bin/filebrowser` is now
+  [FileBrowser Quantum](https://github.com/gtsteffaniak/filebrowser), the
+  maintained fork of the archived `filebrowser/filebrowser`, installed from its
+  latest release after a check against the release's SHA-256 digest. The
+  `filebrowser version` command is unchanged. The server is configured with a
+  `config.yaml` (`filebrowser -c config.yaml`) instead of command-line flags
+  and the `config` subcommands. An existing database from the original is not
+  read in place: set `server.database.migrateFrom` to it in `config.yaml` and
+  Quantum imports its users and shares on first start (see the project's v2
+  migration guide). The role runs no FileBrowser service itself, so nothing
+  changes until you start it.
+* **talhelper** is deprecated. `budimanjojo/talhelper` is archived, so the
+  role no longer installs or updates `/usr/local/bin/talhelper`. A binary an
+  earlier run installed is left in place, and each run prints a warning while
+  it is there. Generate Talos configuration with `talosctl` (installed by the
+  role): `talosctl gen config <cluster> <endpoint> --config-patch @patch.yaml`
+  covers what a `talconfig.yaml` described. Then delete the binary, or retire
+  it on every host with `workstation_removed_paths: [/usr/local/bin/talhelper]`
+  ([above](#retired-system-services-and-removed-paths)).
+* **speedtest**. The `speedtest` alias in the fallback `~/.bash_aliases` used
+  to pipe `speedtest.py` from the archived `sivel/speedtest-cli` master branch
+  into `python3`, unverified, on every use. It now runs `librespeed-cli`, which
+  the role installs from the latest
+  [LibreSpeed CLI](https://github.com/librespeed/speedtest-cli) release after a
+  digest check. It measures against LibreSpeed servers rather than
+  Speedtest.net; `librespeed-cli --list` shows them and `--server <id>` picks
+  one.
+
 ## Custom CA certificates
 
 The source path is local to the Ansible controller. With `ansible-pull`, that

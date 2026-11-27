@@ -273,7 +273,7 @@
       alias myip='curl -s ifconfig.me'
       alias localip='hostname -I | awk "{print \$1}"'
       alias ping='ping -c 5'
-      alias speedtest='curl -s https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py | python3 -'
+      alias speedtest='librespeed-cli'
       alias weather='curl wttr.in'
       alias h='history'
       alias hg='history | grep'

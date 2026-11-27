@@ -675,24 +675,6 @@ entries:
       evidence: https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions
       checked: '2026-11-26'
     replacement: Remove the extension policy; users install by hand.
-  - name: speedtest-cli
-    upstream: sivel/speedtest-cli (archived)
-    source: https://github.com/sivel/speedtest-cli
-    declarations:
-      source:speedtest-cli: https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py
-    licence: Apache-2.0
-    licence_source: https://github.com/sivel/speedtest-cli/blob/master/LICENSE
-    owner: role-maintainer
-    update_channel: the master branch's speedtest.py on each run
-    verification: tls-only
-    security_critical: false
-    support:
-      status: archived
-      evidence: https://github.com/sivel/speedtest-cli
-      checked: '2026-11-26'
-    replacement: The distribution's speedtest-cli package, or Ookla's official speedtest CLI; drop the
-      raw download from user-shell-fallback.yml.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
   - name: weechat-scripts
     upstream: WeeChat project
     source: https://github.com/weechat/scripts
@@ -1252,22 +1234,21 @@ entries:
       checked: '2026-11-26'
     replacement: Pin the last good release, or the distribution's package where one exists.
   - name: filebrowser
-    upstream: filebrowser (GitHub project)
-    source: https://github.com/filebrowser/filebrowser
+    upstream: FileBrowser Quantum, gtsteffaniak (GitHub project; maintained fork of the archived filebrowser/filebrowser)
+    source: https://github.com/gtsteffaniak/filebrowser
     declarations:
-      github-release:filebrowser: filebrowser/filebrowser
+      github-release:filebrowser: gtsteffaniak/filebrowser
     licence: Apache-2.0
-    licence_source: https://github.com/filebrowser/filebrowser/blob/master/LICENSE
+    licence_source: https://github.com/gtsteffaniak/filebrowser/blob/main/LICENSE
     owner: role-maintainer
-    update_channel: the latest GitHub release on each run (latest-releases.yml)
+    update_channel: the latest GitHub release on each run (cli-tools.yml, workspace profile)
     verification: vendor-signature
     security_critical: false
     support:
-      status: archived
-      evidence: https://github.com/filebrowser/filebrowser
-      checked: '2026-11-26'
-    replacement: The distribution's or a maintained fork's file server; remove filebrowser from latest_github_repositories.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
+      status: maintained
+      evidence: https://github.com/gtsteffaniak/filebrowser
+      checked: '2026-11-27'
+    replacement: Pin the last good release, or the distribution's package where one exists.
   - name: flux
     upstream: fluxcd (GitHub project)
     source: https://github.com/fluxcd/flux2
@@ -1476,6 +1457,23 @@ entries:
       evidence: https://github.com/jesseduffield/lazygit
       checked: '2026-11-26'
     replacement: Pin the last good release, or the distribution's package where one exists.
+  - name: librespeed
+    upstream: LibreSpeed (GitHub project)
+    source: https://github.com/librespeed/speedtest-cli
+    declarations:
+      github-release:librespeed: librespeed/speedtest-cli
+    licence: LGPL-3.0-only
+    licence_source: https://github.com/librespeed/speedtest-cli/blob/master/LICENSE
+    owner: role-maintainer
+    update_channel: the latest GitHub release on each run (latest-releases.yml); backs the `speedtest`
+      shell alias in place of the archived sivel/speedtest-cli script
+    verification: vendor-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://github.com/librespeed/speedtest-cli
+      checked: '2026-11-27'
+    replacement: Pin the last good release, or drop the `speedtest` alias.
   - name: litra
     upstream: timrogers (GitHub project)
     source: https://github.com/timrogers/litra-rs
@@ -1620,24 +1618,6 @@ entries:
       evidence: https://github.com/LizardByte/Sunshine
       checked: '2026-11-26'
     replacement: Point latest_github_repositories at SunshineStream/Sunshine.
-    alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
-  - name: talhelper
-    upstream: budimanjojo (GitHub project)
-    source: https://github.com/budimanjojo/talhelper
-    declarations:
-      github-release:talhelper: budimanjojo/talhelper
-    licence: BSD-3-Clause
-    licence_source: https://github.com/budimanjojo/talhelper/blob/master/LICENSE
-    owner: role-maintainer
-    update_channel: the latest GitHub release on each run (latest-releases.yml)
-    verification: vendor-signature
-    security_critical: false
-    support:
-      status: archived
-      evidence: https://github.com/budimanjojo/talhelper
-      checked: '2026-11-26'
-    replacement: talosctl's own config generation (talos is already installed); remove talhelper from
-      latest_github_repositories.
     alert_tracked_in: https://git.developerdojo.org/Curiosity-Corp/catalog/-/issues/171
   - name: talos
     upstream: siderolabs (GitHub project)
