@@ -44,7 +44,9 @@ SSH_PORT="${SSH_PORT:-2222}"
 SEED_PORT="${SEED_PORT:-8099}"
 MONITOR_PORT="${MONITOR_PORT:-4444}"
 # Empty means QEMU's default for the accelerator (qemu64 under TCG).
-VM_MACHINE="${VM_MACHINE:-q35}"
+# SMM off: under TCG the guest sat in SeaBIOS's SMM handler (SMM=1, real mode,
+# EIP 0xfe11) after GRUB handed over, and never reached the kernel.
+VM_MACHINE="${VM_MACHINE:-q35,smm=off}"
 VM_CPU="${VM_CPU:-}"
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-1800}"
 SRC="$PWD"
@@ -186,7 +188,7 @@ boot() {
 # guest that never answers SSH shows whether it is running, halted or looping.
 monitor_sample() {
   local fd
-  exec {fd}<>"/dev/tcp/127.0.0.1/$MONITOR_PORT" 2>/dev/null || return 0
+  { exec {fd}<>"/dev/tcp/127.0.0.1/$MONITOR_PORT"; } 2>/dev/null || return 0
   printf 'info status\ninfo registers\n' >&"$fd"
   { echo "== $(date -u +%H:%M:%S)"; timeout 3 cat <&"$fd"; } >>"$OUT/monitor.log" 2>&1
   exec {fd}>&-
