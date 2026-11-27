@@ -1,0 +1,7 @@
+---
+# Agent CPU policy values of the wrong type (catalog#2): a word for a number
+# or a boolean, a single name for the list of wrapped commands.
+# expect: argument 'agent_cpu_policy_weight' is of type str and we were unable to convert to int
+# expect: The value 'yes please' is not a valid boolean
+agent_cpu_policy_weight: low
+agent_cpu_policy_split_across_users: yes please

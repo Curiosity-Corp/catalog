@@ -1,0 +1,19 @@
+---
+# Agent CPU policy values the slice, launcher or shell functions cannot use
+# (catalog#2). A hostile command or slice name must never reach a shell
+# function in /etc/profile.d or a unit name.
+# expect: agent_cpu_policy_quota must be auto (derived from the CPU count) or a systemd CPU percentage, such as 800% for eight CPUs; got "auto; rm -rf /".
+# expect: agent_cpu_policy_share_percent must be a whole percent from 1 to 100 (the share of all CPUs the agents may use); got 101.
+# expect: CPU of at least 1; got 1 and 0.
+# expect: agent_cpu_policy_weight must be a systemd CPUWeight from 1 to 10000 (100 is systemd's default); got 0.
+# expect: such as claude; got ["rm -rf", "a;b", "$(x)", "a-b", ""].
+# expect: agent_cpu_policy_slice must be a systemd slice unit name without a path, such as curiosity-agents.slice; got "../../evil.slice".
+# expect: agent_cpu_policy_runner_path must be empty or an absolute path without spaces
+agent_cpu_policy_enabled: true
+agent_cpu_policy_quota: "auto; rm -rf /"
+agent_cpu_policy_share_percent: 101
+agent_cpu_policy_min_quota_percent: 0
+agent_cpu_policy_weight: 0
+agent_cpu_policy_wrapped_commands: ["rm -rf", "a;b", "$(x)", "a-b", ""]
+agent_cpu_policy_slice: ../../evil.slice
+agent_cpu_policy_runner_path: bin/curiosity-agent-run

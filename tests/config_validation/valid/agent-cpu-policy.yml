@@ -1,0 +1,9 @@
+---
+# The agent CPU policy switched on with an explicit quota and extra wrapped
+# commands (catalog#2, docs/agent-cpu-policy.md).
+agent_cpu_policy_enabled: true
+agent_cpu_policy_quota: 800%
+agent_cpu_policy_share_percent: 100
+agent_cpu_policy_reserve_cpus: 0
+agent_cpu_policy_weight: 10000
+agent_cpu_policy_wrapped_commands: [claude, codex, my_agent2]

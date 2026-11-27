@@ -132,6 +132,12 @@
       {{ ziti_etc_hosts_pins
          if ziti_etc_hosts_pins | default([]) is sequence and ziti_etc_hosts_pins is not string
          else [] }}
+    # Agent CPU policy (catalog#2): wrapped commands become shell function
+    # names in /etc/profile.d, the slice name a systemd unit name.
+    _agent_cpu_commands: >-
+      {{ agent_cpu_policy_wrapped_commands
+         if agent_cpu_policy_wrapped_commands | default([]) is sequence and agent_cpu_policy_wrapped_commands is not string
+         else [] }}
     _config_rules:
       - ok: "{{ hardware_profile | default('') in _hardware_profile_names }}"
         msg: >-
@@ -192,6 +198,46 @@
           earlyoom_mem_percent and earlyoom_swap_percent must each be a whole
           percent from 1 to 100; got {{ earlyoom_mem_percent | default(none) | to_json }} and
           {{ earlyoom_swap_percent | default(none) | to_json }}.
+      - ok: "{{ agent_cpu_policy_quota | default('auto') | string | trim is match('^(auto|[1-9][0-9]*%)$') }}"
+        msg: >-
+          agent_cpu_policy_quota must be auto (derived from the CPU count) or a
+          systemd CPU percentage, such as 800% for eight CPUs; got
+          {{ agent_cpu_policy_quota | default(none) | to_json }}.
+      - ok: >-
+          {{ agent_cpu_policy_share_percent | default(75) | string is match(_whole_number_re)
+             and agent_cpu_policy_share_percent | default(75) | int >= 1
+             and agent_cpu_policy_share_percent | default(75) | int <= 100 }}
+        msg: >-
+          agent_cpu_policy_share_percent must be a whole percent from 1 to 100
+          (the share of all CPUs the agents may use); got
+          {{ agent_cpu_policy_share_percent | default(none) | to_json }}.
+      - ok: >-
+          {{ agent_cpu_policy_reserve_cpus | default(1) | string is match(_whole_number_re)
+             and agent_cpu_policy_min_quota_percent | default(50) | string is match(_whole_number_re)
+             and agent_cpu_policy_min_quota_percent | default(50) | int >= 1 }}
+        msg: >-
+          agent_cpu_policy_reserve_cpus must be a whole number of CPUs (0 or
+          more) and agent_cpu_policy_min_quota_percent a whole percent of one
+          CPU of at least 1; got {{ agent_cpu_policy_reserve_cpus | default(none) | to_json }} and
+          {{ agent_cpu_policy_min_quota_percent | default(none) | to_json }}.
+      - ok: >-
+          {{ agent_cpu_policy_weight | default(50) | string is match(_whole_number_re)
+             and agent_cpu_policy_weight | default(50) | int >= 1
+             and agent_cpu_policy_weight | default(50) | int <= 10000 }}
+        msg: >-
+          agent_cpu_policy_weight must be a systemd CPUWeight from 1 to 10000
+          (100 is systemd's default); got {{ agent_cpu_policy_weight | default(none) | to_json }}.
+      - ok: "{{ _agent_cpu_commands | map('string') | reject('match', _env_name_re) | list | length == 0 }}"
+        msg: >-
+          agent_cpu_policy_wrapped_commands entries become shell function names,
+          so each must be a plain identifier (letters, digits and underscore,
+          not starting with a digit), such as claude; got
+          {{ _agent_cpu_commands | map('string') | reject('match', _env_name_re) | list | to_json }}.
+      - ok: "{{ agent_cpu_policy_slice | default('curiosity-agents.slice') | string is match('^[A-Za-z0-9_.@-]+[.]slice$') }}"
+        msg: >-
+          agent_cpu_policy_slice must be a systemd slice unit name without a
+          path, such as curiosity-agents.slice; got
+          {{ agent_cpu_policy_slice | default(none) | to_json }}.
       - ok: >-
           {{ catalog_integrity_mode | default('warn') != 'enforce'
              or catalog_signing_key_fingerprint | default('') | string | trim is match('^[0-9A-Fa-f]{40}$') }}

@@ -64,14 +64,16 @@ def _named(prefix: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+# Input validation lives in tasks/validate-config.yml (catalog#31) and is tested
+# by tests/config_validation/{valid,invalid}/agent-cpu-policy*.yml; private host
+# names in defaults by tests/test_public_contract.py.
+
+
 def test_policy_is_off_by_default_and_public_defaults_are_generic() -> None:
     assert DEFAULTS["agent_cpu_policy_enabled"] is False
     assert DEFAULTS["agent_cpu_policy_quota"] == "auto"
     assert DEFAULTS["agent_cpu_policy_weight"] < 100  # below systemd's default weight
     assert DEFAULTS["agent_cpu_policy_slice"].endswith(".slice")
-    for key, value in DEFAULTS.items():
-        if key.startswith("agent_cpu_policy_"):
-            assert "developerdojo" not in str(value).lower()
     # No host is opted in through a hardware profile either.
     assert not any(
         "agent_cpu_policy" in profile for profile in DEFAULTS["hardware_profiles"].values()
@@ -160,49 +162,6 @@ def test_a_reload_handler_exists_and_never_fails_the_run() -> None:
         for n in ([task["notify"]] if isinstance(task.get("notify"), str) else task.get("notify", []))
     ]
     assert set(notified) == {"Reload agent CPU policy in user managers"}
-
-
-def _validation_passes(**overrides: object) -> bool:
-    """Evaluate every clause of the role's assert against the given variables."""
-    assertion = _named("Validate agent CPU policy inputs")["ansible.builtin.assert"]
-    env = _ansible_env()
-    env.tests["match"] = lambda value, pattern: re.match(pattern, str(value)) is not None
-    env.tests["boolean"] = lambda value: isinstance(value, bool)
-    variables = {k: v for k, v in DEFAULTS.items() if k.startswith("agent_cpu_policy_")}
-    variables.update(overrides)
-    return all(
-        env.from_string("{{ (" + clause + ") }}").render(**variables) == "True"
-        for clause in assertion["that"]
-    )
-
-
-def test_defaults_pass_validation_and_hostile_inputs_fail() -> None:
-    assert _validation_passes()
-    assert _validation_passes(agent_cpu_policy_quota="800%", agent_cpu_policy_wrapped_commands=[])
-    assert _validation_passes(agent_cpu_policy_wrapped_commands=["claude", "codex", "my_agent2"])
-    bad = (
-        {"agent_cpu_policy_quota": "0%"},
-        {"agent_cpu_policy_quota": "800"},
-        {"agent_cpu_policy_quota": "auto; rm -rf /"},
-        {"agent_cpu_policy_share_percent": 0},
-        {"agent_cpu_policy_share_percent": 101},
-        {"agent_cpu_policy_weight": 0},
-        {"agent_cpu_policy_weight": 10001},
-        {"agent_cpu_policy_min_quota_percent": 0},
-        {"agent_cpu_policy_split_across_users": "yes please"},
-        {"agent_cpu_policy_wrapped_commands": "claude"},
-        # A hostile command or slice name must not reach a shell function or unit.
-        {"agent_cpu_policy_wrapped_commands": ["rm -rf"]},
-        {"agent_cpu_policy_wrapped_commands": ["a;b"]},
-        {"agent_cpu_policy_wrapped_commands": ["$(x)"]},
-        {"agent_cpu_policy_wrapped_commands": ["a-b"]},
-        {"agent_cpu_policy_wrapped_commands": [""]},
-        {"agent_cpu_policy_slice": "../../evil.slice"},
-        {"agent_cpu_policy_slice": "x.service"},
-        {"agent_cpu_policy_slice": "a b.slice"},
-    )
-    for overrides in bad:
-        assert not _validation_passes(**overrides), overrides
 
 
 # ---------------------------------------------------------------------------

@@ -57,6 +57,11 @@ It checks three layers:
      ([remote workspaces](workspace-providers.md)).
    - `pia_tunnel_apps` cannot be combined with a hardware profile that already
      routes everything through PIA.
+   - The [agent CPU policy](agent-cpu-policy.md) values must be usable:
+     `agent_cpu_policy_quota` is `auto` or a percentage such as `800%`, the
+     share is 1 to 100 percent, the weight 1 to 10000, and each
+     `agent_cpu_policy_wrapped_commands` entry and `agent_cpu_policy_slice` is
+     a name that is safe as a shell function and a systemd unit.
    - `accessibility_packages` must be empty on the workspace profile, which has
      no desktop session; its names come from a fixed list (layer 1).
    - `user_dotfiles_apply: review` with a `user_dotfiles_repo` needs

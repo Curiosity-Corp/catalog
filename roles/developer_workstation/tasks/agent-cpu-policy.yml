@@ -24,35 +24,9 @@
 # containers and the workspace profile.
 # =============================================================================
 
-- name: Validate agent CPU policy inputs
-  ansible.builtin.assert:
-    that:
-      - agent_cpu_policy_quota | string is match('^(auto|[1-9][0-9]*%)$')
-      - agent_cpu_policy_share_percent | string is match('^[0-9]+$')
-      - agent_cpu_policy_share_percent | int >= 1
-      - agent_cpu_policy_share_percent | int <= 100
-      - agent_cpu_policy_reserve_cpus | string is match('^[0-9]+$')
-      - agent_cpu_policy_min_quota_percent | string is match('^[0-9]+$')
-      - agent_cpu_policy_min_quota_percent | int >= 1
-      - agent_cpu_policy_split_across_users is boolean
-      - agent_cpu_policy_weight | string is match('^[0-9]+$')
-      - agent_cpu_policy_weight | int >= 1
-      - agent_cpu_policy_weight | int <= 10000
-      - agent_cpu_policy_wrapped_commands is sequence
-      - agent_cpu_policy_wrapped_commands is not string
-      - >-
-        agent_cpu_policy_wrapped_commands
-        | reject('match', '^[A-Za-z_][A-Za-z0-9_]*$') | list | length == 0
-      - agent_cpu_policy_slice is match('^[A-Za-z0-9_.@-]+[.]slice$')
-    fail_msg: >-
-      agent_cpu_policy_quota must be auto or a systemd percentage such as 800%,
-      agent_cpu_policy_share_percent must be 1-100, agent_cpu_policy_reserve_cpus
-      a whole number, agent_cpu_policy_min_quota_percent at least 1,
-      agent_cpu_policy_weight 1-10000, agent_cpu_policy_split_across_users a
-      boolean, every agent_cpu_policy_wrapped_commands entry a plain shell
-      identifier (letters, digits, underscore) and agent_cpu_policy_slice a
-      *.slice unit name.
-  when: agent_cpu_policy_enabled | bool
+# The inputs (quota format, ranges, shell-safe command and slice names) are
+# checked by tasks/validate-config.yml, which runs before any task of the role
+# whatever --tags are given (catalog#31).
 
 # The quota is only enforced when the kernel runs cgroup v2 with the cpu
 # controller. On anything else the slice would silently bound nothing, so the
