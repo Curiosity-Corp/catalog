@@ -282,6 +282,42 @@ debian13-quickstart:
       - debian-quickstart/
     expire_in: 30 days
 
+# catalog#135: follow docs/quickstarts/laptop.md in a disposable Debian 13
+# virtual machine, apply as root included. scripts/debian13_vm_run.sh boots
+# Debian's own generic cloud image (checked against SHA512SUMS) under QEMU,
+# started as the runner's ordinary uid inside this container, with user-mode
+# networking and throwaway qcow2 overlays; the VM and its disks are discarded
+# with the job. Without /dev/kvm the guest runs under TCG, so the run takes
+# one to three hours: it runs on merge requests that change the harness and is
+# a manual button on every other merge request. The report feeds
+# docs/evidence/2026-11-27-debian13-laptop-vm-run.md.
+debian13-vm-run:
+  stage: test
+  image: public.ecr.aws/docker/library/python:3.13-trixie@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  tags:
+    - cpu-heavy
+  timeout: 4h
+  variables:
+    KUBERNETES_CPU_REQUEST: "4"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "6Gi"
+    KUBERNETES_MEMORY_LIMIT: "12Gi"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - scripts/debian13_vm_run.sh
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+  script:
+    - scripts/debian13_vm_run.sh
+  artifacts:
+    when: always
+    name: "debian13-vm-run-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - debian13-vm/
+    expire_in: 30 days
+
 # catalog#164: run the laptop quickstart's step 3 preview (--check --diff) in
 # this throwaway container, which the role has never run on, and fail if it
 # stops before the end of the repos task group or anywhere laptop.md step 3
