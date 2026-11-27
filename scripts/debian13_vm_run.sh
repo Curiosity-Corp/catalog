@@ -42,6 +42,10 @@ VM_MEMORY_MB="${VM_MEMORY_MB:-6144}"
 VM_DISK_SIZE="${VM_DISK_SIZE:-40G}"
 SSH_PORT="${SSH_PORT:-2222}"
 SEED_PORT="${SEED_PORT:-8099}"
+MONITOR_PORT="${MONITOR_PORT:-4444}"
+# Empty means QEMU's default for the accelerator (qemu64 under TCG).
+VM_MACHINE="${VM_MACHINE:-q35}"
+VM_CPU="${VM_CPU:-}"
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-1800}"
 SRC="$PWD"
 
@@ -113,6 +117,7 @@ else
   # QEMU's default CPU model (qemu64): Debian 13 needs only baseline x86-64.
   # With -cpu max the guest kernel printed nothing after GRUB for 18 minutes.
   ACCEL=(-accel "tcg,thread=multi")
+  [ -n "$VM_CPU" ] && ACCEL+=(-cpu "$VM_CPU")
   echo "- Accelerator: TCG (no /dev/kvm in the job; software emulation)" >>"$REPORT"
 fi
 echo "- QEMU: $(head -n 1 "$OUT/0-qemu-version.log")" >>"$REPORT"
@@ -130,7 +135,7 @@ echo "$expected  $WORK/$IMAGE_NAME" | sha512sum -c - >/dev/null \
   echo "- Image: $IMAGE_DIR_URL/$IMAGE_NAME"
   echo "- Image SHA-512 (matches SHA512SUMS): $expected"
   echo "- Image build: $(curl -fsSIL "$IMAGE_DIR_URL/$IMAGE_NAME" | awk 'tolower($1) == "last-modified:" { $1 = ""; print substr($0, 2) }' | tr -d '\r' | tail -n 1)"
-  echo "- VM: $VM_CPUS vCPU, $VM_MEMORY_MB MiB RAM, $VM_DISK_SIZE virtual disk, user-mode network"
+  echo "- VM: $VM_CPUS vCPU, $VM_MEMORY_MB MiB RAM, $VM_DISK_SIZE virtual disk, machine $VM_MACHINE, CPU ${VM_CPU:-default}, user-mode network"
 } >>"$REPORT"
 
 # --- cloud-init seed: researcher, key-only SSH, passwordless sudo -----------
@@ -164,7 +169,7 @@ SSH=(ssh -i "$WORK/id_ed25519" -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout
 
 # boot <disk> <serial-log>: start the guest in the background.
 boot() {
-  qemu-system-x86_64 -machine q35 "${ACCEL[@]}" -smp "$VM_CPUS" -m "$VM_MEMORY_MB" \
+  qemu-system-x86_64 -machine "$VM_MACHINE" "${ACCEL[@]}" -smp "$VM_CPUS" -m "$VM_MEMORY_MB" \
     -L "$QROOT/usr/share/seabios" -L "$QROOT/usr/share/qemu" -L "$QROOT/usr/lib/ipxe/qemu" \
     -nodefaults -display none -serial "file:$2" \
     -drive "file=$1,if=virtio,format=qcow2,cache=unsafe,discard=unmap" \
@@ -172,8 +177,19 @@ boot() {
     -device virtio-net-pci,netdev=n0,romfile= \
     -device virtio-rng-pci \
     -smbios "type=1,serial=ds=nocloud;s=http://10.0.2.2:$SEED_PORT/" \
+    -monitor "tcp:127.0.0.1:$MONITOR_PORT,server,nowait" \
     >>"$OUT/qemu.log" 2>&1 &
   QEMU_PID=$!
+}
+
+# monitor_sample: append the guest's state and registers to monitor.log, so a
+# guest that never answers SSH shows whether it is running, halted or looping.
+monitor_sample() {
+  local fd
+  exec {fd}<>"/dev/tcp/127.0.0.1/$MONITOR_PORT" 2>/dev/null || return 0
+  printf 'info status\ninfo registers\n' >&"$fd"
+  { echo "== $(date -u +%H:%M:%S)"; timeout 3 cat <&"$fd"; } >>"$OUT/monitor.log" 2>&1
+  exec {fd}>&-
 }
 
 # wait_ssh: wait until the guest answers SSH and cloud-init has finished.
@@ -181,6 +197,7 @@ wait_ssh() {
   local start=$SECONDS
   until "${SSH[@]}" true 2>/dev/null; do
     kill -0 "$QEMU_PID" 2>/dev/null || return 1
+    [ $(( (SECONDS - start) % 300 )) -lt 10 ] && monitor_sample
     [ $((SECONDS - start)) -ge "$BOOT_TIMEOUT" ] && return 1
     sleep 10
   done
