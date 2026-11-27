@@ -259,7 +259,7 @@ wait_ssh >/dev/null || die "the guest did not come back for the run (serial-1-ru
 # Step 1. The guide clones tag v0.1.0 from GitHub; the code under test here is
 # this job's commit, copied in with git archive (same files, no .git).
 step 1-apt-update "sudo apt-get update"
-step 1-apt-prereqs "sudo apt-get install -y git python3-venv python3-pip"
+step 1-apt-prereqs "sudo apt-get install -y git gpg python3-venv python3-pip"
 start=$SECONDS
 git -C "$SRC" archive --format=tar HEAD \
   | "${SSH[@]}" 'rm -rf ~/catalog && mkdir ~/catalog && tar -x -C ~/catalog' >"$OUT/1-checkout.log" 2>&1

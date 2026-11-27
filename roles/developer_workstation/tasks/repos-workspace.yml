@@ -29,6 +29,17 @@
     state: absent
   notify: Update apt cache
 
+# --- gpg for the vendor keyrings (catalog#179) ---
+# apt-keyring.yml dearmors and inspects each vendor key with gpg, and
+# apt_repository needs gpg too. Ubuntu installs it by default; Debian 13 does
+# not (apt verifies with sqv), so without this the first keyring fails.
+- name: Ensure gpg is installed for the vendor APT keyrings
+  ansible.builtin.apt:
+    name: gpg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 # --- GitHub CLI ---
 - name: Converge github-cli APT keyring
   ansible.builtin.include_tasks: apt-keyring.yml
