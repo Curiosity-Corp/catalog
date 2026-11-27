@@ -160,7 +160,13 @@ fn devices_that_are_not_gpus_are_ignored() {
     let machine = Machine::new();
     machine.pci("0000:02:00.0", NETWORK, "8086", "15f3", Some("igc"));
     // An Intel NPU is a processing accelerator, not a GPU.
-    machine.pci("0000:00:0b.0", ACCELERATOR, "8086", "7d1d", Some("intel_vpu"));
+    machine.pci(
+        "0000:00:0b.0",
+        ACCELERATOR,
+        "8086",
+        "7d1d",
+        Some("intel_vpu"),
+    );
     machine.file("proc/cpuinfo", "processor\t: 0\nflags\t\t: fpu vme sse2\n");
     let report = machine.json();
     assert_eq!(report["state"], "none");
@@ -347,7 +353,10 @@ fn a_virtual_adapter_in_a_vm_is_virtual_only() {
     assert_eq!(report["devices"][0]["kind"], "virtual");
     assert_eq!(report["devices"][0]["vendor"], "virtio");
     let text = machine.text();
-    assert!(text.contains("This machine is a virtual machine."), "{text}");
+    assert!(
+        text.contains("This machine is a virtual machine."),
+        "{text}"
+    );
     assert!(text.contains("tools: not applicable"), "{text}");
 }
 

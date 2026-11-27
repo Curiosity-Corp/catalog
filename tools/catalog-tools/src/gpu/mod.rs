@@ -421,7 +421,10 @@ fn judge(vendor: Vendor, device: &Device) -> (State, String) {
     let Some(driver) = device.kernel_driver.as_deref() else {
         return (
             State::NeedsDriver,
-            format!("no kernel driver is bound; install {}", vendor.driver_hint()),
+            format!(
+                "no kernel driver is bound; install {}",
+                vendor.driver_hint()
+            ),
         );
     };
     let compute_driver = match (vendor, driver) {
