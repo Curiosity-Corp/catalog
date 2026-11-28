@@ -165,6 +165,19 @@
           rewritten safely; leaving the /tmp inode cap at its current value.
       when: not (_tmp_hygiene_tmp_mount_derivable | bool)
 
+# A stock host has no tmp.mount.d; the template module does not create it.
+- name: Ensure the tmp.mount drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ tmp_hygiene_nr_inodes_dropin_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - tmp_hygiene_enabled | bool
+    - _tmp_hygiene_nr_inodes | string | length > 0
+    - _tmp_hygiene_tmp_mount_derivable | bool
+
 - name: Install the /tmp inode cap drop-in
   ansible.builtin.template:
     src: curiosity-tmp-inodes.mount.conf.j2
