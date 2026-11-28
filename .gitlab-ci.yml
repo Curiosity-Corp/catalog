@@ -298,7 +298,8 @@ debian13-vm-run:
   image: public.ecr.aws/docker/library/python:3.13-trixie@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   tags:
     - cpu-heavy
-  timeout: 4h
+  # Under TCG the first full apply alone took about two hours (job 3209499).
+  timeout: 6h
   # A push must not end a run that takes hours (default interruptible: true).
   interruptible: false
   variables:
