@@ -363,7 +363,9 @@ lint:
   extends: .python_setup
   stage: validate
   script:
-    - ANSIBLE_ROLES_PATH=roles ansible-lint playbooks/site.yml playbooks/preview-vars.yml roles
+    # --offline: ansible-lint would otherwise install requirements.yml itself
+    # at start; the collections come from galaxy-collections (catalog#182).
+    - ANSIBLE_ROLES_PATH=roles ansible-lint --offline playbooks/site.yml playbooks/preview-vars.yml roles
 
 # galaxy.yml lets users resolve any community.general from its floor upward,
 # while every other job uses the exact pin in ci/requirements.yml. This job

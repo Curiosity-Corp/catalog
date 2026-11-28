@@ -47,7 +47,9 @@ versions with every file matching its manifest, and fails, never fetches,
 when it does not: a job with `needs:` must list `galaxy-collections`. Two
 guards keep it that way. `tests/test_galaxy_fetch_isolation.py` fails when any
 other job, or a script it runs, names galaxy.ansible.com or runs
-`ansible-galaxy collection install` or `download` without `--offline`; and the
+`ansible-galaxy collection install` or `download` without `--offline`, or
+runs ansible-lint without `--offline` (it installs `requirements.yml` itself
+at start otherwise); and the
 pipeline sets `ANSIBLE_GALAXY_SERVER` to a closed local port for every job but
 the fetch job, so a live fetch the scan cannot see fails at once.
 `tests/test_fetch_collections_retry.py` replays the reset against the fetch

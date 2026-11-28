@@ -6,7 +6,8 @@ job, galaxy-collections, fetches everything with retries
 (scripts/fetch-collections.sh) and every other job reads its artifact. These
 tests fail when any other job, through its own script lines or a repository
 script it runs, names galaxy.ansible.com or runs `ansible-galaxy collection
-install` or `download` without `--offline`.
+install` or `download` without `--offline`, or runs ansible-lint without
+`--offline` (it installs requirements.yml itself at start otherwise).
 
 What a static scan cannot see (a pytest that shells out, say) meets the
 runtime guard: every job but the fetch job has ANSIBLE_GALAXY_SERVER pointed
@@ -35,6 +36,8 @@ SCRIPT_KEYS = ("before_script", "script", "after_script")
 REPO_FILE = re.compile(r"(?<![\w/.-])(?:\./)?(scripts/[\w./-]+\.(?:sh|py))")
 GALAXY_HOST = re.compile(r"galaxy\.ansible\.com")
 GALAXY_FETCH = re.compile(r"ansible-galaxy\s+(?:(?:collection|role)\s+)?(?:install|download)\b(?P<rest>[^\n]*)")
+# ansible-lint installs the project's requirements.yml at start unless offline.
+LINT_FETCH = re.compile(r"ansible-lint\b(?P<rest>[^\n]*)")
 CLOSED_PORT = "http://127.0.0.1:9/"
 
 
@@ -94,7 +97,8 @@ def _reached_files(lines: list[str], root: Path) -> dict[str, str]:
 def galaxy_reaches(text: str) -> list[str]:
     """The lines in TEXT that would reach public Galaxy."""
     hits = [m.group(0) for m in GALAXY_HOST.finditer(text)]
-    hits += [m.group(0).strip() for m in GALAXY_FETCH.finditer(text) if "--offline" not in m.group("rest")]
+    for pattern in (GALAXY_FETCH, LINT_FETCH):
+        hits += [m.group(0).strip() for m in pattern.finditer(text) if "--offline" not in m.group("rest")]
     return hits
 
 
@@ -176,8 +180,9 @@ def test_the_guard_catches_a_job_that_fetches(tmp_path: Path) -> None:
         "inherited": {"extends": ".base", "script": ["true"]},
         "nested": {"script": ["scripts/outer.sh"]},
         "host": {"script": ["curl -fsS https://galaxy.ansible.com/api/"]},
-        "offline": {"script": ["scripts/offline.sh"]},
+        "offline": {"script": ["scripts/offline.sh", "ansible-lint --offline roles"]},
+        "lint": {"script": ["ANSIBLE_ROLES_PATH=roles ansible-lint roles"]},
     }
     found = violations(config, tmp_path)
-    assert sorted(found) == ["direct", "host", "inherited", "nested"]
+    assert sorted(found) == ["direct", "host", "inherited", "lint", "nested"]
     assert any("scripts/inner.sh" in hit for hit in found["nested"])
