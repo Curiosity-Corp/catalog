@@ -66,7 +66,10 @@
 # launch and PATH order decided which one ran. The native installer owns
 # ~/.local/bin/claude for every dev_users account (claude-code-user.yml),
 # every run moves it to claude_native_channel, and the run fails if any
-# second `claude` is still reachable.
+# second `claude` is still reachable. claude_native_users adds accounts that
+# get Claude Code and nothing else of the desktop (a person who works over
+# ssh, with no seat at this screen); an account in both lists is converged
+# once.
 # =============================================================================
 
 - name: Remove retired system-wide Claude Code launchers
@@ -76,12 +79,29 @@
   loop: "{{ claude_retired_system_launchers }}"
   when: claude_native_enabled | default(true)
 
+- name: Validate the Claude Code only accounts
+  ansible.builtin.assert:
+    that:
+      - claude_native_users is sequence
+      - claude_native_users is not string
+      - claude_native_users | selectattr('name', 'defined') | selectattr('home', 'defined') | list | length == claude_native_users | length
+      - claude_native_users | map(attribute='name') | select('match', '^[a-z_][a-z0-9_-]*$') | list | length == claude_native_users | length
+      - claude_native_users | map(attribute='home') | select('match', '^/[^ ]+$') | reject('search', '/\\.\\./') | list | length == claude_native_users | length
+      - claude_native_users | map(attribute='name') | unique | list | length == claude_native_users | length
+    fail_msg: >-
+      claude_native_users must be a list of {name, home} with unique POSIX
+      user names and absolute home paths, like dev_users; got
+      {{ claude_native_users | to_json }}.
+    quiet: true
+  when: claude_native_enabled | default(true)
+  tags: [packages, ai]
+
 - name: Keep a single native Claude Code install for every managed user
   ansible.builtin.include_tasks:
     file: claude-code-user.yml
     apply:
       tags: [packages, ai]
-  loop: "{{ dev_users }}"
+  loop: "{{ dev_users + (claude_native_users | rejectattr('name', 'in', dev_users | map(attribute='name') | list) | list) }}"
   loop_control:
     loop_var: dw_user
     label: "{{ dw_user.name }}"

@@ -140,6 +140,7 @@ argument_specs:
       codex_standalone_release: {type: str}
       claude_native_enabled: {type: bool}
       claude_native_channel: {type: str}
+      claude_native_users: {type: list, elements: dict}
       claude_native_release_base_url: {type: str}
       claude_native_release_key_file: {type: str}
       claude_native_release_key_fingerprint: {type: str}

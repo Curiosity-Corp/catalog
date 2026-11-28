@@ -406,7 +406,7 @@ policy:
       tests/test_pro_mimic.py tests/test_firewall_posture.py tests/test_power_policy.py
       tests/test_streamstack.py tests/test_streamstack_low_latency.py tests/test_streamstack_ai_deps.py tests/test_streamstack_apt.py tests/test_hhtest.py tests/test_workstation_storage.py tests/test_cpu_thermal_guard.py
       tests/test_ziti_health.py tests/test_ziti_pins.py tests/test_include_tags_apply.py tests/test_no_conflict_markers.py tests/test_update_snapshot_retention.py
-      tests/test_mouse_debounce.py tests/test_fleetd.py tests/test_user_git_timers.py
+      tests/test_mouse_debounce.py tests/test_fleetd.py tests/test_user_git_timers.py tests/test_claude_native_users.py
       tests/test_python_research.py tests/test_monitor_sleep_pointer.py tests/test_apt_vendor_channels.py tests/test_preflight_tags.py
       tests/test_no_log_policy.py tests/test_argument_specs.py tests/test_ansible_pull_poll.py
       tests/test_agent_cpu_policy.py tests/test_hypersystem_desktop.py
