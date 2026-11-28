@@ -136,6 +136,16 @@ def test_the_fetch_job_is_the_one_that_fetches() -> None:
         assert path in fetch["artifacts"]["paths"]
 
 
+def test_fetched_collections_stay_out_of_the_built_collection() -> None:
+    """The fetch job's directories sit in the checkout the collection job
+    builds from; third-party code must not ship in our artifact (the
+    third_party licence scan caught .ci-collections-floor, catalog#182)."""
+    galaxy = yaml.safe_load((ROOT / "galaxy.yml").read_text())
+    fetch = jobs(_config())["galaxy-collections"]
+    for path in fetch["artifacts"]["paths"]:
+        assert path.rstrip("/") in galaxy["build_ignore"], f"galaxy.yml build_ignore lacks {path}"
+
+
 def test_every_other_job_meets_a_closed_galaxy() -> None:
     config = _config()
     assert config["variables"]["ANSIBLE_GALAXY_SERVER"] == CLOSED_PORT

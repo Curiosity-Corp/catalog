@@ -41,6 +41,8 @@ build_ignore:
   - .mypy_cache
   - .ci-venv
   - .ci-collections
+  - .ci-collections-floor
+  - .ci-collections-user
   - .research-profile
   - research-profile-report.md
   # config-validation CI job report and run logs (catalog#31), not collection content.
