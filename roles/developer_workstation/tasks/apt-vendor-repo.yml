@@ -5,6 +5,9 @@
 #   apt_vendor_repo_key        key in apt_vendor_repos (dotnet, azure_cli, mongodb)
 #   apt_vendor_repo_filename   sources.list.d file name
 #   apt_vendor_repo_signed_by  keyring path for signed-by
+#   apt_vendor_repo_signed_by_debian  optional keyring for the Debian channel,
+#                              when the vendor signs it with another key
+#                              (Microsoft's 2025 key, catalog#180)
 #   apt_vendor_repo_available  optional, default true: false when the caller
 #                              already found no channel (MongoDB's index)
 # Ubuntu writes the noble line unchanged. Debian first fetches the vendor's
@@ -18,6 +21,9 @@
     _apt_vendor_repo: "{{ apt_vendor_repos[apt_vendor_repo_key][apt_vendor_family] }}"
     _apt_vendor_repo_published: "{{ apt_vendor_repo_available | default(true) | bool }}"
     _apt_vendor_repo_reason: "the vendor publishes no channel for this release"
+    _apt_vendor_repo_keyring: >-
+      {{ (apt_vendor_repo_signed_by_debian | default(apt_vendor_repo_signed_by))
+         if apt_vendor_family == 'debian' else apt_vendor_repo_signed_by }}
 
 - name: Check the vendor publishes this Debian release for {{ apt_vendor_repo_key }}
   ansible.builtin.uri:
@@ -60,9 +66,21 @@
       packages come from the distribution archive where it ships them.
   when: not (_apt_vendor_repo_published | bool)
 
+# A Debian line an earlier run wrote with another keyring would make apt
+# report conflicting Signed-By values for the same source (catalog#180).
+- name: Remove a Debian line signed by another keyring for {{ apt_vendor_repo_key }}
+  ansible.builtin.lineinfile:
+    path: "/etc/apt/sources.list.d/{{ apt_vendor_repo_filename }}.list"
+    regexp: "^deb\\s\\[(?!.*signed-by={{ _apt_vendor_repo_keyring | trim | regex_escape }}[\\]\\s]).*\\]\\s{{ _apt_vendor_repo.uri | regex_escape }}\\s{{ _apt_vendor_repo.suite | regex_escape }}\\s"
+    state: absent
+  when:
+    - apt_vendor_family == 'debian'
+    - _apt_vendor_repo_published | bool
+  notify: Update apt cache
+
 - name: Add vendor repository {{ apt_vendor_repo_key }}
   ansible.builtin.apt_repository:
-    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by={{ apt_vendor_repo_signed_by }}] {{ _apt_vendor_repo.uri }} {{ _apt_vendor_repo.suite }} {{ _apt_vendor_repo.components }}"
+    repo: "deb [arch={{ ansible_architecture | replace('x86_64', 'amd64') }} signed-by={{ _apt_vendor_repo_keyring | trim }}] {{ _apt_vendor_repo.uri }} {{ _apt_vendor_repo.suite }} {{ _apt_vendor_repo.components }}"
     filename: "{{ apt_vendor_repo_filename }}"
     state: present
   when: _apt_vendor_repo_published | bool

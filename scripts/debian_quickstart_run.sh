@@ -79,7 +79,7 @@ apt_user=(-o "Dir::State::Lists=$WORK/prereq/lists" -o "Dir::Cache=$WORK/prereq/
           -o Debug::NoLocking=1)
 mkdir -p "$WORK/prereq/lists/partial" "$WORK/prereq/cache/archives/partial"
 step 1-apt-update apt-get "${apt_user[@]}" update
-step 1-apt-prereqs-simulate apt-get "${apt_user[@]}" install --simulate -y git python3-venv python3-pip
+step 1-apt-prereqs-simulate apt-get "${apt_user[@]}" install --simulate -y git gpg python3-venv python3-pip
 step 1-venv python3 -m venv .venv
 # shellcheck disable=SC1091
 . .venv/bin/activate || { echo "- Result: venv activation failed" >>"$REPORT"; cat "$REPORT"; exit 1; }

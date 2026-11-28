@@ -69,8 +69,11 @@ sources:
     source: apt-repository
     url: https://packages.microsoft.com/ubuntu/24.04/prod
     covers: [https://packages.microsoft.com/debian/]
-    keys: [https://packages.microsoft.com/keys/microsoft.asc]
-    declared_in: [roles/developer_workstation/defaults/main.yml (apt_vendor_repos.dotnet)]
+    keys:
+      - https://packages.microsoft.com/keys/microsoft.asc
+      # Microsoft's 2025 key signs the Debian 13 channel (catalog#180).
+      - https://packages.microsoft.com/keys/microsoft-2025.asc
+    declared_in: [roles/developer_workstation/defaults/main.yml (apt_vendor_repos.dotnet), roles/developer_workstation/tasks/repos-workspace.yml]
     pinned: false
   - name: apt-microsoft-azure-cli
     kind: runtime-package-source

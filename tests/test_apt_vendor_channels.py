@@ -272,7 +272,8 @@ def test_ubuntu_does_no_debian_work(release: str, profile: str) -> None:
 
 VENDOR_FILES = {f"/etc/apt/sources.list.d/{n}.list" for n in ("microsoft-dotnet", "azure-cli", "mongodb-org")}
 ARCH = "arch=amd64"
-MS_KEY = "signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg"
+# Microsoft signs debian/13/prod with its 2025 key, not microsoft.asc (catalog#180).
+MS_2025_KEY = "signed-by=/usr/share/keyrings/microsoft-2025-archive-keyring.gpg"
 MONGO_KEY = "signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg"
 
 
@@ -281,7 +282,7 @@ def test_debian13_uses_vendor_debian_channels(profile: str) -> None:
     run = select(ROLE, DEBIAN13, profile)
     lines = {r["filename"]: r["repo"] for r in run.repositories}
     assert lines["microsoft-dotnet"] == (
-        f"deb [{ARCH} {MS_KEY}] https://packages.microsoft.com/debian/13/prod trixie main")
+        f"deb [{ARCH} {MS_2025_KEY}] https://packages.microsoft.com/debian/13/prod trixie main")
     expected_mongo_channel = "8.3" if profile == "desktop" else "9.0"
     assert lines["mongodb-org"] == (
         f"deb [{ARCH} {MONGO_KEY}] https://repo.mongodb.org/apt/debian "

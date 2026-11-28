@@ -18,7 +18,7 @@ The laptop is its own controller. In a normal terminal (not as root):
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git python3-venv python3-pip
+sudo apt-get install -y git gpg python3-venv python3-pip
 git clone --branch v0.1.0 https://github.com/Curiosity-Corp/catalog.git
 cd catalog
 python3 -m venv .venv

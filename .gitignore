@@ -21,6 +21,8 @@ research-profile-report.md
 config-validation/
 debian-quickstart/
 .debian-quickstart-work/
+debian13-vm/
+debian13-vm-work/
 .quickstart-check-preview/
 quickstart-check-preview/
 *.tar.gz

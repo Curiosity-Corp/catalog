@@ -140,7 +140,12 @@
           {{ apt_keyring_url }} did not yield a valid OpenPGP key{{
             (' with fingerprint ' ~ apt_keyring_fingerprint)
             if (apt_keyring_fingerprint | default('')) | length > 0 else ''
-          }}; {{ apt_keyring_dest }} was left unchanged
+          }}; {{ apt_keyring_dest }} was left unchanged{{
+            ('. gpg --show-keys exited ' ~ _apt_keyring_info.rc ~ ': '
+             ~ (_apt_keyring_info.stderr | default('') | trim)
+             ~ ((' (' ~ _apt_keyring_info.msg ~ ')') if _apt_keyring_info.msg is defined else ''))
+            if _apt_keyring_info.rc | default(1) != 0 else ''
+          }}
 
     - name: Install the APT keyring for {{ apt_keyring_name }}
       ansible.builtin.copy:
