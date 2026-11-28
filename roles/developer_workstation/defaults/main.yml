@@ -709,6 +709,12 @@ codex_standalone_home_dir: "{{ dev_user_home }}/.codex"
 # autoUpdatesChannel), and fails if more than one `claude` remains on the
 # user's PATH.
 claude_native_enabled: true
+# Accounts that get native Claude Code and nothing else of the desktop, in
+# the dev_users shape ({name, home}): a person who works on this host over
+# ssh and has no seat at its screen (a dev_users entry also gets the screen
+# lock, which refuses an account with no password). The account must exist;
+# an account also in dev_users is converged once.
+claude_native_users: []
 # Claude Code releases: the channel file names a version whose manifest.json
 # (SHA-256 per platform binary) is signed with the Claude Code release signing
 # key. The role pins that key (files/claude-code-release-key.asc, fingerprint

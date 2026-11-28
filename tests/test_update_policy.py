@@ -252,10 +252,13 @@ def main() -> None:
     if "'@anthropic-ai/claude-code'" not in (ROLE / "tasks/node-packages.yml").read_text():
         raise SystemExit("Root-scoped npm Claude Code copies must be removed")
     # Claude Code is converged for every dev_users account, not only dev_user:
-    # a second desktop user kept an unmanaged, outdated install.
+    # a second desktop user kept an unmanaged, outdated install. Accounts in
+    # claude_native_users (ssh-only people) go through the same task file.
     ai_assistants_text = (ROLE / "tasks/ai-assistants.yml").read_text()
-    if "file: claude-code-user.yml" not in ai_assistants_text or 'loop: "{{ dev_users }}"' not in ai_assistants_text:
-        raise SystemExit("Claude Code must be converged for every dev_users account")
+    if "file: claude-code-user.yml" not in ai_assistants_text or 'loop: "{{ dev_users + (claude_native_users' not in ai_assistants_text:
+        raise SystemExit("Claude Code must be converged for every dev_users and claude_native_users account")
+    if defaults.get("claude_native_users") != []:
+        raise SystemExit("claude_native_users must default to no account")
     ai_assistants_text += (ROLE / "tasks/claude-code-user.yml").read_text()
     # catalog#178: Codex installs from codex-standalone.yml, after release discovery.
     ai_assistants_text += (ROLE / "tasks/codex-standalone.yml").read_text()

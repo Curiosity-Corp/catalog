@@ -142,6 +142,7 @@ variables:
   hhtest_enabled: {safety: account}
   dev_user: {safety: account}
   dev_users: {safety: account}
+  claude_native_users: {safety: account}
   ansible_pull_repo: {safety: supply-chain, note: "The host runs whatever this repository's playbook says, as root."}
   ansible_pull_branch: {safety: supply-chain}
   ansible_pull_playbook: {safety: supply-chain}
