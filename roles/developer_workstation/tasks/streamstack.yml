@@ -15,10 +15,13 @@
 # web) require before they list a virtual camera.
 #
 # The application (CLI, Console, native engine, voice chain, panel menu, auto
-# mode, presets) is the StreamStack project, vendored at files/streamstack as a
-# squashed git subtree of a release tag; this file wires it into the host:
-# packages, the loopback cameras, udev, the settings file, the install under
-# /usr/local and the user services. There is no OBS Studio and no Easy Effects
+# mode, presets) is the StreamStack project. `streamstack_source` says where it
+# comes from: `vendored` (the default) is the Python release vendored at
+# files/streamstack as a squashed git subtree of a release tag and installed
+# under /usr/local; `apt` is the native build from StreamStack's signed apt
+# repository (streamstack-apt.yml, catalog#183). This file wires it into the
+# host: packages, the loopback cameras, udev, the settings file, the install
+# and the user services. There is no OBS Studio and no Easy Effects
 # any more; a host that still has them gets them removed.
 #
 # Included only when `streamstack_enabled` is true (the hardware profile's
@@ -45,6 +48,7 @@
       - streamstack_fps | string is match('^[0-9]+$')
       - streamstack_width | int % 4 == 0
       - streamstack_height | int % 4 == 0
+      - streamstack_source in ['vendored', 'apt']
       - streamstack_canon_bridge in ['gphoto2', 'command', 'none']
       - streamstack_canon_bridge != 'command' or streamstack_canon_bridge_command | length > 0
       - streamstack_canon_bridge_command is not search("['\n]")
@@ -59,13 +63,21 @@
       - streamstack_latitude | string | length == 0 or (streamstack_latitude | string is match('^-?[0-9]+(\.[0-9]+)?$') and streamstack_latitude | float >= -90 and streamstack_latitude | float <= 90)
       - streamstack_longitude | string | length == 0 or (streamstack_longitude | string is match('^-?[0-9]+(\.[0-9]+)?$') and streamstack_longitude | float >= -180 and streamstack_longitude | float <= 180)
     fail_msg: >-
-      StreamStack needs two different loopback device numbers, labels without
+      StreamStack needs a source of vendored or apt, two different loopback device numbers, labels without
       commas or quotes, a width/height divisible by 4, a numeric frame rate,
       a bridge of gphoto2, command (with streamstack_canon_bridge_command)
       or none, and an auto backend of claude-cli, api or local with a local
       interval of at least 5 s and a Claude interval of at least 60 s. A
       property location needs both a decimal latitude (-90 to 90) and
       longitude (-180 to 180), or neither.
+
+# The two installs differ in where the commands and the packaged user units live:
+# the vendored launchers in /usr/local/bin and the role's unit copies in
+# /etc/systemd/user, or the package's /usr/bin and /usr/lib/systemd/user.
+- name: Locate the StreamStack commands and packaged user units
+  ansible.builtin.set_fact:
+    _streamstack_bin_dir: "{{ '/usr/bin' if streamstack_source == 'apt' else '/usr/local/bin' }}"
+    _streamstack_unit_dir: "{{ '/usr/lib/systemd/user' if streamstack_source == 'apt' else '/etc/systemd/user' }}"
 
 - name: Install the StreamStack studio packages
   ansible.builtin.apt:
@@ -147,6 +159,22 @@
     state: absent
   when: streamstack_camera_external | bool
 
+# The package's own loopback options (/usr/lib/modprobe.d/streamstack-v4l2loopback.conf)
+# sort after the role's file, so modprobe would apply its values last. A file of
+# the same name in /etc/modprobe.d masks it: the role's options above, or the
+# tool that owns the camera, stay the only ones.
+- name: Mask the loopback options the StreamStack package ships
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/streamstack-v4l2loopback.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack task group).
+      # Masks /usr/lib/modprobe.d/streamstack-v4l2loopback.conf from the StreamStack package: the loopback
+      # options are in curiosity-streamstack-v4l2loopback.conf, or with the tool that owns the camera.
+  when: streamstack_source == 'apt'
+
 - name: Load v4l2loopback at boot
   ansible.builtin.copy:
     dest: /etc/modules-load.d/curiosity-streamstack.conf
@@ -156,6 +184,14 @@
     content: |
       # Managed by the curiosity workstation role (streamstack task group).
       v4l2loopback
+  when: streamstack_source == 'vendored'
+
+# The package loads it (/usr/lib/modules-load.d/streamstack-v4l2loopback.conf).
+- name: Leave loading v4l2loopback at boot to the StreamStack package
+  ansible.builtin.file:
+    path: /etc/modules-load.d/curiosity-streamstack.conf
+    state: absent
+  when: streamstack_source == 'apt'
 
 # Earlier catalog releases configured a single loopback camera from the
 # deskmeet-b760 hardware profile; StreamStack owns both nodes now.
@@ -307,109 +343,118 @@
       camera").
   when: _streamstack_loopback.stdout in ['pending', 'busy']
 
-# Self-contained install: the package under /usr/local/lib/streamstack and
-# isolated-mode launchers on PATH, so nothing touches the system Python.
-- name: Read the vendored StreamStack version
-  ansible.builtin.set_fact:
-    _streamstack_version: >-
-      {{ lookup('ansible.builtin.file', 'streamstack/src/streamstack/__init__.py')
-         | regex_search('__version__ = "([^"]+)"', '\1') | first }}
+# The vendored release, self-contained: the package under /usr/local/lib/streamstack
+# and isolated-mode launchers on PATH, so nothing touches the system Python.
+- name: Install the vendored StreamStack
+  when: streamstack_source == 'vendored'
+  block:
+    - name: Read the vendored StreamStack version
+      ansible.builtin.set_fact:
+        _streamstack_version: >-
+          {{ lookup('ansible.builtin.file', 'streamstack/src/streamstack/__init__.py')
+             | regex_search('__version__ = "([^"]+)"', '\1') | first }}
 
-- name: Read the installed StreamStack version
-  ansible.builtin.slurp:
-    src: /usr/local/lib/streamstack/streamstack/__init__.py
-  register: _streamstack_installed
-  failed_when: false
+    - name: Read the installed StreamStack version
+      ansible.builtin.slurp:
+        src: /usr/local/lib/streamstack/streamstack/__init__.py
+      register: _streamstack_installed
+      failed_when: false
 
-# copy never deletes, so a module dropped upstream would linger; start clean
-# whenever the version changes.
-- name: Remove a StreamStack package of another version
-  register: _streamstack_package_replaced
-  ansible.builtin.file:
-    path: /usr/local/lib/streamstack/streamstack
-    state: absent
-  when: >-
-    _streamstack_installed.content is not defined
-    or ('__version__ = "' ~ _streamstack_version ~ '"') not in (_streamstack_installed.content | b64decode)
+    # copy never deletes, so a module dropped upstream would linger; start clean
+    # whenever the version changes.
+    - name: Remove a StreamStack package of another version
+      register: _streamstack_package_replaced
+      ansible.builtin.file:
+        path: /usr/local/lib/streamstack/streamstack
+        state: absent
+      when: >-
+        _streamstack_installed.content is not defined
+        or ('__version__ = "' ~ _streamstack_version ~ '"') not in (_streamstack_installed.content | b64decode)
 
-- name: Install the StreamStack package
-  ansible.builtin.copy:
-    src: streamstack/src/streamstack/
-    dest: /usr/local/lib/streamstack/streamstack/
-    owner: root
-    group: root
-    mode: u=rwX,go=rX
-    directory_mode: "0755"
+    - name: Install the StreamStack package
+      ansible.builtin.copy:
+        src: streamstack/src/streamstack/
+        dest: /usr/local/lib/streamstack/streamstack/
+        owner: root
+        group: root
+        mode: u=rwX,go=rX
+        directory_mode: "0755"
 
-- name: Install the StreamStack commands
-  ansible.builtin.copy:
-    src: "streamstack/packaging/bin/{{ item }}"
-    dest: "/usr/local/bin/{{ item }}"
-    owner: root
-    group: root
-    mode: "0755"
-  loop: [streamstack, streamstack-auto, streamstack-console, streamstack-tray]
+    - name: Install the StreamStack commands
+      ansible.builtin.copy:
+        src: "streamstack/packaging/bin/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [streamstack, streamstack-auto, streamstack-console, streamstack-tray]
 
-- name: Create the local hicolor icon directories
-  ansible.builtin.file:
-    path: "/usr/local/share/icons/hicolor/scalable/{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  loop: [apps, status]
+    - name: Create the local hicolor icon directories
+      ansible.builtin.file:
+        path: "/usr/local/share/icons/hicolor/scalable/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [apps, status]
 
-- name: Install the StreamStack icons in the hicolor theme
-  ansible.builtin.copy:
-    src: "streamstack/src/streamstack/data/icons/{{ item.src }}.svg"
-    dest: "/usr/local/share/icons/hicolor/scalable/{{ item.dest }}.svg"
-    owner: root
-    group: root
-    mode: "0644"
-  loop:
-    - {src: streamstack-live, dest: apps/streamstack}
-    - {src: streamstack-live, dest: status/streamstack-live}
-    - {src: streamstack-raw, dest: status/streamstack-raw}
-    - {src: streamstack-warn, dest: status/streamstack-warn}
-    - {src: streamstack-off, dest: status/streamstack-off}
-  loop_control:
-    label: "{{ item.dest }}"
+    - name: Install the StreamStack icons in the hicolor theme
+      ansible.builtin.copy:
+        src: "streamstack/src/streamstack/data/icons/{{ item.src }}.svg"
+        dest: "/usr/local/share/icons/hicolor/scalable/{{ item.dest }}.svg"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - {src: streamstack-live, dest: apps/streamstack}
+        - {src: streamstack-live, dest: status/streamstack-live}
+        - {src: streamstack-raw, dest: status/streamstack-raw}
+        - {src: streamstack-warn, dest: status/streamstack-warn}
+        - {src: streamstack-off, dest: status/streamstack-off}
+      loop_control:
+        label: "{{ item.dest }}"
 
-- name: List StreamStack in the application menu
-  ansible.builtin.copy:
-    src: streamstack/packaging/applications/streamstack.desktop
-    dest: /usr/share/applications/streamstack.desktop
-    owner: root
-    group: root
-    mode: "0644"
+    - name: List StreamStack in the application menu
+      ansible.builtin.copy:
+        src: streamstack/packaging/applications/streamstack.desktop
+        dest: /usr/share/applications/streamstack.desktop
+        owner: root
+        group: root
+        mode: "0644"
+
+    # StreamStack ships WirePlumber drop-ins (for example the Wave XLR capture hold)
+    # that `make install` puts in /etc/wireplumber/wireplumber.conf.d. Install whatever
+    # the vendored release ships, so a new drop-in needs no catalog change. WirePlumber
+    # reads them at its next start; this role never restarts it (that drops every
+    # audio stream, so it never happens during a call).
+    - name: Find the WirePlumber drop-ins the vendored StreamStack ships
+      ansible.builtin.stat:
+        path: "{{ role_path }}/files/streamstack/packaging/wireplumber/wireplumber.conf.d"
+      delegate_to: localhost
+      become: false
+      register: _streamstack_wireplumber_dropins
+
+    - name: Install the StreamStack WirePlumber drop-ins
+      ansible.builtin.copy:
+        src: streamstack/packaging/wireplumber/wireplumber.conf.d/
+        dest: /etc/wireplumber/wireplumber.conf.d/
+        owner: root
+        group: root
+        mode: "0644"
+        directory_mode: "0755"
+      when: _streamstack_wireplumber_dropins.stat.isdir | default(false)
+
+# The native build from the signed apt repository (catalog#183).
+- name: Install StreamStack from the apt repository
+  ansible.builtin.include_tasks:
+    file: streamstack-apt.yml
+  when: streamstack_source == 'apt'
 
 - name: Decide whether the Canon bridge starts at login
   ansible.builtin.set_fact:
     _streamstack_bridge_autostart: >-
       {{ streamstack_canon_bridge_autostart | bool and streamstack_canon_bridge != 'none'
          and not (streamstack_camera_external | bool) }}
-
-# StreamStack ships WirePlumber drop-ins (for example the Wave XLR capture hold)
-# that `make install` puts in /etc/wireplumber/wireplumber.conf.d. Install whatever
-# the vendored release ships, so a new drop-in needs no catalog change. WirePlumber
-# reads them at its next start; this role never restarts it (that drops every
-# audio stream, so it never happens during a call).
-- name: Find the WirePlumber drop-ins the vendored StreamStack ships
-  ansible.builtin.stat:
-    path: "{{ role_path }}/files/streamstack/packaging/wireplumber/wireplumber.conf.d"
-  delegate_to: localhost
-  become: false
-  register: _streamstack_wireplumber_dropins
-
-- name: Install the StreamStack WirePlumber drop-ins
-  ansible.builtin.copy:
-    src: streamstack/packaging/wireplumber/wireplumber.conf.d/
-    dest: /etc/wireplumber/wireplumber.conf.d/
-    owner: root
-    group: root
-    mode: "0644"
-    directory_mode: "0755"
-  when: _streamstack_wireplumber_dropins.stat.isdir | default(false)
 
 - name: Install the Canon bridge user service
   ansible.builtin.copy:
@@ -418,6 +463,7 @@
     owner: root
     group: root
     mode: "0644"
+  when: streamstack_source == 'vendored'
 
 - name: Ensure the global user default.target.wants directory exists
   ansible.builtin.file:
@@ -431,7 +477,7 @@
 - name: Start the Canon bridge at login for every desktop user
   ansible.builtin.file:
     path: /etc/systemd/user/default.target.wants/streamstack-canon.service
-    src: /etc/systemd/user/streamstack-canon.service
+    src: "{{ _streamstack_unit_dir }}/streamstack-canon.service"
     state: link
     owner: root
     group: root
@@ -449,14 +495,26 @@
 # (`systemctl --user enable --now streamstack-audio-chain`) and is not enabled
 # here, so two supervisors never fight over the same PipeWire host. The deck
 # unit needs the `deck` extra and is enabled per user by `streamstack deck enable`.
+# The apt package ships the voice chain unit itself but no deck unit, so an apt
+# host gets the deck unit from here too, pointing at /usr/bin.
 - name: Install the StreamStack voice chain and deck user services
   ansible.builtin.copy:
-    content: "{{ lookup('ansible.builtin.file', 'streamstack/packaging/systemd/user/' ~ item ~ '.service') | replace('ExecStart=streamstack ', 'ExecStart=/usr/local/bin/streamstack ') }}\n"
+    content: "{{ lookup('ansible.builtin.file', 'streamstack/packaging/systemd/user/' ~ item ~ '.service') | replace('ExecStart=streamstack ', 'ExecStart=' ~ _streamstack_bin_dir ~ '/streamstack ') }}\n"
     dest: "/etc/systemd/user/{{ item }}.service"
     owner: root
     group: root
     mode: "0644"
-  loop: [streamstack-audio-chain, streamstack-deck]
+  loop: "{{ ['streamstack-audio-chain', 'streamstack-deck'] if streamstack_source == 'vendored' else ['streamstack-deck'] }}"
+
+# The package ships the voice chain, auto mode, Canon bridge and lights units in
+# /usr/lib/systemd/user; a copy left in /etc/systemd/user by the vendored release
+# would mask them and run commands that are gone.
+- name: Remove the vendored release's copies of the packaged user services
+  ansible.builtin.file:
+    path: "/etc/systemd/user/{{ item }}.service"
+    state: absent
+  loop: [streamstack-audio-chain, streamstack-auto, streamstack-canon, streamstack-lights]
+  when: streamstack_source == 'apt'
 
 - name: Install the StreamStack auto mode user service
   ansible.builtin.copy:
@@ -465,6 +523,7 @@
     owner: root
     group: root
     mode: "0644"
+  when: streamstack_source == 'vendored'
 
 - name: Ensure the global user graphical-session.target.wants directory exists
   ansible.builtin.file:
@@ -480,7 +539,7 @@
 - name: Start StreamStack auto mode at login for every desktop user
   ansible.builtin.file:
     path: /etc/systemd/user/graphical-session.target.wants/streamstack-auto.service
-    src: /etc/systemd/user/streamstack-auto.service
+    src: "{{ _streamstack_unit_dir }}/streamstack-auto.service"
     state: link
     owner: root
     group: root
@@ -502,11 +561,12 @@
     owner: root
     group: root
     mode: "0644"
+  when: streamstack_source == 'vendored'
 
 - name: Start StreamStack camera follow and the light schedule at login
   ansible.builtin.file:
     path: /etc/systemd/user/graphical-session.target.wants/streamstack-lights.service
-    src: /etc/systemd/user/streamstack-lights.service
+    src: "{{ _streamstack_unit_dir }}/streamstack-lights.service"
     state: link
     owner: root
     group: root
@@ -542,6 +602,36 @@
     owner: root
     group: root
     mode: "0755"
+  when: streamstack_source == 'vendored'
+
+# The native build has no Python package for the helper to import its call
+# detection from: the same decisions, asking the running Console instead.
+- name: Ensure /usr/local/lib/curiosity exists
+  ansible.builtin.file:
+    path: /usr/local/lib/curiosity
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: streamstack_source == 'apt'
+
+- name: Install the call-safe StreamStack Console restart decisions
+  ansible.builtin.copy:
+    src: curiosity-streamstack-console-restart
+    dest: /usr/local/lib/curiosity/streamstack_console_restart.py
+    owner: root
+    group: root
+    mode: "0644"
+  when: streamstack_source == 'apt'
+
+- name: Install the call-safe StreamStack Console restart for the native StreamStack
+  ansible.builtin.copy:
+    src: curiosity-streamstack-console-restart-native
+    dest: /usr/local/sbin/curiosity-streamstack-console-restart
+    owner: root
+    group: root
+    mode: "0755"
+  when: streamstack_source == 'apt'
 
 - name: Install the deferred StreamStack Console restart user units
   ansible.builtin.copy:
@@ -612,7 +702,21 @@
     owner: root
     group: root
     mode: "0644"
-  when: streamstack_tray_autostart | bool
+  when:
+    - streamstack_tray_autostart | bool
+    - streamstack_source == 'vendored'
+
+- name: Start the packaged StreamStack panel icon at login
+  ansible.builtin.file:
+    path: /etc/xdg/autostart/streamstack-tray.desktop
+    src: /usr/share/applications/streamstack-tray.desktop
+    state: link
+    owner: root
+    group: root
+    force: true
+  when:
+    - streamstack_tray_autostart | bool
+    - streamstack_source == 'apt'
 
 - name: Leave the StreamStack panel icon to the application menu
   ansible.builtin.file:
@@ -632,7 +736,7 @@
 # a user's own voice tweaks survive every ansible-pull.
 - name: Seed StreamStack defaults for each user
   ansible.builtin.command:
-    argv: [/usr/local/bin/streamstack, setup, --quiet]
+    argv: ["{{ _streamstack_bin_dir }}/streamstack", setup, --quiet]
   become: true
   become_user: "{{ item.item.name }}"
   environment:

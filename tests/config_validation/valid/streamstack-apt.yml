@@ -1,0 +1,5 @@
+---
+# A host that opts into StreamStack's signed apt repository (catalog#183): the
+# repository URL renders from the GitLab host; without one it stays empty.
+streamstack_source: apt
+streamstack_apt_gitlab_host: gitlab.example.org

@@ -598,6 +598,15 @@ and background-blur dependencies (OpenVINO, OpenCV, the Intel GPU compute runtim
 exists, the YuNet face model); the pinned versions and checksums are the
 `streamstack_openvino_*`, `streamstack_deepfilter_*` and
 `streamstack_framing_model_*` variables.
+`streamstack_source` (default `vendored`) picks where StreamStack comes from:
+`vendored` installs the release in the role, exactly as before; `apt` installs
+the native build from StreamStack's signed apt repository instead
+(`streamstack_apt_gitlab_host`, required, `streamstack_apt_project_id`,
+`streamstack_apt_repo_url`, `streamstack_apt_release` (the pinned package
+version), `streamstack_apt_keyring` and `streamstack_apt_auth_file`). An apt
+host needs the repository's deploy token written once by
+`scripts/bootstrap-streamstack-apt.sh`; see
+[Install from the apt repository](streamstack.md#install-from-the-apt-repository).
 See [`streamstack.md`](streamstack.md) for the Teams and Zoom setup.
 
 ## Optional private services

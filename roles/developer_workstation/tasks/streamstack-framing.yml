@@ -59,6 +59,9 @@
   when: _streamstack_framing_intel_gpu.rc == 0
 
 # --- OpenVINO runtime --------------------------------------------------------
+# For the vendored Python release only: the native build from the apt repository
+# (streamstack_source: apt, catalog#183) loads OpenVINO's C library at run time
+# and has no /usr/local/lib/streamstack to install wheels into.
 
 - name: Read the system Python tag the StreamStack launcher runs
   ansible.builtin.command:
@@ -69,6 +72,7 @@
       - "import sys; print('cp%d%d' % sys.version_info[:2])"
   register: _streamstack_python_tag
   changed_when: false
+  when: streamstack_source == 'vendored'
 
 - name: Skip OpenVINO where its wheel does not match
   ansible.builtin.debug:
@@ -76,12 +80,15 @@
       The pinned OpenVINO wheel is {{ streamstack_openvino_python_tag }} for x86_64; this host has
       {{ _streamstack_python_tag.stdout }} on {{ ansible_facts['architecture'] }}. Auto-framing uses
       OpenCV's DNN backend on the CPU until streamstack_openvino_* is updated.
-  when: >-
-    _streamstack_python_tag.stdout != streamstack_openvino_python_tag
-    or ansible_facts['architecture'] != 'x86_64'
+  when:
+    - streamstack_source == 'vendored'
+    - >-
+      _streamstack_python_tag.stdout != streamstack_openvino_python_tag
+      or ansible_facts['architecture'] != 'x86_64'
 
 - name: Install OpenVINO into the StreamStack library directory
   when:
+    - streamstack_source == 'vendored'
     - _streamstack_python_tag.stdout == streamstack_openvino_python_tag
     - ansible_facts['architecture'] == 'x86_64'
   block:

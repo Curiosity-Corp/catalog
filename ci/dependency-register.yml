@@ -18,7 +18,7 @@
 # support.status: maintained | archived | moved | unmaintained | end-of-life
 # Dates are YYYY-MM-DD, or YYYY-MM for "the end of that month" when the vendor
 # publishes only a month.
-reviewed: '2026-11-27'
+reviewed: '2026-11-28'
 review_interval_days: 31
 warn_days: 180
 owner_roles:
@@ -361,6 +361,23 @@ entries:
       evidence: https://support.mozilla.org/kb/install-firefox-linux
       checked: '2026-11-26'
     replacement: The distribution's firefox(-esr) package.
+  - name: streamstack-apt
+    upstream: StreamStack project, Curiosity Research Corporation (the release vendored in roles/developer_workstation/files/streamstack)
+    source: https://git.developerdojo.org/Curiosity-Corp/catalog/-/blob/main/roles/developer_workstation/files/streamstack/README.md
+    declarations:
+      source:apt-streamstack: ansible.builtin.apt
+    licence: Apache-2.0
+    licence_source: https://git.developerdojo.org/Curiosity-Corp/catalog/-/blob/main/roles/developer_workstation/files/streamstack/LICENSE
+    owner: role-maintainer
+    update_channel: 'APT, only on hosts with streamstack_source apt: the release pinned in streamstack_apt_release,
+      bumped by merge request'
+    verification: vendor-repository-signature
+    security_critical: false
+    support:
+      status: maintained
+      evidence: https://git.developerdojo.org/Curiosity-Corp/catalog/-/blob/main/roles/developer_workstation/files/streamstack/README.md
+      checked: '2026-11-28'
+    replacement: The vendored release in the role (streamstack_source vendored, the default).
   - name: authd
     upstream: Canonical
     source: https://github.com/canonical/authd
