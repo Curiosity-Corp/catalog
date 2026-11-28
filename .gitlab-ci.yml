@@ -284,7 +284,7 @@ debian13-quickstart:
   # Stays on 3.13, the system Python of Debian 13 (python3 in trixie), not on
   # the 3.15 the other jobs use: this job stands in for a Debian 13 laptop.
   # renovate.json holds every -trixie tag at 3.13 (catalog#184).
-  image: public.ecr.aws/docker/library/python:3.13-slim-trixie@sha256:7249d5587b78209a006dc4a3b5340678f84ea729239193aa559962cd8c1fce50
+  image: public.ecr.aws/docker/library/python:3.13-slim-trixie@sha256:168d3a5d10f2152f8e8d77b6843ac82c22a846cfefeef7afdf9aa630404e82a7
   timeout: 1h
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
