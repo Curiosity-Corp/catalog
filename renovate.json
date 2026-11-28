@@ -19,6 +19,13 @@
       "matchManagers": ["pip_requirements"],
       "matchFileNames": ["ci/requirements.txt"],
       "enabled": false
+    },
+    {
+      "description": "-trixie images model a Debian 13 laptop: stay on its system Python 3.13 (trixie python3-apt is built for 3.13 only, catalog#184). Digests still move. Guard: test_debian13_laptop_jobs_use_debian13_python.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["public.ecr.aws/docker/library/python"],
+      "matchCurrentValue": "/-trixie$/",
+      "allowedVersions": "/^3\\.13(\\.\\d+)?-/"
     }
   ]
 }

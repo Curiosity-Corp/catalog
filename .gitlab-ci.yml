@@ -8,7 +8,7 @@ include:
 # Same images and tags, no credentials, and Renovate still tracks the tag.
 # Each image is also pinned by digest; Renovate proposes digest and tag bumps
 # as merge requests (catalog#22, docs/ci-toolchain.md).
-image: public.ecr.aws/docker/library/python:3.13-slim@sha256:168d3a5d10f2152f8e8d77b6843ac82c22a846cfefeef7afdf9aa630404e82a7
+image: public.ecr.aws/docker/library/python:3.15-slim@sha256:08a4c22c92b79ec821a7ad49768480039ee5b7accac3955228e75366e30abc8e
 
 stages:
   - prepare
@@ -155,7 +155,7 @@ quickstarts:
 # this throwaway container; the non-root runner cannot apt-get the package.
 # Merge requests only: main does not change the example without one.
 cloud-init-schema:
-  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  image: public.ecr.aws/docker/library/python:3.15@sha256:e4bc83a3314d078d651f06c8440e9a03ba892ee2f6577437f174abd8731fb343
   stage: test
   variables:
     CLOUD_INIT_VERSION: "26.2"
@@ -175,7 +175,7 @@ cloud-init-schema:
 # The full python image ships curl; the slim one does not, and the shared
 # runner is non-root, so it cannot apt-get it.
 resume-standin:
-  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  image: public.ecr.aws/docker/library/python:3.15@sha256:e4bc83a3314d078d651f06c8440e9a03ba892ee2f6577437f174abd8731fb343
   stage: test
   script:
     - python -m venv .ci-venv
@@ -204,7 +204,7 @@ resume-standin:
 verified-downloads:
   extends: .python_setup
   stage: test
-  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  image: public.ecr.aws/docker/library/python:3.15@sha256:e4bc83a3314d078d651f06c8440e9a03ba892ee2f6577437f174abd8731fb343
   timeout: 15m
   script:
     - >-
@@ -216,7 +216,7 @@ verified-downloads:
 verified-downloads-vendors:
   extends: .python_setup
   stage: test
-  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  image: public.ecr.aws/docker/library/python:3.15@sha256:e4bc83a3314d078d651f06c8440e9a03ba892ee2f6577437f174abd8731fb343
   timeout: 45m
   script:
     - python -m pytest -v --durations=0 tests/test_verified_download_vendors.py
@@ -231,7 +231,7 @@ verified-downloads-vendors:
 workspace-helper:
   extends: .python_setup
   stage: test
-  image: public.ecr.aws/docker/library/python:3.13@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
+  image: public.ecr.aws/docker/library/python:3.15@sha256:e4bc83a3314d078d651f06c8440e9a03ba892ee2f6577437f174abd8731fb343
   script:
     - python -m pytest -q tests/test_workspace_credential_helper.py
 
@@ -281,6 +281,9 @@ accessibility-summary:
 # docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
 debian13-quickstart:
   stage: test
+  # Stays on 3.13, the system Python of Debian 13 (python3 in trixie), not on
+  # the 3.15 the other jobs use: this job stands in for a Debian 13 laptop.
+  # renovate.json holds every -trixie tag at 3.13 (catalog#184).
   image: public.ecr.aws/docker/library/python:3.13-slim-trixie@sha256:168d3a5d10f2152f8e8d77b6843ac82c22a846cfefeef7afdf9aa630404e82a7
   timeout: 1h
   rules:
@@ -315,6 +318,9 @@ debian13-quickstart:
 # docs/evidence/2026-11-27-debian13-laptop-vm-run.md.
 debian13-vm-run:
   stage: test
+  # Stays on 3.13, the system Python of Debian 13: trixie's python3-apt ships
+  # apt_pkg built for CPython 3.13 only, and this job stands in for a Debian 13
+  # laptop. renovate.json holds every -trixie tag at 3.13 (catalog#184).
   image: public.ecr.aws/docker/library/python:3.13-trixie@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   tags:
     - cpu-heavy
@@ -349,6 +355,9 @@ debian13-vm-run:
 # ships gpg, as Ubuntu does; the script adds python3-apt to its venv.
 quickstart-check-preview:
   stage: test
+  # Stays on 3.13, the system Python of Debian 13: trixie's python3-apt ships
+  # apt_pkg built for CPython 3.13 only, and this job stands in for a Debian 13
+  # laptop. renovate.json holds every -trixie tag at 3.13 (catalog#184).
   image: public.ecr.aws/docker/library/python:3.13-trixie@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   script:
     - scripts/quickstart_check_preview.sh
