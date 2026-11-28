@@ -8,7 +8,7 @@ include:
 # Same images and tags, no credentials, and Renovate still tracks the tag.
 # Each image is also pinned by digest; Renovate proposes digest and tag bumps
 # as merge requests (catalog#22, docs/ci-toolchain.md).
-image: public.ecr.aws/docker/library/python:3.13-slim@sha256:7249d5587b78209a006dc4a3b5340678f84ea729239193aa559962cd8c1fce50
+image: public.ecr.aws/docker/library/python:3.13-slim@sha256:168d3a5d10f2152f8e8d77b6843ac82c22a846cfefeef7afdf9aa630404e82a7
 
 stages:
   - prepare
@@ -281,7 +281,7 @@ accessibility-summary:
 # docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
 debian13-quickstart:
   stage: test
-  image: public.ecr.aws/docker/library/python:3.13-slim-trixie@sha256:7249d5587b78209a006dc4a3b5340678f84ea729239193aa559962cd8c1fce50
+  image: public.ecr.aws/docker/library/python:3.13-slim-trixie@sha256:168d3a5d10f2152f8e8d77b6843ac82c22a846cfefeef7afdf9aa630404e82a7
   timeout: 1h
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
