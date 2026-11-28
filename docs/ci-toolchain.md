@@ -8,12 +8,22 @@ and moved only by a reviewed merge request.
 
 | Input | Declared in | Pin | Moved by |
 | --- | --- | --- | --- |
-| Job images (`python:3.13`, `-slim`, `-trixie`) | `.gitlab-ci.yml` | tag plus `@sha256:` digest of the multi-arch index, pulled from ECR Public's Docker Library mirror (catalog#97) | Renovate `docker` manager: digest bumps grouped as "container image digests", tag bumps one MR each |
+| Job images (`python:3.15`, `-slim`; `python:3.13-trixie`, `-slim-trixie`) | `.gitlab-ci.yml` | tag plus `@sha256:` digest of the multi-arch index, pulled from ECR Public's Docker Library mirror (catalog#97) | Renovate `docker` manager: digest bumps grouped as "container image digests", tag bumps one MR each; `-trixie` tags are held at 3.13 (below) |
 | Rust image for `tools` (`rust:1-bookworm`) | `.gitlab-ci.yml` | tag plus `@sha256:` digest; the crates are pinned by `tools/Cargo.lock` (`cargo --locked`) | Renovate `docker` manager (digest) and `cargo` manager |
 | Python tooling (ansible-core, ansible-lint, check-jsonschema, yamllint, PyYAML, pytest, uv, reuse with charset-normalizer) | `ci/requirements.in` | exact `==` for each direct dependency | Renovate `pip-compile` manager: bumps the pin and regenerates the lock in the same MR |
 | Their transitive dependencies | `ci/requirements.txt` | full lock with SHA-256 hashes, installed with `pip install --require-hashes` | Renovate lock file maintenance (weekly MR) |
 | pip | the job image | the image digest | the image digest bump |
 | Ansible collections (community.general) | `ci/requirements.yml` | exact version | Renovate `ansible-galaxy` manager |
+
+The `-trixie` images stand in for a Debian 13 laptop (`debian13-quickstart`,
+`debian13-vm-run`, `quickstart-check-preview`), so they run Debian 13's system
+Python, 3.13, whatever the other jobs use: trixie's `python3-apt` ships
+`apt_pkg` built for CPython 3.13 only, and under 3.15 `import apt, apt_pkg`
+fails (catalog#184). A `renovate.json` rule (`matchCurrentValue: /-trixie$/`,
+`allowedVersions: /^3\.13(\.\d+)?-/`) keeps those tags on 3.13 while their
+digests still move; move them only when Debian's own `python3` does.
+`tests/test_public_contract.py::test_debian13_laptop_jobs_use_debian13_python`
+fails when a job on a `-trixie` image uses another minor or the rule is gone.
 
 `tests/test_public_contract.py::test_ci_toolchain_is_locked` fails when a job
 image has no digest, when a `pip install` bypasses the lock, when a direct pin

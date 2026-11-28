@@ -281,7 +281,10 @@ accessibility-summary:
 # docs/evidence/2026-11-25-debian13-laptop-quickstart.md.
 debian13-quickstart:
   stage: test
-  image: public.ecr.aws/docker/library/python:3.15-slim-trixie@sha256:08a4c22c92b79ec821a7ad49768480039ee5b7accac3955228e75366e30abc8e
+  # Stays on 3.13, the system Python of Debian 13 (python3 in trixie), not on
+  # the 3.15 the other jobs use: this job stands in for a Debian 13 laptop.
+  # renovate.json holds every -trixie tag at 3.13 (catalog#184).
+  image: public.ecr.aws/docker/library/python:3.13-slim-trixie@sha256:7249d5587b78209a006dc4a3b5340678f84ea729239193aa559962cd8c1fce50
   timeout: 1h
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -315,7 +318,10 @@ debian13-quickstart:
 # docs/evidence/2026-11-27-debian13-laptop-vm-run.md.
 debian13-vm-run:
   stage: test
-  image: public.ecr.aws/docker/library/python:3.15-trixie@sha256:b856c51ddffa0dfb3a25c7351abd0218857495922cf37352959b17ee03c0c938
+  # Stays on 3.13, the system Python of Debian 13: trixie's python3-apt ships
+  # apt_pkg built for CPython 3.13 only, and this job stands in for a Debian 13
+  # laptop. renovate.json holds every -trixie tag at 3.13 (catalog#184).
+  image: public.ecr.aws/docker/library/python:3.13-trixie@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   tags:
     - cpu-heavy
   # Under TCG the first full apply alone took about two hours (job 3209499).
@@ -349,7 +355,10 @@ debian13-vm-run:
 # ships gpg, as Ubuntu does; the script adds python3-apt to its venv.
 quickstart-check-preview:
   stage: test
-  image: public.ecr.aws/docker/library/python:3.15-trixie@sha256:b856c51ddffa0dfb3a25c7351abd0218857495922cf37352959b17ee03c0c938
+  # Stays on 3.13, the system Python of Debian 13: trixie's python3-apt ships
+  # apt_pkg built for CPython 3.13 only, and this job stands in for a Debian 13
+  # laptop. renovate.json holds every -trixie tag at 3.13 (catalog#184).
+  image: public.ecr.aws/docker/library/python:3.13-trixie@sha256:f25cbd3f7c73c28bdcab476c93c93a2ec90970a8f5b8a7810533654207822390
   script:
     - scripts/quickstart_check_preview.sh
   artifacts:

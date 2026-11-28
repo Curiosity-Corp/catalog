@@ -1,6 +1,7 @@
 """Public OSS contract checks that do not require a managed host."""
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -156,3 +157,48 @@ def test_ci_toolchain_is_locked() -> None:
     collections = yaml.safe_load((ROOT / "ci/requirements.yml").read_text())["collections"]
     for collection in collections:
         assert all(ch.isdigit() or ch == "." for ch in collection["version"]), collection
+
+
+# Debian 13's system Python (python3 in trixie). The jobs below stand in for a
+# Debian 13 laptop; trixie's python3-apt ships apt_pkg built for this minor only.
+DEBIAN13_PYTHON_MINOR = "3.13"
+DEBIAN13_LAPTOP_JOBS = ("debian13-quickstart", "debian13-vm-run", "quickstart-check-preview")
+
+
+def test_debian13_laptop_jobs_use_debian13_python() -> None:
+    """Debian 13 laptop jobs run on Debian 13's own Python minor (catalog#184).
+
+    A python image bump (3.15) broke ``import apt, apt_pkg`` in
+    quickstart-check-preview. Every job on a ``-trixie`` image models the
+    laptop and must stay on 3.13; renovate.json must keep those tags there
+    while still letting their digests move.
+    """
+    ci = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
+    trixie_jobs = {
+        name: job["image"]
+        for name, job in ci.items()
+        if isinstance(job, dict)
+        and isinstance(job.get("image"), str)
+        and "-trixie" in job["image"].split("@", 1)[0]
+    }
+    for name in DEBIAN13_LAPTOP_JOBS:
+        assert name in trixie_jobs, f"{name} no longer runs on a -trixie image"
+    for name, image in trixie_jobs.items():
+        tag = image.split("@", 1)[0].rsplit(":", 1)[1]
+        assert tag.startswith(f"{DEBIAN13_PYTHON_MINOR}-"), (
+            f"{name} runs {image}; a Debian 13 laptop job must use Python "
+            f"{DEBIAN13_PYTHON_MINOR}, the system Python of trixie"
+        )
+
+    rules = json.loads((ROOT / "renovate.json").read_text())["packageRules"]
+    trixie_rules = [r for r in rules if r.get("matchCurrentValue") == "/-trixie$/"]
+    assert len(trixie_rules) == 1, "renovate.json must hold the -trixie python tags"
+    rule = trixie_rules[0]
+    assert rule["matchPackageNames"] == ["public.ecr.aws/docker/library/python"]
+    allowed = rule["allowedVersions"].strip("/")
+    assert re.match(allowed, f"{DEBIAN13_PYTHON_MINOR}-trixie"), rule
+    assert re.match(allowed, f"{DEBIAN13_PYTHON_MINOR}-slim-trixie"), rule
+    assert not re.match(allowed, "3.15-trixie"), rule
+    assert "enabled" not in rule and "matchUpdateTypes" not in rule, (
+        "the rule must not stop digest updates of the 3.13 tags"
+    )
