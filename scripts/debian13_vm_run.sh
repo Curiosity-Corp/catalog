@@ -266,7 +266,17 @@ git -C "$SRC" archive --format=tar HEAD \
 printf '%s\t%s\t%s\n' "1-checkout" "$?" "$((SECONDS - start))" >>"$SUMMARY"
 step 1-venv "python3 -m venv .venv"
 step 1-pip ". .venv/bin/activate && python -m pip install --upgrade pip ansible-core"
-step 1-galaxy ". .venv/bin/activate && for a in 1 2 3; do ansible-galaxy collection install -r requirements.yml && exit 0; sleep 10; done; exit 1"
+# The guide's `ansible-galaxy collection install -r requirements.yml`, from
+# the copy the galaxy-collections job downloaded for this pipeline (same
+# requirements.yml, resolved the way a user resolves it today), carried into
+# the guest: only that job reaches galaxy.ansible.com (catalog#182).
+[ -f "$SRC/.ci-collections-user/requirements.yml" ] \
+  || die "no .ci-collections-user from the galaxy-collections job; this job never fetches from Galaxy itself"
+start=$SECONDS
+tar -C "$SRC" -c .ci-collections-user \
+  | "${SSH[@]}" 'tar -x -C ~/catalog' >"$OUT/1-collections-copy.log" 2>&1
+printf '%s\t%s\t%s\n' "1-collections-copy" "$?" "$((SECONDS - start))" >>"$SUMMARY"
+step 1-galaxy ". .venv/bin/activate && cd .ci-collections-user && ansible-galaxy collection install --offline -r requirements.yml"
 echo "- ansible-core in the guest: $("${SSH[@]}" '"$HOME"/catalog/.venv/bin/ansible --version | head -n 1')" >>"$REPORT"
 
 # Step 2.

@@ -16,6 +16,7 @@ __pycache__/
 .ci-venv/
 .ci-collections/
 .ci-collections-floor/
+.ci-collections-user/
 .research-profile/
 research-profile-report.md
 config-validation/

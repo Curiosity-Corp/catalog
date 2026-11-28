@@ -22,25 +22,53 @@ is missing from the lock, or when a CI collection is not pinned exactly.
 The collection's own dependency range for users stays in `galaxy.yml` and
 `requirements.yml`; `ci/requirements.yml` pins only what CI tests with.
 
-CI fetches those pinned collections from Galaxy once per pipeline (catalog#174).
-The first-stage `galaxy-collections` job installs them into `.ci-collections`
-and passes that directory on as an artifact. Every job that extends
-`.python_setup` uses the copy when `ansible-galaxy collection verify --offline`
-finds the pinned versions with every file matching its manifest. A job that
-got no copy (one that `needs` other jobs) installs them itself: each try is
-bounded to 30 s per Galaxy request and 150 s in all, with four tries 10, 20 and
-40 s apart, and a timeout says galaxy.ansible.com did not answer.
+Only one job reaches galaxy.ansible.com (catalog#174, catalog#182). The
+first-stage `galaxy-collections` job runs `scripts/fetch-collections.sh`,
+which fetches everything CI needs once per pipeline and passes it on as
+artifacts:
+
+| Directory | What | Used by |
+| --- | --- | --- |
+| `.ci-collections` | `ci/requirements.yml`, the exact pin | every job that extends `.python_setup` |
+| `.ci-collections-floor` | community.general at the `galaxy.yml` floor, alone on its path | `collection-floor` |
+| `.ci-collections-user` | `requirements.yml` downloaded as a user resolves it today (tarballs and a `requirements.yml`) | `quickstart-check-preview`, `debian13-quickstart`, `debian13-vm-run`, which run the guide's install with `--offline` |
+
+Galaxy resets connections in bursts (Errno 104). Each fetch gets five tries,
+each bounded to 30 s per Galaxy request and 150 s in all, 10, 20, 40 and 80 s
+apart; a timeout says galaxy.ansible.com did not answer. If all five fail, the
+job fails alone and GitLab retries it (`retry: max: 2`) before any other job
+has started. The GitLab cache keeps the two pinned directories, keyed on
+`ci/requirements.yml` and `galaxy.yml`; a cached copy that passes
+`ansible-galaxy collection verify --offline` is used without asking Galaxy.
+The user download is never cached, so it follows new releases.
+
+Every other job uses the artifact after `verify --offline` finds the pinned
+versions with every file matching its manifest, and fails, never fetches,
+when it does not: a job with `needs:` must list `galaxy-collections`. Two
+guards keep it that way. `tests/test_galaxy_fetch_isolation.py` fails when any
+other job, or a script it runs, names galaxy.ansible.com or runs
+`ansible-galaxy collection install` or `download` without `--offline`; and the
+pipeline sets `ANSIBLE_GALAXY_SERVER` to a closed local port for every job but
+the fetch job, so a live fetch the scan cannot see fails at once.
+`tests/test_fetch_collections_retry.py` replays the reset against the fetch
+script and proves it retries through it, stops after its bounded tries and
+skips the network on a verified cache.
 
 Because every other job tests the exact pin, the `collection-floor` job
-(`scripts/check-collection-floor.sh`) tests the other end of the range: it
-installs exactly the `galaxy.yml` floor of community.general (by version from
-Galaxy, alone on the collection path) and fails when a community.general
-module, filter, test or lookup the roles name is missing or deprecated there,
-or when `requirements.yml` states a different floor. Keep the floor on the
-oldest major that still receives backports (community.general backports to its
-three latest `stable-x` branches, ansible-collections/community.general#582);
-raise it in `galaxy.yml` and `requirements.yml` together. Run it locally with
-`scripts/check-collection-floor.sh "$(mktemp -d)"`.
+(`scripts/check-collection-floor.sh`) tests the other end of the range: on the
+floor the fetch job installed (alone on the collection path, checked against
+its manifest) it fails when a community.general module, filter, test or
+lookup the roles name is missing or deprecated there, or when
+`requirements.yml` states a different floor. Keep the floor on the oldest
+major that still receives backports (community.general backports to its three
+latest `stable-x` branches, ansible-collections/community.general#582); raise
+it in `galaxy.yml` and `requirements.yml` together. Run both locally from the
+repository root with `scripts/fetch-collections.sh` and then
+`scripts/check-collection-floor.sh .ci-collections-floor`.
+
+If Galaxy outages still cost pipelines after this, the next step is a
+cluster-served mirror or pull-through proxy, decided with the infrastructure
+unit; that is not built here.
 
 ## Exceptions
 
