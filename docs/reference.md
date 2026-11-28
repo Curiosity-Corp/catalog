@@ -60,7 +60,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | --- | --- | --- | --- | --- | --- |
 | `accessibility` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` | Opt-in assistive technology packages (accessibility_packages); packages only, see accessibility-and-localization.md. |
 | `agent-cpu-policy` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
-| `ai` | supported | 13 | `ai-assistants.yml`, `main.yml` | `desktop`, `workspace` |  |
+| `ai` | supported | 14 | `ai-assistants.yml`, `main.yml` | `desktop`, `workspace` |  |
 | `always` | supported | 13 | `main.yml`, `update-transaction.yml` |  | Runs on every invocation, even with --tags. Skip it only with --skip-tags always. |
 | `ansible-pull` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `bitwarden` | supported | 9 | `main.yml`, `managed-updates.yml` | `desktop`, `workspace` |  |
@@ -127,7 +127,7 @@ Select tags with `--tags` or exclude them with `--skip-tags`. A task carries a t
 | `networking` | supported | 6 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `node` | supported | 11 | `main.yml` | `desktop`, `workspace` |  |
 | `openbox` | supported | 3 | `minimal-desktop.yml` | `byod-kiosk` |  |
-| `packages` | supported | 20 | `ai-assistants.yml`, `main.yml`, `managed-updates.yml`, `minimal-desktop.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Package installation across the role. |
+| `packages` | supported | 21 | `ai-assistants.yml`, `main.yml`, `managed-updates.yml`, `minimal-desktop.yml` | `desktop`, `workspace`, `thin-client`, `byod-kiosk` | Package installation across the role. |
 | `pia-tunnel` | supported | 1 | `main.yml` | `desktop`, `thin-client`, `byod-kiosk` |  |
 | `picom` | supported | 1 | `minimal-desktop.yml` |  |  |
 | `pinned-vt` | supported | 1 | `minimal-desktop.yml` |  |  |
@@ -313,7 +313,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-567 variables, from `roles/developer_workstation/defaults/main.yml`.
+568 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -432,6 +432,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `codex_standalone_install_dir` | string (template) | `"{{ dev_user_home }}/.local/bin"` |  | supported |  | (undocumented) |
 | `codex_standalone_home_dir` | string (template) | `"{{ dev_user_home }}/.codex"` |  | supported |  | (undocumented) |
 | `claude_native_enabled` | bool | `true` |  | supported |  | Native Claude Code, for every dev_users account. The official installer owns ~/.local/bin/claude (a link into ~/.local/share/claude/versions). (...) |
+| `claude_native_users` | list | `[]` |  | supported | account | Accounts that get native Claude Code and nothing else of the desktop, in the dev_users shape ({name, home}): a person who works on this host over ssh and has no seat at its screen (a dev_users entry also gets the screen lock, which refuses an account with no password). (...) |
 | `claude_native_release_base_url` | string | `"https://downloads.claude.ai/claude-code-releases"` |  | internal | supply-chain | Claude Code releases: the channel file names a version whose manifest.json (SHA-256 per platform binary) is signed with the Claude Code release signing key. (...) |
 | `claude_native_release_key_file` | string | `"claude-code-release-key.asc"` |  | internal | supply-chain | (undocumented) |
 | `claude_native_release_key_fingerprint` | string | `"31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"` |  | internal | supply-chain | (undocumented) |
