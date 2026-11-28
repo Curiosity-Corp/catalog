@@ -226,6 +226,11 @@
       <action name="Execute"><command>sh -c 'mkdir -p "$HOME/Pictures/Screenshots" &amp;&amp; exec flameshot gui --path "$HOME/Pictures/Screenshots"'</command></action>
     </keybind>
 
+    <!-- Sleep both monitors; mouse or keyboard input wakes the X session. -->
+    <keybind key="W-S-F12">
+      <action name="Execute"><command>sh -c 'sleep 1; xset +dpms &amp;&amp; xset dpms force off'</command></action>
+    </keybind>
+
     <!-- Media keys (PipeWire/WirePlumber) and the mixer -->
     <keybind key="XF86AudioRaiseVolume">
       <action name="Execute"><command>wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+</command></action>

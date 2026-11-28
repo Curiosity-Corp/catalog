@@ -3,7 +3,7 @@
 # Entra ID SSO via authd + authd-msentraid broker
 # =============================================================================
 # Enables Microsoft Entra ID login on Ubuntu workstations.
-# Users sign in at GDM with their organization-managed identity using device
+# Users sign in at LightDM with their organization-managed identity using device
 # code flow (scan QR code on phone).
 # =============================================================================
 
