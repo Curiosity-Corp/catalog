@@ -16,8 +16,8 @@ ConditionUser=|{{ user }}
 [Service]
 Type=oneshot
 # A StreamStack release without `camera-publish` makes --help fail: the unit is skipped, not failed.
-ExecCondition=/usr/local/bin/streamstack camera-publish --help
-ExecStart=/usr/local/bin/streamstack camera-publish --wait 120
+ExecCondition={{ _streamstack_bin_dir }}/streamstack camera-publish --help
+ExecStart={{ _streamstack_bin_dir }}/streamstack camera-publish --wait 120
 # 3 = an app holds the camera or captures audio: nothing to do now, and not a failure.
 SuccessExitStatus=3
 TimeoutStartSec=180

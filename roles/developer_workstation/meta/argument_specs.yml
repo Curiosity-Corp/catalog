@@ -383,6 +383,15 @@ argument_specs:
       samsung_tv_key_vault_secret: {type: str, no_log: true}
       developer_workstation_browser_hw_decode_features: {type: list}
       pointer_accel_conf_path: {type: str}
+      streamstack_source:
+        type: str
+        choices: [vendored, apt]
+      streamstack_apt_release: {type: str}
+      streamstack_apt_gitlab_host: {type: str}
+      streamstack_apt_project_id: {type: int}
+      streamstack_apt_repo_url: {type: str}
+      streamstack_apt_keyring: {type: str}
+      streamstack_apt_auth_file: {type: str}
       streamstack_camera_video_nr: {type: int}
       streamstack_camera_label: {type: str}
       streamstack_camera_card_label: {type: str}

@@ -1,0 +1,1045 @@
+[
+ {
+  "args": {
+   "ansible.builtin.apt": {
+    "name": [
+     "zam-plugins",
+     "qpwgraph",
+     "pavucontrol",
+     "pulseaudio-utils",
+     "v4l-utils",
+     "qv4l2",
+     "guvcview",
+     "v4l2loopback-utils",
+     "gphoto2",
+     "ffmpeg",
+     "python3-gi",
+     "gir1.2-gtk-3.0",
+     "gir1.2-ayatanaappindicator3-0.1",
+     "libnotify-bin"
+    ],
+    "state": "present"
+   }
+  },
+  "module": "ansible.builtin.apt",
+  "name": "Install the StreamStack studio packages"
+ },
+ {
+  "args": {
+   "ansible.builtin.apt": {
+    "name": [
+     "obs-studio",
+     "easyeffects",
+     "obs-backgroundremoval"
+    ],
+    "state": "absent"
+   }
+  },
+  "module": "ansible.builtin.apt",
+  "name": "Remove OBS Studio, Easy Effects and the OBS background plugin"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.file": {
+     "path": "/usr/lib/x86_64-linux-gnu/obs-plugins/obs-backgroundremoval.so",
+     "state": "absent"
+    }
+   },
+   {
+    "ansible.builtin.file": {
+     "path": "/usr/share/obs/obs-plugins/obs-backgroundremoval",
+     "state": "absent"
+    }
+   },
+   {
+    "ansible.builtin.file": {
+     "path": "/usr/local/lib/obs-plugins/obs-backgroundremoval.so",
+     "state": "absent"
+    }
+   },
+   {
+    "ansible.builtin.file": {
+     "path": "/usr/local/share/obs/obs-plugins/obs-backgroundremoval",
+     "state": "absent"
+    }
+   },
+   {
+    "ansible.builtin.file": {
+     "path": "/etc/xdg/autostart/streamstack-easyeffects.desktop",
+     "state": "absent"
+    }
+   }
+  ],
+  "module": "ansible.builtin.file",
+  "name": "Remove the OBS background plugin links and the Easy Effects autostart"
+ },
+ {
+  "args": {
+   "ansible.builtin.command": "modinfo -n v4l2loopback"
+  },
+  "module": "ansible.builtin.command",
+  "name": "Check for the v4l2loopback kernel module"
+ },
+ {
+  "args": {
+   "ansible.builtin.apt": {
+    "name": [
+     "linux-modules-v4l2loopback-generic",
+     "linux-main-modules-v4l2loopback-6.8.0-generic"
+    ],
+    "state": "present"
+   }
+  },
+  "module": "ansible.builtin.apt",
+  "name": "Install the prebuilt v4l2loopback module package",
+  "when": [
+   "_streamstack_v4l2loopback_modinfo.rc != 0"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.apt": {
+    "name": "v4l2loopback-dkms",
+    "state": "present"
+   }
+  },
+  "module": "ansible.builtin.apt",
+  "name": "Install v4l2loopback through DKMS",
+  "when": [
+   "_streamstack_v4l2loopback_modinfo.rc != 0"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "group": "root",
+    "mode": "0755",
+    "owner": "root",
+    "path": "/etc/streamstack",
+    "state": "directory"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Ensure /etc/streamstack exists"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "content": "# Managed by the curiosity workstation role (streamstack task group).\n# video42: camera bridge, video43: program camera (the native engine).\n# Names apply when the module loads. Changing one here never reloads the module: it takes effect at the next planned reload.\noptions v4l2loopback devices=2 video_nr=42,43 card_label=\"StreamStack RAW - not for calls,StreamStack Camera\" exclusive_caps=1,1 max_buffers=2\n",
+    "dest": "/etc/modprobe.d/curiosity-streamstack-v4l2loopback.conf",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Configure the StreamStack loopback cameras"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "content": "# Managed by the curiosity workstation role (streamstack task group).\nv4l2loopback\n",
+    "dest": "/etc/modules-load.d/curiosity-streamstack.conf",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Load v4l2loopback at boot"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "path": "/etc/modprobe.d/curiosity-v4l2loopback.conf",
+    "state": "absent"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Remove the superseded single-camera loopback options"
+ },
+ {
+  "args": {
+   "ansible.builtin.shell": {
+    "cmd": "set -o pipefail; grep -lE '^[[:space:]]*options[[:space:]]+v4l2loopback' /etc/modprobe.d/*.conf | grep -vx /etc/modprobe.d/curiosity-streamstack-v4l2loopback.conf || true",
+    "executable": "/bin/bash"
+   }
+  },
+  "module": "ansible.builtin.shell",
+  "name": "Find other v4l2loopback options on this host"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "content": "# Managed by the curiosity workstation role (streamstack task group).\n# Loopback nodes: match on KERNEL only, ATTR{name} is not populated yet\n# when the add event is processed.\nSUBSYSTEM==\"video4linux\", KERNEL==\"video42\", GROUP=\"video\", MODE=\"0660\", TAG+=\"uaccess\"\nSUBSYSTEM==\"video4linux\", KERNEL==\"video43\", GROUP=\"video\", MODE=\"0660\", TAG+=\"uaccess\"\n# Stable capture-card path for the native engine: /dev/streamstack/camlink\nSUBSYSTEM==\"video4linux\", ATTRS{idVendor}==\"0fd9\", ATTRS{idProduct}==\"0066\", ATTR{index}==\"0\", SYMLINK+=\"streamstack/camlink\"\n",
+    "dest": "/etc/udev/rules.d/60-curiosity-streamstack.rules",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Grant the console user the StreamStack cameras"
+ },
+ {
+  "args": {
+   "ansible.builtin.getent": {
+    "database": "passwd"
+   }
+  },
+  "module": "ansible.builtin.getent",
+  "name": "Look up the accounts on this host"
+ },
+ {
+  "args": {
+   "ansible.builtin.command": "udevadm control --reload"
+  },
+  "module": "ansible.builtin.command",
+  "name": "Reload udev rules for StreamStack",
+  "when": [
+   "_streamstack_udev is changed"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.command": "udevadm trigger --subsystem-match=video4linux"
+  },
+  "module": "ansible.builtin.command",
+  "name": "Re-apply udev rules to present video devices",
+  "when": [
+   "_streamstack_udev is changed"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "content": "# Managed by the curiosity workstation role (streamstack task group).\nSTREAMSTACK_CAMERA_DEVICE=/dev/video42\nSTREAMSTACK_CAMERA_LABEL='Canon EOS 50D'\nSTREAMSTACK_PROGRAM_DEVICE=/dev/video43\nSTREAMSTACK_PROGRAM_LABEL='StreamStack Camera'\nSTREAMSTACK_WIDTH=1920\nSTREAMSTACK_HEIGHT=1080\nSTREAMSTACK_FPS=30\nSTREAMSTACK_CAMERA_EXTERNAL=false\nSTREAMSTACK_CANON_BRIDGE=gphoto2\nSTREAMSTACK_CANON_COMMAND=''\nSTREAMSTACK_VOICE_PRESET='StreamStack Voice'\nSTREAMSTACK_MICROPHONE=''\nSTREAMSTACK_AUTO_BACKEND=claude-cli\nSTREAMSTACK_AUTO_MODEL=''\nSTREAMSTACK_AUTO_INTERVAL=15\nSTREAMSTACK_AUTO_AI_INTERVAL=300\nSTREAMSTACK_AUTO_VIDEO=true\nSTREAMSTACK_AUTO_AUDIO=true\nSTREAMSTACK_AUTO_NOTIFY=true\nSTREAMSTACK_PROPERTY=''\nSTREAMSTACK_LATITUDE=\nSTREAMSTACK_LONGITUDE=\n",
+    "dest": "/etc/streamstack/streamstack.env",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Render the StreamStack settings"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "dest": "/usr/local/sbin/curiosity-streamstack-loopback",
+    "group": "root",
+    "mode": "0755",
+    "owner": "root",
+    "src": "curiosity-streamstack-loopback",
+    "src_sha256": "95dbfa7c9b4f118c9d220674ce09fee905512426b84549f6ae17f169b320be70"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack loopback bring-up"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "dest": "/etc/systemd/system/curiosity-streamstack-loopback.service",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root",
+    "src": "curiosity-streamstack-loopback.service",
+    "src_sha256": "a26204599c95089e0a5314c44f989f3c3117eb26dca74e443d6480b38bd9160f"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack loopback boot service"
+ },
+ {
+  "args": {
+   "ansible.builtin.systemd_service": {
+    "daemon_reload": "{{ _streamstack_loopback_unit is changed }}",
+    "enabled": true,
+    "name": "curiosity-streamstack-loopback.service"
+   }
+  },
+  "module": "ansible.builtin.systemd_service",
+  "name": "Enable the StreamStack loopback boot service"
+ },
+ {
+  "args": {
+   "ansible.builtin.command": "/usr/local/sbin/curiosity-streamstack-loopback --no-reload"
+  },
+  "module": "ansible.builtin.command",
+  "name": "Bring up the StreamStack loopback cameras"
+ },
+ {
+  "args": {
+   "ansible.builtin.slurp": {
+    "src": "/usr/local/lib/streamstack/streamstack/__init__.py"
+   }
+  },
+  "module": "ansible.builtin.slurp",
+  "name": "Read the installed StreamStack version"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "path": "/usr/local/lib/streamstack/streamstack",
+    "state": "absent"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Remove a StreamStack package of another version",
+  "when": [
+   "_streamstack_installed.content is not defined or ('__version__ = \"' ~ _streamstack_version ~ '\"') not in (_streamstack_installed.content | b64decode)"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "dest": "/usr/local/lib/streamstack/streamstack/",
+    "directory_mode": "0755",
+    "group": "root",
+    "mode": "u=rwX,go=rX",
+    "owner": "root",
+    "src": "streamstack/src/streamstack/",
+    "src_sha256": "524d9c5050f12a5f9b86370ff7c964ffc1a4cf8de74ef83d18be540ccf6a06db"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack package"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/bin/streamstack",
+     "group": "root",
+     "mode": "0755",
+     "owner": "root",
+     "src": "streamstack/packaging/bin/streamstack",
+     "src_sha256": "2c01ca4e753743fd2b35a0e30df433560fd44fdafd04af6332a7f1630d5904eb"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/bin/streamstack-auto",
+     "group": "root",
+     "mode": "0755",
+     "owner": "root",
+     "src": "streamstack/packaging/bin/streamstack-auto",
+     "src_sha256": "47e5c40aae5a286be353380f6a17ef0c22e645d66f4f874856cf0008ff131934"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/bin/streamstack-console",
+     "group": "root",
+     "mode": "0755",
+     "owner": "root",
+     "src": "streamstack/packaging/bin/streamstack-console",
+     "src_sha256": "9b0d7882a0b535a3a9454c1bc858a717d290b1dad585ec500867863b2c06cd24"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/bin/streamstack-tray",
+     "group": "root",
+     "mode": "0755",
+     "owner": "root",
+     "src": "streamstack/packaging/bin/streamstack-tray",
+     "src_sha256": "86957c061c3ea5ca5e4f5377b7d0b3c14583bdd7f8376ae3e0ea90c3e9c24aaf"
+    }
+   }
+  ],
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack commands"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.file": {
+     "group": "root",
+     "mode": "0755",
+     "owner": "root",
+     "path": "/usr/local/share/icons/hicolor/scalable/apps",
+     "state": "directory"
+    }
+   },
+   {
+    "ansible.builtin.file": {
+     "group": "root",
+     "mode": "0755",
+     "owner": "root",
+     "path": "/usr/local/share/icons/hicolor/scalable/status",
+     "state": "directory"
+    }
+   }
+  ],
+  "module": "ansible.builtin.file",
+  "name": "Create the local hicolor icon directories"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/share/icons/hicolor/scalable/apps/streamstack.svg",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "src": "streamstack/src/streamstack/data/icons/streamstack-live.svg",
+     "src_sha256": "24814b69bbaae4b8f3865e863c1a8be5a960727e288d09ff8fa97eab36cab5c5"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/share/icons/hicolor/scalable/status/streamstack-live.svg",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "src": "streamstack/src/streamstack/data/icons/streamstack-live.svg",
+     "src_sha256": "24814b69bbaae4b8f3865e863c1a8be5a960727e288d09ff8fa97eab36cab5c5"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/share/icons/hicolor/scalable/status/streamstack-raw.svg",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "src": "streamstack/src/streamstack/data/icons/streamstack-raw.svg",
+     "src_sha256": "3a316c63963c1df02bb9bdea26265338dc3ead2060089141d20a1ce3de6dfc90"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/share/icons/hicolor/scalable/status/streamstack-warn.svg",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "src": "streamstack/src/streamstack/data/icons/streamstack-warn.svg",
+     "src_sha256": "e774ab7a747d994b89dbc7d9442b76aa95472864b4aa3113a465b81a2fef057d"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "dest": "/usr/local/share/icons/hicolor/scalable/status/streamstack-off.svg",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "src": "streamstack/src/streamstack/data/icons/streamstack-off.svg",
+     "src_sha256": "1088fd32aab83fd9d411856c95c8967e3a7d43b2607526015b1dac5408b571db"
+    }
+   }
+  ],
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack icons in the hicolor theme"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "dest": "/usr/share/applications/streamstack.desktop",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root",
+    "src": "streamstack/packaging/applications/streamstack.desktop",
+    "src_sha256": "bfbaa98dfc3590d9e1f402a206444187de69c7171853d4ed37dc0d8121dc7b7a"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "List StreamStack in the application menu"
+ },
+ {
+  "args": {
+   "ansible.builtin.stat": {
+    "path": "roles/developer_workstation/files/streamstack/packaging/wireplumber/wireplumber.conf.d"
+   },
+   "become": false,
+   "delegate_to": "localhost"
+  },
+  "module": "ansible.builtin.stat",
+  "name": "Find the WirePlumber drop-ins the vendored StreamStack ships"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "dest": "/etc/wireplumber/wireplumber.conf.d/",
+    "directory_mode": "0755",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root",
+    "src": "streamstack/packaging/wireplumber/wireplumber.conf.d/",
+    "src_sha256": "49c85b048e20fdecb5e3cf6944dd6633681ccd6c178cb8afdf9cac4716d333d6"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack WirePlumber drop-ins",
+  "when": [
+   "_streamstack_wireplumber_dropins.stat.isdir | default(false)"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "dest": "/etc/systemd/user/streamstack-canon.service",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root",
+    "src": "streamstack/packaging/systemd/user/streamstack-canon.service",
+    "src_sha256": "9e068a92edcf561570546f573f19c6cb651c2b36cd5d04e58c55947d704db3d9"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Install the Canon bridge user service"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "path": "/etc/systemd/user/default.target.wants/streamstack-canon.service",
+    "state": "absent"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Leave the Canon bridge to `streamstack studio`"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.copy": {
+     "content": "# The StreamStack voice chain: a PipeWire filter-chain that exposes \"StreamStack Mic\" (48 kHz mono).\n# The Console starts the same host by itself; enable this unit only to have the voice chain without the Console:\n#   systemctl --user enable --now streamstack-audio-chain.service\n[Unit]\nDescription=StreamStack voice chain (StreamStack Mic)\nAfter=pipewire.service wireplumber.service\nWants=pipewire.service\n\n[Service]\nExecStart=/usr/local/bin/streamstack chain run\n# StreamStack Mic becomes the default microphone once the host is up, and the raw one comes back when it stops.\nExecStartPost=-streamstack chain claim-default\nExecStopPost=-streamstack chain release-default\nRestart=on-failure\nRestartSec=3\nNice=-5\nNoNewPrivileges=true\n\n[Install]\nWantedBy=default.target",
+     "dest": "/etc/systemd/user/streamstack-audio-chain.service",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "content": "# StreamStack deck: an Elgato Stream Deck as a control surface for the Console, with the Console closed.\n# `streamstack deck enable|disable|status`, or the Deck page. Needs the deck extra: pip install 'streamstack[deck]'.\n[Unit]\nDescription=StreamStack deck (Elgato Stream Deck keys for the Console)\nAfter=graphical-session.target\nStartLimitIntervalSec=300\nStartLimitBurst=5\n\n[Service]\nType=simple\nExecStart=/usr/local/bin/streamstack deck run\nRestart=on-failure\nRestartSec=5\nNice=5\nCPUWeight=10\nNoNewPrivileges=true\n# The deck starts a headless Console when none is running; that Console must outlive a restart of this unit.\nKillMode=process\n\n[Install]\nWantedBy=graphical-session.target",
+     "dest": "/etc/systemd/user/streamstack-deck.service",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root"
+    }
+   }
+  ],
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack voice chain and deck user services"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "dest": "/etc/systemd/user/streamstack-auto.service",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root",
+    "src": "streamstack/packaging/systemd/user/streamstack-auto.service",
+    "src_sha256": "84058a88825c8d3814d2f316375e5ab1a35e4ae847560e3d81ce06694410604f"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack auto mode user service"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "group": "root",
+    "mode": "0755",
+    "owner": "root",
+    "path": "/etc/systemd/user/graphical-session.target.wants",
+    "state": "directory"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Ensure the global user graphical-session.target.wants directory exists"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "path": "/etc/systemd/user/graphical-session.target.wants/streamstack-auto.service",
+    "state": "absent"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Leave StreamStack auto mode to `streamstack auto on`"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "content": "# StreamStack lights: camera follow and the daylight schedule for Litra lights, with the Console closed.\n# `streamstack lights enable|disable|status`, or the Lighting page.\n[Unit]\nDescription=StreamStack lights (camera follow and daylight schedule for Litra lights)\nAfter=graphical-session.target\nStartLimitIntervalSec=300\nStartLimitBurst=5\n\n[Service]\nType=simple\nExecStart=/usr/local/bin/streamstack lights run\nRestart=on-failure\nRestartSec=5\nNice=5\nCPUWeight=10\nNoNewPrivileges=true\n\n[Install]\nWantedBy=graphical-session.target",
+    "dest": "/etc/systemd/user/streamstack-lights.service",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Install the StreamStack lights user service"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "force": true,
+    "group": "root",
+    "owner": "root",
+    "path": "/etc/systemd/user/graphical-session.target.wants/streamstack-lights.service",
+    "src": "/etc/systemd/user/streamstack-lights.service",
+    "state": "link"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Start StreamStack camera follow and the light schedule at login"
+ },
+ {
+  "args": {
+   "ansible.builtin.template": {
+    "dest": "/etc/systemd/user/streamstack-console.service",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root",
+    "rendered": "# Managed by the curiosity workstation role (streamstack task group).\n# The StreamStack Console without a window: it hosts the native video engine\n# (the only writer of the program camera, /dev/video43\n# \"StreamStack Camera\") and starts the voice chain (\"StreamStack Mic\").\n# `streamstack console` opens a window on this same process.\n# Runs for these accounts only: one account at a time may feed the camera.\n[Unit]\nDescription=StreamStack Console (native video engine and voice chain, headless)\nAfter=graphical-session.target pipewire.service wireplumber.service\nWants=pipewire.service\nConditionUser=|mrh\nStartLimitIntervalSec=300\nStartLimitBurst=5\n\n[Service]\nType=simple\nExecStart=/usr/local/bin/streamstack console --no-window\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=true\n# The engine's ffmpeg child dies with the Console; stop the whole group together.\nKillMode=control-group\nTimeoutStopSec=20\n\n[Install]\nWantedBy=graphical-session.target\n",
+    "rendered_sha256": "f9944b9e2bda0e8a7670d859a18d67972ae18c9d9cd1ddbe3aff384be4cad745",
+    "src": "streamstack-console.service.j2"
+   }
+  },
+  "module": "ansible.builtin.template",
+  "name": "Install the StreamStack Console user service"
+ },
+ {
+  "args": {
+   "ansible.builtin.copy": {
+    "dest": "/usr/local/sbin/curiosity-streamstack-console-restart",
+    "group": "root",
+    "mode": "0755",
+    "owner": "root",
+    "src": "curiosity-streamstack-console-restart",
+    "src_sha256": "89cb8d3a9f39cec474f6d694f150c6b088f5cd349bfcc2d1458e24b5da9c2ad6"
+   }
+  },
+  "module": "ansible.builtin.copy",
+  "name": "Install the call-safe StreamStack Console restart"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.copy": {
+     "dest": "/etc/systemd/user/curiosity-streamstack-console-restart.service",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "src": "curiosity-streamstack-console-restart.service",
+     "src_sha256": "d3a481393394ccbcc89456022522d2133a352f4735d79a754a6c555ed76bf1e4"
+    }
+   },
+   {
+    "ansible.builtin.copy": {
+     "dest": "/etc/systemd/user/curiosity-streamstack-console-restart.timer",
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "src": "curiosity-streamstack-console-restart.timer",
+     "src_sha256": "0eefb4ed761115404380139d38af5cd54b4b1e5707919efaff778640e6011aa9"
+    }
+   }
+  ],
+  "module": "ansible.builtin.copy",
+  "name": "Install the deferred StreamStack Console restart user units"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "group": "root",
+    "mode": "0755",
+    "owner": "root",
+    "path": "/etc/systemd/user/graphical-session.target.wants",
+    "state": "directory"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Ensure the global user graphical-session.target.wants directory exists for the Console"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "force": true,
+    "group": "root",
+    "owner": "root",
+    "path": "/etc/systemd/user/graphical-session.target.wants/streamstack-console.service",
+    "src": "/etc/systemd/user/streamstack-console.service",
+    "state": "link"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Start the StreamStack Console (video engine and voice chain) at login"
+ },
+ {
+  "args": {
+   "ansible.builtin.template": {
+    "dest": "/etc/systemd/user/streamstack-camera-publish.service",
+    "group": "root",
+    "mode": "0644",
+    "owner": "root",
+    "rendered": "# Managed by the curiosity workstation role (streamstack task group).\n# StreamStack Camera (/dev/video43 \"StreamStack Camera\") is a v4l2loopback node with exclusive_caps=1: until the\n# Console writes it, it offers only output capability. WirePlumber probes the node when udev announces it (module\n# load at boot) and never again, so PipeWire, Firefox and the camera portal do not list it until WirePlumber\n# probes it a second time. After the Console has fed the node, this one-shot asks `streamstack camera-publish` to\n# restart WirePlumber once. It refuses while an app holds the camera or captures audio (exit 3), so a call is never\n# interrupted. See StreamStack#176 and docs/camera-delivery.md in the application.\n[Unit]\nDescription=Publish StreamStack Camera to PipeWire (one WirePlumber restart after the Console feeds it)\nAfter=graphical-session.target pipewire.service wireplumber.service streamstack-console.service\nWants=streamstack-console.service\nConditionUser=|mrh\n\n[Service]\nType=oneshot\n# A StreamStack release without `camera-publish` makes --help fail: the unit is skipped, not failed.\nExecCondition=/usr/local/bin/streamstack camera-publish --help\nExecStart=/usr/local/bin/streamstack camera-publish --wait 120\n# 3 = an app holds the camera or captures audio: nothing to do now, and not a failure.\nSuccessExitStatus=3\nTimeoutStartSec=180\nNoNewPrivileges=true\n\n[Install]\nWantedBy=graphical-session.target\n",
+    "rendered_sha256": "53957d1a09b8b706567adbf17a1c5665f3089ba112e95706bfbe959c3440052f",
+    "src": "streamstack-camera-publish.service.j2"
+   }
+  },
+  "module": "ansible.builtin.template",
+  "name": "Install the StreamStack camera publish user service"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "force": true,
+    "group": "root",
+    "owner": "root",
+    "path": "/etc/systemd/user/graphical-session.target.wants/streamstack-camera-publish.service",
+    "src": "/etc/systemd/user/streamstack-camera-publish.service",
+    "state": "link"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Publish StreamStack Camera to PipeWire at login"
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "path": "/etc/xdg/autostart/streamstack-tray.desktop",
+    "state": "absent"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Leave the StreamStack panel icon to the application menu"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.command": {
+     "argv": [
+      "/usr/local/bin/streamstack",
+      "setup",
+      "--quiet"
+     ]
+    },
+    "become": true,
+    "become_user": "{{ item.item.name }}",
+    "environment": {
+     "HOME": "{{ item.item.home }}"
+    }
+   }
+  ],
+  "module": "ansible.builtin.command",
+  "name": "Seed StreamStack defaults for each user",
+  "when": [
+   "item.stat.isdir | default(false)"
+  ]
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.command": {
+     "argv": [
+      "runuser",
+      "-u",
+      null,
+      "--",
+      "env",
+      "XDG_RUNTIME_DIR=/run/user/{{ getent_passwd[item.item][1] }}",
+      "/usr/local/sbin/curiosity-streamstack-console-restart",
+      "{{ 'restart' if _streamstack_package_replaced is changed else 'start' }}"
+     ]
+    }
+   }
+  ],
+  "module": "ansible.builtin.command",
+  "name": "Start the StreamStack Console, restarting it after a package replacement unless a call is on",
+  "when": [
+   "item.stat.exists | default(false)"
+  ]
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.stat": {
+     "path": "/run/user/{{ getent_passwd[item.name][1] }}/bus"
+    }
+   }
+  ],
+  "module": "ansible.builtin.stat",
+  "name": "Check which desktop users have a running user manager"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.command": {
+     "argv": [
+      "runuser",
+      "-u",
+      "{{ item.0.item.name }}",
+      "--",
+      "env",
+      "XDG_RUNTIME_DIR=/run/user/{{ getent_passwd[item.0.item.name][1] }}",
+      "systemctl",
+      "--user",
+      "try-restart",
+      "{"
+     ]
+    }
+   }
+  ],
+  "module": "ansible.builtin.command",
+  "name": "Try-restart the StreamStack lights and deck user services after a package replacement"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.shell": {
+     "cmd": "set -o pipefail\nfor _ in $(seq 1 30); do\n  pactl list short sources | cut -f2 | grep -qx streamstack_mic && break\n  sleep 2\ndone\npactl list short sources | cut -f2 | grep -qx streamstack_mic || { echo \"streamstack_mic absent\"; exit 3; }\nif [ \"$(pactl get-default-source)\" = streamstack_mic ]; then echo unchanged; else\n  pactl set-default-source streamstack_mic && echo changed; fi\n",
+     "executable": "/bin/bash"
+    },
+    "become": true,
+    "become_user": null,
+    "environment": {
+     "XDG_RUNTIME_DIR": "/run/user/{{ getent_passwd[item.item][1] }}"
+    }
+   }
+  ],
+  "module": "ansible.builtin.shell",
+  "name": "Make StreamStack Mic the default microphone for each Console account",
+  "when": [
+   "item.stat.exists | default(false)"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.command": "pkill -x easyeffects"
+  },
+  "module": "ansible.builtin.command",
+  "name": "Stop Easy Effects processes that outlive the package"
+ },
+ {
+  "args": {
+   "ansible.builtin.apt": {
+    "name": [
+     "python3-pip",
+     "python3-numpy",
+     "python3-opencv",
+     "python3-packaging"
+    ],
+    "state": "present"
+   }
+  },
+  "module": "ansible.builtin.apt",
+  "name": "Install the auto-framing Python packages"
+ },
+ {
+  "args": {
+   "ansible.builtin.shell": {
+    "cmd": "grep -qx 0x8086 /sys/class/drm/card*/device/vendor",
+    "executable": "/bin/bash"
+   }
+  },
+  "module": "ansible.builtin.shell",
+  "name": "Detect an Intel GPU for auto-framing"
+ },
+ {
+  "args": {
+   "ansible.builtin.apt": {
+    "name": [
+     "intel-opencl-icd",
+     "libze-intel-gpu1",
+     "libze1",
+     "libigdgmm12",
+     "ocl-icd-libopencl1"
+    ],
+    "state": "present"
+   }
+  },
+  "module": "ansible.builtin.apt",
+  "name": "Install the Intel GPU compute runtime",
+  "when": [
+   "_streamstack_framing_intel_gpu.rc == 0"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.command": {
+    "argv": [
+     "/usr/bin/python3",
+     "-I",
+     "-c",
+     "import sys; print('cp%d%d' % sys.version_info[:2])"
+    ]
+   }
+  },
+  "module": "ansible.builtin.command",
+  "name": "Read the system Python tag the StreamStack launcher runs"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.stat": {
+     "path": "/usr/local/lib/streamstack/openvino-2026.4.1.dist-info"
+    }
+   },
+   {
+    "ansible.builtin.stat": {
+     "path": "/usr/local/lib/streamstack/openvino_telemetry-2025.2.0.dist-info"
+    }
+   }
+  ],
+  "module": "ansible.builtin.stat",
+  "name": "Check the installed OpenVINO packages",
+  "when": [
+   "_streamstack_python_tag.stdout == streamstack_openvino_python_tag"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.file": {
+    "group": "root",
+    "mode": "0750",
+    "owner": "root",
+    "path": "/var/cache/curiosity/artifacts",
+    "state": "directory"
+   }
+  },
+  "module": "ansible.builtin.file",
+  "name": "Ensure the verified artifact cache exists",
+  "when": [
+   "_streamstack_python_tag.stdout == streamstack_openvino_python_tag",
+   "_streamstack_openvino_installed.results | map(attribute='stat.exists') | reject | list | length > 0"
+  ]
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.get_url": {
+     "checksum": "sha256:3631dd889dccf3d5087775948590a6609a662f90c24a9cf85bb4dfa0cdd7fd2f",
+     "dest": "/var/cache/curiosity/artifacts/openvino-2026.4.1-22982-cp314-cp314-manylinux_2_28_x86_64.whl",
+     "force": false,
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "url": "https://files.pythonhosted.org/packages/77/cf/830aff97404d73b8ada3ba3f02a626089a384299322cb94b52c37eaebd18/openvino-2026.4.1-22982-cp314-cp314-manylinux_2_28_x86_64.whl"
+    }
+   },
+   {
+    "ansible.builtin.get_url": {
+     "checksum": "sha256:bcb667e83a44f202ecf4cfa49281715c6d7e21499daec04ff853b7f964833599",
+     "dest": "/var/cache/curiosity/artifacts/openvino_telemetry-2025.2.0-py3-none-any.whl",
+     "force": false,
+     "group": "root",
+     "mode": "0644",
+     "owner": "root",
+     "url": "https://files.pythonhosted.org/packages/3b/ac/5ab0ca0aa269ad3c73f7bfc3801b10e5f56f75a31bf68c1ae8bd51cf70a4/openvino_telemetry-2025.2.0-py3-none-any.whl"
+    }
+   }
+  ],
+  "module": "ansible.builtin.get_url",
+  "name": "Download the OpenVINO wheels",
+  "when": [
+   "_streamstack_python_tag.stdout == streamstack_openvino_python_tag",
+   "_streamstack_openvino_installed.results | map(attribute='stat.exists') | reject | list | length > 0"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.find": {
+    "file_type": "directory",
+    "paths": "/usr/local/lib/streamstack",
+    "patterns": [
+     "openvino-*.dist-info",
+     "openvino_telemetry-*.dist-info"
+    ]
+   }
+  },
+  "module": "ansible.builtin.find",
+  "name": "Find OpenVINO packages of other versions",
+  "when": [
+   "_streamstack_python_tag.stdout == streamstack_openvino_python_tag",
+   "_streamstack_openvino_installed.results | map(attribute='stat.exists') | reject | list | length > 0"
+  ]
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.file": {
+     "path": null,
+     "state": "absent"
+    }
+   }
+  ],
+  "module": "ansible.builtin.file",
+  "name": "Remove OpenVINO packages of other versions",
+  "when": [
+   "_streamstack_python_tag.stdout == streamstack_openvino_python_tag",
+   "_streamstack_openvino_installed.results | map(attribute='stat.exists') | reject | list | length > 0",
+   "(item.path | basename) not in [\n  'openvino-' ~ streamstack_openvino_release ~ '.dist-info',\n  'openvino_telemetry-' ~ streamstack_openvino_telemetry_release ~ '.dist-info']"
+  ]
+ },
+ {
+  "args": {
+   "ansible.builtin.command": {
+    "argv": [
+     "/usr/bin/python3",
+     "-I",
+     "-m",
+     "pip",
+     "install",
+     "--disable-pip-version-check",
+     "--no-input",
+     "--no-deps",
+     "--no-index",
+     "--upgrade",
+     "--target",
+     "/usr/local/lib/streamstack",
+     "/var/cache/curiosity/artifacts/openvino-2026.4.1-22982-cp314-cp314-manylinux_2_28_x86_64.whl",
+     "/var/cache/curiosity/artifacts/openvino_telemetry-2025.2.0-py3-none-any.whl"
+    ]
+   },
+   "environment": {
+    "PIP_REQUIRE_VIRTUALENV": "false"
+   }
+  },
+  "module": "ansible.builtin.command",
+  "name": "Install the OpenVINO wheels with pip --target",
+  "when": [
+   "_streamstack_python_tag.stdout == streamstack_openvino_python_tag",
+   "_streamstack_openvino_installed.results | map(attribute='stat.exists') | reject | list | length > 0"
+  ]
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.file": {
+     "group": "{{ item.0.stat.gid }}",
+     "mode": "u+rwx",
+     "owner": "{{ item.0.stat.uid }}",
+     "path": "{{ item.0.item.home }}/{{ item.1 }}",
+     "state": "directory"
+    }
+   }
+  ],
+  "module": "ansible.builtin.file",
+  "name": "Create the StreamStack model directory for each user"
+ },
+ {
+  "items": [
+   {
+    "ansible.builtin.get_url": {
+     "checksum": "sha256:8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+     "dest": "{{ item.item.home }}/.local/share/streamstack/models/{{ streamstack_framing_model_file }}",
+     "force": false,
+     "group": "{{ item.stat.gid }}",
+     "mode": "0644",
+     "owner": "{{ item.stat.uid }}",
+     "url": "https://github.com/opencv/opencv_zoo/raw/f12e12798e8314f7c074a6656816c048dcc95b7a/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+    }
+   }
+  ],
+  "module": "ansible.builtin.get_url",
+  "name": "Fetch the pinned YuNet face model for each user",
+  "when": [
+   "item.stat.isdir | default(false)"
+  ]
+ }
+]

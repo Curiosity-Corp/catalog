@@ -211,6 +211,17 @@ Curiosity-Redistribution = "Public verification material; it carries no secret. 
 # Third-party works, derivatives and key material shipped in the collection
 # ---------------------------------------------------------------------------
 [[annotations]]
+path = "roles/developer_workstation/files/streamstack-apt-public.gpg"
+precedence = "override"
+SPDX-FileCopyrightText = "StreamStack project, Curiosity Research Corporation"
+SPDX-License-Identifier = "Apache-2.0"
+Curiosity-Kind = "key-material"
+Curiosity-Source = "the StreamStack project's APT signing public key, its packaging/apt-public.asc dearmored (fingerprint F3AA4E82E815D695089DB4D2456BDF83CAB0C1E8, tests/test_streamstack_apt.py proves both)"
+Curiosity-Version = "as vendored with 0.0.32"
+Curiosity-Provenance = "resolved"
+Curiosity-Redistribution = "Public verification material; it carries no secret. Keep it unmodified."
+
+[[annotations]]
 path = "roles/developer_workstation/files/wee_most.py"
 precedence = "override"
 SPDX-FileCopyrightText = [

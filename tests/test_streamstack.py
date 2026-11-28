@@ -18,7 +18,19 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "roles/developer_workstation"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
-TASKS = yaml.safe_load((ROLE / "tasks/streamstack.yml").read_text())
+
+
+def _flatten(tasks: list[dict]) -> list[dict]:
+    """Every task, blocks included: the vendored install sits in a block since catalog#183."""
+    found = []
+    for task in tasks or []:
+        found.append(task)
+        for part in ("block", "rescue", "always"):
+            found.extend(_flatten(task.get(part, [])))
+    return found
+
+
+TASKS = _flatten(yaml.safe_load((ROLE / "tasks/streamstack.yml").read_text()))
 APP = ROLE / "files/streamstack"
 
 
@@ -38,8 +50,22 @@ def _task(name: str) -> dict:
 
 def _render(text: str, **extra) -> str:
     context = {k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")}
+    context.update(_locations(context.get("streamstack_source", "vendored")))
     context.update(extra)
     return _environment().from_string(text).render(**context)
+
+
+def _locations(source: str) -> dict[str, str]:
+    """`_streamstack_bin_dir` and `_streamstack_unit_dir` as the role sets them for `source`."""
+    facts = _task("Locate the StreamStack commands and packaged user units")["ansible.builtin.set_fact"]
+    env = _environment()
+    return {key: env.from_string(value).render(streamstack_source=source) for key, value in facts.items()}
+
+
+def test_the_install_locations_follow_the_source() -> None:
+    assert _locations("vendored") == {"_streamstack_bin_dir": "/usr/local/bin",
+                                      "_streamstack_unit_dir": "/etc/systemd/user"}
+    assert _locations("apt") == {"_streamstack_bin_dir": "/usr/bin", "_streamstack_unit_dir": "/usr/lib/systemd/user"}
 
 
 def test_only_deskmeet_opts_in_by_profile() -> None:
@@ -185,7 +211,8 @@ def test_loopback_script_adds_only_the_program_node_in_external_mode(tmp_path: P
 
 def test_user_defaults_are_seeded_not_overwritten() -> None:
     task = _task("Seed StreamStack defaults for each user")
-    assert task["ansible.builtin.command"]["argv"] == ["/usr/local/bin/streamstack", "setup", "--quiet"]
+    assert [_render(arg) for arg in task["ansible.builtin.command"]["argv"]] == \
+        ["/usr/local/bin/streamstack", "setup", "--quiet"]
     assert task["become_user"] == "{{ item.item.name }}"
     assert "--force" not in task["ansible.builtin.command"]["argv"]
 
@@ -198,7 +225,7 @@ def test_panel_menu_is_installed_and_the_tray_icon_is_opt_in() -> None:
     assert "Exec=streamstack-console" in entry  # the Console; the old menu stays as a desktop action
     assert "Exec=streamstack-tray --menu" in entry
     autostart = _task("Start the StreamStack panel icon at login")
-    assert autostart["when"] == "streamstack_tray_autostart | bool"
+    assert autostart["when"] == ["streamstack_tray_autostart | bool", "streamstack_source == 'vendored'"]
     assert (ROLE / "files" / autostart["ansible.builtin.copy"]["src"]).is_file()
     for package in ("python3-gi", "gir1.2-ayatanaappindicator3-0.1"):
         assert package in DEFAULTS["streamstack_packages"]
@@ -277,7 +304,7 @@ def test_lights_follow_the_camera_at_login_for_every_desktop_user() -> None:
     assert install["dest"] == "/etc/systemd/user/streamstack-lights.service"
     assert "replace('@STREAMSTACK@', '/usr/local/bin/streamstack')" in install["content"]
     link = _task("Start StreamStack camera follow and the light schedule at login")
-    assert link["ansible.builtin.file"]["src"] == "/etc/systemd/user/streamstack-lights.service"
+    assert _render(link["ansible.builtin.file"]["src"]) == "/etc/systemd/user/streamstack-lights.service"
     assert link["when"] == "streamstack_lights_autostart | bool"
     wants = _task("Ensure the global user graphical-session.target.wants directory exists")
     assert "streamstack_lights_autostart" in wants["when"]
@@ -361,9 +388,7 @@ def test_obs_and_easy_effects_are_retired_not_installed() -> None:
 
 def test_the_console_runs_headless_for_the_studio_account_only() -> None:
     assert DEFAULTS["streamstack_console_users"] == ["mrh"]
-    unit = _environment().from_string((ROLE / "templates/streamstack-console.service.j2").read_text()).render(
-        **{k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")}
-    )
+    unit = _render((ROLE / "templates/streamstack-console.service.j2").read_text())
     assert "ExecStart=/usr/local/bin/streamstack console --no-window" in unit
     assert "ConditionUser=|mrh" in unit
     assert "WantedBy=graphical-session.target" in unit
@@ -379,9 +404,7 @@ def test_the_console_runs_headless_for_the_studio_account_only() -> None:
 
 def test_the_program_camera_is_published_to_pipewire_after_the_console_feeds_it() -> None:
     # WirePlumber probes the exclusive_caps loopback at module load and never again (StreamStack#176)
-    unit = _environment().from_string((ROLE / "templates/streamstack-camera-publish.service.j2").read_text()).render(
-        **{k: v for k, v in DEFAULTS.items() if k.startswith("streamstack_")}
-    )
+    unit = _render((ROLE / "templates/streamstack-camera-publish.service.j2").read_text())
     assert "After=graphical-session.target pipewire.service wireplumber.service streamstack-console.service" in unit
     assert "ExecStart=/usr/local/bin/streamstack camera-publish --wait 120" in unit
     assert "ExecCondition=/usr/local/bin/streamstack camera-publish --help" in unit  # old releases: skipped, not failed
@@ -397,9 +420,11 @@ def test_the_program_camera_is_published_to_pipewire_after_the_console_feeds_it(
 def test_the_voice_chain_is_not_enabled_beside_the_console() -> None:
     # The Console starts the chain host itself; a second supervisor would restart it against the first.
     install = _task("Install the StreamStack voice chain and deck user services")
-    assert install["loop"] == ["streamstack-audio-chain", "streamstack-deck"]
+    loop = _environment().compile_expression(install["loop"].strip("{} "))
+    assert loop(streamstack_source="vendored") == ["streamstack-audio-chain", "streamstack-deck"]
+    assert loop(streamstack_source="apt") == ["streamstack-deck"]  # the package ships the voice chain unit
     assert not any("wants" in str(t.get("ansible.builtin.file", {}).get("path", "")) and "audio-chain" in str(t) for t in TASKS)
-    for item in install["loop"]:
+    for item in loop(streamstack_source="vendored"):
         assert (APP / f"packaging/systemd/user/{item}.service").is_file()
 
 

@@ -1,0 +1,155 @@
+---
+# =============================================================================
+# StreamStack from its signed apt repository (catalog#183)
+# =============================================================================
+# Included from streamstack.yml when `streamstack_source: apt`. The native build
+# replaces the vendored release: the package owns /usr/bin/streamstack*, the
+# packaged user units in /usr/lib/systemd/user, its udev rules, modprobe and
+# modules-load files and its WirePlumber drop-in, so the role installs none of
+# those and removes what the vendored release left under /usr/local. The role
+# keeps the host wiring: loopback options, udev access, settings, the Console,
+# camera publish, deck and restart units (streamstack.yml).
+#
+# The repository is a flat apt repository in a GitLab Generic Package Registry,
+# readable only with a deploy token. scripts/bootstrap-streamstack-apt.sh writes
+# that token, once per host, to `streamstack_apt_auth_file` (root, 0600); this
+# file only checks it is there and never reads it.
+#
+# `_streamstack_package_replaced` is the apt install's result: streamstack.yml
+# restarts the Console (call-safe) and try-restarts the lights and deck services
+# once when this run installed or changed the package.
+# =============================================================================
+
+- name: Validate the StreamStack apt settings
+  ansible.builtin.assert:
+    that:
+      - streamstack_apt_gitlab_host | length > 0
+      - streamstack_apt_release is match('^[0-9][0-9A-Za-z.+~-]*$')
+      - streamstack_apt_repo_url is match('^https://')
+    fail_msg: >-
+      streamstack_source: apt needs streamstack_apt_gitlab_host (the GitLab host
+      serving the StreamStack apt repository), a Debian version in
+      streamstack_apt_release and an https streamstack_apt_repo_url (apt sends the deploy token over https only).
+    quiet: true
+
+- name: Check the StreamStack apt credentials
+  ansible.builtin.stat:
+    path: "{{ streamstack_apt_auth_file }}"
+  register: _streamstack_apt_auth
+
+- name: Require root-only StreamStack apt credentials
+  ansible.builtin.assert:
+    that:
+      - _streamstack_apt_auth.stat.exists
+      - _streamstack_apt_auth.stat.pw_name == 'root'
+      - _streamstack_apt_auth.stat.mode == '0600'
+    fail_msg: >-
+      {{ streamstack_apt_auth_file }} must exist, owned by root with mode 0600:
+      it carries the read-only deploy token for the StreamStack apt repository.
+      Write it once on this host with scripts/bootstrap-streamstack-apt.sh
+      (docs/streamstack.md, "Install from the apt repository"); the role never
+      creates it and never reads it.
+    quiet: true
+
+# --- signing key --------------------------------------------------------------
+# The key StreamStack publishes (packaging/apt-public.asc), dearmored once into
+# files/streamstack-apt-public.gpg. tests/test_streamstack_apt.py proves that
+# file is the vendored release's armored key, byte for byte, with exactly one
+# primary key, whose fingerprint is StreamStack's packaging/apt-public.fingerprint.
+# Copied on every run, so a rotated key in the role reaches every host.
+
+- name: Ensure the apt keyring directory exists
+  ansible.builtin.file:
+    path: "{{ streamstack_apt_keyring | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the StreamStack signing key
+  ansible.builtin.copy:
+    src: streamstack-apt-public.gpg
+    dest: "{{ streamstack_apt_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _streamstack_apt_keyring
+
+# --- repository ---------------------------------------------------------------
+
+- name: Add the StreamStack apt repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/streamstack.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the curiosity workstation role (streamstack task group, catalog#183).
+      # Credentials: {{ streamstack_apt_auth_file }} (root, 0600).
+      deb [signed-by={{ streamstack_apt_keyring }}] {{ streamstack_apt_repo_url }} ./
+  register: _streamstack_apt_source
+
+# --- package ------------------------------------------------------------------
+
+- name: Check whether the StreamStack package is installed
+  ansible.builtin.command:
+    argv: [dpkg-query, --show, "--showformat=${db:Status-Status}", streamstack]
+  register: _streamstack_apt_status
+  changed_when: false
+  failed_when: _streamstack_apt_status.rc not in [0, 1]
+  check_mode: false
+
+# The vendored release copied its WirePlumber drop-ins into the directory where
+# the package ships them as conffiles. dpkg keeps an unowned file it finds there
+# (apt's force-confold), so remove the vendored copies once, before the package
+# first installs, and the package's own file is the one in place.
+- name: Remove the vendored WirePlumber drop-ins before the package takes them over
+  ansible.builtin.file:
+    path: "/etc/wireplumber/wireplumber.conf.d/{{ item | basename }}"
+    state: absent
+  loop: "{{ query('ansible.builtin.fileglob', role_path ~ '/files/streamstack/packaging/wireplumber/wireplumber.conf.d/*') }}"
+  loop_control:
+    label: "{{ item | basename }}"
+  when: _streamstack_apt_status.stdout != 'installed'
+
+- name: Check the apt cache knows StreamStack {{ streamstack_apt_release }}
+  ansible.builtin.command:
+    argv: [apt-cache, show, "streamstack={{ streamstack_apt_release }}"]
+  register: _streamstack_apt_cached
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install StreamStack from the apt repository at version {{ streamstack_apt_release }}
+  ansible.builtin.apt:
+    name: "streamstack={{ streamstack_apt_release }}"
+    state: present
+    allow_downgrade: true
+    update_cache: >-
+      {{ _streamstack_apt_cached.rc != 0
+         or _streamstack_apt_source is changed
+         or _streamstack_apt_keyring is changed }}
+  register: _streamstack_package_replaced
+
+# --- the vendored release, retired -----------------------------------------------
+
+- name: Find the vendored StreamStack launchers
+  ansible.builtin.find:
+    paths: /usr/local/bin
+    patterns: "streamstack*"
+    file_type: any
+  register: _streamstack_vendored_launchers
+  check_mode: false
+
+- name: Remove the vendored StreamStack install
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ (_streamstack_vendored_launchers.files | map(attribute='path') | list)
+       + ['/usr/local/lib/streamstack',
+          '/usr/local/share/icons/hicolor/scalable/apps/streamstack.svg',
+          '/usr/local/share/icons/hicolor/scalable/status/streamstack-live.svg',
+          '/usr/local/share/icons/hicolor/scalable/status/streamstack-raw.svg',
+          '/usr/local/share/icons/hicolor/scalable/status/streamstack-warn.svg',
+          '/usr/local/share/icons/hicolor/scalable/status/streamstack-off.svg'] }}

@@ -2017,6 +2017,25 @@ minimal_desktop_display_guard_enabled: "{{ (minimal_desktop_display_setup_enable
 # OBS Studio and Easy Effects are not used by StreamStack any more and the role
 # removes them. Per-user defaults are seeded once and never overwritten.
 streamstack_enabled: "{{ (hardware_profiles.get(hardware_profile, {})).get('streamstack', false) | bool }}"
+# Where StreamStack comes from (catalog#183, docs/streamstack.md "Install from
+# the apt repository"). `vendored` installs the Python release vendored at
+# files/streamstack under /usr/local. `apt` installs the native build (0.0.33
+# and later) from StreamStack's signed apt repository, pinned to
+# streamstack_apt_release, and removes the vendored install; the role keeps its
+# own loopback, udev and user-unit wiring and leaves the package's udev,
+# modules-load and WirePlumber files to the package. `apt` needs the GitLab host
+# that serves the repository (streamstack_apt_gitlab_host) and the root-only
+# apt credentials file scripts/bootstrap-streamstack-apt.sh writes.
+streamstack_source: vendored
+streamstack_apt_release: "0.0.33"
+streamstack_apt_gitlab_host: ""
+streamstack_apt_project_id: 2122
+streamstack_apt_repo_url: "https://{{ streamstack_apt_gitlab_host }}/api/v4/projects/{{ streamstack_apt_project_id }}/packages/generic/streamstack-apt/stable"
+# The repository's OpenPGP key ships in the role (files/streamstack-apt-public.gpg,
+# StreamStack's packaging/apt-public.asc dearmored; its fingerprint is pinned by
+# tests/test_streamstack_apt.py) and is installed here for signed-by.
+streamstack_apt_keyring: /etc/apt/keyrings/streamstack.gpg
+streamstack_apt_auth_file: /etc/apt/auth.conf.d/streamstack.conf
 streamstack_camera_video_nr: 42
 streamstack_camera_label: Canon EOS 50D
 # What call apps (Firefox, Chromium, Teams, Zoom) show for the raw camera node

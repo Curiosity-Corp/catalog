@@ -105,7 +105,15 @@ def test_the_gpu_runtime_is_installed_only_with_an_intel_gpu() -> None:
 def test_a_foreign_python_skips_openvino_instead_of_failing() -> None:
     install = _named(FRAMING, "Install OpenVINO into")
     assert any("streamstack_openvino_python_tag" in str(w) for w in install["when"])
-    assert "_streamstack_python_tag.stdout !=" in _named(FRAMING, "Skip OpenVINO")["when"]
+    skip = _named(FRAMING, "Skip OpenVINO")["when"]
+    assert any("_streamstack_python_tag.stdout !=" in str(w) for w in skip)
+
+
+def test_openvino_wheels_are_for_the_vendored_release_only() -> None:
+    # The native build (catalog#183) loads OpenVINO's C library and has no /usr/local/lib/streamstack.
+    for name in ("Read the system Python tag", "Skip OpenVINO", "Install OpenVINO into"):
+        when = _named(FRAMING, name)["when"]
+        assert "streamstack_source == 'vendored'" in (when if isinstance(when, list) else [when]), name
 
 
 def test_the_model_lands_where_streamstack_looks_for_it() -> None:

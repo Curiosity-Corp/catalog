@@ -72,6 +72,16 @@ written in the role (`url`) or the default that holds it (`url_var`), and
 itself. A URL nothing is installed from (an API endpoint, a documentation
 link, an XML namespace) goes under `not_dependencies` with its reason.
 
+A source whose URL is set per host has no URL prefix to declare. It is
+declared by the module it installs with and its pinned version instead:
+`apt-streamstack`, StreamStack's signed apt repository (catalog#183), is built
+from `streamstack_apt_gitlab_host` in the inventory, pinned to
+`streamstack_apt_release`, and its signing key ships in the role
+(`roles/developer_workstation/files/streamstack-apt-public.gpg`, fingerprint
+`F3AA4E82E815D695089DB4D2456BDF83CAB0C1E8`, listed as key material in
+`REUSE.toml`), so the SBOM records it with no distribution URL and the key in
+its note.
+
 ## Limits
 
 - The URL scan covers role defaults, tasks, vars and handlers. Scripts shipped

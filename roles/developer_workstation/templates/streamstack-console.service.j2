@@ -16,7 +16,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/streamstack console --no-window
+ExecStart={{ _streamstack_bin_dir }}/streamstack console --no-window
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

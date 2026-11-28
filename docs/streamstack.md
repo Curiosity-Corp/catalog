@@ -102,6 +102,59 @@ Role variables map onto the app's settings file: `streamstack_microphone` is
 table). Users can override any of them in
 `~/.config/streamstack/streamstack.env`.
 
+## Install from the apt repository
+
+By default the role installs the vendored release above (`streamstack_source: vendored`), and
+a host that sets nothing else is converged exactly as before. A host can instead take the native
+StreamStack build from StreamStack's signed apt repository (catalog#183): one `host_vars` line,
+`streamstack_source: apt`, plus the GitLab host that serves the repository.
+
+```yaml
+streamstack_source: apt
+streamstack_apt_gitlab_host: <gitlab host>
+# streamstack_apt_release: "0.0.33"   # the default; the package is pinned to it
+```
+
+The repository is a flat apt repository in the StreamStack project's GitLab Generic Package
+Registry (`streamstack_apt_project_id`, default `2122`; `streamstack_apt_repo_url` builds the URL),
+readable only with a read-only deploy token (`read_package_registry`). Give each host the token
+once, before its first apt run, as an operator logged in to Azure:
+
+```bash
+scripts/bootstrap-streamstack-apt.sh --host <gitlab host> --vault <key vault> \
+    --secret streamstack-apt-pull-deploy-token
+```
+
+It reads the Key Vault secret (value `<username>:<token>`) through a pipe and writes one
+`machine` entry scoped to the project's registry path to `/etc/apt/auth.conf.d/streamstack.conf`,
+root:root 0600, atomically. It never prints the token, and running it again rewrites the same file
+(a rotated token replaces the old one). The role never creates or reads that file: the run stops
+with a pointer to the script while it is missing, not owned by root or not 0600.
+
+On an apt host the role:
+
+| Step | What |
+| --- | --- |
+| signing key | copies `files/streamstack-apt-public.gpg` to `/etc/apt/keyrings/streamstack.gpg` (`streamstack_apt_keyring`); `tests/test_streamstack_apt.py` proves it is StreamStack's `packaging/apt-public.asc`, one primary key, fingerprint `F3AA4E82E815D695089DB4D2456BDF83CAB0C1E8` (`packaging/apt-public.fingerprint`) |
+| source | `/etc/apt/sources.list.d/streamstack.list`, `deb [signed-by=/etc/apt/keyrings/streamstack.gpg] <repository> ./` |
+| package | `apt install streamstack=<streamstack_apt_release>` (downgrades allowed, so the pin wins); the cache is refreshed only when the version is unknown or the source or key changed |
+| vendored install | removes `/usr/local/lib/streamstack`, every `/usr/local/bin/streamstack*` launcher and the vendored icons |
+| package files | installs no udev rule, modules-load file, WirePlumber drop-in, packaged user unit (audio chain, auto, lights, Canon), icon, menu or panel entry of its own: the package ships them. The role removes the copies the vendored release left in `/etc/systemd/user` and the vendored WirePlumber drop-ins (once, before the package first installs, so dpkg puts its own conffile in place), and masks the package's `/usr/lib/modprobe.d/streamstack-v4l2loopback.conf` with an empty file of the same name in `/etc/modprobe.d` so the role's loopback options stay the only ones |
+| kept | the loopback nodes and options, udev access, `/etc/streamstack/streamstack.env`, the Console, camera publish and deck user units (pointing at `/usr/bin/streamstack`), the Canon bridge, auto mode and lights links (now to `/usr/lib/systemd/user`), the panel icon autostart (a link to the package's entry) and per-user seeding |
+| restart | once, when this run installed or changed the package, the call-safe Console restart below |
+
+The call-safe restart keeps its decisions (catalog#137) but asks the running Console whether a
+call is on: the native build has no Python package to import. It reads the port and token of the
+Console's local API from `$XDG_RUNTIME_DIR/streamstack-console.json` and asks `GET /api/state` on
+127.0.0.1 for its `call` section, StreamStack's own call detection. Anything but a clear "no call"
+(the Console not answering, no call watch yet, the audio server or `/proc` unreadable) defers, as a
+call does. The vendored Console serves the same section, so the first restart after the switch is
+call-safe too.
+
+Moving a host back to `vendored` reinstalls the vendored release, but the package stays installed
+until it is removed (`apt remove streamstack`) and `/usr/bin` comes first on `PATH`; remove the
+package and the files above first.
+
 ## Daily use
 
 ### The Console

@@ -1,0 +1,120 @@
+#!/usr/bin/python3 -I
+"""Managed by curiosity.workstation. The call-safe Console restart for a host on the native StreamStack (catalog#183).
+
+The restart decisions are curiosity-streamstack-console-restart's (catalog#137), loaded unchanged from
+/usr/local/lib/curiosity/streamstack_console_restart.py. Only the question "is a call on?" is asked another way: the
+native StreamStack has no Python package to import, so this asks the running Console, which watches the call apps
+itself (StreamStack's own call detection, the same one Pre-flight and the muted warning use). Its local API serves
+the `call` section of `GET /api/state` on 127.0.0.1, at the port and with the token of the runtime file it writes
+(mode 600) in $XDG_RUNTIME_DIR. The token goes only into that one request header and is never printed.
+
+The vendored Python Console serves the same section, so the first restart after a host moves to the native build
+(the old Console still running) is call-safe too. The answer is "busy" (wait) whenever it is not a clear "no call":
+the Console is not answering, has no call watch, its watch has not reported yet, or it cannot read the audio server
+or /proc. The restart only asks while the Console runs, so a
+Console that is down is started, never waited for.
+
+Environment (overridable for tests):
+  CURIOSITY_STREAMSTACK_CONSOLE_RESTART_LIB   the restart decisions  (/usr/local/lib/curiosity/streamstack_console_restart.py)
+"""
+
+from __future__ import annotations
+
+import http.client
+import importlib.machinery
+import importlib.util
+import json
+import os
+import sys
+from pathlib import Path
+from types import ModuleType
+
+LIB = os.environ.get("CURIOSITY_STREAMSTACK_CONSOLE_RESTART_LIB",
+                     "/usr/local/lib/curiosity/streamstack_console_restart.py")
+TOKEN_HEADER = "X-StreamStack-Token"  # the name of a header, not a secret
+TIMEOUT_S = 5.0
+
+
+def load_restart() -> ModuleType:
+    loader = importlib.machinery.SourceFileLoader("streamstack_console_restart", LIB)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise SystemExit(f"curiosity-streamstack-console-restart: cannot load the restart decisions from {LIB}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module  # its dataclasses resolve annotations through sys.modules
+    try:
+        loader.exec_module(module)
+    except OSError as exc:
+        raise SystemExit(f"curiosity-streamstack-console-restart: cannot load the restart decisions from {LIB}: {exc}")
+    return module
+
+
+def runtime_file() -> Path:
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/streamstack-{os.getuid()}"
+    return Path(runtime) / "streamstack-console.json"
+
+
+def console_call_state(path: Path) -> tuple[dict[str, object] | None, str]:
+    """The Console's `call` section, or None and why it could not be read."""
+    try:
+        running = json.loads(path.read_text())
+        port, token = int(running["port"]), str(running["token"])
+    except FileNotFoundError:
+        return None, "the Console has not registered its local API yet"
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return None, f"the Console's runtime file is unreadable ({type(exc).__name__})"
+    if not token or not 0 < port < 65536:
+        return None, "the Console's runtime file names no port or token"
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=TIMEOUT_S)
+    try:
+        connection.request("GET", "/api/state", headers={TOKEN_HEADER: token, "Connection": "close"})
+        response = connection.getresponse()
+        body = response.read()
+    except (OSError, http.client.HTTPException) as exc:
+        return None, f"the Console is not answering ({type(exc).__name__})"
+    finally:
+        connection.close()
+    if response.status != 200:
+        return None, f"the Console refused the state request (HTTP {response.status})"
+    try:
+        call = json.loads(body).get("call")
+    except (ValueError, AttributeError):
+        return None, "the Console sent an unreadable state"
+    if not isinstance(call, dict):
+        return None, "the Console serves no call state"
+    return call, ""
+
+
+def busy_reason(call: dict[str, object] | None, why: str) -> tuple[bool, str]:
+    """`(busy, reason)` from the Console's call section: busy for a call and for every "cannot tell"."""
+    if call is None:
+        return True, why
+    if call.get("available") is not True:
+        return True, "the Console has no call watch, so it cannot say whether a call is on"
+    sources = call.get("sources")
+    if not isinstance(sources, dict) or sources.get("audio") is not True:
+        return True, "the audio server does not say whether a call app is capturing the microphone"
+    if sources.get("video") is not True:
+        return True, "/proc cannot be read to see which apps hold the camera"
+    active = call.get("active")
+    if not isinstance(active, bool):
+        return True, "the Console's call watch has not reported yet"
+    if active:
+        service = call.get("service")
+        return True, str(call.get("reason") or (f"{service} call" if service else "a call is on"))
+    return False, ""
+
+
+def main(argv: list[str]) -> int:
+    restart = load_restart()
+
+    def look() -> object:
+        busy, reason = busy_reason(*console_call_state(runtime_file()))
+        return restart.Look(busy, reason)
+
+    restart.look_with_streamstack = look  # main() builds its Restarter with this name
+    return restart.main(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

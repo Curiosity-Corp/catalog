@@ -151,6 +151,25 @@ sources:
     keys: [https://get.openziti.io/tun/package-repos.gpg]
     declared_in: [roles/developer_workstation/tasks/repos.yml, roles/developer_workstation/tasks/ziti.yml]
     pinned: false
+  - name: apt-streamstack
+    kind: runtime-package-source
+    source: apt-repository
+    description: >-
+      StreamStack's signed flat APT repository in its GitLab Generic Package
+      Registry, read with a read-only deploy token; used only on a host that
+      sets streamstack_source apt.
+    modules: [ansible.builtin.apt]
+    version_var: streamstack_apt_release
+    declared_in: [roles/developer_workstation/defaults/main.yml (streamstack_apt_repo_url), roles/developer_workstation/tasks/streamstack-apt.yml]
+    note: >-
+      The repository URL is built from streamstack_apt_gitlab_host, which the
+      inventory sets per host, so no URL prefix is declared. The signing key
+      ships in the role (files/streamstack-apt-public.gpg, StreamStack's
+      packaging/apt-public.asc dearmored, fingerprint
+      F3AA4E82E815D695089DB4D2456BDF83CAB0C1E8 pinned by
+      tests/test_streamstack_apt.py); the package is pinned to
+      streamstack_apt_release.
+    pinned: true
   - name: apt-mozilla
     kind: runtime-package-source
     source: apt-repository

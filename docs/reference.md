@@ -313,7 +313,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-560 variables, from `roles/developer_workstation/defaults/main.yml`.
+567 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -740,6 +740,13 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `minimal_desktop_display_guard` | string (template) | template expression |  | experimental | boot | curiosity-display-guard (derived from the hardware profile's `display_guard` mapping: output, mode, rate and optional lane_count and tv_host). Empty (the default) installs nothing. (...) |
 | `minimal_desktop_display_guard_enabled` | string (template) | template expression |  | experimental | boot | (undocumented) |
 | `streamstack_enabled` | string (template) | template expression |  | supported |  | StreamStack call/stream studio (tasks/streamstack.yml, docs/streamstack.md). (...) |
+| `streamstack_source` | string | `"vendored"` | `"vendored"`, `"apt"` | supported |  | Where StreamStack comes from (catalog#183, docs/streamstack.md "Install from the apt repository"). `vendored` installs the Python release vendored at files/streamstack under /usr/local. (...) |
+| `streamstack_apt_release` | string | `"0.0.33"` |  | supported |  | (undocumented) |
+| `streamstack_apt_gitlab_host` | string | `""` |  | supported |  | (undocumented) |
+| `streamstack_apt_project_id` | int | `2122` |  | supported |  | (undocumented) |
+| `streamstack_apt_repo_url` | string (template) | template expression |  | supported |  | (undocumented) |
+| `streamstack_apt_keyring` | string | `"/etc/apt/keyrings/streamstack.gpg"` |  | supported |  | The repository's OpenPGP key ships in the role (files/streamstack-apt-public.gpg, StreamStack's packaging/apt-public.asc dearmored; its fingerprint is pinned by tests/test_streamstack_apt.py) and is installed here for signed-by. |
+| `streamstack_apt_auth_file` | string | `"/etc/apt/auth.conf.d/streamstack.conf"` |  | supported |  | (undocumented) |
 | `streamstack_camera_video_nr` | int | `42` |  | supported |  | (undocumented) |
 | `streamstack_camera_label` | string | `"Canon EOS 50D"` |  | supported |  | (undocumented) |
 | `streamstack_camera_card_label` | string | `"StreamStack RAW - not for calls"` |  | supported |  | What call apps (Firefox, Chromium, Teams, Zoom) show for the raw camera node (StreamStack #198): written to the module options only. (...) |
