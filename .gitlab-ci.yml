@@ -28,9 +28,14 @@ variables:
   PIP_NO_CACHE_DIR: "1"
   PYTHONDONTWRITEBYTECODE: "1"
   SOURCE_DATE_EPOCH: "0"
+  # catalog#182: no job but galaxy-collections reaches galaxy.ansible.com. A
+  # live `ansible-galaxy` install anywhere else meets this closed port and
+  # fails at once instead of depending on Galaxy; --offline installs and
+  # `verify --offline` never use it. galaxy-collections sets the real server.
+  ANSIBLE_GALAXY_SERVER: "http://127.0.0.1:9/"
 
-.python_setup:
-  before_script:
+.python_tools:
+  before_script: &python_tools
     # The shared Kubernetes runner is intentionally non-root. Keep jobs
     # portable by installing tools into a disposable workspace virtualenv.
     - python -m venv .ci-venv
@@ -38,48 +43,63 @@ variables:
     # Hash-checked lock of the CI tooling (catalog#22, docs/ci-toolchain.md).
     # pip itself comes from the digest-pinned image, so it is not upgraded here.
     - python -m pip install --require-hashes -r ci/requirements.txt
-    # Ansible collections (catalog#174). galaxy.ansible.com resets connections
-    # in bursts, and with every job installing on its own one reset failed the
-    # pipeline. The galaxy-collections job installs the pinned collections once
-    # into .ci-collections and passes them on as an artifact. A job uses them
-    # when `verify --offline` finds the pinned versions with every file matching
-    # its manifest; otherwise (a job that `needs` others and so got no copy) it
-    # installs them itself. Each try: 30 s per Galaxy request, 150 s in all;
-    # four tries, 10, 20 and 40 s apart.
+
+.python_setup:
+  before_script:
+    - *python_tools
+    # Ansible collections (catalog#174, catalog#182). galaxy.ansible.com
+    # resets connections in bursts, so only the galaxy-collections job
+    # reaches it, with retries; every other job uses its .ci-collections
+    # artifact after `verify --offline` finds the pinned versions with every
+    # file matching its manifest. A job that `needs` others must list
+    # galaxy-collections too (tests/test_galaxy_fetch_isolation.py).
     - export ANSIBLE_COLLECTIONS_PATH="$CI_PROJECT_DIR/.ci-collections:$HOME/.ansible/collections:/usr/share/ansible/collections"
     - |
-      if ansible-galaxy collection verify --offline -r ci/requirements.yml >/dev/null 2>&1; then
-        echo "Using the collections from the galaxy-collections job (verified offline)"
-      else
-        attempt=1
-        until timeout 150 ansible-galaxy collection install -r ci/requirements.yml --timeout 30 -p "$CI_PROJECT_DIR/.ci-collections"; do
-          rc=$?
-          why="exit $rc"
-          [ "$rc" -eq 124 ] && why="no answer from galaxy.ansible.com within 150 s"
-          if [ "$attempt" -ge 4 ]; then
-            echo "ansible-galaxy collection install failed after $attempt attempts ($why)" >&2
-            exit "$rc"
-          fi
-          wait=$((10 * (1 << (attempt - 1))))
-          echo "ansible-galaxy collection install attempt $attempt failed ($why); retrying in ${wait}s" >&2
-          attempt=$((attempt + 1))
-          sleep "$wait"
-        done
+      if ! ansible-galaxy collection verify --offline -r ci/requirements.yml; then
+        echo "No verified .ci-collections from the galaxy-collections job. Jobs never fetch from Galaxy themselves (catalog#182): if this job has needs:, add galaxy-collections with artifacts: true." >&2
+        exit 1
       fi
 
-# catalog#174: the pinned collections, once per pipeline, for every job that
-# extends .python_setup (see its before_script). Its own run installs them, as
-# nothing is there yet, then proves the copy it passes on.
+# catalog#182: the one job that reaches galaxy.ansible.com. It fetches the
+# pinned collections (.ci-collections, every .python_setup job), the galaxy.yml
+# floor (.ci-collections-floor, collection-floor) and requirements.yml as a
+# user resolves it (.ci-collections-user, the quickstart jobs), once per
+# pipeline, each fetch retried with backoff (scripts/fetch-collections.sh). A
+# longer outage fails this job alone, which GitLab retries before anything
+# else runs. The cache keeps the two pinned directories between pipelines; a
+# cached copy that verifies offline is used without asking Galaxy.
 galaxy-collections:
-  extends: .python_setup
+  extends: .python_tools
   stage: prepare
-  timeout: 15m
+  variables:
+    ANSIBLE_GALAXY_SERVER: "https://galaxy.ansible.com/"
+  # Worst case: three fetches of five tries, 150 s each, plus backoff.
+  timeout: 50m
+  retry:
+    max: 2
+    when:
+      - script_failure
+      - stuck_or_timeout_failure
+      - runner_system_failure
+      - api_failure
+      - unknown_failure
+  cache:
+    key:
+      prefix: galaxy-collections
+      files:
+        - ci/requirements.yml
+        - galaxy.yml
+    paths:
+      - .ci-collections/
+      - .ci-collections-floor/
   script:
-    - ansible-galaxy collection verify --offline -r ci/requirements.yml
+    - scripts/fetch-collections.sh
   artifacts:
     expire_in: 1 day
     paths:
       - .ci-collections/
+      - .ci-collections-floor/
+      - .ci-collections-user/
 
 # One pipeline per change: merge request pipelines for feature branches, branch
 # pipelines only for the default branch. A plain push to a branch that has (or
@@ -343,13 +363,16 @@ lint:
   extends: .python_setup
   stage: validate
   script:
-    - ANSIBLE_ROLES_PATH=roles ansible-lint playbooks/site.yml playbooks/preview-vars.yml roles
+    # --offline: ansible-lint would otherwise install requirements.yml itself
+    # at start; the collections come from galaxy-collections (catalog#182).
+    - ANSIBLE_ROLES_PATH=roles ansible-lint --offline playbooks/site.yml playbooks/preview-vars.yml roles
 
 # galaxy.yml lets users resolve any community.general from its floor upward,
 # while every other job uses the exact pin in ci/requirements.yml. This job
-# installs the floor alone and fails when a community.general module, filter,
-# test or lookup the roles name is missing or deprecated there (catalog#171,
-# docs/ci-toolchain.md).
+# checks the floor the galaxy-collections job fetched into
+# .ci-collections-floor, alone on the collection path, and fails when a
+# community.general module, filter, test or lookup the roles name is missing
+# or deprecated there (catalog#171, catalog#182, docs/ci-toolchain.md).
 collection-floor:
   extends: .python_setup
   stage: validate
@@ -378,6 +401,7 @@ policy:
       tests/test_python_research.py tests/test_monitor_sleep_pointer.py tests/test_apt_vendor_channels.py tests/test_preflight_tags.py
       tests/test_no_log_policy.py tests/test_argument_specs.py tests/test_ansible_pull_poll.py
       tests/test_agent_cpu_policy.py tests/test_hypersystem_desktop.py
+      tests/test_galaxy_fetch_isolation.py tests/test_fetch_collections_retry.py
 
 # catalog#36: install the Python research profile for real, in this throwaway
 # container. Applies the role's own science-venv.yml with

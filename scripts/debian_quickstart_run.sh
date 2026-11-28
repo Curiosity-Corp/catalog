@@ -27,6 +27,7 @@ set -uo pipefail
 
 OUT="${OUT:-$PWD/debian-quickstart}"
 WORK="${WORK:-$PWD/.debian-quickstart-work}"
+SRC_COLLECTIONS="$PWD/.ci-collections-user"
 TAGS="${TAGS:-repos,packages,python,science,data-science,git}"
 mkdir -p "$OUT" "$WORK/home"
 # The runner uid has no passwd entry and no writable home.
@@ -86,14 +87,14 @@ step 1-venv python3 -m venv .venv
 step 1-pip python -m pip install --upgrade pip ansible-core
 command -v ansible-playbook >/dev/null \
   || { echo "- Result: ansible-core did not install (see 1-pip.log)" >>"$REPORT"; cat "$REPORT"; exit 1; }
+# The guide's `ansible-galaxy collection install -r requirements.yml`, from
+# the copy the galaxy-collections job downloaded for this pipeline (same
+# requirements.yml, resolved the way a user resolves it today): only that job
+# reaches galaxy.ansible.com (catalog#182, docs/ci-toolchain.md).
 galaxy() {
-  local attempt
-  for attempt in 1 2 3; do
-    ansible-galaxy collection install -r requirements.yml && return 0
-    echo "ansible-galaxy attempt $attempt failed; retrying in 10s" >&2
-    sleep 10
-  done
-  return 1
+  [ -f "$SRC_COLLECTIONS/requirements.yml" ] \
+    || { echo "no $SRC_COLLECTIONS from the galaxy-collections job; this job never fetches from Galaxy itself" >&2; return 1; }
+  (cd "$SRC_COLLECTIONS" && ansible-galaxy collection install --offline -r requirements.yml)
 }
 step 1-galaxy galaxy
 echo "- ansible-core: $(ansible --version | head -n 1)" >>"$REPORT"

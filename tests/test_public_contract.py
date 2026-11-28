@@ -142,7 +142,10 @@ def test_ci_toolchain_is_locked() -> None:
     for image in images:
         assert "${" in image or "@sha256:" in image, f"{image} is not pinned by digest"
     assert "--require-hashes -r ci/requirements.txt" in ci_text
-    assert "collection install -r ci/requirements.yml" in ci_text
+    assert "scripts/fetch-collections.sh" in ci_text
+    assert "collection install --force --timeout 30 -r ci/requirements.yml" in (
+        ROOT / "scripts/fetch-collections.sh"
+    ).read_text()
     for line in ci_text.splitlines():
         if "pip install" in line and ".ci-cloud-init/src/requirements.txt" not in line:
             assert "ci/requirements.txt" in line, f"unlocked install: {line.strip()}"

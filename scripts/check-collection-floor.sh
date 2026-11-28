@@ -3,6 +3,7 @@
 # (catalog#171, docs/ci-toolchain.md).
 #
 #   scripts/check-collection-floor.sh COLLECTIONS_DIR
+#   scripts/check-collection-floor.sh --print-floor
 #
 # galaxy.yml's dependency range lets users install any community.general from
 # its floor upward, while every other CI job uses the exact pin in
@@ -10,30 +11,24 @@
 #
 # 1. reads the floor from galaxy.yml (`community.general: ">=X.Y.Z"`) and fails
 #    when requirements.yml (what users install) states a different floor;
-# 2. installs exactly that version into COLLECTIONS_DIR, which must be empty
-#    or absent, and makes it the ONLY collection path (no ~/.ansible, no
-#    site-packages), then checks that ansible-doc reports that version;
+#    --print-floor stops here and prints it;
+# 2. makes COLLECTIONS_DIR the ONLY collection path (no ~/.ansible, no
+#    site-packages) and checks that it holds exactly that version, every file
+#    matching its manifest. It never fetches: in CI the galaxy-collections job
+#    (scripts/fetch-collections.sh) installs the floor into
+#    .ci-collections-floor, the only job that reaches Galaxy (catalog#182);
 # 3. resolves every `community.general.<name>` the roles and playbooks name,
 #    as a module, filter, test or lookup, with ansible-doc against that path,
 #    and fails on a name the floor lacks or marks deprecated.
 #
 # ansible-lint and --syntax-check cannot do step 3: neither isolates the
 # collection path, and syntax-check does not load dynamically included tasks.
+# Locally: scripts/fetch-collections.sh, then this script on
+# .ci-collections-floor.
 set -eu
 
 if [ "$#" -ne 1 ]; then
-  echo "usage: $0 COLLECTIONS_DIR" >&2
-  exit 2
-fi
-dest="$1"
-for tool in ansible-galaxy ansible-doc; do
-  command -v "$tool" >/dev/null 2>&1 || {
-    echo "$tool not found: install the CI toolchain (pip install --require-hashes -r ci/requirements.txt)" >&2
-    exit 2
-  }
-done
-if [ -e "$dest" ] && [ -n "$(ls -A "$dest")" ]; then
-  echo "$dest is not empty; give a fresh directory so no other collection is on the path" >&2
+  echo "usage: $0 COLLECTIONS_DIR | --print-floor" >&2
   exit 2
 fi
 
@@ -47,18 +42,22 @@ if [ "$user_floor" != "$floor" ]; then
   echo "requirements.yml asks for community.general >=${user_floor:-?}, galaxy.yml for >=$floor; keep them equal" >&2
   exit 1
 fi
+if [ "$1" = "--print-floor" ]; then
+  echo "$floor"
+  exit 0
+fi
 
-# galaxy.ansible.com occasionally resets the connection mid-download.
-attempt=1
-until ansible-galaxy collection install --force -p "$dest" "community.general:==$floor"; do
-  if [ "$attempt" -ge 3 ]; then
-    echo "could not install community.general $floor after $attempt attempts" >&2
-    exit 1
-  fi
-  attempt=$((attempt + 1))
-  sleep 10
+dest="$1"
+for tool in ansible-galaxy ansible-doc; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "$tool not found: install the CI toolchain (pip install --require-hashes -r ci/requirements.txt)" >&2
+    exit 2
+  }
 done
-
+if [ ! -d "$dest/ansible_collections/community/general" ]; then
+  echo "$dest holds no community.general: the galaxy-collections job installs the floor there (docs/ci-toolchain.md)" >&2
+  exit 2
+fi
 ANSIBLE_COLLECTIONS_PATH="$(cd "$dest" && pwd)"
 ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=false
 ANSIBLE_NOCOLOR=1
@@ -68,6 +67,10 @@ installed="$(ansible-galaxy collection list community.general 2>/dev/null \
   | awk '$1 == "community.general" { print $2 }')"
 if [ "$installed" != "$floor" ]; then
   echo "expected only community.general $floor on the collection path, found: ${installed:-none}" >&2
+  exit 1
+fi
+if ! ansible-galaxy collection verify --offline "community.general:==$floor" >/dev/null 2>&1; then
+  echo "community.general $floor in $dest does not match its manifest; fetch it again" >&2
   exit 1
 fi
 

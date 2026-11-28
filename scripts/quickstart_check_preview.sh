@@ -50,12 +50,13 @@ python -m venv "$WORK/venv"
 # shellcheck disable=SC1091
 . "$WORK/venv/bin/activate"
 python -m pip install --quiet --upgrade pip ansible-core
-for attempt in 1 2 3; do
-  ansible-galaxy collection install -r requirements.yml && break
-  [ "$attempt" = 3 ] && { echo "ansible-galaxy failed after 3 attempts" >&2; exit 1; }
-  echo "ansible-galaxy attempt $attempt failed; retrying in 10s" >&2
-  sleep 10
-done
+# The guide's `ansible-galaxy collection install -r requirements.yml`, from
+# the copy the galaxy-collections job downloaded for this pipeline (same
+# requirements.yml, resolved the way a user resolves it today): only that job
+# reaches galaxy.ansible.com (catalog#182, docs/ci-toolchain.md).
+[ -f "$PWD/.ci-collections-user/requirements.yml" ] \
+  || { echo "no .ci-collections-user from the galaxy-collections job; this job never fetches from Galaxy itself" >&2; exit 1; }
+(cd "$PWD/.ci-collections-user" && ansible-galaxy collection install --offline -r requirements.yml)
 
 apt_dir="$WORK/apt"
 apt_opts=(-o "Dir::State::Lists=$apt_dir/lists" -o "Dir::Cache=$apt_dir/cache" -o Debug::NoLocking=1)
