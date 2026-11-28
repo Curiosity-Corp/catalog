@@ -51,7 +51,16 @@ echo "AIDE under test: $(head -n 1 "$OUT/aide-version.txt")"
 
 # --- The packaged configuration, with the role's rules added -----------------
 CONF="$ROOT/etc/aide/aide.conf"
-[ -r "$CONF" ] || die "aide-common has no /etc/aide/aide.conf"
+# Debian's and Ubuntu's aide-common ship the stock configuration under
+# /usr/share/aide/config and its maintainer script copies it to /etc (ucf);
+# dpkg-deb -x runs no maintainer script, so do that copy here.
+SHIPPED="$ROOT/usr/share/aide/config/aide"
+if [ ! -r "$CONF" ] && [ -r "$SHIPPED/aide.conf" ]; then
+  mkdir -p "$ROOT/etc"
+  cp -a "$SHIPPED" "$ROOT/etc/aide"
+fi
+[ -r "$CONF" ] || die "aide-common ships neither /etc/aide/aide.conf nor /usr/share/aide/config/aide/aide.conf"
+ls "$ROOT/etc/aide/aide.conf.d" >"$OUT/aide.conf.d.txt"
 grep -q '/etc/aide/aide.conf.d' "$CONF" || die "aide.conf does not include /etc/aide/aide.conf.d"
 # x_include runs executable snippets only from a directory owned by the
 # current user and not group- or world-writable (aide.conf(5)).
