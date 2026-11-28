@@ -313,7 +313,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 
 ### Role `developer_workstation`
 
-568 variables, from `roles/developer_workstation/defaults/main.yml`.
+570 variables, from `roles/developer_workstation/defaults/main.yml`.
 
 | Variable | Type | Default | Valid values | Status | Safety impact | Description |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -673,6 +673,8 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `ubuntu_pro_token` | string | `""` |  | supported | secret | Ubuntu Pro token — empty by default, so ESM/Livepatch attach is skipped entirely. Canonical's free tier covers ESM + Livepatch for up to 5 machines for individuals; set this in host_vars/group_vars, NEVER commit a real token. |
 | `fwupd_auto_apply` | bool | `false` |  | supported | boot | fwupd refreshes metadata weekly regardless; auto-*applying* firmware unattended can brick hardware, so this stays opt-in. Unattended firmware updates can brick hardware. |
 | `failed_sweep_webhook_url` | string | `""` |  | private-hook |  | Incoming-webhook URL (Mattermost/Slack/Teams/generic) for the hourly systemctl --failed sweep. Empty by default — the sweep always logs to syslog regardless; this just adds a push alert on top. Set in host_vars/group_vars, never commit a real URL. |
+| `aide_check_memory_high` | string | `"4G"` |  | supported |  | Bounds for the nightly dailyaidecheck.service (security.yml, catalog#185). Past this the kernel reclaims and throttles the check instead of letting it grow. Raise it per host if the check's system tree is genuinely larger. |
+| `aide_check_memory_swap_max` | string | `"1G"` |  | supported |  | Most swap the daily AIDE check may hold, so an integrity scan can never exhaust the workstation's swap. systemd size syntax or "infinity". |
 | `pro_mimic_needrestart_auto` | bool | `true` |  | supported | security | Ubuntu 26.04 LTS carries standard support to ~2031, so a Pro subscription buys this fleet almost nothing today (partial Universe SLA, Livepatch convenience, compliance content). (...) |
 | `pro_mimic_needrestart_blacklist` | list | `[]` |  | supported |  | Perl regex sources (without delimiters) for services needrestart must never restart automatically, e.g. ['^docker$', '^libvirtd$']. Empty by default. |
 | `pro_mimic_ssh_password_auth` | bool | `false` |  | supported | secret, security | SSH stays hardened by default. Set true ONLY on hosts where an operator has explicitly accepted password authentication (the drop-in is then removed). |

@@ -284,34 +284,20 @@
 #   3. Negative-rule lines need a trailing file-type letter ("d" for
 #      directory), matching every rule already shipped in
 #      /etc/aide/aide.conf.d/*.
-- name: Prune home directories from AIDE's default full-filesystem scan
+#
+# The rules live in files/aide/zz_workstation_excludes. They also prune the
+# RAM-backed and volatile trees (/tmp, /var/tmp, /dev/shm, /run/user): AIDE
+# does not stop at mount points, and a tmpfs /tmp full of swapped-out agent
+# scratch made the nightly check run 7-8 h at 25-29 GiB of swap (catalog#185).
+# The aide-config-check CI job proves every rule with the distribution's own
+# aide: --config-check, then --path-check of each pruned and kept path.
+- name: Prune home directories and volatile trees from AIDE's default full-filesystem scan
   ansible.builtin.copy:
+    src: aide/zz_workstation_excludes
     dest: /etc/aide/aide.conf.d/zz_workstation_excludes
     owner: root
     group: root
     mode: "0644"
-    content: |
-      # Managed by Ansible — developer-workstation role
-      -/home/[^/]+$ d
-      -/var/lib/docker$ d
-      -/var/lib/containers$ d
-      -/var/lib/snapd$ d
-      -/snap$ d
-      # Swap file content is meaningless to integrity-monitor (changes every
-      # boot) and, at 16G on this host, was the single largest contributor
-      # to AIDE's scan time/memory — found via `find / -xdev -size +200M`,
-      # not guessed.
-      -/swap\.img$ f
-
-      # Re-include specific security-relevant files despite the /home prune
-      # above — AIDE's deepest-match means these more specific rules win.
-      /home/[^/]+/\.ssh$ d R
-      /home/[^/]+/\.ssh/authorized_keys$ f R
-      /home/[^/]+/\.ssh/config$ f R
-      /home/[^/]+/\.bashrc$ f R
-      /home/[^/]+/\.bash_profile$ f R
-      /home/[^/]+/\.profile$ f R
-      /home/[^/]+/\.zshrc$ f R
 
 - name: Check if AIDE database is initialized
   ansible.builtin.stat:
@@ -350,7 +336,30 @@
     owner: root
     group: root
     mode: "0755"
-  when: not _aide_db.stat.exists
+
+# The daily check must never starve the workstation it protects (catalog#185).
+# It runs at the lowest CPU and I/O priority, like curiosity-aide-init above,
+# and its memory is bounded: past MemoryHigh the kernel reclaims and throttles
+# it instead of letting it grow, and MemorySwapMax caps the swap it may hold,
+# so it can no longer push the host into swap_exhausted. Both are sized in
+# defaults/main.yml (aide_check_memory_high, aide_check_memory_swap_max) and
+# can be raised per host. CPUSchedulingPolicy=idle is deliberately not set: on
+# a workstation whose agents keep every core busy, SCHED_IDLE can starve the
+# check indefinitely, while Nice=19 still lets it finish.
+- name: Bound the daily AIDE check's priority, memory and swap
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/dailyaidecheck.service.d/20-curiosity-resources.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible — developer-workstation role (catalog#185)
+      [Service]
+      Nice=19
+      IOSchedulingClass=idle
+      MemoryHigh={{ aide_check_memory_high }}
+      MemorySwapMax={{ aide_check_memory_swap_max }}
+  notify: Reload systemd
 
 - name: Guard the daily AIDE check until its database exists
   ansible.builtin.copy:

@@ -1653,6 +1653,14 @@ fwupd_auto_apply: false
 # host_vars/group_vars, never commit a real URL.
 failed_sweep_webhook_url: ""
 
+# Bounds for the nightly dailyaidecheck.service (security.yml, catalog#185).
+# Past this the kernel reclaims and throttles the check instead of letting it
+# grow. Raise it per host if the check's system tree is genuinely larger.
+aide_check_memory_high: 4G
+# Most swap the daily AIDE check may hold, so an integrity scan can never
+# exhaust the workstation's swap. systemd size syntax or "infinity".
+aide_check_memory_swap_max: 1G
+
 # =============================================================================
 # Free Ubuntu-Pro equivalents (pro-free-mimic plane, tasks/pro-mimic.yml)
 # =============================================================================

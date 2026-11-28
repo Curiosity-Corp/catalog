@@ -411,6 +411,33 @@ policy:
       tests/test_no_log_policy.py tests/test_argument_specs.py tests/test_ansible_pull_poll.py
       tests/test_agent_cpu_policy.py tests/test_hypersystem_desktop.py
       tests/test_galaxy_fetch_isolation.py tests/test_fetch_collections_retry.py
+      tests/test_aide_scope.py
+
+# catalog#185: prove roles/developer_workstation/files/aide/zz_workstation_excludes
+# with the distribution's own AIDE, as security.yml requires. The script
+# fetches aide and aide-common from Ubuntu 26.04's archive with apt's lists in a
+# private directory (the runner is non-root), runs aide --config-check on the
+# packaged aide.conf with the role's rules added, then aide --path-check on each
+# pruned tree (/tmp, /var/tmp, /dev/shm, /run/user, ...) and on the paths that
+# must stay monitored. Ubuntu 26.04 is the fleet's workstation release.
+aide-config-check:
+  stage: test
+  image: public.ecr.aws/docker/library/ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
+  timeout: 15m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes:
+        - roles/developer_workstation/files/aide/**/*
+        - roles/developer_workstation/tasks/security.yml
+        - scripts/aide_config_check.sh
+        - .gitlab-ci.yml
+  script:
+    - bash scripts/aide_config_check.sh
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - aide-config-check/
 
 # catalog#36: install the Python research profile for real, in this throwaway
 # container. Applies the role's own science-venv.yml with

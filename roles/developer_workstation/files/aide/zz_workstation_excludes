@@ -1,0 +1,36 @@
+# Managed by Ansible — developer-workstation role
+# (roles/developer_workstation/files/aide/zz_workstation_excludes).
+# Every rule here is proved by the aide-config-check CI job
+# (scripts/aide_config_check.sh): aide --config-check against the
+# distribution's own aide.conf, then --path-check on each pruned tree.
+-/home/[^/]+$ d
+-/var/lib/docker$ d
+-/var/lib/containers$ d
+-/var/lib/snapd$ d
+-/snap$ d
+# Swap file content is meaningless to integrity-monitor (changes every
+# boot) and, at 16G on this host, was the single largest contributor
+# to AIDE's scan time/memory — found via `find / -xdev -size +200M`,
+# not guessed.
+-/swap\.img$ f
+
+# RAM-backed and volatile trees (catalog#185). Their content is scratch that
+# changes all day and has no integrity value against a daily baseline. On
+# dm313red /tmp is a tmpfs holding 25G of agent scratch, mostly swapped out:
+# the catch-all "/ 0 Full" read and hashed every page of it, faulting it back
+# in, so the nightly check ran 7-8 h and peaked at 25-29 GiB of swap. Each
+# rule is non-recursive ("-"), so AIDE never descends into the tree.
+-/tmp$ d
+-/var/tmp$ d
+-/dev/shm$ d
+-/run/user$ d
+
+# Re-include specific security-relevant files despite the /home prune
+# above — AIDE's deepest-match means these more specific rules win.
+/home/[^/]+/\.ssh$ d R
+/home/[^/]+/\.ssh/authorized_keys$ f R
+/home/[^/]+/\.ssh/config$ f R
+/home/[^/]+/\.bashrc$ f R
+/home/[^/]+/\.bash_profile$ f R
+/home/[^/]+/\.profile$ f R
+/home/[^/]+/\.zshrc$ f R

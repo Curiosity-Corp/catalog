@@ -347,6 +347,8 @@ argument_specs:
       ubuntu_pro_token: {type: str, no_log: true}
       fwupd_auto_apply: {type: bool}
       failed_sweep_webhook_url: {type: str, no_log: true}
+      aide_check_memory_high: {type: str}
+      aide_check_memory_swap_max: {type: str}
       pro_mimic_needrestart_auto: {type: bool}
       pro_mimic_needrestart_blacklist: {type: list}
       pro_mimic_ssh_password_auth: {type: bool}
