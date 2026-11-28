@@ -411,6 +411,7 @@ policy:
       tests/test_no_log_policy.py tests/test_argument_specs.py tests/test_ansible_pull_poll.py
       tests/test_agent_cpu_policy.py tests/test_hypersystem_desktop.py
       tests/test_galaxy_fetch_isolation.py tests/test_fetch_collections_retry.py
+      tests/test_module_tmpdir.py
 
 # catalog#36: install the Python research profile for real, in this throwaway
 # container. Applies the role's own science-venv.yml with

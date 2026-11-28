@@ -15,7 +15,14 @@
   connection: local
   become: true
   force_handlers: true
+  # Module payloads go to disk, not the /tmp tmpfs (catalog#176). Every module
+  # unpacks its payload with Python's tempfile, as the task's become user;
+  # sudo drops TMPDIR, so without this a become_user task writes to /tmp and
+  # crashes ("No start of json char found") once that user reaches the
+  # per-user /tmp quota. /var/tmp is disk-backed and sticky; each payload
+  # directory is private (0700) and removed when the module ends.
   environment:
+    TMPDIR: /var/tmp
     http_proxy: "{{ lab_http_proxy }}"
     https_proxy: "{{ lab_https_proxy }}"
     no_proxy: "{{ lab_no_proxy }}"

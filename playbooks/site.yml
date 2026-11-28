@@ -7,6 +7,14 @@
   # run sees those files unchanged and never notifies again, so for example a
   # DNS-over-TLS drop-in stayed written but never loaded by systemd-networkd.
   force_handlers: true
+  # Module payloads go to disk, not the /tmp tmpfs (catalog#176). Every module
+  # unpacks its payload with Python's tempfile, as the task's become user;
+  # sudo drops TMPDIR, so without this a become_user task writes to /tmp and
+  # crashes ("No start of json char found") once that user reaches the
+  # per-user /tmp quota. /var/tmp is disk-backed and sticky; each payload
+  # directory is private (0700) and removed when the module ends.
+  environment:
+    TMPDIR: /var/tmp
   roles:
     - developer_workstation
     - workstation_storage

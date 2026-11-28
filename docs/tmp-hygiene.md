@@ -222,6 +222,15 @@ Check it with `systemctl list-timers curiosity-tmp-short-age.timer` and
   `tmp_hygiene_extra_exclusions`, for example `X /tmp/my-tool-*`.
 - Disk-backed `/tmp` still gets the daily age-based cleanup; the pressure timer
   does nothing there because `/tmp` is not a mount point.
+- Ansible itself is a `/tmp` user. Every module unpacks its payload with
+  Python's `tempfile`, as the task's become user, and sudo drops `TMPDIR`. A
+  `become_user` task whose user has reached the per-user `/tmp` quota then
+  dies before it can answer, and the run reports `Module result
+  deserialization failed: No start of json char found` (catalog#176). The
+  shipped plays (`playbooks/site.yml`, `examples/`) therefore set
+  `environment: {TMPDIR: /var/tmp}`, which Ansible puts on the module's own
+  command line inside sudo; copy it into your own play.
+  `tests/test_module_tmpdir.py` keeps it there.
 - Systemd units that use `PrivateTmp=` have their own directories under
   `/tmp/systemd-private-*`; they are neither measured nor cleaned by the
   pressure helper beyond the stock rules.
