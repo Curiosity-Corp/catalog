@@ -270,12 +270,15 @@ def test_documented_tag_sets_preview_with_the_example_variables(vars_file: str, 
 @needs_ansible
 def test_restricted_network_playbook_parses_and_exports_proxy_environment() -> None:
     play = yaml.safe_load((EXAMPLES / "restricted-network-site.yml").read_text())[0]
+    site = yaml.safe_load((ROOT / "playbooks/site.yml").read_text())[0]
+    # The proxy wrapper keeps site.yml's own environment (TMPDIR, catalog#176)
+    # and adds the proxy variables.
     assert play["environment"] == {
+        **site["environment"],
         "http_proxy": "{{ lab_http_proxy }}",
         "https_proxy": "{{ lab_https_proxy }}",
         "no_proxy": "{{ lab_no_proxy }}",
     }
-    site = yaml.safe_load((ROOT / "playbooks/site.yml").read_text())[0]
     assert play["roles"] == site["roles"], "keep the proxy wrapper in step with playbooks/site.yml"
     result = _playbook(
         "--syntax-check",
