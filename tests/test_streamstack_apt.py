@@ -22,6 +22,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import jinja2
 import pytest
 import yaml
 
@@ -79,6 +80,15 @@ def test_the_default_is_the_vendored_release() -> None:
     for key in DEFAULTS:
         if key.startswith("streamstack_apt_") or key == "streamstack_source":
             assert key in SPECS, key
+
+
+def test_the_repository_url_is_empty_until_a_host_names_the_gitlab_server() -> None:
+    # validate-config.yml accepts an empty *_url or an https:// one: a default that rendered "https:///api/..." on
+    # hosts that never opt in stopped every run (the quickstart preview found it).
+    template = jinja2.Environment().from_string(DEFAULTS["streamstack_apt_repo_url"])
+    assert template.render(streamstack_apt_gitlab_host="", streamstack_apt_project_id=2122) == ""
+    assert (template.render(streamstack_apt_gitlab_host="gitlab.example.org", streamstack_apt_project_id=2122)
+            == "https://gitlab.example.org/api/v4/projects/2122/packages/generic/streamstack-apt/stable")
 
 
 def test_the_vendored_plan_is_byte_for_byte_the_one_before_the_switch() -> None:

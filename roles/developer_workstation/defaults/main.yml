@@ -2030,7 +2030,11 @@ streamstack_source: vendored
 streamstack_apt_release: "0.0.33"
 streamstack_apt_gitlab_host: ""
 streamstack_apt_project_id: 2122
-streamstack_apt_repo_url: "https://{{ streamstack_apt_gitlab_host }}/api/v4/projects/{{ streamstack_apt_project_id }}/packages/generic/streamstack-apt/stable"
+# Empty until the host is set, so the public configuration check (an empty
+# *_url or an https URL) passes on every host that does not opt in.
+streamstack_apt_repo_url: >-
+  {{ ('https://' ~ streamstack_apt_gitlab_host ~ '/api/v4/projects/' ~ streamstack_apt_project_id
+      ~ '/packages/generic/streamstack-apt/stable') if streamstack_apt_gitlab_host | length > 0 else '' }}
 # The repository's OpenPGP key ships in the role (files/streamstack-apt-public.gpg,
 # StreamStack's packaging/apt-public.asc dearmored; its fingerprint is pinned by
 # tests/test_streamstack_apt.py) and is installed here for signed-by.

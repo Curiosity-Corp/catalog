@@ -744,7 +744,7 @@ Variables marked experimental, internal or private-hook. Do not depend on intern
 | `streamstack_apt_release` | string | `"0.0.33"` |  | supported |  | (undocumented) |
 | `streamstack_apt_gitlab_host` | string | `""` |  | supported |  | (undocumented) |
 | `streamstack_apt_project_id` | int | `2122` |  | supported |  | (undocumented) |
-| `streamstack_apt_repo_url` | string (template) | template expression |  | supported |  | (undocumented) |
+| `streamstack_apt_repo_url` | string (template) | template expression |  | supported |  | Empty until the host is set, so the public configuration check (an empty *_url or an https URL) passes on every host that does not opt in. |
 | `streamstack_apt_keyring` | string | `"/etc/apt/keyrings/streamstack.gpg"` |  | supported |  | The repository's OpenPGP key ships in the role (files/streamstack-apt-public.gpg, StreamStack's packaging/apt-public.asc dearmored; its fingerprint is pinned by tests/test_streamstack_apt.py) and is installed here for signed-by. |
 | `streamstack_apt_auth_file` | string | `"/etc/apt/auth.conf.d/streamstack.conf"` |  | supported |  | (undocumented) |
 | `streamstack_camera_video_nr` | int | `42` |  | supported |  | (undocumented) |
